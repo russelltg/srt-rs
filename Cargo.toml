@@ -1,0 +1,20 @@
+[package]
+name = "srt"
+version = "0.1.0"
+authors = ["Russell Greene <russellgreene8@gmail.com>"]
+
+[dependencies]
+tokio = "^0.1"
+tokio-io = "^0.1"
+futures = "^0.1"
+bytes = "^0.4"
+byteorder = "^1.2"
+
+[lib]
+name = "srt"
+path = "src/lib.rs"
+
+[[bin]]
+name = "stransmit-rs"
+path = "src/bin.rs"
+
