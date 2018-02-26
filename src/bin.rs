@@ -4,33 +4,32 @@ extern crate srt;
 use bytes::{BytesMut, IntoBuf};
 
 use std::net::UdpSocket;
-use srt::packet::Packet;
-use std::io::Cursor;
+use srt::socket::SrtSocketBuilder;
+use std::io::{Cursor, Error};
+
+use futures::prelude::*;
+
+use tokio::executor::current_thread;
+
+struct Peer {
+    sock: SrtSocket;
+}
+
+impl Future for Peer {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<(), Error> {
+        while let Async::Ready(packet) = self.sock.poll()? {
+            println!("{:?}", packet);
+        } 
+    }
+}
 
 fn main() {
-    let sock = UdpSocket::bind("127.0.0.1:8171").unwrap();
+    let peer = Peer{sock: SrtSocketBuilder::new("127.0.0.1:8171").build().unwrap()};
 
-    let mut buf: [u8; 65536] = [0; 65536];
-    while let Ok((len, addr)) = sock.recv_from(&mut buf) {
-        match Packet::parse(Cursor::new(&buf[0..len])) {
-            Ok(mut s) => {
-                if let Packet::Data(d) = s {
-                    println!(
-                        "Received data packet; size = {}; message = {}; pos = {:?}",
-                        d.payload.len(),
-                        d.message_number,
-                        d.message_loc
-                    );
-                    continue;
-                }
-                println!("{:?}", s);
-
-                let mut out = vec![];
-                s.serialize(&mut out);
-
-                sock.send_to(&out[..], addr);
-            }
-            Err(e) => eprintln!("{:?}", e),
-        }
-    }
+    current_thread::run(|_| {
+        current_thread::spawn(peer);
+    });
 }

@@ -1,14 +1,12 @@
 // Packet structures
 // see https://tools.ietf.org/html/draft-gg-udt-03#page-5
 
-use bytes::{Buf, BufMut, BytesMut, IntoBuf};
+use bytes::{Buf, BufMut, BytesMut};
 
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::BigEndian;
 
-use std::io::{Cursor, Error, ErrorKind, Read, Result, Seek, SeekFrom};
+use std::io::{Cursor, Error, ErrorKind, Result};
 use std::net::IpAddr;
-
-use futures::prelude::*;
 
 /// Represents A UDT/SRT packet
 #[derive(Debug)]
