@@ -1,10 +1,12 @@
 extern crate bytes;
 extern crate srt;
+extern crate futures;
+extern crate tokio;
 
 use bytes::{BytesMut, IntoBuf};
 
 use std::net::UdpSocket;
-use srt::socket::SrtSocketBuilder;
+use srt::socket::{SrtSocketBuilder, SrtSocket};
 use std::io::{Cursor, Error};
 
 use futures::prelude::*;
@@ -12,24 +14,24 @@ use futures::prelude::*;
 use tokio::executor::current_thread;
 
 struct Peer {
-    sock: SrtSocket;
+    sock: SrtSocket,
 }
 
-impl Future for Peer {
-    type Item = ();
-    type Error = Error;
+// impl Future for Peer {
+//     type Item = ();
+//     type Error = Error;
 
-    fn poll(&mut self) -> Poll<(), Error> {
-        while let Async::Ready(packet) = self.sock.poll()? {
-            println!("{:?}", packet);
-        } 
-    }
-}
+//     fn poll(&mut self) -> Poll<(), Error> {
+//         while let Async::Ready(packet) = self.sock.poll()? {
+//             println!("{:?}", packet);
+//         }
+//     }
+// }
 
 fn main() {
-    let peer = Peer{sock: SrtSocketBuilder::new("127.0.0.1:8171").build().unwrap()};
+    //let peer = Peer{sock: SrtSocketBuilder::new("127.0.0.1:8171").build().unwrap()};
 
-    current_thread::run(|_| {
-        current_thread::spawn(peer);
-    });
+    // current_thread::run(|_| {
+    //     current_thread::spawn(peer);
+    // });
 }

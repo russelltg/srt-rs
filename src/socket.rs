@@ -1,6 +1,7 @@
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::io::{Cursor, Error, ErrorKind, Result};
 
+
 use tokio::net::UdpSocket;
 
 use futures::prelude::*;
@@ -34,7 +35,7 @@ impl<T: ToSocketAddrs, U: ToSocketAddrs> SrtSocketBuilder<T, U> {
 
     pub fn build(self) -> Result<SrtSocket> {
         Ok(SrtSocket {
-            socket: SocketOr::U(UdpSocket::bind(
+            socket: UdpSocket::bind(
                 match self.local_addr.to_socket_addrs()?.next() {
                     Some(ref a) => a,
                     None => {
@@ -44,42 +45,15 @@ impl<T: ToSocketAddrs, U: ToSocketAddrs> SrtSocketBuilder<T, U> {
                         ));
                     }
                 },
-            )?),
+            )?,
             buffer: BytesMut::new(),
         })
     }
 }
 
-enum SocketOr {
-    U(UdpSocket),
-    F(Box<Future<Item = (UdpSocket, Vec<u8>, usize, SocketAddr), Error = Error>>),
-}
-
 pub struct SrtSocket {
-    socket: SocketOr,
+    socket: UdpSocket,
     buffer: BytesMut,
+
 }
 
-impl Stream for SrtSocket {
-    type Item = Packet;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        // make sure the buffer is big enough. Should be a one-time op
-        self.buffer.reserve(65536);
-
-        // Read from the socket
-
-        // parse the packet
-
-        // freeze the buffer, wont' change now
-        let buf_frozen = self.buffer.freeze();
-
-        let packet = Packet::parse(Cursor::new(buf_frozen))?;
-
-        // go back to mut
-        self.buffer = buf_frozen.try_mut().unwrap();
-
-        return Ok(Async::Ready(Some(packet)));
-    }
-}

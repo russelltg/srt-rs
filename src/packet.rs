@@ -61,7 +61,7 @@ pub struct DataPacket {
 }
 
 /// Signifies the packet location in a message for a data packet
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum PacketLocation {
     /// The first packet in a message, 10 in the FF location
     First,
@@ -80,9 +80,9 @@ impl PacketLocation {
     // Takes the second line of a data packet and gives the packet location in the message
     fn from_i32(from: i32) -> PacketLocation {
         match from {
-            x if (x & (0b11 << 30)) != 0 => PacketLocation::Only,
-            x if (x & (0b10 << 30)) != 0 => PacketLocation::First,
-            x if (x & (0b01 << 30)) != 0 => PacketLocation::Last,
+            x if (x & (0b10 << 30)) == (0b10 << 30) => PacketLocation::First,
+            x if (x & (0b01 << 30)) == (0b01 << 30) => PacketLocation::Last,
+            x if (x & (0b11 << 30)) != (0b11 << 30) => PacketLocation::Only,
             _ => PacketLocation::Middle,
         }
     }
@@ -548,4 +548,23 @@ impl Packet {
             }
         }
     }
+}
+
+#[test]
+fn packet_location_test() {
+    assert_eq!(PacketLocation::from_i32(0b10 << 30), PacketLocation::First);
+    assert_eq!(PacketLocation::from_i32(!(0b01 << 30)), PacketLocation::First);
+    assert_eq!(PacketLocation::from_i32(0b101010101110 << 20), PacketLocation::First);
+
+    assert_eq!(PacketLocation::from_i32(0b00), PacketLocation::Middle);
+    assert_eq!(PacketLocation::from_i32(!(0b11 << 30)), PacketLocation::Middle);
+    assert_eq!(PacketLocation::from_i32(0b001010101110 << 20), PacketLocation::Middle);
+
+    assert_eq!(PacketLocation::from_i32(0b01 << 30), PacketLocation::Last);
+    assert_eq!(PacketLocation::from_i32(!(0b10 << 30)), PacketLocation::Last);
+    assert_eq!(PacketLocation::from_i32(0b011100101110 << 20), PacketLocation::Last);
+
+    assert_eq!(PacketLocation::from_i32(0b11 << 30), PacketLocation::Only);
+    assert_eq!(PacketLocation::from_i32(!(0b00 << 30)), PacketLocation::Only);
+    assert_eq!(PacketLocation::from_i32(0b110100101110 << 20), PacketLocation::Only);
 }
