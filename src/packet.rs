@@ -80,19 +80,19 @@ impl PacketLocation {
     // Takes the second line of a data packet and gives the packet location in the message
     fn from_i32(from: i32) -> PacketLocation {
         match from {
-            x if (x & (0b10 << 30)) == (0b10 << 30) => PacketLocation::First,
-            x if (x & (0b01 << 30)) == (0b01 << 30) => PacketLocation::Last,
-            x if (x & (0b11 << 30)) != (0b11 << 30) => PacketLocation::Only,
+            x if (x & (0b11 << 30)) == (0b10 << 30) => PacketLocation::First,
+            x if (x & (0b11 << 30)) == (0b01 << 30) => PacketLocation::Last,
+            x if (x & (0b11 << 30)) == (0b11 << 30) => PacketLocation::Only,
             _ => PacketLocation::Middle,
         }
     }
 
     fn to_i32(&self) -> i32 {
         match self {
-            &PacketLocation::First => 0b11 << 30,
-            &PacketLocation::Middle => 0b10 << 30,
+            &PacketLocation::First => 0b10 << 30,
+            &PacketLocation::Middle => 0b00,
             &PacketLocation::Last => 0b01 << 30,
-            &PacketLocation::Only => 0b00,
+            &PacketLocation::Only => 0b11 << 30,
         }
     }
 }
@@ -551,7 +551,7 @@ impl Packet {
 }
 
 #[test]
-fn packet_location_test() {
+fn packet_location_from_i32_test() {
     assert_eq!(PacketLocation::from_i32(0b10 << 30), PacketLocation::First);
     assert_eq!(PacketLocation::from_i32(!(0b01 << 30)), PacketLocation::First);
     assert_eq!(PacketLocation::from_i32(0b101010101110 << 20), PacketLocation::First);
@@ -567,4 +567,12 @@ fn packet_location_test() {
     assert_eq!(PacketLocation::from_i32(0b11 << 30), PacketLocation::Only);
     assert_eq!(PacketLocation::from_i32(!(0b00 << 30)), PacketLocation::Only);
     assert_eq!(PacketLocation::from_i32(0b110100101110 << 20), PacketLocation::Only);
+}
+
+#[test]
+fn packet_location_to_i32_test() {
+    assert_eq!(PacketLocation::First.to_i32(), 0b10 << 30);
+    assert_eq!(PacketLocation::Middle.to_i32(), 0b0);
+    assert_eq!(PacketLocation::Last.to_i32(), 0b01 << 30);
+    assert_eq!(PacketLocation::Only.to_i32(), 0b11 << 30);
 }
