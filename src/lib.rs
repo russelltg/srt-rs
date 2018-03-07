@@ -8,3 +8,7 @@ extern crate tokio_io;
 
 pub mod socket;
 pub mod packet;
+pub mod pending_connection;
+
+pub use packet::Packet;
+pub use socket::{SrtSocket, SrtSocketBuilder};

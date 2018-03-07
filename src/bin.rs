@@ -6,8 +6,6 @@ extern crate futures;
 
 extern crate tokio;
 
-use bytes::{BytesMut, IntoBuf};
-
 use std::net::ToSocketAddrs;
 use srt::socket::{SrtSocketBuilder, SrtSocket};
 use std::io::{Error};
@@ -33,9 +31,6 @@ impl Future for Peer {
 }
 
 fn main() {
-    let b = BytesMut::with_capacity(65536);
-    let a: &mut [u8] = b.as_mut();
-    println!("{}", a.len());
 
     let peer = Peer{sock: SrtSocketBuilder::new("127.0.0.1:8171".to_socket_addrs().unwrap().next().unwrap()).build().unwrap()};
 

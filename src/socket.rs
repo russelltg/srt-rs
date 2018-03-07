@@ -1,12 +1,13 @@
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::io::{Error, ErrorKind, Result, Cursor};
-use std::collections::VecDeque;
+use std::io::{Cursor, Error, ErrorKind, Result};
+use std::iter::repeat;
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
 
-use tokio::net::{UdpSocket, RecvDgram, SendDgram};
+use tokio::net::{RecvDgram, SendDgram, UdpSocket};
 
 use packet::Packet;
 
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 
 use futures::prelude::*;
 
@@ -34,24 +35,35 @@ impl SrtSocketBuilder {
     }
 
     pub fn build(self) -> Result<SrtSocket> {
-
         // start listening
         let sock = UdpSocket::bind(&self.local_addr)?;
 
+        let mut bytes = BytesMut::with_capacity(65536);
+
+        // TODO: there should be a cleaner way to do this,
+        // if this doesn't happen the len is zero so no data is read
+        let vec: Vec<_> = repeat(b'\0').take(65535).collect();
+        bytes.put(&vec);
+
+        // create the queue
+        // TODO: do something with tx
+        let (_, rx) = channel();
+
         Ok(SrtSocket {
-            queue: VecDeque::new(),
-            future: SocketFuture::Recv(sock.recv_dgram(BytesMut::with_capacity(65536))),
+            queue: rx,
+            future: SocketFuture::Recv(sock.recv_dgram(bytes)),
         })
     }
 }
 
-pub enum SocketFuture {
+// Represents either future that the socket can hold
+enum SocketFuture {
     Send(SendDgram<BytesMut>),
     Recv(RecvDgram<BytesMut>),
 }
 
 pub struct SrtSocket {
-    queue: VecDeque<(Packet, SocketAddr)>,
+    queue: Receiver<(Packet, SocketAddr)>,
     future: SocketFuture,
 }
 
@@ -60,29 +72,28 @@ impl Stream for SrtSocket {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Packet>, Error> {
-
         loop {
-
             let mut pack = None;
 
-            let sock = match &mut self.future {
+            let (sock, buff) = match &mut self.future {
                 &mut SocketFuture::Recv(ref mut recv) => {
-                    let (sock, buff, n_bytes, from_addr) = try_ready!(recv.poll());
+                    let (sock, mut buff, n_bytes, from_addr) = try_ready!(recv.poll());
 
                     // parse the packet
-                    pack = Some(Packet::parse(Cursor::new(buff.freeze().slice(0, n_bytes)))?);
-                    
-                    sock
+                    pack = Some(Packet::parse(Cursor::new(&buff.as_mut()[0..n_bytes]))?);
+
+                    (sock, buff)
                 }
                 &mut SocketFuture::Send(ref mut snd) => {
-                    let (sock, _) = try_ready!(snd.poll());
-                    sock
+                    let (sock, mut buff) = try_ready!(snd.poll());
+
+                    (sock, buff)
                 }
             };
 
             // start the next op
-            self.future = match self.queue.pop_front() {
-                Some((pack, addr)) => {
+            self.future = match self.queue.try_recv() {
+                Ok((pack, addr)) => {
                     // send the packet
 
                     // serialize the packet
@@ -91,12 +102,11 @@ impl Stream for SrtSocket {
 
                     // send it
                     SocketFuture::Send(sock.send_dgram(bytes, &addr))
-                },
-                None => {
+                }
+                // If it's either disconnected or empty just receive
+                Err(_) => {
                     // just receive
-                    let mut bytes = BytesMut::with_capacity(65536);
-
-                    SocketFuture::Recv(sock.recv_dgram(bytes))
+                    SocketFuture::Recv(sock.recv_dgram(buff))
                 }
             };
 
