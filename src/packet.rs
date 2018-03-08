@@ -9,59 +9,83 @@ use std::io::{Cursor, Error, ErrorKind, Result};
 use std::net::IpAddr;
 
 /// Represents A UDT/SRT packet
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Packet {
-    Data(DataPacket),
-    Control(ControlPacket),
-}
+    /// A UDT packet carrying data
+    ///  0                   1                   2                   3
+    ///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///  |0|                     Packet Sequence Number                  |
+    ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///  |FF |O|                     Message Number                      |
+    ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///  |                          Time Stamp                           |
+    ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///  |                    Destination Socket ID                      |
+    ///    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    /// (from https://tools.ietf.org/html/draft-gg-udt-03#page-)
+    Data {
+        /// The sequence number is packet based, so if packet n has
+        /// sequence number `i`, the next would have `i + 1`
 
-/// A UDT packet carrying data
-///  0                   1                   2                   3
-///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///  |0|                     Packet Sequence Number                  |
-///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///  |FF |O|                     Message Number                      |
-///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///  |                          Time Stamp                           |
-///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///  |                    Destination Socket ID                      |
-///    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-/// (from https://tools.ietf.org/html/draft-gg-udt-03#page-)
-#[derive(Debug)]
-pub struct DataPacket {
-    /// The sequence number is packet based, so if packet n has
-    /// sequence number `i`, the next would have `i + 1`
+        /// Represented by a 31 bit unsigned integer, so
+        /// Sequence number is wrapped after it recahed 2^31 - 1
+        seq_number: i32,
 
-    /// Represented by a 31 bit unsigned integer, so
-    /// Sequence number is wrapped after it recahed 2^31 - 1
-    pub seq_number: i32,
+        /// Message location
+        /// Represented by the first two bits in the second row of 4 bytes
+        message_loc: PacketLocation,
 
-    /// Message location
-    /// Represented by the first two bits in the second row of 4 bytes
-    pub message_loc: PacketLocation,
+        /// Should this message be delivered in order?
+        /// Represented by the third bit in the second row
+        in_order_delivery: bool,
 
-    /// Should this message be delivered in order?
-    /// Represented by the third bit in the second row
-    pub in_order_delivery: bool,
+        /// The message number, is the ID of the message being passed
+        /// Represented by the final 29 bits of the third row
+        /// It's only 29 bits long, so it's wrapped after 2^29 - 1
+        message_number: i32,
 
-    /// The message number, is the ID of the message being passed
-    /// Represented by the final 29 bits of the third row
-    /// It's only 29 bits long, so it's wrapped after 2^29 - 1
-    pub message_number: i32,
+        /// The timestamp, relative to when the connection was created.
+        timestamp: i32,
 
-    /// The timestamp, relative to when the connection was created.
-    pub timestamp: i32,
+        /// The dest socket id, used for UDP multiplexing
+        dest_sockid: i32,
 
-    /// The dest socket id, used for UDP multiplexing
-    pub dest_sockid: i32,
+        /// The rest of the packet, the payload
+        payload: BytesMut,
+    },
 
-    /// The rest of the packet, the payload
-    pub payload: BytesMut,
+    /// A UDP packet carrying control information
+    ///  0                   1                   2                   3
+    ///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///  |1|             Type            |            Reserved           |
+    ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///  |     |                    Additional Info                      |
+    ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///  |                            Time Stamp                         |
+    ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///  |                    Destination Socket ID                      |
+    ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///  |                                                               |
+    ///  ~                 Control Information Field                     ~
+    ///  |                                                               |
+    ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    /// (from https://tools.ietf.org/html/draft-gg-udt-03#page-5)
+    Control {
+        /// The timestamp, relative to the socket start time
+        timestamp: i32,
+
+        /// The dest socket ID, used for multiplexing
+        dest_sockid: i32,
+
+        /// The extra data
+        control_type: ControlTypes,
+    },
 }
 
 /// Signifies the packet location in a message for a data packet
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum PacketLocation {
     /// The first packet in a message, 10 in the FF location
     First,
@@ -97,37 +121,8 @@ impl PacketLocation {
     }
 }
 
-/// A UDP packet carrying control information
-///  0                   1                   2                   3
-///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///  |1|             Type            |            Reserved           |
-///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///  |     |                    Additional Info                      |
-///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///  |                            Time Stamp                         |
-///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///  |                    Destination Socket ID                      |
-///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///  |                                                               |
-///  ~                 Control Information Field                     ~
-///  |                                                               |
-///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-/// (from https://tools.ietf.org/html/draft-gg-udt-03#page-5)
-#[derive(Debug)]
-pub struct ControlPacket {
-    /// The timestamp, relative to the socket start time
-    pub timestamp: i32,
-
-    /// The dest socket ID, used for multiplexing
-    pub dest_sockid: i32,
-
-    /// The extra data
-    pub control_type: ControlTypes,
-}
-
 /// The different kind of control packets
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ControlTypes {
     /// The control packet for initiating connections, type 0x0
     /// Does not use Additional Info
@@ -199,12 +194,10 @@ impl ControlTypes {
                 let recvd_until = buf.get_i32::<BigEndian>();
 
                 // if there is more data, use it. However, it's optional
-                let mut opt_read_next = move || {
-                    if buf.remaining() > 4 {
-                        Some(buf.get_i32::<BigEndian>())
-                    } else {
-                        None
-                    }
+                let mut opt_read_next = move || if buf.remaining() > 4 {
+                    Some(buf.get_i32::<BigEndian>())
+                } else {
+                    None
                 };
                 let rtt = opt_read_next();
                 let rtt_variance = opt_read_next();
@@ -295,17 +288,17 @@ impl ControlTypes {
                 }
             }
             &ControlTypes::KeepAlive => {}
-            &ControlTypes::Ack(_, ref a) => unimplemented!(),
-            &ControlTypes::Nak(ref n) => unimplemented!(),
+            &ControlTypes::Ack(_, ref _a) => unimplemented!(),
+            &ControlTypes::Nak(ref _n) => unimplemented!(),
             &ControlTypes::Shutdown => {}
             &ControlTypes::Ack2(_) => {}
-            &ControlTypes::DropRequest(_, ref d) => unimplemented!(),
+            &ControlTypes::DropRequest(_, ref _d) => unimplemented!(),
         };
     }
 }
 
 /// The DropRequest control info
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DropRequestControlInfo {
     /// The first message to drop
     pub first: i32,
@@ -315,7 +308,7 @@ pub struct DropRequestControlInfo {
 }
 
 /// The NAK control info
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NakControlInfo {
     /// The loss infomration
     /// If a number in this is a seq number (first bit 0),
@@ -328,7 +321,7 @@ pub struct NakControlInfo {
 }
 
 /// The ACK control info struct
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AckControlInfo {
     /// The packet sequence number that all packets have been recieved until (excluding)
     pub recvd_until: i32,
@@ -350,7 +343,7 @@ pub struct AckControlInfo {
 }
 
 /// The control info for handshake packets
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HandshakeControlInfo {
     /// The UDT version, currently 4
     pub udt_version: i32,
@@ -385,7 +378,7 @@ pub struct HandshakeControlInfo {
 }
 
 /// The socket type for a handshake.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SocketType {
     /// A stream socket, 1 when serialized
     Stream,
@@ -415,7 +408,7 @@ impl SocketType {
 }
 
 /// See https://tools.ietf.org/html/draft-gg-udt-03#page-10
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ConnectionType {
     /// A regular connection; one listener and one sender, 1
     Regular,
@@ -493,7 +486,7 @@ impl Packet {
             let timestamp = buf.get_i32::<BigEndian>();
             let dest_sockid = buf.get_i32::<BigEndian>();
 
-            Ok(Packet::Data(DataPacket {
+            Ok(Packet::Data {
                 seq_number,
                 message_loc,
                 in_order_delivery,
@@ -501,7 +494,7 @@ impl Packet {
                 timestamp,
                 dest_sockid,
                 payload: buf.collect(),
-            }))
+            })
         } else {
             // this means it's a control packet
 
@@ -509,42 +502,58 @@ impl Packet {
             let timestamp = buf.get_i32::<BigEndian>();
             let dest_sockid = buf.get_i32::<BigEndian>();
 
-            Ok(Packet::Control(ControlPacket {
+            Ok(Packet::Control {
                 timestamp,
                 dest_sockid,
                 // just match against the second byte, as everything is in that
                 control_type: ControlTypes::deserialize(first4[1], add_info, buf)?,
-            }))
+            })
         }
     }
 
     pub fn serialize<T: BufMut>(&self, mut into: T) {
         match self {
-            &Packet::Control(ref c) => {
+            &Packet::Control {
+                ref timestamp,
+                ref dest_sockid,
+                ref control_type,
+            } => {
                 // first half of first row, the control type and the 1st bit which is a one
-                into.put_i16::<BigEndian>((c.control_type.id_byte() as i16) | (0b1 << 15));
+                into.put_i16::<BigEndian>((control_type.id_byte() as i16) | (0b1 << 15));
 
                 // finish that row, which is reserved, so just fill with zeros
                 into.put_i16::<BigEndian>(0);
 
                 // the additonal info line
-                into.put_i32::<BigEndian>(c.control_type.add_info());
+                into.put_i32::<BigEndian>(control_type.add_info());
 
                 // timestamp
-                into.put_i32::<BigEndian>(c.timestamp);
+                into.put_i32::<BigEndian>(*timestamp);
 
                 // dest sock id
-                into.put_i32::<BigEndian>(c.dest_sockid);
+                into.put_i32::<BigEndian>(*dest_sockid);
 
                 // the rest of the info
-                c.control_type.serialize(into);
+                control_type.serialize(into);
             }
-            &Packet::Data(ref d) => {
-                into.put_i32::<BigEndian>(d.seq_number);
-                into.put_i32::<BigEndian>(d.message_number | d.message_loc.to_i32());
-                into.put_i32::<BigEndian>(d.timestamp);
-                into.put_i32::<BigEndian>(d.dest_sockid);
-                into.put(&d.payload);
+            &Packet::Data {
+                ref timestamp,
+                ref seq_number,
+                ref message_number,
+                ref message_loc,
+                ref dest_sockid,
+                ref payload,
+                ref in_order_delivery,
+            } => {
+                into.put_i32::<BigEndian>(*seq_number);
+                into.put_i32::<BigEndian>(
+                    message_number | message_loc.to_i32() |
+                    // the third bit in the second row is if it expects in order delivery
+                        if *in_order_delivery { 1 << 29 } else { 0 },
+                );
+                into.put_i32::<BigEndian>(*timestamp);
+                into.put_i32::<BigEndian>(*dest_sockid);
+                into.put(payload);
             }
         }
     }
@@ -553,20 +562,44 @@ impl Packet {
 #[test]
 fn packet_location_from_i32_test() {
     assert_eq!(PacketLocation::from_i32(0b10 << 30), PacketLocation::First);
-    assert_eq!(PacketLocation::from_i32(!(0b01 << 30)), PacketLocation::First);
-    assert_eq!(PacketLocation::from_i32(0b101010101110 << 20), PacketLocation::First);
+    assert_eq!(
+        PacketLocation::from_i32(!(0b01 << 30)),
+        PacketLocation::First
+    );
+    assert_eq!(
+        PacketLocation::from_i32(0b101010101110 << 20),
+        PacketLocation::First
+    );
 
     assert_eq!(PacketLocation::from_i32(0b00), PacketLocation::Middle);
-    assert_eq!(PacketLocation::from_i32(!(0b11 << 30)), PacketLocation::Middle);
-    assert_eq!(PacketLocation::from_i32(0b001010101110 << 20), PacketLocation::Middle);
+    assert_eq!(
+        PacketLocation::from_i32(!(0b11 << 30)),
+        PacketLocation::Middle
+    );
+    assert_eq!(
+        PacketLocation::from_i32(0b001010101110 << 20),
+        PacketLocation::Middle
+    );
 
     assert_eq!(PacketLocation::from_i32(0b01 << 30), PacketLocation::Last);
-    assert_eq!(PacketLocation::from_i32(!(0b10 << 30)), PacketLocation::Last);
-    assert_eq!(PacketLocation::from_i32(0b011100101110 << 20), PacketLocation::Last);
+    assert_eq!(
+        PacketLocation::from_i32(!(0b10 << 30)),
+        PacketLocation::Last
+    );
+    assert_eq!(
+        PacketLocation::from_i32(0b011100101110 << 20),
+        PacketLocation::Last
+    );
 
     assert_eq!(PacketLocation::from_i32(0b11 << 30), PacketLocation::Only);
-    assert_eq!(PacketLocation::from_i32(!(0b00 << 30)), PacketLocation::Only);
-    assert_eq!(PacketLocation::from_i32(0b110100101110 << 20), PacketLocation::Only);
+    assert_eq!(
+        PacketLocation::from_i32(!(0b00 << 30)),
+        PacketLocation::Only
+    );
+    assert_eq!(
+        PacketLocation::from_i32(0b110100101110 << 20),
+        PacketLocation::Only
+    );
 }
 
 #[test]

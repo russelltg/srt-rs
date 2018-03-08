@@ -8,34 +8,25 @@ extern crate tokio;
 
 use std::net::ToSocketAddrs;
 use srt::socket::{SrtSocketBuilder, SrtSocket};
-use std::io::{Error};
+use srt::connection::Connection;
+use std::io::Error;
 
 use futures::prelude::*;
 
 use tokio::executor::current_thread;
 
-struct Peer {
-    sock: SrtSocket,
-}
-
-impl Future for Peer {
-    type Item = ();
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<(), Error> {
-        loop {
-            let packet = try_ready!(self.sock.poll());
-            println!("{:?}", packet);
-        }
-    }
-}
 
 fn main() {
 
-    let peer = Peer{sock: SrtSocketBuilder::new("127.0.0.1:8171".to_socket_addrs().unwrap().next().unwrap()).build().unwrap()};
+    let conn = SrtSocketBuilder::new("127.0.0.1:1231".to_socket_addrs().unwrap().next().unwrap())
+        .build()
+        .unwrap()
+        .map(|(sock, addr)| {
+            println!("Connected to {:?}", addr);
+        });
 
     current_thread::run(|_| {
-        current_thread::spawn(peer.map_err(|e| {
+        current_thread::spawn(conn.map_err(|e| {
             eprintln!("Error received: {:?}", e);
         }));
     });

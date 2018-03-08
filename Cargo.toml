@@ -9,6 +9,7 @@ tokio-io = "^0.1"
 futures = "^0.1"
 bytes = "^0.4"
 byteorder = "^1.2"
+futures-timer = "0.1"
 
 [lib]
 name = "srt"

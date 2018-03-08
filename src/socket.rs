@@ -1,11 +1,12 @@
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::io::{Cursor, Error, ErrorKind, Result};
+use std::net::SocketAddr;
+use std::io::{Cursor, Error, Result};
 use std::iter::repeat;
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 use tokio::net::{RecvDgram, SendDgram, UdpSocket};
 
 use packet::Packet;
+use pending_connection::PendingConnection;
 
 use bytes::{BufMut, BytesMut};
 
@@ -34,7 +35,7 @@ impl SrtSocketBuilder {
         self
     }
 
-    pub fn build(self) -> Result<SrtSocket> {
+    pub fn build(self) -> Result<PendingConnection> {
         // start listening
         let sock = UdpSocket::bind(&self.local_addr)?;
 
@@ -46,13 +47,18 @@ impl SrtSocketBuilder {
         bytes.put(&vec);
 
         // create the queue
-        // TODO: do something with tx
-        let (_, rx) = channel();
+        let (tx, rx) = channel();
 
-        Ok(SrtSocket {
+        let sock = SrtSocket {
             queue: rx,
             future: SocketFuture::Recv(sock.recv_dgram(bytes)),
-        })
+            queue_sender: tx,
+        };
+
+        match self.connect_addr {
+            Some(addr) => Ok(PendingConnection::connect(sock, addr)),
+            None => Ok(PendingConnection::listen(sock)),
+        }
     }
 }
 
@@ -64,23 +70,28 @@ enum SocketFuture {
 
 pub struct SrtSocket {
     queue: Receiver<(Packet, SocketAddr)>,
+    // TODO: re architect this
+    pub queue_sender: Sender<(Packet, SocketAddr)>,
     future: SocketFuture,
 }
 
 impl Stream for SrtSocket {
-    type Item = Packet;
+    type Item = (Packet, SocketAddr);
     type Error = Error;
 
-    fn poll(&mut self) -> Poll<Option<Packet>, Error> {
+    fn poll(&mut self) -> Poll<Option<(Packet, SocketAddr)>, Error> {
         loop {
-            let mut pack = None;
+            let mut ret = None;
 
             let (sock, buff) = match &mut self.future {
                 &mut SocketFuture::Recv(ref mut recv) => {
-                    let (sock, mut buff, n_bytes, from_addr) = try_ready!(recv.poll());
+                    let (sock, mut buff, n_bytes, addr) = try_ready!(recv.poll());
 
                     // parse the packet
-                    pack = Some(Packet::parse(Cursor::new(&buff.as_mut()[0..n_bytes]))?);
+                    ret = Some((
+                        Packet::parse(Cursor::new(&buff.as_mut()[0..n_bytes]))?,
+                        addr,
+                    ));
 
                     (sock, buff)
                 }
@@ -101,16 +112,14 @@ impl Stream for SrtSocket {
                     pack.serialize(&mut bytes);
 
                     // send it
+                    println!("Sending packet {:?} to {:?}", pack, addr);
                     SocketFuture::Send(sock.send_dgram(bytes, &addr))
                 }
                 // If it's either disconnected or empty just receive
-                Err(_) => {
-                    // just receive
-                    SocketFuture::Recv(sock.recv_dgram(buff))
-                }
+                Err(_) => SocketFuture::Recv(sock.recv_dgram(buff)),
             };
 
-            if let Some(p) = pack {
+            if let Some(p) = ret {
                 return Ok(Async::Ready(Some(p)));
             }
         }
