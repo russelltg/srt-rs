@@ -17,8 +17,6 @@ struct LossListEntry {
 }
 
 pub struct Receiver {
-    sock: SrtSocket,
-
     remote: SocketAddr,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
@@ -111,7 +109,10 @@ impl Stream for Receiver {
                         &ControlTypes::DropRequest(to_drop, info) => unimplemented!(),
                         &ControlTypes::Handshake(info) => {
                             // just send it back
-                            self.sock.queue_sender.send((pack.clone(), self.remote)).unwrap();
+                            self.sock
+                                .queue_sender
+                                .send((pack.clone(), self.remote))
+                                .unwrap();
                         }
                         &ControlTypes::KeepAlive => unimplemented!(),
                         &ControlTypes::Nak(ref info) => unimplemented!(),
