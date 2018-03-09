@@ -1,13 +1,13 @@
 use std::net::SocketAddr;
 use std::io::{Cursor, Error, Result};
 use std::iter::repeat;
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Instant;
 
 use tokio::net::{RecvDgram, SendDgram, UdpSocket};
 
 use packet::Packet;
 use pending_connection::PendingConnection;
+use receiver::Receiver;
 
 use bytes::{BufMut, BytesMut};
 
@@ -36,30 +36,29 @@ impl SrtSocketBuilder {
         self
     }
 
-    pub fn build(self) -> Result<PendingConnection> {
+    pub fn build(self) -> Result<SrtSocket> {
         // start listening
         let sock = UdpSocket::bind(&self.local_addr)?;
 
-        let mut bytes = BytesMut::with_capacity(65536);
+        let mut bytes = {
+            let tmp = BytesMut::with_capacity(65536);
 
-        // TODO: there should be a cleaner way to do this,
-        // if this doesn't happen the len is zero so no data is read
-        let vec: Vec<_> = repeat(b'\0').take(65535).collect();
-        bytes.put(&vec);
+            // TODO: there should be a cleaner way to do this,
+            // if this doesn't happen the len is zero so no data is read
+            let vec: Vec<_> = repeat(b'\0').take(65535).collect();
+            tmp.put(&vec);
 
-        // create the queue
-        let (tx, rx) = channel();
+            tmp
+        };
 
         let sock = SrtSocket {
-            queue: rx,
             future: SocketFuture::Recv(sock.recv_dgram(bytes)),
-            queue_sender: tx,
             start_time: Instant::now(),
         };
 
         match self.connect_addr {
-            Some(addr) => Ok(PendingConnection::connect(sock, addr)),
-            None => Ok(PendingConnection::listen(sock)),
+            Some(addr) => Ok(PendingConnection::connect(addr)),
+            None => Ok(PendingConnection::listen()),
         }
     }
 }
@@ -70,16 +69,20 @@ enum SocketFuture {
     Recv(RecvDgram<BytesMut>),
 }
 
+enum SocketState {
+    Connecting(PendingConnection),
+    Receiver(Receiver),
+}
+
 pub struct SrtSocket {
-    queue: Receiver<(Packet, SocketAddr)>,
-    // TODO: re architect this
-    pub queue_sender: Sender<(Packet, SocketAddr)>,
     future: SocketFuture,
-    start_time: Instant,
+    start_time: Instant, // TODO: should this be relative to handshake or creation
+    state: SocketState,
 }
 
 impl SrtSocket {
     pub fn get_timestamp(&self) -> i32 {
+        // TODO: not sure if this shold be us or ms
         (self.start_time.elapsed().as_secs() * 1_000_000
             + (self.start_time.elapsed().subsec_nanos() as u64 / 1_000)) as i32
     }

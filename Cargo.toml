@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Russell Greene <russellgreene8@gmail.com>"]
 
 [dependencies]
-tokio = "^0.1"
+tokio = "^0.1.1"
 tokio-io = "^0.1"
 futures = "^0.1"
 bytes = "^0.4"
