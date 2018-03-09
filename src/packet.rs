@@ -300,7 +300,7 @@ impl ControlTypes {
 }
 
 /// The DropRequest control info
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct DropRequestControlInfo {
     /// The first message to drop
     pub first: i32,
@@ -323,7 +323,7 @@ pub struct NakControlInfo {
 }
 
 /// The ACK control info struct
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct AckControlInfo {
     /// The packet sequence number that all packets have been recieved until (excluding)
     pub recvd_until: i32,
@@ -344,8 +344,21 @@ pub struct AckControlInfo {
     pub est_link_cap: Option<i32>,
 }
 
+impl AckControlInfo {
+    pub fn new(recvd_until: i32) -> AckControlInfo {
+        AckControlInfo {
+            recvd_until,
+            rtt: None,
+            rtt_variance: None,
+            buffer_available: None,
+            packet_recv_rate: None,
+            est_link_cap: None,
+        }
+    }
+}
+
 /// The control info for handshake packets
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct HandshakeControlInfo {
     /// The UDT version, currently 4
     pub udt_version: i32,
@@ -380,7 +393,7 @@ pub struct HandshakeControlInfo {
 }
 
 /// The socket type for a handshake.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum SocketType {
     /// A stream socket, 1 when serialized
     Stream,
@@ -410,7 +423,7 @@ impl SocketType {
 }
 
 /// See https://tools.ietf.org/html/draft-gg-udt-03#page-10
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ConnectionType {
     /// A regular connection; one listener and one sender, 1
     Regular,

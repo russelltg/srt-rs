@@ -1,8 +1,9 @@
 use std::io::{Error, ErrorKind};
 use std::time::Duration;
+use std::net::SocketAddr;
 
 use socket::SrtSocket;
-use packet::{ControlTypes, Packet};
+use packet::{AckControlInfo, ControlTypes, Packet};
 use bytes::BytesMut;
 use futures::prelude::*;
 use futures_timer::Interval;
@@ -17,6 +18,8 @@ struct LossListEntry {
 
 pub struct Receiver {
     sock: SrtSocket,
+
+    remote: SocketAddr,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Receiver's Loss List: It is a list of tuples whose values include:
@@ -39,17 +42,25 @@ pub struct Receiver {
 
     /// Tells the receiver to ACK the sender
     ack_timer: Interval,
+
+    /// the highest received packet sequence number
+    lrsn: i32,
+
+    next_ack: i32,
 }
 
 impl Receiver {
-    pub fn new(sock: SrtSocket) -> Receiver {
+    pub fn new(sock: SrtSocket, remote: SocketAddr) -> Receiver {
         Receiver {
             sock,
+            remote,
             loss_list: Vec::new(),
             ack_history_window: Vec::new(),
             packet_history_window: Vec::new(),
             // TODO: what's the actual ACK timeout?
             ack_timer: Interval::new(Duration::from_secs(1)),
+            lrsn: 0,
+            next_ack: 0,
         }
     }
 }
@@ -68,12 +79,19 @@ impl Stream for Receiver {
 
             if let Async::Ready(_) = self.ack_timer.poll()? {
                 // Send an ACK packet
-                unimplemented!()
+                let ack = Packet::Control {
+                    timestamp: self.sock.get_timestamp(),
+                    dest_sockid: 0, // TODO: this should be better
+                    control_type: ControlTypes::Ack(self.next_ack, AckControlInfo::new(self.lrsn)),
+                };
+                self.next_ack += 1;
+
+                self.sock.queue_sender.send((ack, self.remote)).unwrap()
             }
 
             // wait for a packet
             // TODO: have some sort of set timeout and store EXPCount
-            let (pack, _) = match try_ready!(self.sock.poll()) {
+            let (pack, addr) = match try_ready!(self.sock.poll()) {
                 Some(p) => p,
                 None => panic!(), // TODO: is this panic safe?
             };
@@ -83,18 +101,21 @@ impl Stream for Receiver {
                 Packet::Control {
                     timestamp,
                     dest_sockid,
-                    control_type,
+                    ref control_type,
                 } => {
                     // handle the control packet
 
                     match control_type {
-                        ControlTypes::Ack(seq_num, info) => unimplemented!(),
-                        ControlTypes::Ack2(seq_num) => unimplemented!(),
-                        ControlTypes::DropRequest(to_drop, info) => unimplemented!(),
-                        ControlTypes::Handshake(info) => unimplemented!(),
-                        ControlTypes::KeepAlive => unimplemented!(),
-                        ControlTypes::Nak(info) => unimplemented!(),
-                        ControlTypes::Shutdown => unimplemented!(),
+                        &ControlTypes::Ack(seq_num, info) => unimplemented!(),
+                        &ControlTypes::Ack2(seq_num) => unimplemented!(),
+                        &ControlTypes::DropRequest(to_drop, info) => unimplemented!(),
+                        &ControlTypes::Handshake(info) => {
+                            // just send it back
+                            self.sock.queue_sender.send((pack.clone(), self.remote)).unwrap();
+                        }
+                        &ControlTypes::KeepAlive => unimplemented!(),
+                        &ControlTypes::Nak(ref info) => unimplemented!(),
+                        &ControlTypes::Shutdown => unimplemented!(),
                     }
                 }
                 Packet::Data {
@@ -105,7 +126,9 @@ impl Stream for Receiver {
                     timestamp,
                     dest_sockid,
                     payload,
-                } => unimplemented!(),
+                } => {
+                    self.lrsn = seq_number;
+                }
             }
         }
     }

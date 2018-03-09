@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::io::{Cursor, Error, Result};
 use std::iter::repeat;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::time::Instant;
 
 use tokio::net::{RecvDgram, SendDgram, UdpSocket};
 
@@ -53,6 +54,7 @@ impl SrtSocketBuilder {
             queue: rx,
             future: SocketFuture::Recv(sock.recv_dgram(bytes)),
             queue_sender: tx,
+            start_time: Instant::now(),
         };
 
         match self.connect_addr {
@@ -73,6 +75,14 @@ pub struct SrtSocket {
     // TODO: re architect this
     pub queue_sender: Sender<(Packet, SocketAddr)>,
     future: SocketFuture,
+    start_time: Instant,
+}
+
+impl SrtSocket {
+    pub fn get_timestamp(&self) -> i32 {
+        (self.start_time.elapsed().as_secs() * 1_000_000
+            + (self.start_time.elapsed().subsec_nanos() as u64 / 1_000)) as i32
+    }
 }
 
 impl Stream for SrtSocket {
