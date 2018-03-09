@@ -7,17 +7,15 @@ extern crate futures;
 extern crate tokio;
 
 use std::net::ToSocketAddrs;
-use srt::socket::{SrtSocketBuilder, SrtSocket};
-use srt::connection::Connection;
+use srt::socket::{SrtSocket, SrtSocketBuilder};
+use srt::receiver::Receiver;
 use std::io::Error;
 
 use futures::prelude::*;
 
 use tokio::executor::current_thread;
 
-
 fn main() {
-
     let conn = SrtSocketBuilder::new("127.0.0.1:1231".to_socket_addrs().unwrap().next().unwrap())
         .build()
         .unwrap()

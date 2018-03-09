@@ -2,7 +2,7 @@ use std::io::{Error, ErrorKind};
 use std::time::Duration;
 
 use socket::SrtSocket;
-use packet::Packet;
+use packet::{ControlTypes, Packet};
 use bytes::BytesMut;
 use futures::prelude::*;
 use futures_timer::Interval;
@@ -67,7 +67,45 @@ impl Stream for Receiver {
             // ACK, also check the ACK packet interval.
 
             if let Async::Ready(_) = self.ack_timer.poll()? {
-                // Send ACK packet
+                // Send an ACK packet
+                unimplemented!()
+            }
+
+            // wait for a packet
+            // TODO: have some sort of set timeout and store EXPCount
+            let (pack, _) = match try_ready!(self.sock.poll()) {
+                Some(p) => p,
+                None => panic!(), // TODO: is this panic safe?
+            };
+
+            // depending on the packet type, handle it
+            match pack {
+                Packet::Control {
+                    timestamp,
+                    dest_sockid,
+                    control_type,
+                } => {
+                    // handle the control packet
+
+                    match control_type {
+                        ControlTypes::Ack(seq_num, info) => unimplemented!(),
+                        ControlTypes::Ack2(seq_num) => unimplemented!(),
+                        ControlTypes::DropRequest(to_drop, info) => unimplemented!(),
+                        ControlTypes::Handshake(info) => unimplemented!(),
+                        ControlTypes::KeepAlive => unimplemented!(),
+                        ControlTypes::Nak(info) => unimplemented!(),
+                        ControlTypes::Shutdown => unimplemented!(),
+                    }
+                }
+                Packet::Data {
+                    seq_number,
+                    message_loc,
+                    in_order_delivery,
+                    message_number,
+                    timestamp,
+                    dest_sockid,
+                    payload,
+                } => unimplemented!(),
             }
         }
     }

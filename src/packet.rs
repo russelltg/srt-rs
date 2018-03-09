@@ -194,10 +194,12 @@ impl ControlTypes {
                 let recvd_until = buf.get_i32::<BigEndian>();
 
                 // if there is more data, use it. However, it's optional
-                let mut opt_read_next = move || if buf.remaining() > 4 {
-                    Some(buf.get_i32::<BigEndian>())
-                } else {
-                    None
+                let mut opt_read_next = move || {
+                    if buf.remaining() > 4 {
+                        Some(buf.get_i32::<BigEndian>())
+                    } else {
+                        None
+                    }
                 };
                 let rtt = opt_read_next();
                 let rtt_variance = opt_read_next();
