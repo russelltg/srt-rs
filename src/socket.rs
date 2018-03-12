@@ -1,15 +1,17 @@
 use std::net::SocketAddr;
 use std::io::{Cursor, Error, Result};
 use std::iter::repeat;
-use std::time::Instant;
+use std::time::{Instant, Duration};
+use std::boxed::Box;
 
 use tokio::net::{RecvDgram, SendDgram, UdpSocket};
 
 use packet::Packet;
 use pending_connection::PendingConnection;
 use receiver::Receiver;
+use recv_dgram_timeout::RecvDgramTimeout;
 
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 
 use futures::prelude::*;
 
@@ -40,101 +42,76 @@ impl SrtSocketBuilder {
         // start listening
         let sock = UdpSocket::bind(&self.local_addr)?;
 
-        let mut bytes = {
-            let tmp = BytesMut::with_capacity(65536);
-
-            // TODO: there should be a cleaner way to do this,
-            // if this doesn't happen the len is zero so no data is read
-            let vec: Vec<_> = repeat(b'\0').take(65535).collect();
-            tmp.put(&vec);
-
-            tmp
-        };
-
-        let sock = SrtSocket {
-            future: SocketFuture::Recv(sock.recv_dgram(bytes)),
+        Ok(SrtSocket {
             start_time: Instant::now(),
-        };
-
-        match self.connect_addr {
-            Some(addr) => Ok(PendingConnection::connect(addr)),
-            None => Ok(PendingConnection::listen()),
-        }
+            sock,
+            buffer: { let tmp = Vec::new(); tmp.resize(65536, b'\0'); tmp }
+        })
     }
 }
 
-// Represents either future that the socket can hold
-enum SocketFuture {
-    Send(SendDgram<BytesMut>),
-    Recv(RecvDgram<BytesMut>),
-}
-
-enum SocketState {
-    Connecting(PendingConnection),
-    Receiver(Receiver),
-}
-
 pub struct SrtSocket {
-    future: SocketFuture,
     start_time: Instant, // TODO: should this be relative to handshake or creation
-    state: SocketState,
+    sock: UdpSocket,
+    buffer: Vec<u8>,
 }
 
 impl SrtSocket {
     pub fn get_timestamp(&self) -> i32 {
-        // TODO: not sure if this shold be us or ms
+        // TODO: not sure if this should be us or ms
         (self.start_time.elapsed().as_secs() * 1_000_000
             + (self.start_time.elapsed().subsec_nanos() as u64 / 1_000)) as i32
     }
-}
 
-impl Stream for SrtSocket {
-    type Item = (Packet, SocketAddr);
-    type Error = Error;
+    pub fn send_packet(self, packet: &Packet, addr: SocketAddr) -> Box<Future<Item = SrtSocket, Error=Error>> {
 
-    fn poll(&mut self) -> Poll<Option<(Packet, SocketAddr)>, Error> {
-        loop {
-            let mut ret = None;
+        // serialize
+        packet.serialize(&mut self.buffer);
 
-            let (sock, buff) = match &mut self.future {
-                &mut SocketFuture::Recv(ref mut recv) => {
-                    let (sock, mut buff, n_bytes, addr) = try_ready!(recv.poll());
-
-                    // parse the packet
-                    ret = Some((
-                        Packet::parse(Cursor::new(&buff.as_mut()[0..n_bytes]))?,
-                        addr,
-                    ));
-
-                    (sock, buff)
-                }
-                &mut SocketFuture::Send(ref mut snd) => {
-                    let (sock, mut buff) = try_ready!(snd.poll());
-
-                    (sock, buff)
-                }
-            };
-
-            // start the next op
-            self.future = match self.queue.try_recv() {
-                Ok((pack, addr)) => {
-                    // send the packet
-
-                    // serialize the packet
-                    let mut bytes = BytesMut::with_capacity(65536);
-                    pack.serialize(&mut bytes);
-
-                    // send it
-                    println!("Sending packet {:?} to {:?}", pack, addr);
-                    SocketFuture::Send(sock.send_dgram(bytes, &addr))
-                }
-                // If it's either disconnected or empty just receive
-                Err(_) => SocketFuture::Recv(sock.recv_dgram(buff)),
-            };
-
-            if let Some(p) = ret {
-                return Ok(Async::Ready(Some(p)));
+        Box::new(self.sock.send_dgram(self.buffer, &addr).map(move |(sock, buffer)| {
+            SrtSocket {
+                start_time: self.start_time,
+                sock,
+                buffer,
             }
-        }
+        }))
+    }
+
+    pub fn recv_packet(self) -> Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error=Error>> {
+        return Box::new(
+            self.sock.recv_dgram(self.buffer).and_then(move |(sock, buffer, size, addr)| {
+                let srt_socket = SrtSocket {
+                    start_time: self.start_time,
+                    sock,
+                    buffer
+                };
+
+                Ok((srt_socket, addr, Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?))
+            });
+        )
+    }
+
+    pub fn recv_packet_timeout(self, timeout: Duration) -> Box<Future<Item = (SrtSocket, Option<(SocketAddr, Packet)>), Error=Error>> {
+        return Box::new(
+            RecvDgramTimeout::new(self.sock, timeout, self.buffer).and_then(move|(sock, buffer, data)| {
+
+                let srt_socket = SrtSocket {
+                    start_time: self.start_time,
+                    sock,
+                    buffer
+                };
+
+                if let Some((size, addr)) = data {
+                    // data was received, parse it
+                    return Ok((
+                        srt_socket,
+                        Some((addr, Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?)),
+                    ));
+                }
+
+                return Ok((srt_socket, None));
+            }),
+        )
     }
 }
+

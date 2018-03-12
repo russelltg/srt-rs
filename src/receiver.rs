@@ -1,4 +1,4 @@
-use std::io::{Error, ErrorKind};
+use std::io::{Error};
 use std::time::Duration;
 use std::net::SocketAddr;
 
