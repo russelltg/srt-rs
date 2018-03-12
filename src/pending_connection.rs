@@ -6,6 +6,7 @@ use std::mem;
 
 use futures::prelude::*;
 
+use connection::Connection;
 use socket::SrtSocket;
 use packet::{ControlTypes, Packet};
 
@@ -18,7 +19,7 @@ pub struct PendingConnection {
 }
 
 enum RSFuture {
-    Recv(Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error=Error>>),
+    Recv(Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = Error>>),
     Snd(Box<Future<Item = SrtSocket, Error = Error>>),
 }
 
@@ -60,25 +61,22 @@ impl PendingConnection {
 }
 
 impl Future for PendingConnection {
-
     type Item = Connection;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Connection, Error> {
-
         loop {
             match self.conn_type {
                 ConnectionType::Listen => {
-
                     let (sock, addr, packet) = match self.future {
-                        RSFuture::Snd(ref mut fut) => {
+                        RSFuture::Snd(mut fut) => {
                             let sock = try_ready!(fut.poll());
-                            *fut = RSFuture::Recv(sock.recv_packet());
+                            self.future = RSFuture::Recv(sock.recv_packet());
 
                             continue;
-                        },
-                        RSFuture::Recv(ref fut) => try_ready!(fut.poll());
-                    }
+                        }
+                        RSFuture::Recv(ref fut) => try_ready!(fut.poll()),
+                    };
 
                     match self.state {
                         // Haven't received anything yet, waiting for the first handshake
@@ -89,35 +87,35 @@ impl Future for PendingConnection {
                                 timestamp,
                                 dest_sockid,
                             } = packet
-                                {
-                                    // https://tools.ietf.org/html/draft-gg-udt-03#page-9
-                                    // When the server first receives the connection request from a client,
-                                    // it generates a cookie value according to the client address and a
-                                    // secret key and sends it back to the client. The client must then send
-                                    // back the same cookie to the server.
+                            {
+                                // https://tools.ietf.org/html/draft-gg-udt-03#page-9
+                                // When the server first receives the connection request from a client,
+                                // it generates a cookie value according to the client address and a
+                                // secret key and sends it back to the client. The client must then send
+                                // back the same cookie to the server.
 
-                                    // generate the cookie, which is just a hash of the address
-                                    // TODO: the reference impl uses the time, maybe we should here
-                                    let mut hasher = DefaultHasher::new();
-                                    shake.peer_addr.hash(&mut hasher);
-                                    let cookie = hasher.finish() as i32; // this will truncate, which is fine
+                                // generate the cookie, which is just a hash of the address
+                                // TODO: the reference impl uses the time, maybe we should here
+                                let mut hasher = DefaultHasher::new();
+                                shake.peer_addr.hash(&mut hasher);
+                                let cookie = hasher.finish() as i32; // this will truncate, which is fine
 
-                                    // construct a packet to send back
-                                    let resp_handshake = Packet::Control {
-                                        timestamp,
-                                        dest_sockid,
-                                        control_type: ControlTypes::Handshake({
-                                            let mut tmp = shake.clone();
-                                            tmp.syn_cookie = cookie;
-                                            tmp
-                                        }),
-                                    };
+                                // construct a packet to send back
+                                let resp_handshake = Packet::Control {
+                                    timestamp,
+                                    dest_sockid,
+                                    control_type: ControlTypes::Handshake({
+                                        let mut tmp = shake.clone();
+                                        tmp.syn_cookie = cookie;
+                                        tmp
+                                    }),
+                                };
 
-                                    self.state = ConnectionState::WaitingForCookieResp(cookie);
+                                self.state = ConnectionState::WaitingForCookieResp(cookie);
 
-                                    // send the packet
-                                    self.future = RSFuture::Snd(sock.send_packet(shake_resp, addr))
-                                }
+                                // send the packet
+                                self.future = RSFuture::Snd(sock.send_packet(&resp_handshake, addr))
+                            }
                         }
 
                         // Received the first packet and waiting for the same cookie to come back
@@ -136,26 +134,27 @@ impl Future for PendingConnection {
                                 control_type: ControlTypes::Handshake(ref shake),
                                 ..
                             } = packet
-                                {
-                                    // check that the cookie matches
-                                    if shake.syn_cookie != cookie {
-                                        // wait for the next one
-                                        println!(
-                                            "Received invalid cookie handshake: {}",
-                                            shake.syn_cookie
-                                        );
-                                        continue;
-                                    }
-
-                                    // select the smaller packet size and max window size
-                                    // TODO: allow configuration of these parameters, for now just
-                                    // use the remote ones
-
-                                    // send the packet
-                                    self.future = RSFuture::Snd(sock.send_packet(packet, addr))
-
-                                    return Ok(Async::Ready(addr))
+                            {
+                                // check that the cookie matches
+                                if shake.syn_cookie != cookie {
+                                    // wait for the next one
+                                    println!(
+                                        "Received invalid cookie handshake: {}",
+                                        shake.syn_cookie
+                                    );
+                                    continue;
                                 }
+
+                                // select the smaller packet size and max window size
+                                // TODO: allow configuration of these parameters, for now just
+                                // use the remote ones
+
+                                // send the packet
+                                self.future = RSFuture::Snd(sock.send_packet(&packet, addr));
+
+                                // TODO: this ain't right
+                                return Ok(Async::Ready(Connection {}));
+                            }
                         }
                     }
                 }

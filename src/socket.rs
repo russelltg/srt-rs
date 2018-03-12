@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::io::{Cursor, Error, Result};
 use std::iter::repeat;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 use std::boxed::Box;
 
 use tokio::net::{RecvDgram, SendDgram, UdpSocket};
@@ -45,7 +45,11 @@ impl SrtSocketBuilder {
         Ok(SrtSocket {
             start_time: Instant::now(),
             sock,
-            buffer: { let tmp = Vec::new(); tmp.resize(65536, b'\0'); tmp }
+            buffer: {
+                let tmp = Vec::new();
+                tmp.resize(65536, b'\0');
+                tmp
+            },
         })
     }
 }
@@ -63,55 +67,72 @@ impl SrtSocket {
             + (self.start_time.elapsed().subsec_nanos() as u64 / 1_000)) as i32
     }
 
-    pub fn send_packet(self, packet: &Packet, addr: SocketAddr) -> Box<Future<Item = SrtSocket, Error=Error>> {
-
+    pub fn send_packet(
+        self,
+        packet: &Packet,
+        addr: SocketAddr,
+    ) -> Box<Future<Item = SrtSocket, Error = Error>> {
         // serialize
         packet.serialize(&mut self.buffer);
 
-        Box::new(self.sock.send_dgram(self.buffer, &addr).map(move |(sock, buffer)| {
-            SrtSocket {
-                start_time: self.start_time,
-                sock,
-                buffer,
-            }
-        }))
-    }
-
-    pub fn recv_packet(self) -> Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error=Error>> {
-        return Box::new(
-            self.sock.recv_dgram(self.buffer).and_then(move |(sock, buffer, size, addr)| {
-                let srt_socket = SrtSocket {
+        Box::new(
+            self.sock
+                .send_dgram(self.buffer, &addr)
+                .map(move |(sock, buffer)| SrtSocket {
                     start_time: self.start_time,
                     sock,
-                    buffer
-                };
-
-                Ok((srt_socket, addr, Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?))
-            });
+                    buffer,
+                }),
         )
     }
 
-    pub fn recv_packet_timeout(self, timeout: Duration) -> Box<Future<Item = (SrtSocket, Option<(SocketAddr, Packet)>), Error=Error>> {
-        return Box::new(
-            RecvDgramTimeout::new(self.sock, timeout, self.buffer).and_then(move|(sock, buffer, data)| {
+    pub fn recv_packet(self) -> Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = Error>> {
+        Box::new(
+            self.sock
+                .recv_dgram(self.buffer)
+                .and_then(move |(sock, buffer, size, addr)| {
+                    let srt_socket = SrtSocket {
+                        start_time: self.start_time,
+                        sock,
+                        buffer,
+                    };
 
-                let srt_socket = SrtSocket {
-                    start_time: self.start_time,
-                    sock,
-                    buffer
-                };
-
-                if let Some((size, addr)) = data {
-                    // data was received, parse it
-                    return Ok((
+                    Ok((
                         srt_socket,
-                        Some((addr, Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?)),
-                    ));
-                }
-
-                return Ok((srt_socket, None));
-            }),
+                        addr,
+                        Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?,
+                    ))
+                }),
         )
+    }
+
+    pub fn recv_packet_timeout(
+        self,
+        timeout: Duration,
+    ) -> Box<Future<Item = (SrtSocket, Option<(SocketAddr, Packet)>), Error = Error>> {
+        return Box::new(
+            RecvDgramTimeout::new(self.sock, timeout, self.buffer).and_then(
+                move |(sock, buffer, data)| {
+                    let srt_socket = SrtSocket {
+                        start_time: self.start_time,
+                        sock,
+                        buffer,
+                    };
+
+                    if let Some((size, addr)) = data {
+                        // data was received, parse it
+                        return Ok((
+                            srt_socket,
+                            Some((
+                                addr,
+                                Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?,
+                            )),
+                        ));
+                    }
+
+                    return Ok((srt_socket, None));
+                },
+            ),
+        );
     }
 }
-
