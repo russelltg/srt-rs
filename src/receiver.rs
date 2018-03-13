@@ -1,5 +1,5 @@
-use std::io::{Error};
-use std::time::Duration;
+use std::io::Error;
+use std::time::{Duration, Instant};
 use std::net::SocketAddr;
 
 use socket::SrtSocket;
@@ -18,6 +18,8 @@ struct LossListEntry {
 
 pub struct Receiver {
     remote: SocketAddr,
+
+    start_time: Instant, // TODO: should this be relative to handshake or creation
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Receiver's Loss List: It is a list of tuples whose values include:
@@ -50,7 +52,6 @@ pub struct Receiver {
 impl Receiver {
     pub fn new(sock: SrtSocket, remote: SocketAddr) -> Receiver {
         Receiver {
-            sock,
             remote,
             loss_list: Vec::new(),
             ack_history_window: Vec::new(),
@@ -59,7 +60,14 @@ impl Receiver {
             ack_timer: Interval::new(Duration::from_secs(1)),
             lrsn: 0,
             next_ack: 0,
+            start_time: Instant::now(),
         }
+    }
+
+    pub fn get_timestamp(&self) -> i32 {
+        // TODO: not sure if this should be us or ms
+        (self.start_time.elapsed().as_secs() * 1_000_000
+            + (self.start_time.elapsed().subsec_nanos() as u64 / 1_000)) as i32
     }
 }
 
@@ -78,7 +86,7 @@ impl Stream for Receiver {
             if let Async::Ready(_) = self.ack_timer.poll()? {
                 // Send an ACK packet
                 let ack = Packet::Control {
-                    timestamp: self.sock.get_timestamp(),
+                    timestamp: self.get_timestamp(),
                     dest_sockid: 0, // TODO: this should be better
                     control_type: ControlTypes::Ack(self.next_ack, AckControlInfo::new(self.lrsn)),
                 };
