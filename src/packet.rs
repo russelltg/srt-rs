@@ -85,7 +85,7 @@ pub enum Packet {
 }
 
 /// Signifies the packet location in a message for a data packet
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum PacketLocation {
     /// The first packet in a message, 10 in the FF location
     First,

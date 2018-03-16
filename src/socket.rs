@@ -38,17 +38,19 @@ impl SrtSocketBuilder {
         self
     }
 
-    pub fn build(self) -> Result<SrtSocket> {
-        // start listening
-        let sock = UdpSocket::bind(&self.local_addr)?;
-
-        Ok(SrtSocket {
-            sock,
+    pub fn build(self) -> Result<PendingConnection> {
+        let socket = SrtSocket {
+            sock: UdpSocket::bind(&self.local_addr)?,
             buffer: {
                 let mut tmp = Vec::new();
                 tmp.resize(65536, b'\0');
                 tmp
             },
+        };
+
+        Ok(match self.connect_addr {
+            Some(addr) => PendingConnection::connect(socket, addr),
+            None => PendingConnection::listen(socket),
         })
     }
 }

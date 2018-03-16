@@ -81,8 +81,12 @@ impl Receiver {
     }
 
     /// Handles the packet. If it made a send operation, it returns None, if not returns sock
-    fn handle_packet(&mut self, pack: &Packet, from: &SocketAddr, sock: SrtSocket) -> Option<SrtSocket> {
-
+    fn handle_packet(
+        &mut self,
+        pack: &Packet,
+        from: &SocketAddr,
+        sock: SrtSocket,
+    ) -> Option<SrtSocket> {
         // depending on the packet type, handle it
         match pack {
             &Packet::Control {
@@ -115,10 +119,8 @@ impl Receiver {
                 message_number,
                 timestamp,
                 dest_sockid,
-                payload,
-            } => {
-                unimplemented!()
-            }
+                ref payload,
+            } => unimplemented!(),
         }
     }
 }
@@ -129,23 +131,24 @@ impl Stream for Receiver {
 
     fn poll(&mut self) -> Poll<Option<BytesMut>, Error> {
         loop {
-
             // wait for the socket to be ready
-            let socket = match self.future {
-                RSFutureTimeout::Recv(ref recv) => {
-                    let (sock, packet_addr) = try_ready!(recv.poll());
+            
+            let socket = {
+                let (socket, packet_addr) = match self.future {
+                    RSFutureTimeout::Recv(ref mut recv) => 
+                        try_ready!(recv.poll()),
+                    
+                    RSFutureTimeout::Send(ref mut send) => (try_ready!(send.poll()), None),
+                };
 
-                    if let Some((addr, packet)) = packet_addr {
-                        match self.handle_packet(&packet, &addr, sock) {
-                            Some(s) => s,
-                            None => continue,
-                        }
-                    } else {
-                        sock
+                // if there was a packet, handle it
+                if let Some((addr, packet)) = packet_addr {
+                    match self.handle_packet(&packet, &addr, socket) {
+                        Some(s) => s,
+                        None => continue,
                     }
-                },
-                RSFutureTimeout::Send(ref send) => {
-                    try_ready!(send.poll())
+                } else {
+                    socket
                 }
             };
 
@@ -166,10 +169,8 @@ impl Stream for Receiver {
 
                 self.future = RSFutureTimeout::Send(socket.send_packet(&ack, &self.remote));
 
-                continue
+                continue;
             }
-
-
         }
     }
 }
