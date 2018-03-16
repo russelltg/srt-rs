@@ -16,10 +16,18 @@ struct LossListEntry {
     k: i32,
 }
 
+enum RSFutureTimeout {
+    Recv(Box<Future<Item = (SrtSocket, Option<(SocketAddr, Packet)>), Error = Error>>),
+    Send(Box<Future<Item = SrtSocket, Error = Error>>),
+}
+
 pub struct Receiver {
     remote: SocketAddr,
 
     start_time: Instant, // TODO: should this be relative to handshake or creation
+
+    /// the future to send or recieve packets
+    future: RSFutureTimeout,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Receiver's Loss List: It is a list of tuples whose values include:
@@ -52,6 +60,8 @@ pub struct Receiver {
 impl Receiver {
     pub fn new(sock: SrtSocket, remote: SocketAddr) -> Receiver {
         Receiver {
+            // TODO: what's the actual timeout
+            future: RSFutureTimeout::Recv(sock.recv_packet_timeout(Duration::from_secs(1))),
             remote,
             loss_list: Vec::new(),
             ack_history_window: Vec::new(),
@@ -69,6 +79,48 @@ impl Receiver {
         (self.start_time.elapsed().as_secs() * 1_000_000
             + (self.start_time.elapsed().subsec_nanos() as u64 / 1_000)) as i32
     }
+
+    /// Handles the packet. If it made a send operation, it returns None, if not returns sock
+    fn handle_packet(&mut self, pack: &Packet, from: &SocketAddr, sock: SrtSocket) -> Option<SrtSocket> {
+
+        // depending on the packet type, handle it
+        match pack {
+            &Packet::Control {
+                timestamp,
+                dest_sockid,
+                ref control_type,
+            } => {
+                // handle the control packet
+
+                match control_type {
+                    &ControlTypes::Ack(seq_num, info) => unimplemented!(),
+                    &ControlTypes::Ack2(seq_num) => unimplemented!(),
+                    &ControlTypes::DropRequest(to_drop, info) => unimplemented!(),
+                    &ControlTypes::Handshake(info) => {
+                        // just send it back
+                        // TODO: this should actually depend on where it comesf rom
+                        self.future = RSFutureTimeout::Send(sock.send_packet(pack, from));
+
+                        None
+                    }
+                    &ControlTypes::KeepAlive => unimplemented!(),
+                    &ControlTypes::Nak(ref info) => unimplemented!(),
+                    &ControlTypes::Shutdown => unimplemented!(),
+                }
+            }
+            &Packet::Data {
+                seq_number,
+                message_loc,
+                in_order_delivery,
+                message_number,
+                timestamp,
+                dest_sockid,
+                payload,
+            } => {
+                unimplemented!()
+            }
+        }
+    }
 }
 
 impl Stream for Receiver {
@@ -77,6 +129,26 @@ impl Stream for Receiver {
 
     fn poll(&mut self) -> Poll<Option<BytesMut>, Error> {
         loop {
+
+            // wait for the socket to be ready
+            let socket = match self.future {
+                RSFutureTimeout::Recv(ref recv) => {
+                    let (sock, packet_addr) = try_ready!(recv.poll());
+
+                    if let Some((addr, packet)) = packet_addr {
+                        match self.handle_packet(&packet, &addr, sock) {
+                            Some(s) => s,
+                            None => continue,
+                        }
+                    } else {
+                        sock
+                    }
+                },
+                RSFutureTimeout::Send(ref send) => {
+                    try_ready!(send.poll())
+                }
+            };
+
             // https://tools.ietf.org/html/draft-gg-udt-03#page-12
             // Query the system time to check if ACK, NAK, or EXP timer has
             // expired. If there is any, process the event (as described below
@@ -92,53 +164,12 @@ impl Stream for Receiver {
                 };
                 self.next_ack += 1;
 
-                self.sock.queue_sender.send((ack, self.remote)).unwrap()
+                self.future = RSFutureTimeout::Send(socket.send_packet(&ack, &self.remote));
+
+                continue
             }
 
-            // wait for a packet
-            // TODO: have some sort of set timeout and store EXPCount
-            let (pack, addr) = match try_ready!(self.sock.poll()) {
-                Some(p) => p,
-                None => panic!(), // TODO: is this panic safe?
-            };
 
-            // depending on the packet type, handle it
-            match pack {
-                Packet::Control {
-                    timestamp,
-                    dest_sockid,
-                    ref control_type,
-                } => {
-                    // handle the control packet
-
-                    match control_type {
-                        &ControlTypes::Ack(seq_num, info) => unimplemented!(),
-                        &ControlTypes::Ack2(seq_num) => unimplemented!(),
-                        &ControlTypes::DropRequest(to_drop, info) => unimplemented!(),
-                        &ControlTypes::Handshake(info) => {
-                            // just send it back
-                            self.sock
-                                .queue_sender
-                                .send((pack.clone(), self.remote))
-                                .unwrap();
-                        }
-                        &ControlTypes::KeepAlive => unimplemented!(),
-                        &ControlTypes::Nak(ref info) => unimplemented!(),
-                        &ControlTypes::Shutdown => unimplemented!(),
-                    }
-                }
-                Packet::Data {
-                    seq_number,
-                    message_loc,
-                    in_order_delivery,
-                    message_number,
-                    timestamp,
-                    dest_sockid,
-                    payload,
-                } => {
-                    self.lrsn = seq_number;
-                }
-            }
         }
     }
 }

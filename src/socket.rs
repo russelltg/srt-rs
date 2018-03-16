@@ -45,7 +45,7 @@ impl SrtSocketBuilder {
         Ok(SrtSocket {
             sock,
             buffer: {
-                let tmp = Vec::new();
+                let mut tmp = Vec::new();
                 tmp.resize(65536, b'\0');
                 tmp
             },
@@ -59,24 +59,18 @@ pub struct SrtSocket {
 }
 
 impl SrtSocket {
-
-
     pub fn send_packet(
-        self,
+        mut self,
         packet: &Packet,
-        addr: SocketAddr,
+        addr: &SocketAddr,
     ) -> Box<Future<Item = SrtSocket, Error = Error>> {
         // serialize
         packet.serialize(&mut self.buffer);
 
         Box::new(
             self.sock
-                .send_dgram(self.buffer, &addr)
-                .map(move |(sock, buffer)| SrtSocket {
-                    start_time: self.start_time,
-                    sock,
-                    buffer,
-                }),
+                .send_dgram(self.buffer, addr)
+                .map(move |(sock, buffer)| SrtSocket { sock, buffer }),
         )
     }
 
@@ -85,16 +79,14 @@ impl SrtSocket {
             self.sock
                 .recv_dgram(self.buffer)
                 .and_then(move |(sock, buffer, size, addr)| {
-                    let srt_socket = SrtSocket {
-                        start_time: self.start_time,
-                        sock,
-                        buffer,
-                    };
+                    let srt_socket = SrtSocket { sock, buffer };
+
+                    let pack = Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?;
 
                     Ok((
                         srt_socket,
                         addr,
-                        Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?,
+                        pack,
                     ))
                 }),
         )
@@ -107,19 +99,17 @@ impl SrtSocket {
         return Box::new(
             RecvDgramTimeout::new(self.sock, timeout, self.buffer).and_then(
                 move |(sock, buffer, data)| {
-                    let srt_socket = SrtSocket {
-                        start_time: self.start_time,
-                        sock,
-                        buffer,
-                    };
+                    let srt_socket = SrtSocket { sock, buffer };
+
 
                     if let Some((size, addr)) = data {
+                        let pack = Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?;
                         // data was received, parse it
                         return Ok((
                             srt_socket,
                             Some((
                                 addr,
-                                Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?,
+                                pack,
                             )),
                         ));
                     }

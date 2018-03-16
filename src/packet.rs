@@ -268,7 +268,7 @@ impl ControlTypes {
         }
     }
 
-    fn serialize<T: BufMut>(&self, mut into: T) {
+    fn serialize<T: BufMut>(&self, into: &mut T) {
         match self {
             &ControlTypes::Handshake(ref c) => {
                 into.put_i32::<BigEndian>(c.udt_version);
@@ -526,7 +526,7 @@ impl Packet {
         }
     }
 
-    pub fn serialize<T: BufMut>(&self, mut into: T) {
+    pub fn serialize<T: BufMut>(&self, into: &mut T) {
         match self {
             &Packet::Control {
                 ref timestamp,

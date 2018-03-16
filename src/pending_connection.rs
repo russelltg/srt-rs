@@ -21,6 +21,7 @@ pub struct PendingConnection {
 enum RSFuture {
     Recv(Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = Error>>),
     Snd(Box<Future<Item = SrtSocket, Error = Error>>),
+    None,
 }
 
 // The state of the connection initiation
@@ -68,14 +69,15 @@ impl Future for PendingConnection {
         loop {
             match self.conn_type {
                 ConnectionType::Listen => {
-                    let (sock, addr, packet) = match self.future {
+                    let (sock, addr, packet) = match mem::replace(&mut self.future, RSFuture::None) {
                         RSFuture::Snd(mut fut) => {
                             let sock = try_ready!(fut.poll());
                             self.future = RSFuture::Recv(sock.recv_packet());
 
                             continue;
                         }
-                        RSFuture::Recv(ref fut) => try_ready!(fut.poll()),
+                        RSFuture::Recv(mut fut) => try_ready!(fut.poll()),
+                        RSFuture::None => panic!()
                     };
 
                     match self.state {
@@ -114,7 +116,7 @@ impl Future for PendingConnection {
                                 self.state = ConnectionState::WaitingForCookieResp(cookie);
 
                                 // send the packet
-                                self.future = RSFuture::Snd(sock.send_packet(&resp_handshake, addr))
+                                self.future = RSFuture::Snd(sock.send_packet(&resp_handshake, &addr))
                             }
                         }
 
@@ -150,7 +152,7 @@ impl Future for PendingConnection {
                                 // use the remote ones
 
                                 // send the packet
-                                self.future = RSFuture::Snd(sock.send_packet(&packet, addr));
+                                self.future = RSFuture::Snd(sock.send_packet(&packet, &addr));
 
                                 // TODO: this ain't right
                                 return Ok(Async::Ready(Connection {}));
