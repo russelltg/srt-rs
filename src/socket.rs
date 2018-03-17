@@ -81,15 +81,21 @@ impl SrtSocket {
 
     pub fn recv_packet(
         mut self,
-    ) -> Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = Error>> {
+    ) -> Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = (SrtSocket, Error)>> {
         self.buffer.resize(65536, b'\0');
         Box::new(
             self.sock
                 .recv_dgram(self.buffer)
+                .map_err(|e| {
+                    panic!()
+                })
                 .and_then(move |(sock, buffer, size, addr)| {
                     let srt_socket = SrtSocket { sock, buffer };
 
-                    let pack = Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?;
+                    let pack = match Packet::parse(Cursor::new(&srt_socket.buffer[0..size])) {
+                        Err(e) => return Err((srt_socket, e)),
+                        Ok(p) => p,
+                    };
 
                     Ok((srt_socket, addr, pack))
                 }),
@@ -99,21 +105,28 @@ impl SrtSocket {
     pub fn recv_packet_timeout(
         self,
         timeout: Duration,
-    ) -> Box<Future<Item = (SrtSocket, Option<(SocketAddr, Packet)>), Error = Error>> {
+    ) -> Box<Future<Item = (SrtSocket, Option<(SocketAddr, Packet)>), Error = (SrtSocket, Error)>>
+    {
         return Box::new(
-            RecvDgramTimeout::new(self.sock, timeout, self.buffer).and_then(
-                move |(sock, buffer, data)| {
+            RecvDgramTimeout::new(self.sock, timeout, self.buffer)
+                .map_err(|e| {
+                    // all these are irrecoverable, so don't bother
+                    panic!(e)
+                })
+                .and_then(move |(sock, buffer, data)| {
                     let srt_socket = SrtSocket { sock, buffer };
 
                     if let Some((size, addr)) = data {
-                        let pack = Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?;
                         // data was received, parse it
+                        let pack = match Packet::parse(Cursor::new(&srt_socket.buffer[0..size])) {
+                            Err(e) => return Err((srt_socket, e)),
+                            Ok(p) => p,
+                        };
                         return Ok((srt_socket, Some((addr, pack))));
                     }
 
                     return Ok((srt_socket, None));
-                },
-            ),
+                }),
         );
     }
 }

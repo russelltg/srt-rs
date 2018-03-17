@@ -17,7 +17,7 @@ struct LossListEntry {
 }
 
 enum RSFutureTimeout {
-    Recv(Box<Future<Item = (SrtSocket, Option<(SocketAddr, Packet)>), Error = Error>>),
+    Recv(Box<Future<Item = (SrtSocket, Option<(SocketAddr, Packet)>), Error = (SrtSocket, Error)>>),
     Send(Box<Future<Item = SrtSocket, Error = Error>>),
 }
 
@@ -67,9 +67,10 @@ impl Receiver {
             ack_history_window: Vec::new(),
             packet_history_window: Vec::new(),
             // TODO: what's the actual ACK timeout?
-            ack_timer: Interval::new(Duration::from_secs(1)),
+            ack_timer: Interval::new(Duration::from_millis(500)),
             lrsn: 0,
-            next_ack: 0,
+            // TODO: do these start at 1?
+            next_ack: 1,
             start_time: Instant::now(),
         }
     }
@@ -78,50 +79,6 @@ impl Receiver {
         // TODO: not sure if this should be us or ms
         (self.start_time.elapsed().as_secs() * 1_000_000
             + (self.start_time.elapsed().subsec_nanos() as u64 / 1_000)) as i32
-    }
-
-    /// Handles the packet. If it made a send operation, it returns None, if not returns sock
-    fn handle_packet(
-        &mut self,
-        pack: &Packet,
-        from: &SocketAddr,
-        sock: SrtSocket,
-    ) -> Option<SrtSocket> {
-        // depending on the packet type, handle it
-        match pack {
-            &Packet::Control {
-                timestamp,
-                dest_sockid,
-                ref control_type,
-            } => {
-                // handle the control packet
-
-                match control_type {
-                    &ControlTypes::Ack(seq_num, info) => unimplemented!(),
-                    &ControlTypes::Ack2(seq_num) => unimplemented!(),
-                    &ControlTypes::DropRequest(to_drop, info) => unimplemented!(),
-                    &ControlTypes::Handshake(info) => {
-                        // just send it back
-                        // TODO: this should actually depend on where it comesf rom
-                        self.future = RSFutureTimeout::Send(sock.send_packet(pack, from));
-
-                        None
-                    }
-                    &ControlTypes::KeepAlive => unimplemented!(),
-                    &ControlTypes::Nak(ref info) => unimplemented!(),
-                    &ControlTypes::Shutdown => unimplemented!(),
-                }
-            }
-            &Packet::Data {
-                seq_number,
-                message_loc,
-                in_order_delivery,
-                message_number,
-                timestamp,
-                dest_sockid,
-                ref payload,
-            } => unimplemented!(),
-        }
     }
 }
 
@@ -132,24 +89,64 @@ impl Stream for Receiver {
     fn poll(&mut self) -> Poll<Option<BytesMut>, Error> {
         loop {
             // wait for the socket to be ready
-            
-            let socket = {
-                let (socket, packet_addr) = match self.future {
-                    RSFutureTimeout::Recv(ref mut recv) => 
-                        try_ready!(recv.poll()),
-                    
-                    RSFutureTimeout::Send(ref mut send) => (try_ready!(send.poll()), None),
-                };
+            let (socket, packet_addr) = match self.future {
+                RSFutureTimeout::Recv(ref mut recv) => match recv.poll() {
+                    Err((sock, e)) => {
+                        warn!("Error reading packet: {:?}", e);
 
-                // if there was a packet, handle it
-                if let Some((addr, packet)) = packet_addr {
-                    match self.handle_packet(&packet, &addr, socket) {
-                        Some(s) => s,
-                        None => continue,
+                        (sock, None)
                     }
-                } else {
-                    socket
+                    Ok(Async::Ready(s)) => s,
+                    Ok(Async::NotReady) => return Ok(Async::NotReady),
+                },
+
+                RSFutureTimeout::Send(ref mut send) => (try_ready!(send.poll()), None),
+            };
+
+            // if there was a packet, handle it
+            let payload = if let Some((addr, packet)) = packet_addr {
+                match packet {
+                    Packet::Control {
+                        timestamp,
+                        dest_sockid,
+                        ref control_type,
+                    } => {
+                        // handle the control packet
+
+                        match control_type {
+                            &ControlTypes::Ack(seq_num, info) => unimplemented!(),
+                            &ControlTypes::Ack2(seq_num) => unimplemented!(),
+                            &ControlTypes::DropRequest(to_drop, info) => unimplemented!(),
+                            &ControlTypes::Handshake(info) => {
+                                // just send it back
+                                // TODO: this should actually depend on where it comesf rom
+                                self.future =
+                                    RSFutureTimeout::Send(socket.send_packet(&packet, &addr));
+
+                                continue;
+                            }
+                            &ControlTypes::KeepAlive => unimplemented!(),
+                            &ControlTypes::Nak(ref info) => unimplemented!(),
+                            &ControlTypes::Shutdown => unimplemented!(),
+                        }
+                    }
+                    Packet::Data {
+                        seq_number,
+                        message_loc,
+                        in_order_delivery,
+                        message_number,
+                        timestamp,
+                        dest_sockid,
+                        payload,
+                    } => {
+                        // record that we got this packet
+                        self.lrsn = seq_number;
+
+                        Some(payload)
+                    }
                 }
+            } else {
+                None
             };
 
             // https://tools.ietf.org/html/draft-gg-udt-03#page-12
@@ -160,17 +157,30 @@ impl Stream for Receiver {
 
             if let Async::Ready(_) = self.ack_timer.poll()? {
                 // Send an ACK packet
+                info!("Sending ACK to {:?}...", self.remote);
+
                 let ack = Packet::Control {
                     timestamp: self.get_timestamp(),
                     dest_sockid: 0, // TODO: this should be better
-                    control_type: ControlTypes::Ack(self.next_ack, AckControlInfo::new(self.lrsn)),
+                    control_type: ControlTypes::Ack(
+                        self.next_ack,
+                        // +1 because it's exclusive
+                        AckControlInfo::new(self.lrsn + 1),
+                    ),
                 };
                 self.next_ack += 1;
 
                 self.future = RSFutureTimeout::Send(socket.send_packet(&ack, &self.remote));
-
-                continue;
+            } else {
+                self.future =
+                    RSFutureTimeout::Recv(socket.recv_packet_timeout(Duration::from_secs(1)));
             }
+
+            // if there was a payload, yield it
+            if let Some(p) = payload {
+                return Ok(Async::Ready(Some(p)));
+            }
+            // otherwise just continue
         }
     }
 }

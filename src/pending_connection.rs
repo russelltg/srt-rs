@@ -18,7 +18,7 @@ pub struct PendingConnection {
 }
 
 enum RSFuture {
-    Recv(Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = Error>>),
+    Recv(Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = (SrtSocket, Error)>>),
     Snd(Box<Future<Item = SrtSocket, Error = Error>>),
 }
 
@@ -32,7 +32,8 @@ impl RSFuture {
 
     fn receiver(
         &mut self,
-    ) -> Option<&mut Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = Error>>> {
+    ) -> Option<&mut Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = (SrtSocket, Error)>>>
+    {
         match self {
             &mut RSFuture::Recv(ref mut r) => Some(r),
             &mut RSFuture::Snd(_) => None,
@@ -44,7 +45,7 @@ impl RSFuture {
 enum ConnectionState {
     WaitingForHandshake,
     WaitingForCookieResp(i32 /*cookie*/),
-    Done,
+    Done(SocketAddr),
 }
 
 enum ConnectionType {
@@ -89,11 +90,25 @@ impl Future for PendingConnection {
                     let (sock, addr, packet) = match self.future {
                         ref mut fut @ RSFuture::Snd(_) => {
                             let sock = try_ready!(fut.sender().unwrap().poll());
+
+                            if let ConnectionState::Done(addr) = self.state {
+                                return Ok(Async::Ready(Connection::Recv(Receiver::new(sock, addr))))
+                            }
+
                             *fut = RSFuture::Recv(sock.recv_packet());
 
                             continue;
                         }
-                        RSFuture::Recv(ref mut fut) => try_ready!(fut.poll()),
+                        RSFuture::Recv(ref mut fut) => match fut.poll() {
+                            Err((sock, e)) => {
+                                warn!("Error decoding packet: {:?}", e);
+
+                                *fut = sock.recv_packet();
+                                continue;
+                            },
+                            Ok(Async::Ready(d)) => d,
+                            Ok(Async::NotReady) => return Ok(Async::NotReady),
+                        },
                     };
 
                     match self.state {
@@ -180,13 +195,11 @@ impl Future for PendingConnection {
                                 self.future = RSFuture::Snd(sock.send_packet(&packet, &addr));
 
                                 // don't just return now, wait until the packet is sent
-                                self.state = ConnectionState::Done;
+                                self.state = ConnectionState::Done(addr);
                             }
                         }
-
-                        ConnectionState::Done => {
-                            return Ok(Async::Ready(Connection::Recv(Receiver::new(sock, addr))))
-                        }
+                        // This is handled further up
+                        ConnectionState::Done(_) => panic!()
                     }
                 }
                 ConnectionType::Connect(_) => unimplemented!(),

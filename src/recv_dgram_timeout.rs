@@ -39,12 +39,13 @@ where
     type Item = (UdpSocket, T, Option<(usize, SocketAddr)>);
     type Error = Error;
 
-    fn poll(&mut self) -> Poll<Self::Item, Error> {
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         // have we timed out?
         let timed_out = {
             let ref mut inner = self.state.as_mut().expect("Polled after completion");
 
-            if let Async::Ready(_) = inner.timeout.poll()? {
+            // It's prob ok to unwrap a timer future? Like how could that fail?
+            if let Async::Ready(_) = inner.timeout.poll().unwrap() {
                 true
             } else {
                 false
