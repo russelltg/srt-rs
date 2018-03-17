@@ -39,11 +39,13 @@ impl SrtSocketBuilder {
     }
 
     pub fn build(self) -> Result<PendingConnection> {
+        trace!("Listening on {:?}", self.local_addr);
+
         let socket = SrtSocket {
             sock: UdpSocket::bind(&self.local_addr)?,
             buffer: {
                 let mut tmp = Vec::new();
-                tmp.resize(65536, b'\0');
+                tmp.reserve(65536);
                 tmp
             },
         };
@@ -67,6 +69,7 @@ impl SrtSocket {
         addr: &SocketAddr,
     ) -> Box<Future<Item = SrtSocket, Error = Error>> {
         // serialize
+        self.buffer.resize(0, b'\0');
         packet.serialize(&mut self.buffer);
 
         Box::new(
@@ -76,7 +79,10 @@ impl SrtSocket {
         )
     }
 
-    pub fn recv_packet(self) -> Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = Error>> {
+    pub fn recv_packet(
+        mut self,
+    ) -> Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = Error>> {
+        self.buffer.resize(65536, b'\0');
         Box::new(
             self.sock
                 .recv_dgram(self.buffer)
@@ -85,11 +91,7 @@ impl SrtSocket {
 
                     let pack = Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?;
 
-                    Ok((
-                        srt_socket,
-                        addr,
-                        pack,
-                    ))
+                    Ok((srt_socket, addr, pack))
                 }),
         )
     }
@@ -103,17 +105,10 @@ impl SrtSocket {
                 move |(sock, buffer, data)| {
                     let srt_socket = SrtSocket { sock, buffer };
 
-
                     if let Some((size, addr)) = data {
                         let pack = Packet::parse(Cursor::new(&srt_socket.buffer[0..size]))?;
                         // data was received, parse it
-                        return Ok((
-                            srt_socket,
-                            Some((
-                                addr,
-                                pack,
-                            )),
-                        ));
+                        return Ok((srt_socket, Some((addr, pack))));
                     }
 
                     return Ok((srt_socket, None));

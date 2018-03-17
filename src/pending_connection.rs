@@ -1,4 +1,4 @@
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
@@ -9,8 +9,7 @@ use futures::prelude::*;
 use connection::Connection;
 use socket::SrtSocket;
 use packet::{ControlTypes, Packet};
-
-use tokio::net::UdpSocket;
+use receiver::Receiver;
 
 pub struct PendingConnection {
     conn_type: ConnectionType,
@@ -21,13 +20,31 @@ pub struct PendingConnection {
 enum RSFuture {
     Recv(Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = Error>>),
     Snd(Box<Future<Item = SrtSocket, Error = Error>>),
-    None,
+}
+
+impl RSFuture {
+    fn sender(&mut self) -> Option<&mut Box<Future<Item = SrtSocket, Error = Error>>> {
+        match self {
+            &mut RSFuture::Recv(_) => None,
+            &mut RSFuture::Snd(ref mut s) => Some(s),
+        }
+    }
+
+    fn receiver(
+        &mut self,
+    ) -> Option<&mut Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = Error>>> {
+        match self {
+            &mut RSFuture::Recv(ref mut r) => Some(r),
+            &mut RSFuture::Snd(_) => None,
+        }
+    }
 }
 
 // The state of the connection initiation
 enum ConnectionState {
     WaitingForHandshake,
     WaitingForCookieResp(i32 /*cookie*/),
+    Done,
 }
 
 enum ConnectionType {
@@ -69,15 +86,14 @@ impl Future for PendingConnection {
         loop {
             match self.conn_type {
                 ConnectionType::Listen => {
-                    let (sock, addr, packet) = match mem::replace(&mut self.future, RSFuture::None) {
-                        RSFuture::Snd(mut fut) => {
-                            let sock = try_ready!(fut.poll());
-                            self.future = RSFuture::Recv(sock.recv_packet());
+                    let (sock, addr, packet) = match self.future {
+                        ref mut fut @ RSFuture::Snd(_) => {
+                            let sock = try_ready!(fut.sender().unwrap().poll());
+                            *fut = RSFuture::Recv(sock.recv_packet());
 
                             continue;
                         }
-                        RSFuture::Recv(mut fut) => try_ready!(fut.poll()),
-                        RSFuture::None => panic!()
+                        RSFuture::Recv(ref mut fut) => try_ready!(fut.poll()),
                     };
 
                     match self.state {
@@ -90,6 +106,8 @@ impl Future for PendingConnection {
                                 dest_sockid,
                             } = packet
                             {
+                                trace!("Handshake recieved from {:?}", addr);
+
                                 // https://tools.ietf.org/html/draft-gg-udt-03#page-9
                                 // When the server first receives the connection request from a client,
                                 // it generates a cookie value according to the client address and a
@@ -98,9 +116,11 @@ impl Future for PendingConnection {
 
                                 // generate the cookie, which is just a hash of the address
                                 // TODO: the reference impl uses the time, maybe we should here
-                                let mut hasher = DefaultHasher::new();
-                                shake.peer_addr.hash(&mut hasher);
-                                let cookie = hasher.finish() as i32; // this will truncate, which is fine
+                                let cookie = {
+                                    let mut hasher = DefaultHasher::new();
+                                    shake.peer_addr.hash(&mut hasher);
+                                    hasher.finish() as i32 // this will truncate, which is fine
+                                };
 
                                 // construct a packet to send back
                                 let resp_handshake = Packet::Control {
@@ -116,7 +136,8 @@ impl Future for PendingConnection {
                                 self.state = ConnectionState::WaitingForCookieResp(cookie);
 
                                 // send the packet
-                                self.future = RSFuture::Snd(sock.send_packet(&resp_handshake, &addr))
+                                self.future =
+                                    RSFuture::Snd(sock.send_packet(&resp_handshake, &addr))
                             }
                         }
 
@@ -132,6 +153,8 @@ impl Future for PendingConnection {
                             // However, it must send back response packet as long as it receives any
                             // further handshakes from the same client.
 
+                            trace!("Second handshake recieved from {:?}", addr);
+
                             if let Packet::Control {
                                 control_type: ControlTypes::Handshake(ref shake),
                                 ..
@@ -140,12 +163,14 @@ impl Future for PendingConnection {
                                 // check that the cookie matches
                                 if shake.syn_cookie != cookie {
                                     // wait for the next one
-                                    println!(
-                                        "Received invalid cookie handshake: {}",
-                                        shake.syn_cookie
+                                    trace!(
+                                        "Received invalid cookie handshake from {:?}: {}, should be {}",
+                                        addr, shake.syn_cookie, cookie
                                     );
                                     continue;
                                 }
+
+                                trace!("Cookie was correct, connection established to {:?}", addr);
 
                                 // select the smaller packet size and max window size
                                 // TODO: allow configuration of these parameters, for now just
@@ -154,9 +179,13 @@ impl Future for PendingConnection {
                                 // send the packet
                                 self.future = RSFuture::Snd(sock.send_packet(&packet, &addr));
 
-                                // TODO: this ain't right
-                                return Ok(Async::Ready(Connection {}));
+                                // don't just return now, wait until the packet is sent
+                                self.state = ConnectionState::Done;
                             }
+                        }
+
+                        ConnectionState::Done => {
+                            return Ok(Async::Ready(Connection::Recv(Receiver::new(sock, addr))))
                         }
                     }
                 }

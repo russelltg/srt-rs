@@ -4,6 +4,8 @@ extern crate srt;
 extern crate futures;
 
 extern crate tokio;
+extern crate log;
+extern crate simple_logger;
 
 use std::net::ToSocketAddrs;
 use srt::socket::SrtSocketBuilder;
@@ -13,6 +15,8 @@ use futures::prelude::*;
 use tokio::executor::current_thread;
 
 fn main() {
+    simple_logger::init().unwrap();
+
     let pending_connection = SrtSocketBuilder::new(
         "127.0.0.1:1231".to_socket_addrs().unwrap().next().unwrap(),
     ).build()

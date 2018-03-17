@@ -18,7 +18,10 @@ pub struct RecvDgramTimeoutInner<T> {
 }
 
 impl<T> RecvDgramTimeout<T> {
-    pub fn new(sock: UdpSocket, timeout: Duration, buffer: T) -> RecvDgramTimeout<T> {
+    pub fn new(sock: UdpSocket, timeout: Duration, buffer: T) -> RecvDgramTimeout<T>
+    where
+        T: AsMut<[u8]>,
+    {
         RecvDgramTimeout {
             state: Some(RecvDgramTimeoutInner {
                 sock,
@@ -27,7 +30,6 @@ impl<T> RecvDgramTimeout<T> {
             }),
         }
     }
-    
 }
 
 impl<T> Future for RecvDgramTimeout<T>
@@ -55,11 +57,100 @@ where
 
         let (n, addr) = {
             let ref mut inner = self.state.as_mut().unwrap();
-            
+
             try_nb!(inner.sock.recv_from(inner.buffer.as_mut()))
         };
 
         let inner = self.state.take().unwrap();
         Ok(Async::Ready((inner.sock, inner.buffer, Some((n, addr)))))
     }
+}
+
+use tokio::executor::current_thread;
+use std::net::ToSocketAddrs;
+
+// tests
+#[test]
+fn recv_dgram_to_test_none() {
+    let addr = "127.0.0.1:8171".to_socket_addrs().unwrap().next().unwrap();
+
+    // try to recieve on the port
+    current_thread::run(|_| {
+        current_thread::spawn(
+            RecvDgramTimeout::new(
+                UdpSocket::bind(&addr)
+                    .unwrap(),
+                Duration::from_secs(1),
+                vec![],
+            // shouldn't error
+            ).map_err(|e| {
+                panic!(e);
+            })
+                // shoudln't get any data
+                .map(|(_, vec, sz_addr)| {
+                    assert_eq!(vec, vec![]);
+                    assert_eq!(sz_addr, None)
+                }),
+        );
+
+        // send data 2 seconds later
+        current_thread::spawn(
+            Delay::new(Duration::from_secs(2))
+                .and_then(move |_| {
+                    UdpSocket::bind(&"127.0.0.1:0".to_socket_addrs().unwrap().next().unwrap())
+                        .unwrap()
+                        .send_dgram(b"this shouldn't be recvd", &addr)
+                })
+                .map(|(_, buf)| {
+                    assert_eq!(buf, b"this shouldn't be recvd");
+                })
+                .map_err(|e| {
+                    panic!(e);
+                }),
+        );
+    });
+}
+
+#[test]
+fn recv_dgram_to_test_some() {
+    let addr = "127.0.0.1:8172".to_socket_addrs().unwrap().next().unwrap();
+
+    // try to recieve on the port
+    current_thread::run(|_| {
+        current_thread::spawn(
+            RecvDgramTimeout::new(
+                UdpSocket::bind(&addr)
+                    .unwrap(),
+                Duration::from_secs(2),
+                b"\0\0\0\0\0\0".to_vec()
+            // shouldn't error
+            ).map_err(|e| {
+                panic!(e);
+            })
+            // we should get data
+            .map(|(_, vec, sz_addr)| {
+                if let Some((size, addr)) = sz_addr {
+                    assert_eq!(&vec[0..size][0], &b"recvd"[0]);
+                } else {
+                    panic!("Failed to get data");
+                }
+            }),
+        );
+
+        // send data 1 second later
+        current_thread::spawn(
+            Delay::new(Duration::from_secs(1))
+                .and_then(move |_| {
+                    UdpSocket::bind(&"127.0.0.1:0".to_socket_addrs().unwrap().next().unwrap())
+                        .unwrap()
+                        .send_dgram(b"recvd", &addr)
+                })
+                .map(|(_, buf)| {
+                    assert_eq!(buf, b"recvd");
+                })
+                .map_err(|e| {
+                    panic!(e);
+                }),
+        );
+    });
 }
