@@ -7,6 +7,8 @@ use tokio::net::UdpSocket;
 
 use futures_timer::Delay;
 
+use tokio::executor::current_thread;
+
 pub struct RecvDgramTimeout<T> {
     state: Option<RecvDgramTimeoutInner<T>>,
 }
@@ -67,13 +69,10 @@ where
     }
 }
 
-use tokio::executor::current_thread;
-use std::net::ToSocketAddrs;
-
 // tests
 #[test]
 fn recv_dgram_to_test_none() {
-    let addr = "127.0.0.1:8171".to_socket_addrs().unwrap().next().unwrap();
+    let addr = "127.0.0.1:8171".parse().unwrap();
 
     // try to recieve on the port
     current_thread::run(|_| {
@@ -98,7 +97,7 @@ fn recv_dgram_to_test_none() {
         current_thread::spawn(
             Delay::new(Duration::from_secs(2))
                 .and_then(move |_| {
-                    UdpSocket::bind(&"127.0.0.1:0".to_socket_addrs().unwrap().next().unwrap())
+                    UdpSocket::bind(&"127.0.0.1:0".parse().unwrap())
                         .unwrap()
                         .send_dgram(b"this shouldn't be recvd", &addr)
                 })
@@ -114,7 +113,7 @@ fn recv_dgram_to_test_none() {
 
 #[test]
 fn recv_dgram_to_test_some() {
-    let addr = "127.0.0.1:8172".to_socket_addrs().unwrap().next().unwrap();
+    let addr = "127.0.0.1:8172".parse().unwrap();
 
     // try to recieve on the port
     current_thread::run(|_| {
@@ -142,7 +141,7 @@ fn recv_dgram_to_test_some() {
         current_thread::spawn(
             Delay::new(Duration::from_secs(1))
                 .and_then(move |_| {
-                    UdpSocket::bind(&"127.0.0.1:0".to_socket_addrs().unwrap().next().unwrap())
+                    UdpSocket::bind(&"127.0.0.1:0".parse().unwrap())
                         .unwrap()
                         .send_dgram(b"recvd", &addr)
                 })

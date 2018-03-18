@@ -13,6 +13,7 @@ use std::net::ToSocketAddrs;
 use srt::socket::SrtSocketBuilder;
 use srt::connection::Connection;
 use srt::receiver::Receiver;
+use std::net::UdpSocket;
 
 use futures::prelude::*;
 
@@ -20,6 +21,7 @@ use tokio::executor::current_thread;
 
 struct Printer {
     recvr: Receiver,
+    out_sock: UdpSocket,
 }
 
 impl Future for Printer {
@@ -37,8 +39,12 @@ impl Future for Printer {
                 }
             };
 
-            if let Some(b) = buf {
-                //println!("Buffer recieved: {}", b.len());
+            if let Some(mut b) = buf {
+                self.out_sock.send_to(b.as_mut(), "127.0.0.1:1888").unwrap();
+            } else {
+                println!("Shutdown!");
+
+                return Ok(Async::Ready(()));
             }
         }
     }
@@ -58,7 +64,10 @@ fn main() {
             pending_connection
                 .map_err(|e| eprintln!("Error: {:?}", e))
                 .and_then(|c| match c {
-                    Connection::Recv(r) => Printer { recvr: r },
+                    Connection::Recv(r) => Printer {
+                        recvr: r,
+                        out_sock: UdpSocket::bind("127.0.0.1:0").unwrap(),
+                    },
                     Connection::Send(_) => unimplemented!(),
                 }),
         );

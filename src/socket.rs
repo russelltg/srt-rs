@@ -1,17 +1,14 @@
 use std::net::SocketAddr;
 use std::io::{Cursor, Error, Result};
-use std::iter::repeat;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::boxed::Box;
 
-use tokio::net::{RecvDgram, SendDgram, UdpSocket};
+use tokio::net::UdpSocket;
+use rand::{thread_rng, Rng};
 
 use packet::Packet;
 use pending_connection::PendingConnection;
-use receiver::Receiver;
 use recv_dgram_timeout::RecvDgramTimeout;
-
-use bytes::{BufMut, Bytes, BytesMut};
 
 use futures::prelude::*;
 
@@ -42,6 +39,7 @@ impl SrtSocketBuilder {
         trace!("Listening on {:?}", self.local_addr);
 
         let socket = SrtSocket {
+            id: SrtSocketBuilder::gen_sockid(),
             sock: UdpSocket::bind(&self.local_addr)?,
             buffer: {
                 let mut tmp = Vec::new();
@@ -55,11 +53,28 @@ impl SrtSocketBuilder {
             None => PendingConnection::listen(socket),
         })
     }
+
+    pub fn build_raw(self) -> Result<SrtSocket> {
+        Ok(SrtSocket {
+            id: SrtSocketBuilder::gen_sockid(),
+            sock: UdpSocket::bind(&self.local_addr)?,
+            buffer: {
+                let mut tmp = Vec::new();
+                tmp.reserve(65536);
+                tmp
+            },
+        })
+    }
+
+    pub fn gen_sockid() -> i32 {
+        thread_rng().gen::<i32>()
+    }
 }
 
 pub struct SrtSocket {
     sock: UdpSocket,
     buffer: Vec<u8>,
+    id: i32,
 }
 
 impl SrtSocket {
@@ -72,10 +87,11 @@ impl SrtSocket {
         self.buffer.resize(0, b'\0');
         packet.serialize(&mut self.buffer);
 
+        let id = self.id;
         Box::new(
             self.sock
                 .send_dgram(self.buffer, addr)
-                .map(move |(sock, buffer)| SrtSocket { sock, buffer }),
+                .map(move |(sock, buffer)| SrtSocket { id, sock, buffer }),
         )
     }
 
@@ -83,14 +99,14 @@ impl SrtSocket {
         mut self,
     ) -> Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = (SrtSocket, Error)>> {
         self.buffer.resize(65536, b'\0');
+
+        let id = self.id;
         Box::new(
             self.sock
                 .recv_dgram(self.buffer)
-                .map_err(|e| {
-                    panic!()
-                })
+                .map_err(|e| panic!(e))
                 .and_then(move |(sock, buffer, size, addr)| {
-                    let srt_socket = SrtSocket { sock, buffer };
+                    let srt_socket = SrtSocket { id, sock, buffer };
 
                     let pack = match Packet::parse(Cursor::new(&srt_socket.buffer[0..size])) {
                         Err(e) => return Err((srt_socket, e)),
@@ -107,6 +123,8 @@ impl SrtSocket {
         timeout: Duration,
     ) -> Box<Future<Item = (SrtSocket, Option<(SocketAddr, Packet)>), Error = (SrtSocket, Error)>>
     {
+        let id = self.id;
+
         return Box::new(
             RecvDgramTimeout::new(self.sock, timeout, self.buffer)
                 .map_err(|e| {
@@ -114,7 +132,7 @@ impl SrtSocket {
                     panic!(e)
                 })
                 .and_then(move |(sock, buffer, data)| {
-                    let srt_socket = SrtSocket { sock, buffer };
+                    let srt_socket = SrtSocket { id, sock, buffer };
 
                     if let Some((size, addr)) = data {
                         // data was received, parse it
@@ -128,5 +146,9 @@ impl SrtSocket {
                     return Ok((srt_socket, None));
                 }),
         );
+    }
+
+    pub fn id(&self) -> i32 {
+        self.id
     }
 }

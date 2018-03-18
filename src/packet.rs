@@ -6,10 +6,10 @@ use bytes::{Buf, BufMut, BytesMut};
 use byteorder::BigEndian;
 
 use std::io::{Cursor, Error, ErrorKind, Result};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 
 /// Represents A UDT/SRT packet
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
     /// A UDT packet carrying data
     ///  0                   1                   2                   3
@@ -122,7 +122,7 @@ impl PacketLocation {
 }
 
 /// The different kind of control packets
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ControlTypes {
     /// The control packet for initiating connections, type 0x0
     /// Does not use Additional Info
@@ -172,7 +172,13 @@ impl ControlTypes {
                 // get the IP
                 let mut ip_buf: [u8; 16] = [0; 16];
                 buf.copy_to_slice(&mut ip_buf);
-                let peer_addr = IpAddr::from(ip_buf);
+
+                // TODO: this is probably really wrong, so fix it
+                let peer_addr = if &ip_buf[4..] == &b"\0\0\0\0\0\0\0\0\0\0\0\0"[..] {
+                    IpAddr::from(Ipv4Addr::new(ip_buf[0], ip_buf[1], ip_buf[2], ip_buf[3]))
+                } else {
+                    IpAddr::from(ip_buf)
+                };
 
                 Ok(ControlTypes::Handshake(HandshakeControlInfo {
                     udt_version,
@@ -228,7 +234,7 @@ impl ControlTypes {
             0x6 => {
                 // ACK2
 
-                unimplemented!()
+                Ok(ControlTypes::Ack2(extra_info))
             }
             0x7 => {
                 // Drop request
@@ -284,7 +290,8 @@ impl ControlTypes {
                     IpAddr::V4(four) => {
                         into.put(&four.octets()[..]);
 
-                        into.put(&b"\0\0\0\0"[..]);
+                        // the data structure reuiqres enough space for an ipv6, so pad the end with 16 - 4 = 12 bytes
+                        into.put(&b"\0\0\0\0\0\0\0\0\0\0\0\0"[..]);
                     }
                     IpAddr::V6(six) => into.put(&six.octets()[..]),
                 }
@@ -307,7 +314,7 @@ impl ControlTypes {
 }
 
 /// The DropRequest control info
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DropRequestControlInfo {
     /// The first message to drop
     pub first: i32,
@@ -317,7 +324,7 @@ pub struct DropRequestControlInfo {
 }
 
 /// The NAK control info
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NakControlInfo {
     /// The loss infomration
     /// If a number in this is a seq number (first bit 0),
@@ -330,7 +337,7 @@ pub struct NakControlInfo {
 }
 
 /// The ACK control info struct
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AckControlInfo {
     /// The packet sequence number that all packets have been recieved until (excluding)
     pub recvd_until: i32,
@@ -351,21 +358,8 @@ pub struct AckControlInfo {
     pub est_link_cap: Option<i32>,
 }
 
-impl AckControlInfo {
-    pub fn new(recvd_until: i32) -> AckControlInfo {
-        AckControlInfo {
-            recvd_until,
-            rtt: None,
-            rtt_variance: None,
-            buffer_available: None,
-            packet_recv_rate: None,
-            est_link_cap: None,
-        }
-    }
-}
-
 /// The control info for handshake packets
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HandshakeControlInfo {
     /// The UDT version, currently 4
     pub udt_version: i32,
@@ -400,7 +394,7 @@ pub struct HandshakeControlInfo {
 }
 
 /// The socket type for a handshake.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SocketType {
     /// A stream socket, 1 when serialized
     Stream,
@@ -430,7 +424,7 @@ impl SocketType {
 }
 
 /// See https://tools.ietf.org/html/draft-gg-udt-03#page-10
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ConnectionType {
     /// A regular connection; one listener and one sender, 1
     Regular,
@@ -439,7 +433,8 @@ pub enum ConnectionType {
     RendezvousFirst,
 
     /// A rendezvous connection, response to intial connect request, -1
-    RendezvousSecond,
+    /// Also a regular connection client response to the second handshake
+    RendezvousRegularSecond,
 
     /// Final rendezvous check, -2
     RendezvousFinal,
@@ -450,7 +445,7 @@ impl ConnectionType {
         match num {
             1 => Ok(ConnectionType::Regular),
             0 => Ok(ConnectionType::RendezvousFirst),
-            -1 => Ok(ConnectionType::RendezvousSecond),
+            -1 => Ok(ConnectionType::RendezvousRegularSecond),
             -2 => Ok(ConnectionType::RendezvousFinal),
             i => Err(Error::new(
                 ErrorKind::InvalidData,
@@ -463,7 +458,7 @@ impl ConnectionType {
         match self {
             &ConnectionType::Regular => 1,
             &ConnectionType::RendezvousFirst => 0,
-            &ConnectionType::RendezvousSecond => -1,
+            &ConnectionType::RendezvousRegularSecond => -1,
             &ConnectionType::RendezvousFinal => -2,
         }
     }
@@ -630,4 +625,30 @@ fn packet_location_to_i32_test() {
     assert_eq!(PacketLocation::Middle.to_i32(), 0b0);
     assert_eq!(PacketLocation::Last.to_i32(), 0b01 << 30);
     assert_eq!(PacketLocation::Only.to_i32(), 0b11 << 30);
+}
+
+#[test]
+fn handshake_ser_des_test() {
+    let pack = Packet::Control {
+        timestamp: 0,
+        dest_sockid: 0,
+        control_type: ControlTypes::Handshake(HandshakeControlInfo {
+            udt_version: 4,
+            sock_type: SocketType::Datagram,
+            init_seq_num: 1827131,
+            max_packet_size: 1500,
+            max_flow_size: 25600,
+            connection_type: ConnectionType::Regular,
+            socket_id: 1231,
+            syn_cookie: 0,
+            peer_addr: "127.0.0.1".parse().unwrap(),
+        }),
+    };
+
+    let mut buf = vec![];
+    pack.serialize(&mut buf);
+
+    let des = Packet::parse(Cursor::new(buf)).unwrap();
+
+    assert_eq!(pack, des);
 }

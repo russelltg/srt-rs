@@ -1,14 +1,17 @@
 extern crate byteorder;
 extern crate bytes;
 
+extern crate either;
 #[macro_use]
 extern crate futures;
 extern crate futures_timer;
+#[macro_use]
+extern crate log;
+extern crate rand;
 extern crate tokio;
 #[macro_use]
 extern crate tokio_io;
-#[macro_use]
-extern crate log;
+
 pub mod socket;
 pub mod packet;
 pub mod pending_connection;

@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Russell Greene <russellgreene8@gmail.com>"]
 
 [dependencies]
-tokio = "^0.1.1"
+tokio = "^0.1"
 tokio-io = "^0.1"
 futures = "^0.1.18"
 bytes = "^0.4"
@@ -12,6 +12,8 @@ byteorder = "^1.2"
 futures-timer = "0.1"
 log = "0.4.1"
 simple_logger = "0.5.0"
+rand = "0.4"
+either = "1.4"
 
 
 [lib]

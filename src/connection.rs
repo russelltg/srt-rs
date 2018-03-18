@@ -1,5 +1,3 @@
-use std::net::SocketAddr;
-
 use receiver::Receiver;
 use sender::Sender;
 
