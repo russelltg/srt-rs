@@ -292,11 +292,11 @@ impl ControlTypes {
             &ControlTypes::KeepAlive => {}
             &ControlTypes::Ack(_, ref c) => {
                 into.put_i32::<BigEndian>(c.recvd_until);
-                // into.put_i32::<BigEndian>(c.rtt.unwrap_or(0));
-                // into.put_i32::<BigEndian>(c.rtt_variance.unwrap_or(0));
-                // into.put_i32::<BigEndian>(c.buffer_available.unwrap_or(0));
-                // into.put_i32::<BigEndian>(c.packet_recv_rate.unwrap_or(0));
-                // into.put_i32::<BigEndian>(c.est_link_cap.unwrap_or(0));
+                into.put_i32::<BigEndian>(c.rtt.unwrap_or(10_000));
+                into.put_i32::<BigEndian>(c.rtt_variance.unwrap_or(50_000));
+                into.put_i32::<BigEndian>(c.buffer_available.unwrap_or(8175)); // TODO: better defaults
+                into.put_i32::<BigEndian>(c.packet_recv_rate.unwrap_or(10_000));
+                into.put_i32::<BigEndian>(c.est_link_cap.unwrap_or(1_000));
             }
             &ControlTypes::Nak(ref _n) => unimplemented!(),
             &ControlTypes::Shutdown => {}
