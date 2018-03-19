@@ -305,7 +305,9 @@ impl ControlTypes {
                 into.put_i32::<BigEndian>(c.packet_recv_rate.unwrap_or(10_000));
                 into.put_i32::<BigEndian>(c.est_link_cap.unwrap_or(1_000));
             }
-            &ControlTypes::Nak(ref _n) => unimplemented!(),
+            &ControlTypes::Nak(ref n) => for &loss in &n.loss_info {
+                into.put_i32::<BigEndian>(loss);
+            },
             &ControlTypes::Shutdown => {}
             &ControlTypes::Ack2(_) => {}
             &ControlTypes::DropRequest(_, ref _d) => unimplemented!(),
