@@ -99,10 +99,10 @@ pub struct Receiver {
     /// First is seq num, second is time
     packet_pair_window: Vec<(i32, i32)>,
 
-    /// Wakes the thread when an ACK is to be sent
+    /// Wakes the thread when an ACK or a NAK is to be sent
     ack_interval: Interval,
 
-    /// the highest received packet sequence number
+    /// the highest received packet sequence number + 1
     lrsn: i32,
 
     /// The number of consecutive timeouts
@@ -116,6 +116,9 @@ pub struct Receiver {
     probe_time: Option<i32>,
 
     timeout_timer: Delay,
+
+    /// The ACK sequence number of the largest ACK2 received
+    lr_ack_acked: i32,
 }
 
 enum ReadyType {
@@ -148,6 +151,7 @@ impl Receiver {
             exp_count: 1,
             probe_time: None,
             timeout_timer: Delay::new(Duration::from_secs(1)),
+            lr_ack_acked: 0,
         }
     }
 
@@ -156,11 +160,28 @@ impl Receiver {
     }
 
     fn check_ack_timer(&mut self) -> Result<()> {
+
+        // early return if the timer isn't triggered
         match self.ack_interval.poll() {
             Err(e) => panic!(e),
             Ok(Async::NotReady) => return Ok(()),
             Ok(Async::Ready(_)) => {}
         }
+
+        // get largest inclusive received packet number
+        let num_to_ack = match self.loss_list.first() {
+            // There is an element in the loss list
+            Some(i) => i,
+            // No elements, use lrsn,
+            None => self.lrsn
+        };
+
+        // 2) If (a) the ACK number equals to the largest ACK number ever
+        //    acknowledged by ACK2, or 
+        // (b) it is equal to the ACK number in the
+        //     last ACK and the time interval between this two ACK packets is
+        //     less than 2 RTTs, stop (do not send this ACK).
+        
 
         // Send an ACK packet
         let ts = self.sock.get_timestamp();
@@ -227,7 +248,7 @@ impl Receiver {
                             let (_, send_timestamp) = self.ack_history_window[id];
 
                             // 2) Update the largest ACK number ever been acknowledged.
-                            // TODO: actually do this. Not sure why it's necessary
+                            self.lr_ack_acked = seq_num;
 
                             // 3) Calculate new rtt according to the ACK2 arrival time and the ACK
                             //    departure time, and update the RTT value as: RTT = (RTT * 7 +
