@@ -39,7 +39,6 @@ impl PendingConnection {
             sock: Some(sock),
             conn_type: ConnectionType::Listen,
             state: ConnectionState::WaitingForHandshake,
-            // TODO: should this be random?
         }
     }
 

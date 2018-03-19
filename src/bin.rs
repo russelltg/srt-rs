@@ -9,10 +9,8 @@ extern crate tokio_io;
 
 use log::LevelFilter;
 
-use std::net::ToSocketAddrs;
 use srt::socket::SrtSocketBuilder;
 use srt::connection::Connection;
-use srt::receiver::Receiver;
 use tokio::net::UdpSocket;
 use tokio::net::UdpFramed;
 use tokio_io::codec::BytesCodec;
