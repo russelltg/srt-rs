@@ -16,6 +16,8 @@ Reference implementation is available at https://github.com/haivision/srt
 - [ ] Rendezvous connecting
 - [x] Receiving
 - [ ] Sending
+- [ ] Special SRT packets
+- [ ] Actual SRT (TSBPD)
 
 
 # Heap efficiency
