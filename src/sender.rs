@@ -1,13 +1,7 @@
-use futures::prelude::*;
-
-use std::io::Error;
-
-use bytes::Bytes;
-
 pub struct Sender {}
 
 impl Sender {
-    fn new(socket: SrtSocket) -> Sender {}
+    //    fn new(socket: SrtSocket) -> Sender {}
 }
 
 // impl Sink for Sender {

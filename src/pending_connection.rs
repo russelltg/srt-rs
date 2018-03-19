@@ -1,7 +1,8 @@
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
+use std::mem;
 
 use futures::prelude::*;
 
@@ -13,38 +14,14 @@ use receiver::Receiver;
 pub struct PendingConnection {
     conn_type: ConnectionType,
     state: ConnectionState,
-    future: RSFuture,
-}
-
-enum RSFuture {
-    Recv(Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = (SrtSocket, Error)>>),
-    Snd(Box<Future<Item = SrtSocket, Error = Error>>),
-}
-
-impl RSFuture {
-    fn sender(&mut self) -> Option<&mut Box<Future<Item = SrtSocket, Error = Error>>> {
-        match self {
-            &mut RSFuture::Recv(_) => None,
-            &mut RSFuture::Snd(ref mut s) => Some(s),
-        }
-    }
-
-    fn _receiver(
-        &mut self,
-    ) -> Option<&mut Box<Future<Item = (SrtSocket, SocketAddr, Packet), Error = (SrtSocket, Error)>>>
-    {
-        match self {
-            &mut RSFuture::Recv(ref mut r) => Some(r),
-            &mut RSFuture::Snd(_) => None,
-        }
-    }
+    sock: Option<SrtSocket>,
 }
 
 // The state of the connection initiation
 enum ConnectionState {
     WaitingForHandshake,
     WaitingForCookieResp(i32 /*cookie*/),
-    Done(SocketAddr, i32 /*socketid*/, i32 /*init_seq_num*/),
+    Done(SocketAddr, i32, i32),
 }
 
 enum ConnectionType {
@@ -59,7 +36,7 @@ enum ConnectionType {
 impl PendingConnection {
     pub fn listen(sock: SrtSocket) -> PendingConnection {
         PendingConnection {
-            future: RSFuture::Recv(sock.recv_packet()),
+            sock: Some(sock),
             conn_type: ConnectionType::Listen,
             state: ConnectionState::WaitingForHandshake,
             // TODO: should this be random?
@@ -84,38 +61,31 @@ impl Future for PendingConnection {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Connection, Error> {
+        // the wakeup could be becaus of poll_complete, handle that
+
         loop {
+            let sock = self.sock
+                .as_mut()
+                .expect("Poll after PendingConnection completion");
+
+            sock.poll_complete()?;
+
             match self.conn_type {
                 ConnectionType::Listen => {
-                    let (sock, addr, packet) = match self.future {
-                        ref mut fut @ RSFuture::Snd(_) => {
-                            let sock = try_ready!(fut.sender().unwrap().poll());
-
-                            if let ConnectionState::Done(addr, remote_socketid, init_seq_num) =
-                                self.state
-                            {
-                                return Ok(Async::Ready(Connection::Recv(Receiver::new(
-                                    sock,
-                                    addr,
-                                    remote_socketid,
-                                    init_seq_num,
-                                ))));
-                            }
-
-                            *fut = RSFuture::Recv(sock.recv_packet());
+                    let (packet, addr) = match sock.poll() {
+                        Ok(Async::Ready(Some(p))) => p,
+                        Ok(Async::Ready(None)) => {
+                            return Err(Error::new(
+                                ErrorKind::UnexpectedEof,
+                                "Unexpected EOF when reading stream",
+                            ));
+                        }
+                        Ok(Async::NotReady) => return Ok(Async::NotReady),
+                        Err(e) => {
+                            warn!("Error decoding packet: {:?}", e);
 
                             continue;
                         }
-                        RSFuture::Recv(ref mut fut) => match fut.poll() {
-                            Err((sock, e)) => {
-                                warn!("Error decoding packet: {:?}", e);
-
-                                *fut = sock.recv_packet();
-                                continue;
-                            }
-                            Ok(Async::Ready(d)) => d,
-                            Ok(Async::NotReady) => return Ok(Async::NotReady),
-                        },
                     };
 
                     match self.state {
@@ -160,8 +130,7 @@ impl Future for PendingConnection {
                                 self.state = ConnectionState::WaitingForCookieResp(cookie);
 
                                 // send the packet
-                                self.future =
-                                    RSFuture::Snd(sock.send_packet(&resp_handshake, &addr))
+                                sock.start_send((resp_handshake, addr))?;
                             }
                         }
 
@@ -188,14 +157,14 @@ impl Future for PendingConnection {
                                 // check that the cookie matches
                                 if shake.syn_cookie != cookie {
                                     // wait for the next one
-                                    trace!(
+                                    warn!(
                                         "Received invalid cookie handshake from {:?}: {}, should be {}",
                                         addr, shake.syn_cookie, cookie
                                     );
                                     continue;
                                 }
 
-                                trace!("Cookie was correct, connection established to {:?}", addr);
+                                info!("Cookie was correct, connection established to {:?}", addr);
 
                                 // select the smaller packet size and max window size
                                 // TODO: allow configuration of these parameters, for now just
@@ -215,24 +184,41 @@ impl Future for PendingConnection {
                                 };
 
                                 // send the packet
-                                self.future =
-                                    RSFuture::Snd(sock.send_packet(&resp_handshake, &addr));
+                                sock.start_send((resp_handshake, addr))?;
+                                // poll_completed here beacuse we won't get a chance to call it later
+                                sock.poll_complete()?;
 
-                                // don't just return now, wait until the packet is sent
+                                // finish the connection
                                 self.state = ConnectionState::Done(
                                     addr,
                                     shake.socket_id,
                                     shake.init_seq_num,
                                 );
+                                // break out to end the borrow on self.sock
+                                break;
                             }
                         }
-                        // This is handled further up
+                        // this should never happen
                         ConnectionState::Done(_, _, _) => panic!(),
                     }
                 }
                 ConnectionType::Connect(_) => unimplemented!(),
                 ConnectionType::Rendezvous { .. } => unimplemented!(),
             };
+
+            sock.poll_complete()?;
+        }
+
+        match self.state {
+            ConnectionState::Done(addr, sockid, init_seq) => {
+                return Ok(Async::Ready(Connection::Recv(Receiver::new(
+                    mem::replace(&mut self.sock, None).unwrap(),
+                    addr,
+                    sockid,
+                    init_seq,
+                ))))
+            }
+            _ => panic!(),
         }
     }
 }

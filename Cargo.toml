@@ -4,18 +4,16 @@ version = "0.1.0"
 authors = ["Russell Greene <russellgreene8@gmail.com>"]
 
 [dependencies]
-tokio-core = "^0.1"
+tokio-core = "^0.1.12"
+tokio-io = "^0.1.5"
 tokio = "^0.1"
-tokio-io = "^0.1"
 futures = "^0.1.18"
 bytes = "^0.4"
 byteorder = "^1.2"
-futures-timer = "0.1"
+futures-timer = "0.1.1"
 log = "0.4.1"
 simple_logger = "0.5.0"
 rand = "0.4"
-either = "1.4"
-
 
 [lib]
 name = "srt"

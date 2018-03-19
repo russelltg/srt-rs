@@ -1,22 +1,27 @@
-use std::net::SocketAddr;
+use std::io::{Cursor, Error, Result};
 
-use tokio_core::net::UdpCodec;
+use packet::Packet;
+use bytes::BytesMut;
+use tokio_io::codec::{Decoder, Encoder};
 
 pub struct PacketCodec {}
 
-impl UdpCodec for PacketCodec {
-    type In = (Packet, SocketAddr);
-    type Out = (Packet, SocketAddr);
+impl Decoder for PacketCodec {
+    type Item = Packet;
+    type Error = Error;
 
-    fn decode(&mut self, src: &SocketAddr, buf: &[u8]) -> Result<(Packet, SocketAddr)> {
-        (Packet::parse(buf)?, src)
+    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Packet>> {
+        Packet::parse(Cursor::new(buf)).map(|p| Some(p))
     }
+}
 
-    fn encode(&mut self, msg: (Packet, SocketAddr), buf: &mut Vec<u8>) -> SocketAddr {
-        let (packet, addr) = msg;
+impl Encoder for PacketCodec {
+    type Item = Packet;
+    type Error = Error;
 
+    fn encode(&mut self, packet: Packet, buf: &mut BytesMut) -> Result<()> {
         packet.serialize(buf);
 
-        addr
+        Ok(())
     }
 }

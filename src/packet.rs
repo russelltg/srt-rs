@@ -1,7 +1,7 @@
 // Packet structures
 // see https://tools.ietf.org/html/draft-gg-udt-03#page-5
 
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut, Bytes};
 
 use byteorder::BigEndian;
 
@@ -52,7 +52,7 @@ pub enum Packet {
         dest_sockid: i32,
 
         /// The rest of the packet, the payload
-        payload: BytesMut,
+        payload: Bytes,
     },
 
     /// A UDP packet carrying control information
