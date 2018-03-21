@@ -393,7 +393,7 @@ impl Receiver {
                 // TODO: check incoming socket id
 
                 match control_type {
-                    ControlTypes::Ack(_seq_num, _info) => unimplemented!(),
+                    ControlTypes::Ack(_, _) => warn!("Receiver received ACK packet, unusual"),
                     ControlTypes::Ack2(seq_num) => {
                         // 1) Locate the related ACK in the ACK History Window according to the
                         //    ACK sequence number in this ACK2.
@@ -460,7 +460,7 @@ impl Receiver {
                         ))?;
                     }
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
-                    ControlTypes::Nak(_info) => unimplemented!(),
+                    ControlTypes::Nak(_info) => warn!("Receiver received NAK packet, unusual"),
                     ControlTypes::Shutdown => return Ok(Some(ReadyType::Shutdown)), // end of stream
                 }
             }
