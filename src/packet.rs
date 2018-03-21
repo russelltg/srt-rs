@@ -197,7 +197,7 @@ impl ControlTypes {
                 // ACK
 
                 // read control info
-                let recvd_until = buf.get_i32::<BigEndian>();
+                let ack_number = buf.get_i32::<BigEndian>();
 
                 // if there is more data, use it. However, it's optional
                 let mut opt_read_next = move || {
@@ -216,7 +216,7 @@ impl ControlTypes {
                 Ok(ControlTypes::Ack(
                     extra_info,
                     AckControlInfo {
-                        recvd_until,
+                        ack_number,
                         rtt,
                         rtt_variance,
                         buffer_available,
@@ -298,7 +298,7 @@ impl ControlTypes {
             }
             &ControlTypes::KeepAlive => {}
             &ControlTypes::Ack(_, ref c) => {
-                into.put_i32::<BigEndian>(c.recvd_until);
+                into.put_i32::<BigEndian>(c.ack_number);
                 into.put_i32::<BigEndian>(c.rtt.unwrap_or(10_000));
                 into.put_i32::<BigEndian>(c.rtt_variance.unwrap_or(50_000));
                 into.put_i32::<BigEndian>(c.buffer_available.unwrap_or(8175)); // TODO: better defaults
@@ -342,7 +342,7 @@ pub struct NakControlInfo {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AckControlInfo {
     /// The packet sequence number that all packets have been recieved until (excluding)
-    pub recvd_until: i32,
+    pub ack_number: i32,
 
     /// Round trip time
     pub rtt: Option<i32>,
