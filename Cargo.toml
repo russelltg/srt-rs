@@ -1,5 +1,5 @@
 [package]
-name = "srt"
+name = "srt-transport"
 version = "0.1.0"
 authors = ["Russell Greene <russellgreene8@gmail.com>"]
 description = "SRT implementation in Rust"
