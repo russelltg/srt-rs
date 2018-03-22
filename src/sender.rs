@@ -81,32 +81,32 @@ impl Sender {
 
                         // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
                         let now = self.sock.get_timestamp();
-                        self.sock.start_send(Packet::Control {
+                        self.sock.start_send((Packet::Control {
                             timestamp: now,
                             dest_sockid: self.remote_sockid,
-                            contorl_type: ControlTypes::Ack2(seq_num),
-                        })?;
+                            control_type: ControlTypes::Ack2(seq_num),
+                        }, self.remote))?;
                         
                         // 3) Update RTT and RTTVar.
-                        self.rtt = data.rtt;
-                        self.rtt_var = data.rtt_var;
+                        self.rtt = data.rtt.unwrap_or(0);
+                        self.rtt_var = data.rtt_variance.unwrap_or(0);
 
                         // 4) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
                         // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.
    
                         // 5) Update flow window size.
-                        self.flow_window_size = data.flow_window_size;
+						// TODO: pretty sure this has to do with congestion control. So implement that.
                         
                         // 6) If this is a Light ACK, stop.
                         // TODO: wat
 
                         // 7) Update packet arrival rate: A = (A * 7 + a) / 8, where a is the
                         //    value carried in the ACK.
-                        self.pkt_arr_rate = (self.pkt_arr_rate * 7 + data.packet_recv_rate) / 8;
+                        self.pkt_arr_rate = (self.pkt_arr_rate * 7 + data.packet_recv_rate.unwrap_or(0)) / 8;
 
                         // 8) Update estimated link capacity: B = (B * 7 + b) / 8, where b is
                         //    the value carried in the ACK.
-                        self.est_link_cap = (self.est_link_cap * 7 + data.est_link_cap) / 8;
+                        self.est_link_cap = (self.est_link_cap * 7 + data.est_link_cap.unwrap_or(0)) / 8;
 
                         // 9) Update sender's buffer (by releasing the buffer that has been
                         //    acknowledged).
@@ -126,6 +126,7 @@ impl Sender {
                     ControlTypes::Shutdown => unimplemented!(),
                 }
             }
+			Packet::Data { .. } => warn!("Sender received data packet"),
         }
 
         Ok(())
@@ -178,5 +179,8 @@ impl Sink for Sender {
         }
     }
 
-    fn close(&mut self) -> Poll<(), Error> {}
+    fn close(&mut self) -> Poll<(), Error> {
+		// TODO: send shutdown packet
+		self.poll_complete()		
+	}
 }
