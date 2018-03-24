@@ -29,6 +29,13 @@ pub struct Sender {
     //    are stored in increasing order.
     loss_list: VecDeque<Packet>,
 
+	/// The buffer to store packets for retransmision
+	buffer: VecDeque<Packet>,
+
+	/// The first sequence number in buffer, so seq number i would be found at
+	/// buffer[i - first_seq]
+	first_seq: i32,
+
     /// The sequence number of the largest acknowledged packet + 1
     lr_acked_packet: i32,
 
@@ -59,6 +66,8 @@ impl Sender {
             pending_packets: VecDeque::new(),
             next_seq_number: initial_seq_num,
             loss_list: VecDeque::new(),
+			buffer: VecDeque::new(),
+			first_seq: initial_seq_num,
             lr_acked_packet: initial_seq_num,
             rtt: 10_000,
             rtt_var: 0,
@@ -110,19 +119,26 @@ impl Sender {
 
                         // 9) Update sender's buffer (by releasing the buffer that has been
                         //    acknowledged).
+						while data.ack_number > self.first_seq {
+							self.buffer.pop_front();
+							self.first_seq += 1;
+						}
                            
-                        // TODO: 
-
                         // 10) Update sender's loss list (by removing all those that has been
                         //     acknowledged).
-
-                        // TODO:
+						while let Some(pack) = self.loss_list.pop_front() {
+							if pack.seq_number().unwrap() >= data.ack_number {
+								self.loss_list.push_front(pack);
+							}
+						}
                     },
                     ControlTypes::Ack2(_) => warn!("Sender received ACK2, unusual"),
                     ControlTypes::DropRequest(_msg_id, _info) => unimplemented!(),
                     ControlTypes::Handshake(_shake) => unimplemented!(),
                     ControlTypes::KeepAlive => unimplemented!(),
-                    ControlTypes::Nak(_info) => unimplemented!(),
+                    ControlTypes::Nak(_info) => {
+						
+					}
                     ControlTypes::Shutdown => unimplemented!(),
                 }
             }

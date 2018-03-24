@@ -84,6 +84,16 @@ pub enum Packet {
     },
 }
 
+impl Packet {
+	pub fn seq_number(&self) -> Option<i32> {
+		if let &Packet::Data { seq_number, .. } = self {
+			Some(seq_number)		
+		} else {
+			None
+		}
+	}	
+}
+
 /// Signifies the packet location in a message for a data packet
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum PacketLocation {
