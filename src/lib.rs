@@ -14,7 +14,7 @@ pub mod socket;
 pub mod packet;
 pub mod pending_connection;
 pub mod receiver;
-pub mod connection;
+pub mod connected;
 pub mod sender;
 pub mod codec;
 

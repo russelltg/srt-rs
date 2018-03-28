@@ -29,12 +29,12 @@ pub struct Sender {
     //    are stored in increasing order.
     loss_list: VecDeque<Packet>,
 
-	/// The buffer to store packets for retransmision
-	buffer: VecDeque<Packet>,
+    /// The buffer to store packets for retransmision
+    buffer: VecDeque<Packet>,
 
-	/// The first sequence number in buffer, so seq number i would be found at
-	/// buffer[i - first_seq]
-	first_seq: i32,
+    /// The first sequence number in buffer, so seq number i would be found at
+    /// buffer[i - first_seq]
+    first_seq: i32,
 
     /// The sequence number of the largest acknowledged packet + 1
     lr_acked_packet: i32,
@@ -66,8 +66,8 @@ impl Sender {
             pending_packets: VecDeque::new(),
             next_seq_number: initial_seq_num,
             loss_list: VecDeque::new(),
-			buffer: VecDeque::new(),
-			first_seq: initial_seq_num,
+            buffer: VecDeque::new(),
+            first_seq: initial_seq_num,
             lr_acked_packet: initial_seq_num,
             rtt: 10_000,
             rtt_var: 0,
@@ -135,7 +135,8 @@ impl Sender {
                     ControlTypes::Ack2(_) => warn!("Sender received ACK2, unusual"),
                     ControlTypes::DropRequest(_msg_id, _info) => unimplemented!(),
                     ControlTypes::Handshake(_shake) => unimplemented!(),
-                    ControlTypes::KeepAlive => unimplemented!(),
+					// TODO: reset ACK
+                    ControlTypes::KeepAlive => {},
                     ControlTypes::Nak(_info) => {
 						
 					}
@@ -175,7 +176,7 @@ impl Sink for Sender {
                 // get the payload
                 let packet = self.loss_list.pop_front().unwrap();
 
-                self.sock.start_send((packet, self.remote));
+                self.sock.start_send((packet, self.remote))?;
             } else {
                 // 2) In messaging mode, if the packets has been the loss list for a
                 //    time more than the application specified TTL (time-to-live), send
@@ -196,7 +197,7 @@ impl Sink for Sender {
     }
 
     fn close(&mut self) -> Poll<(), Error> {
-		// TODO: send shutdown packet
-		self.poll_complete()		
-	}
+        // TODO: send shutdown packet
+        self.poll_complete()
+    }
 }

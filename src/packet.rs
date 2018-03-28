@@ -85,13 +85,13 @@ pub enum Packet {
 }
 
 impl Packet {
-	pub fn seq_number(&self) -> Option<i32> {
-		if let &Packet::Data { seq_number, .. } = self {
-			Some(seq_number)		
-		} else {
-			None
-		}
-	}	
+    pub fn seq_number(&self) -> Option<i32> {
+        if let &Packet::Data { seq_number, .. } = self {
+            Some(seq_number)
+        } else {
+            None
+        }
+    }
 }
 
 /// Signifies the packet location in a message for a data packet
@@ -210,12 +210,10 @@ impl ControlTypes {
                 let ack_number = buf.get_i32::<BigEndian>();
 
                 // if there is more data, use it. However, it's optional
-                let mut opt_read_next = move || {
-                    if buf.remaining() > 4 {
-                        Some(buf.get_i32::<BigEndian>())
-                    } else {
-                        None
-                    }
+                let mut opt_read_next = move || if buf.remaining() > 4 {
+                    Some(buf.get_i32::<BigEndian>())
+                } else {
+                    None
                 };
                 let rtt = opt_read_next();
                 let rtt_variance = opt_read_next();
@@ -315,9 +313,11 @@ impl ControlTypes {
                 into.put_i32::<BigEndian>(c.packet_recv_rate.unwrap_or(10_000));
                 into.put_i32::<BigEndian>(c.est_link_cap.unwrap_or(1_000));
             }
-            &ControlTypes::Nak(ref n) => for &loss in &n.loss_info {
-                into.put_i32::<BigEndian>(loss);
-            },
+            &ControlTypes::Nak(ref n) => {
+                for &loss in &n.loss_info {
+                    into.put_i32::<BigEndian>(loss);
+                }
+            }
             &ControlTypes::Shutdown => {}
             &ControlTypes::Ack2(_) => {}
             &ControlTypes::DropRequest(_, ref _d) => unimplemented!(),
