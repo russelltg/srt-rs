@@ -1,9 +1,11 @@
 use std::collections::VecDeque;
 use std::io::{Error, Result};
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use bytes::Bytes;
 use futures::prelude::*;
+use futures_timer::Delay;
 
 use packet::{ControlTypes, Packet, PacketLocation};
 use socket::SrtSocket;
@@ -53,6 +55,12 @@ pub struct Sender {
 
     /// estimated link capacity
     est_link_cap: i32,
+
+    /// The inter-packet interval, updated by cc
+    snd_duration: Duration,
+
+    /// The send timer
+    snd_timer: Delay,
 }
 
 impl Sender {
@@ -77,6 +85,9 @@ impl Sender {
             rtt_var: 0,
             pkt_arr_rate: 0,
             est_link_cap: 0,
+            // TODO: What should this actually be?
+            snd_duration: Duration::from_millis(1),
+            snd_timer: Delay::new(Duration::from_millis(1)),
         }
     }
 
@@ -153,6 +164,29 @@ impl Sender {
 
         Ok(())
     }
+
+    fn send_packet(&mut self, payload: Bytes) -> Result<()> {
+        let pack = Packet::Data {
+            dest_sockid: self.remote_sockid,
+            in_order_delivery: false, // TODO: research this
+            message_loc: PacketLocation::Only,
+            message_number: {
+                self.next_message_number += 1;
+
+                self.next_message_number - 1
+            },
+            seq_number: {
+                self.next_seq_number += 1;
+
+                self.next_seq_number - 1
+            },
+            timestamp: self.sock.get_timestamp(), // TODO: allow senders to put their own timestamps here
+            payload,
+        };
+        self.sock.start_send((pack, self.remote))?;
+
+        Ok(())
+    }
 }
 
 impl Sink for Sender {
@@ -179,6 +213,7 @@ impl Sink for Sender {
                 // packet in the list and remove it from the list.
 
                 // get the payload
+                // TODO: implement congestion control
                 let packet = self.loss_list.pop_front().unwrap();
 
                 self.sock.start_send((packet, self.remote))?;
@@ -195,33 +230,29 @@ impl Sink for Sender {
                 //    1).
                 // b. Pack a new data packet and send it out.
 
-                // TODO: implement congestion control
-                let payload = match self.pending_packets.pop_front() {
+                self.send_packet(match self.pending_packets.pop_front() {
                     Some(p) => p,
                     None => return Ok(Async::Ready(())),
-                };
-                let pack = Packet::Data {
-                    dest_sockid: self.remote_sockid,
-                    in_order_delivery: false, // TODO: research this
-                    message_loc: PacketLocation::Only,
-                    message_number: {
-                        self.next_message_number += 1;
+                });
 
-                        self.next_message_number - 1
-                    },
-                    seq_number: {
-                        self.next_seq_number += 1;
-
-                        self.next_seq_number - 1
-                    },
-                    timestamp: self.sock.get_timestamp(), // TODO: allow senders to put their own timestamps here
-                    payload,
-                };
-                self.sock.start_send((pack, self.remote));
-
+                // 5) If the sequence number of the current packet is 16n, where n is an
+                //     integer, go to 2) (which is send another packet).
+                if (self.next_seq_number - 1) % 16 == 0 {
+                    self.send_packet(match self.pending_packets.pop_front() {
+                        Some(p) => p,
+                        None => return Ok(Async::Ready(())),
+                    });
+                    continue;
+                }
             }
 
-            // 5
+            // 6) Wait (SND - t) time, where SND is the inter-packet interval
+            //     updated by congestion control and t is the total time used by step
+            //     1 to step 5. Go to 1).
+
+            // TODO: update SND duration
+
+            self.snd_timer.reset(self.snd_duration);
         }
     }
 

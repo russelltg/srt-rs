@@ -17,6 +17,8 @@ pub mod receiver;
 pub mod connected;
 pub mod sender;
 pub mod codec;
+pub mod congestion_control;
+pub mod default_congestion_control;
 
 pub use packet::Packet;
 pub use socket::{SrtSocket, SrtSocketBuilder};
