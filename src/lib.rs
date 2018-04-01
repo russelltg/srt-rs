@@ -19,6 +19,8 @@ pub mod sender;
 pub mod codec;
 pub mod congestion_control;
 pub mod default_congestion_control;
+pub mod srt_object;
 
 pub use packet::Packet;
 pub use socket::{SrtSocket, SrtSocketBuilder};
+pub use srt_object::SrtObject;

@@ -4,16 +4,18 @@ use std::net::SocketAddr;
 use futures::prelude::*;
 
 use connected::Connected;
-use socket::SrtSocket;
+use Packet;
 
-pub struct Rendezvous {
+pub struct Rendezvous<T> {
     local_public: SocketAddr,
     remote_public: SocketAddr,
-    sock: SrtSocket,
+    sock: T,
 }
 
-impl Rendezvous {
-    pub fn new(sock: SrtSocket, local_public: SocketAddr, remote_public: SocketAddr) -> Rendezvous {
+impl<T> Rendezvous<T>
+    where T: Stream<Item=(Packet, SocketAddr), Error=Error> +
+    Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
+    pub fn new(sock: T, local_public: SocketAddr, remote_public: SocketAddr) -> Rendezvous<T> {
         Rendezvous {
             sock,
             local_public,
@@ -22,11 +24,13 @@ impl Rendezvous {
     }
 }
 
-impl Future for Rendezvous {
-    type Item = Connected;
+impl<T> Future for Rendezvous<T>
+    where T: Stream<Item=(Packet, SocketAddr), Error=Error> +
+    Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
+    type Item = Connected<T>;
     type Error = Error;
 
-    fn poll(&mut self) -> Poll<Connected, Error> {
+    fn poll(&mut self) -> Poll<Connected<T>, Error> {
         unimplemented!()
     }
 }

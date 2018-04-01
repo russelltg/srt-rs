@@ -1,17 +1,23 @@
 use std::collections::VecDeque;
 use std::io::{Error, Result};
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::Delay;
 
+use SrtObject;
 use packet::{ControlTypes, Packet, PacketLocation};
-use socket::SrtSocket;
 
-pub struct Sender {
-    sock: SrtSocket,
+pub struct Sender<T> {
+    sock: T,
+
+    /// The local UDT socket id
+    local_sockid: i32,
+
+    /// The start time of the socket
+    socket_start_time: Instant,
 
     /// The remote addr this is connected to
     remote: SocketAddr,
@@ -63,15 +69,20 @@ pub struct Sender {
     snd_timer: Delay,
 }
 
-impl Sender {
+impl<T> Sender<T>     where T: Stream<Item=(Packet, SocketAddr), Error=Error> + Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
+
     pub fn new(
-        sock: SrtSocket,
+        sock: T,
+        local_sockid: i32,
+        socket_start_time: Instant,
         remote: SocketAddr,
         remote_sockid: i32,
         initial_seq_num: i32,
-    ) -> Sender {
+    ) -> Sender<T> {
         Sender {
             sock,
+            local_sockid,
+            socket_start_time,
             remote,
             remote_sockid,
             pending_packets: VecDeque::new(),
@@ -103,7 +114,7 @@ impl Sender {
                         self.lr_acked_packet = data.ack_number;
 
                         // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
-                        let now = self.sock.get_timestamp();
+                        let now = self.get_timestamp();
                         self.sock.start_send((Packet::Control {
                             timestamp: now,
                             dest_sockid: self.remote_sockid,
@@ -180,7 +191,7 @@ impl Sender {
 
                 self.next_seq_number - 1
             },
-            timestamp: self.sock.get_timestamp(), // TODO: allow senders to put their own timestamps here
+            timestamp: self.get_timestamp(), // TODO: allow senders to put their own timestamps here
             payload,
         };
         self.sock.start_send((pack, self.remote))?;
@@ -189,7 +200,8 @@ impl Sender {
     }
 }
 
-impl Sink for Sender {
+impl<T> Sink for Sender<T>    where T: Stream<Item=(Packet, SocketAddr), Error=Error> + Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
+
     type SinkItem = Bytes;
     type SinkError = Error;
 
@@ -259,5 +271,42 @@ impl Sink for Sender {
     fn close(&mut self) -> Poll<(), Error> {
         // TODO: send shutdown packet
         self.poll_complete()
+    }
+}
+
+impl<T> SrtObject for Sender<T> {
+    fn packet_arrival_rate(&self) -> i32 {
+        unimplemented!()
+    }
+
+    fn rtt(&self) -> Duration {
+        unimplemented!()
+    }
+
+    fn estimated_bandwidth(&self) -> i32 {
+        unimplemented!()
+    }
+
+
+    /// Receiver doesn't have this info, so yields None
+    fn packet_send_rate(&self) -> Option<i32> {
+        unimplemented!()
+    }
+
+    /// The maximum packet size, in bytes
+    fn max_packet_size(&self) -> i32 {
+        unimplemented!()
+    }
+
+    fn start_time(&self) -> Instant {
+        self.socket_start_time
+    }
+
+    /// Get the SRT timestamp, which is microseconds since `start_time`.
+    fn get_timestamp(&self) -> i32 {
+        let elapsed = self.start_time().elapsed();
+
+        (elapsed.as_secs() * 1_000_000
+            + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
     }
 }

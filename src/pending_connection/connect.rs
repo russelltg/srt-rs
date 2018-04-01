@@ -4,24 +4,26 @@ use std::net::SocketAddr;
 use futures::prelude::*;
 
 use connected::Connected;
-use socket::SrtSocket;
+use packet::Packet;
 
-pub struct Connect {
+pub struct Connect<T> {
     remote: SocketAddr,
-    sock: SrtSocket,
+    sock: T,
 }
 
-impl Connect {
-    pub fn new(sock: SrtSocket, remote: SocketAddr) -> Connect {
+impl<T> Connect<T> {
+    pub fn new(sock: T, remote: SocketAddr) -> Connect<T> {
         Connect { sock, remote }
     }
 }
 
-impl Future for Connect {
-    type Item = Connected;
+impl<T> Future for Connect<T>
+    where T: Stream<Item=(Packet, SocketAddr), Error=Error> +
+    Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
+    type Item = Connected<T>;
     type Error = Error;
 
-    fn poll(&mut self) -> Poll<Connected, Error> {
+    fn poll(&mut self) -> Poll<Connected<T>, Error> {
         unimplemented!()
     }
 }

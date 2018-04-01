@@ -1,14 +1,14 @@
 use std::io::{Error, Result};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::net::SocketAddr;
 use std::cmp;
 use std::iter::Iterator;
 
-use socket::SrtSocket;
 use packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet};
 use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
+use SrtObject;
 
 struct LossListEntry {
     seq_num: i32,
@@ -98,7 +98,7 @@ where
     ret
 }
 
-pub struct Receiver {
+pub struct Receiver<T> {
     remote: SocketAddr,
     remote_sockid: i32,
 
@@ -110,8 +110,11 @@ pub struct Receiver {
     /// is calculated each ACK2
     rtt_variance: i32,
 
+    /// The socket ID of the local UDT entry
+    local_sockid: i32,
+
     /// the future to send or recieve packets
-    sock: SrtSocket,
+    sock: T,
 
     /// The time to wait for a packet to arrive
     listen_timeout: Duration,
@@ -162,6 +165,9 @@ pub struct Receiver {
 
     /// The ACK sequence number of the largest ACK2 received, and the ack number
     lr_ack_acked: (i32, i32),
+
+    /// The socket start time, timestamp zero
+    sock_start_time: Instant,
 }
 
 enum ReadyType {
@@ -169,18 +175,23 @@ enum ReadyType {
     Shutdown,
 }
 
-impl Receiver {
+impl<T> Receiver<T>
+    where T: Stream<Item=(Packet, SocketAddr), Error=Error> +
+    Sink<SinkItem=(Packet, SocketAddr), SinkError=Error>{
     pub fn new(
-        sock: SrtSocket,
+        sock: T,
         remote: SocketAddr,
         remote_sockid: i32,
         initial_seq_num: i32,
-    ) -> Receiver {
+        local_sockid: i32,
+        sock_start_time: Instant,
+    ) -> Receiver<T> {
         Receiver {
             remote,
             remote_sockid,
             // TODO: what's the actual timeout
             sock,
+            local_sockid,
             rtt: 10_000,
             rtt_variance: 1_000,
             listen_timeout: Duration::from_secs(1),
@@ -195,8 +206,10 @@ impl Receiver {
             probe_time: None,
             timeout_timer: Delay::new(Duration::from_secs(1)),
             lr_ack_acked: (0, 0),
+            sock_start_time,
         }
     }
+
 
     pub fn remote(&self) -> SocketAddr {
         self.remote
@@ -235,7 +248,7 @@ impl Receiver {
             if last_ack_number == ack_number &&
                     // and the time interval between this two ACK packets is
                     // less than 2 RTTs,
-                    (self.sock.get_timestamp() - last_timestamp) < (self.rtt * 2)
+                    (self.get_timestamp() - last_timestamp) < (self.rtt * 2)
             {
                 // stop (do not send this ACK).
                 return Ok(());
@@ -317,7 +330,7 @@ impl Receiver {
         ));
 
         // add it to the ack history
-        let now = self.sock.get_timestamp();
+        let now = self.get_timestamp();
         self.ack_history_window.push(AckHistoryEntry {
             ack_number,
             ack_seq_num,
@@ -335,7 +348,7 @@ impl Receiver {
         // (according to section 6.4) and send these numbers back to the sender
         // in an NAK packet.
 
-        let now = self.sock.get_timestamp();
+        let now = self.get_timestamp();
 
         // increment k and change feedback time, returning sequence numbers
         let seq_nums = {
@@ -420,7 +433,7 @@ impl Receiver {
                             // 3) Calculate new rtt according to the ACK2 arrival time and the ACK
                             //    departure time, and update the RTT value as: RTT = (RTT * 7 +
                             //    rtt) / 8
-                            let immediate_rtt = self.sock.get_timestamp() - send_timestamp;
+                            let immediate_rtt = self.get_timestamp() - send_timestamp;
                             self.rtt = (self.rtt * 7 + immediate_rtt) / 8;
 
                             // 4) Update RTTVar by: RTTVar = (RTTVar * 3 + abs(RTT - rtt)) / 4.
@@ -445,9 +458,9 @@ impl Receiver {
                     ControlTypes::Handshake(info) => {
                         // just send it back
                         // TODO: this should actually depend on where it comes from & dest sock id
-                        let sockid = self.sock.id();
+                        let sockid = self.local_sockid;
 
-                        let ts = self.sock.get_timestamp();
+                        let ts = self.get_timestamp();
                         self.sock.start_send((
                             Packet::Control {
                                 timestamp: ts,
@@ -471,7 +484,7 @@ impl Receiver {
                 payload,
                 ..
             } => {
-                let now = self.sock.get_timestamp();
+                let now = self.get_timestamp();
 
                 // 1) Reset the ExpCount to 1. If there is no unacknowledged data
                 //     packet, or if this is an ACK or NAK control packet, reset the EXP
@@ -543,9 +556,9 @@ impl Receiver {
     }
 
     // send a NAK, and return the future
-    fn send_nak<T>(&mut self, lost_seq_nums: T) -> Result<()>
+    fn send_nak<I>(&mut self, lost_seq_nums: I) -> Result<()>
     where
-        T: Iterator<Item = i32>,
+        I: Iterator<Item = i32>,
     {
         info!("Sending NAK");
 
@@ -560,14 +573,16 @@ impl Receiver {
 
     fn make_control_packet(&self, control_type: ControlTypes) -> Packet {
         Packet::Control {
-            timestamp: self.sock.get_timestamp(),
+            timestamp: self.get_timestamp(),
             dest_sockid: self.remote_sockid,
             control_type,
         }
     }
 }
 
-impl Stream for Receiver {
+impl<T> Stream for Receiver<T>
+    where T: Stream<Item=(Packet, SocketAddr), Error=Error> +
+    Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
     type Item = Bytes;
     type Error = Error;
 
@@ -620,3 +635,42 @@ impl Stream for Receiver {
         }
     }
 }
+
+
+impl<T> SrtObject for Receiver<T> {
+    fn packet_arrival_rate(&self) -> i32 {
+        unimplemented!()
+    }
+
+    fn rtt(&self) -> Duration {
+        unimplemented!()
+    }
+
+    fn estimated_bandwidth(&self) -> i32 {
+        unimplemented!()
+    }
+
+
+    /// Receiver doesn't have this info, so yields None
+    fn packet_send_rate(&self) -> Option<i32> {
+        unimplemented!()
+    }
+
+    /// The maximum packet size, in bytes
+    fn max_packet_size(&self) -> i32 {
+        unimplemented!()
+    }
+
+    fn start_time(&self) -> Instant {
+        self.sock_start_time
+    }
+
+    /// Get the SRT timestamp, which is microseconds since `start_time`.
+    fn get_timestamp(&self) -> i32 {
+        let elapsed = self.start_time().elapsed();
+
+        (elapsed.as_secs() * 1_000_000
+            + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
+    }
+}
+
