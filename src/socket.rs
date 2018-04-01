@@ -75,8 +75,8 @@ impl SrtSocket {
 
     pub fn get_timestamp(&self) -> i32 {
         // TODO: not sure if this should be us or ms
-        (self.start_time.elapsed().as_secs() * 1_000_000 +
-             (self.start_time.elapsed().subsec_nanos() as u64 / 1_000)) as i32
+        (self.start_time.elapsed().as_secs() * 1_000_000
+            + (u64::from(self.start_time.elapsed().subsec_nanos()) / 1_000)) as i32
     }
 }
 

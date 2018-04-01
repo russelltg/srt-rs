@@ -1,16 +1,16 @@
 extern crate srt;
 
+extern crate bytes;
 extern crate futures;
 extern crate log;
 extern crate simple_logger;
 extern crate tokio;
 extern crate tokio_io;
 extern crate url;
-extern crate bytes;
 #[macro_use]
 extern crate clap;
 
-use std::net::{SocketAddr, IpAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::io::Error;
 
 use log::LevelFilter;
@@ -20,13 +20,12 @@ use tokio_io::codec::BytesCodec;
 use tokio::executor::current_thread;
 use futures::prelude::*;
 use futures::future;
-use url::{Url, Host};
+use url::{Host, Url};
 use bytes::Bytes;
 
 use srt::socket::SrtSocketBuilder;
 
 fn main() {
-
     let matches = clap_app!(stransmit_rs =>
 		(version: "1.0")
 		(author: "Russell Greene")
@@ -66,25 +65,23 @@ fn main() {
         input_url.port().expect("Input URL has no port specified"),
     );
 
-
     // Resolve the receiver side
     // this will be a future that resolves to a stream of bytes
     // (all boxed to allow for different protocols)
     let from: Box<Future<Item = Box<Stream<Item = Bytes, Error = Error>>, Error = Error>> =
         match input_url.scheme() {
-            "udp" => Box::new(future::ok::<
-                Box<Stream<Item = Bytes, Error = Error>>,
-                Error,
-            >(Box::new(
-                UdpFramed::new(
-                    UdpSocket::bind(&input_host).unwrap(),
-                    BytesCodec::new(),
-                ).map(|(b, _)| b.freeze()),
-            ))),
+            "udp" => Box::new(
+                future::ok::<Box<Stream<Item = Bytes, Error = Error>>, Error>(Box::new(
+                    UdpFramed::new(UdpSocket::bind(&input_host).unwrap(), BytesCodec::new())
+                        .map(|(b, _)| b.freeze()),
+                )),
+            ),
             // TODO: flags
-            "srt" => Box::new(SrtSocketBuilder::new(input_host).build().unwrap().map(
-                |c| -> Box<Stream<Item = Bytes, Error = Error>> { Box::new(c.receiver()) },
-            )),
+            "srt" => {
+                Box::new(SrtSocketBuilder::new(input_host).build().unwrap().map(
+                    |c| -> Box<Stream<Item = Bytes, Error = Error>> { Box::new(c.receiver()) },
+                ))
+            }
             s => panic!("unrecognized scheme: {} designated in input url", s),
         };
 
@@ -111,14 +108,9 @@ fn main() {
                     BytesCodec::new(),
                 ).with(move |b| future::ok((b, output_host))),
             ))),
-            "srt" => Box::new(
-                SrtSocketBuilder::new(output_host)
-                    .build()
-                    .unwrap()
-                    .map(|c| -> Box<Sink<SinkItem = Bytes, SinkError = Error>> {
-                        Box::new(c.sender())
-                    }),
-            ),
+            "srt" => Box::new(SrtSocketBuilder::new(output_host).build().unwrap().map(
+                |c| -> Box<Sink<SinkItem = Bytes, SinkError = Error>> { Box::new(c.sender()) },
+            )),
             s => panic!("unrecognized scheme: {} designated in output url", s),
         };
 

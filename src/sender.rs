@@ -1,11 +1,11 @@
+use std::collections::VecDeque;
 use std::io::{Error, Result};
 use std::net::SocketAddr;
-use std::collections::VecDeque;
 
 use bytes::Bytes;
 use futures::prelude::*;
 
-use packet::{ControlTypes, Packet};
+use packet::{ControlTypes, Packet, PacketLocation};
 use socket::SrtSocket;
 
 pub struct Sender {
@@ -22,6 +22,9 @@ pub struct Sender {
 
     /// The sequence number for the next data packet
     next_seq_number: i32,
+
+    /// The messag number for the next message
+    next_message_number: i32,
 
     // 1) Sender's Loss List: The sender's loss list is used to store the
     //    sequence numbers of the lost packets fed back by the receiver
@@ -65,6 +68,7 @@ impl Sender {
             remote_sockid,
             pending_packets: VecDeque::new(),
             next_seq_number: initial_seq_num,
+            next_message_number: 0,
             loss_list: VecDeque::new(),
             buffer: VecDeque::new(),
             first_seq: initial_seq_num,
@@ -79,7 +83,6 @@ impl Sender {
     fn handle_packet(&mut self, pack: Packet) -> Result<()> {
         match pack {
             Packet::Control {
-                timestamp,
                 control_type,
                 .. // Use dst sockid
             } => {
@@ -111,11 +114,13 @@ impl Sender {
 
                         // 7) Update packet arrival rate: A = (A * 7 + a) / 8, where a is the
                         //    value carried in the ACK.
-                        self.pkt_arr_rate = (self.pkt_arr_rate * 7 + data.packet_recv_rate.unwrap_or(0)) / 8;
+                        self.pkt_arr_rate =
+                            (self.pkt_arr_rate * 7 + data.packet_recv_rate.unwrap_or(0)) / 8;
 
                         // 8) Update estimated link capacity: B = (B * 7 + b) / 8, where b is
                         //    the value carried in the ACK.
-                        self.est_link_cap = (self.est_link_cap * 7 + data.est_link_cap.unwrap_or(0)) / 8;
+                        self.est_link_cap =
+                            (self.est_link_cap * 7 + data.est_link_cap.unwrap_or(0)) / 8;
 
                         // 9) Update sender's buffer (by releasing the buffer that has been
                         //    acknowledged).
@@ -135,7 +140,7 @@ impl Sender {
                     ControlTypes::Ack2(_) => warn!("Sender received ACK2, unusual"),
                     ControlTypes::DropRequest(_msg_id, _info) => unimplemented!(),
                     ControlTypes::Handshake(_shake) => unimplemented!(),
-					// TODO: reset ACK
+					// TODO: reset EXP-ish
                     ControlTypes::KeepAlive => {},
                     ControlTypes::Nak(_info) => {
 						
@@ -157,7 +162,7 @@ impl Sink for Sender {
     fn start_send(&mut self, item: Bytes) -> StartSend<Bytes, Error> {
         self.pending_packets.push_back(item);
 
-        return Ok(AsyncSink::Ready);
+        Ok(AsyncSink::Ready)
     }
 
     fn poll_complete(&mut self) -> Poll<(), Error> {
@@ -189,6 +194,30 @@ impl Sink for Sender {
                 //    flow/congestion window size, wait until an ACK comes. Go to
                 //    1).
                 // b. Pack a new data packet and send it out.
+
+                // TODO: implement congestion control
+                let payload = match self.pending_packets.pop_front() {
+                    Some(p) => p,
+                    None => return Ok(Async::Ready(())),
+                };
+                let pack = Packet::Data {
+                    dest_sockid: self.remote_sockid,
+                    in_order_delivery: false, // TODO: research this
+                    message_loc: PacketLocation::Only,
+                    message_number: {
+                        self.next_message_number += 1;
+
+                        self.next_message_number - 1
+                    },
+                    seq_number: {
+                        self.next_seq_number += 1;
+
+                        self.next_seq_number - 1
+                    },
+                    timestamp: self.sock.get_timestamp(), // TODO: allow senders to put their own timestamps here
+                    payload,
+                };
+                self.sock.start_send((pack, self.remote));
 
             }
 

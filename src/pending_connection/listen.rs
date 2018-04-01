@@ -12,16 +12,16 @@ use socket::SrtSocket;
 
 pub struct Listen {
     state: ConnectionState,
-	sock: Option<SrtSocket>,
+    sock: Option<SrtSocket>,
 }
 
 impl Listen {
     pub fn new(sock: SrtSocket) -> Listen {
-		Listen {
-			sock: Some(sock),
-			state: ConnectionState::WaitingForHandshake,
-		}	
-	}
+        Listen {
+            sock: Some(sock),
+            state: ConnectionState::WaitingForHandshake,
+        }
+    }
 }
 
 // The state of the connection initiation
@@ -31,18 +31,16 @@ enum ConnectionState {
     Done(SocketAddr, i32, i32),
 }
 
-
-
 impl Future for Listen {
     type Item = Connected;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Connected, Error> {
         loop {
-          let sock = self.sock.as_mut().expect(
-                "Poll after PendingConnection completion",
-            );
-		  sock.poll_complete()?;
+            let sock = self.sock
+                .as_mut()
+                .expect("Poll after PendingConnection completion");
+            sock.poll_complete()?;
 
             let (packet, addr) = match sock.poll() {
                 Ok(Async::Ready(Some(p))) => p,
@@ -91,7 +89,7 @@ impl Future for Listen {
                             timestamp,
                             dest_sockid: shake.socket_id,
                             control_type: ControlTypes::Handshake({
-                                let mut tmp = shake.clone();
+                                let mut tmp = shake;
                                 tmp.syn_cookie = cookie;
                                 tmp.socket_id = sock.id();
 
@@ -121,7 +119,7 @@ impl Future for Listen {
                     info!("Second handshake recieved from {:?}", addr);
 
                     if let Packet::Control {
-                        control_type: ControlTypes::Handshake(ref shake),
+                        control_type: ControlTypes::Handshake(shake),
                         timestamp,
                         ..
                     } = packet
@@ -131,9 +129,7 @@ impl Future for Listen {
                             // wait for the next one
                             warn!(
                                 "Received invalid cookie handshake from {:?}: {}, should be {}",
-                                addr,
-                                shake.syn_cookie,
-                                cookie
+                                addr, shake.syn_cookie, cookie
                             );
                             continue;
                         }
@@ -149,7 +145,7 @@ impl Future for Listen {
                             timestamp,
                             dest_sockid: shake.socket_id,
                             control_type: ControlTypes::Handshake({
-                                let mut tmp = shake.clone();
+                                let mut tmp = shake;
                                 tmp.syn_cookie = cookie;
                                 tmp.socket_id = sock.id();
 
@@ -172,19 +168,15 @@ impl Future for Listen {
                 // this should never happen
                 ConnectionState::Done(_, _, _) => panic!(),
             }
-
         }
         match self.state {
-            ConnectionState::Done(addr, sockid, init_seq) => {
-                return Ok(Async::Ready(Connected::new(
-                    mem::replace(&mut self.sock, None).unwrap(),
-                    addr,
-                    sockid,
-                    init_seq,
-                )))
-            }
+            ConnectionState::Done(addr, sockid, init_seq) => Ok(Async::Ready(Connected::new(
+                mem::replace(&mut self.sock, None).unwrap(),
+                addr,
+                sockid,
+                init_seq,
+            ))),
             _ => panic!(),
         }
-
     }
 }

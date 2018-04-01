@@ -7,26 +7,21 @@ use connected::Connected;
 use socket::SrtSocket;
 
 pub struct Connect {
-	remote: SocketAddr,
-	sock: SrtSocket,
+    remote: SocketAddr,
+    sock: SrtSocket,
 }
 
 impl Connect {
-	pub fn new(sock: SrtSocket, remote: SocketAddr) -> Connect {
-		Connect {
-			sock,		
-			remote,
-		}	
-	}
-
+    pub fn new(sock: SrtSocket, remote: SocketAddr) -> Connect {
+        Connect { sock, remote }
+    }
 }
 
 impl Future for Connect {
-	type Item = Connected;
-	type Error = Error;
+    type Item = Connected;
+    type Error = Error;
 
-	fn poll(&mut self) -> Poll<Connected, Error> {
-		unimplemented!()
-	}
+    fn poll(&mut self) -> Poll<Connected, Error> {
+        unimplemented!()
+    }
 }
-

@@ -66,7 +66,7 @@ where
     }
 
     let mut ranging = false;
-    while let Some(this) = loss_list.next() {
+    for this in loss_list {
         let last = *ret.last().unwrap();
 
         if ranging {
@@ -80,20 +80,18 @@ where
                 ret.push(this);
                 ranging = false;
             }
+        // last was just the last element
+        } else if last + 1 == this {
+            // start ranging
+
+            // turn the last element into a start
+            *ret.last_mut().unwrap() |= 1 << 31;
+
+            ret.push(this);
+            ranging = true;
         } else {
-            // last was just the last element
-            if last + 1 == this {
-                // start ranging
-
-                // turn the last element into a start
-                *ret.last_mut().unwrap() |= 1 << 31;
-
-                ret.push(this);
-                ranging = true;
-            } else {
-                // keep on not ranging
-                ret.push(this);
-            }
+            // keep on not ranging
+            ret.push(this);
         }
     }
 
@@ -219,27 +217,25 @@ impl Receiver {
 
         // 2) If (a) the ACK number equals to the largest ACK number ever
         //    acknowledged by ACK2
-        if ack_number ==
-            {
-                let (_, a) = self.lr_ack_acked;
-                a
-            }
-        {
+        if ack_number == {
+            let (_, a) = self.lr_ack_acked;
+            a
+        } {
             // stop (do not send this ACK).
             return Ok(());
         }
         if let Some(&AckHistoryEntry {
-                        ack_number: last_ack_number,
-                        timestamp: last_timestamp,
-                        ..
-                    }) = self.ack_history_window.first()
+            ack_number: last_ack_number,
+            timestamp: last_timestamp,
+            ..
+        }) = self.ack_history_window.first()
         {
             // or, (b) it is equal to the ACK number in the
             // last ACK
-            if last_ack_number == ack_number && 
-        // and the time interval between this two ACK packets is
-        // less than 2 RTTs, 
-                (self.sock.get_timestamp() - last_timestamp) < (self.rtt * 2)
+            if last_ack_number == ack_number &&
+                    // and the time interval between this two ACK packets is
+                    // less than 2 RTTs,
+                    (self.sock.get_timestamp() - last_timestamp) < (self.rtt * 2)
             {
                 // stop (do not send this ACK).
                 return Ok(());
@@ -258,11 +254,11 @@ impl Receiver {
             } else {
                 // Calculate the median value of the last 16 packet arrival
                 // intervals (AI) using the values stored in PKT History Window.
-                let mut last_16: Vec<_> =
-                    self.packet_history_window[self.packet_history_window.len() - 16..]
-                        .iter()
-                        .map(|&(_, ts)| ts)
-                        .collect();
+                let mut last_16: Vec<_> = self.packet_history_window
+                    [self.packet_history_window.len() - 16..]
+                    .iter()
+                    .map(|&(_, ts)| ts)
+                    .collect();
                 last_16.sort();
                 let ai = last_16[last_16.len() / 2];
 
@@ -271,7 +267,7 @@ impl Receiver {
                 let filtered: Vec<i32> = last_16
                     .iter()
                     .filter(|&&n| n < ai * 8 && n > ai / 8)
-                    .map(|&n| n)
+                    .cloned()
                     .collect();
 
                 // If more than 8 values are left, calculate the
@@ -293,8 +289,8 @@ impl Receiver {
                 //  Calculate the median value of the last 16 packet pair
                 //  intervals (PI) using the values in Packet Pair Window, and the
                 //  link capacity is 1/PI (number of packets per second).
-                let mut last_16: Vec<_> = self.packet_pair_window[self.packet_pair_window.len() -
-                                                                      16..]
+                let mut last_16: Vec<_> = self.packet_pair_window
+                    [self.packet_pair_window.len() - 16..]
                     .iter()
                     .map(|&(_, time)| time)
                     .collect();
@@ -327,7 +323,7 @@ impl Receiver {
             ack_seq_num,
             timestamp: now,
         });
-        self.sock.start_send((ack, self.remote.clone()))?;
+        self.sock.start_send((ack, self.remote))?;
 
         Ok(())
     }
@@ -346,9 +342,9 @@ impl Receiver {
             let mut ret = Vec::new();
 
             let rtt = self.rtt;
-            for pak in self.loss_list.iter_mut().filter(|lle| {
-                lle.feedback_time > now - lle.k * rtt
-            })
+            for pak in self.loss_list
+                .iter_mut()
+                .filter(|lle| lle.feedback_time > now - lle.k * rtt)
             {
                 pak.k += 1;
                 pak.feedback_time = now;
@@ -403,15 +399,13 @@ impl Receiver {
                     ControlTypes::Ack2(seq_num) => {
                         // 1) Locate the related ACK in the ACK History Window according to the
                         //    ACK sequence number in this ACK2.
-                        let id_in_wnd =
-                            match self.ack_history_window.as_slice().binary_search_by(
-                                |entry| {
-                                    entry.ack_seq_num.cmp(&seq_num)
-                                },
-                            ) {
-                                Ok(i) => Some(i),
-                                Err(_) => None,
-                            };
+                        let id_in_wnd = match self.ack_history_window
+                            .as_slice()
+                            .binary_search_by(|entry| entry.ack_seq_num.cmp(&seq_num))
+                        {
+                            Ok(i) => Some(i),
+                            Err(_) => None,
+                        };
 
                         if let Some(id) = id_in_wnd {
                             let AckHistoryEntry {
@@ -430,16 +424,15 @@ impl Receiver {
                             self.rtt = (self.rtt * 7 + immediate_rtt) / 8;
 
                             // 4) Update RTTVar by: RTTVar = (RTTVar * 3 + abs(RTT - rtt)) / 4.
-                            self.rtt_variance = (self.rtt_variance * 3 +
-                                                     (self.rtt_variance - immediate_rtt).abs()) /
-                                4;
+                            self.rtt_variance = (self.rtt_variance * 3
+                                + (self.rtt_variance - immediate_rtt).abs())
+                                / 4;
 
                             // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
                             self.ack_interval = Interval::new(Duration::new(
                                 0,
                                 // convert to nanoseconds
-                                (4 * self.rtt + self.rtt_variance + 0) as u32 *
-                                    1_000, /* TODO: syn */
+                                (4 * self.rtt + self.rtt_variance/* TODO: + syn */) as u32 * 1_000,
                             ));
                         } else {
                             warn!(
@@ -460,7 +453,7 @@ impl Receiver {
                                 timestamp: ts,
                                 dest_sockid: info.socket_id, // this is different, so don't use make_control_packet
                                 control_type: ControlTypes::Handshake({
-                                    let mut tmp = info.clone();
+                                    let mut tmp = info;
                                     tmp.socket_id = sockid;
                                     tmp
                                 }),
@@ -520,14 +513,12 @@ impl Receiver {
                         })
                     }
 
-                    self.send_nak((first_to_be_nak..seq_number))?;
+                    self.send_nak(first_to_be_nak..seq_number)?;
 
                 // b. If the sequence number is less than LRSN, remove it from the
                 //    receiver's loss list.
                 } else if seq_number < self.lrsn {
-                    match self.loss_list[..].binary_search_by(
-                        |ref ll| ll.seq_num.cmp(&seq_number),
-                    ) {
+                    match self.loss_list[..].binary_search_by(|ll| ll.seq_num.cmp(&seq_number)) {
                         Ok(i) => {
                             self.loss_list.remove(i);
                             ()

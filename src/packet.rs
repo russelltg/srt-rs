@@ -23,7 +23,7 @@ pub enum Packet {
     ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     ///  |                    Destination Socket ID                      |
     ///    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    /// (from https://tools.ietf.org/html/draft-gg-udt-03#page-)
+    /// (from <https://tools.ietf.org/html/draft-gg-udt-03>)
     Data {
         /// The sequence number is packet based, so if packet n has
         /// sequence number `i`, the next would have `i + 1`
@@ -71,7 +71,7 @@ pub enum Packet {
     ///  ~                 Control Information Field                     ~
     ///  |                                                               |
     ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    /// (from https://tools.ietf.org/html/draft-gg-udt-03#page-5)
+    /// (from <https://tools.ietf.org/html/draft-gg-udt-03#page-5>)
     Control {
         /// The timestamp, relative to the socket start time
         timestamp: i32,
@@ -86,7 +86,7 @@ pub enum Packet {
 
 impl Packet {
     pub fn seq_number(&self) -> Option<i32> {
-        if let &Packet::Data { seq_number, .. } = self {
+        if let Packet::Data { seq_number, .. } = *self {
             Some(seq_number)
         } else {
             None
@@ -122,11 +122,11 @@ impl PacketLocation {
     }
 
     fn to_i32(&self) -> i32 {
-        match self {
-            &PacketLocation::First => 0b10 << 30,
-            &PacketLocation::Middle => 0b00,
-            &PacketLocation::Last => 0b01 << 30,
-            &PacketLocation::Only => 0b11 << 30,
+        match *self {
+            PacketLocation::First => 0b10 << 30,
+            PacketLocation::Middle => 0b00,
+            PacketLocation::Last => 0b01 << 30,
+            PacketLocation::Only => 0b11 << 30,
         }
     }
 }
@@ -153,12 +153,12 @@ pub enum ControlTypes {
     /// Shutdown packet, type 0x5
     Shutdown,
 
-    /// Acknowldegement of Acknowldegement (ACK2) 0x6
-    /// Additinal Info (the i32) is the ACK sequence number to acknowldege
+    /// Acknowledgement of Acknowledgement (ACK2) 0x6
+    /// Additional Info (the i32) is the ACK sequence number to acknowldege
     Ack2(i32),
 
     /// Drop request, type 0x7
-    /// Additinal Info (the i32) is the message ID to drop
+    /// Additional Info (the i32) is the message ID to drop
     DropRequest(i32, DropRequestControlInfo),
 }
 
@@ -184,7 +184,7 @@ impl ControlTypes {
                 buf.copy_to_slice(&mut ip_buf);
 
                 // TODO: this is probably really wrong, so fix it
-                let peer_addr = if &ip_buf[4..] == &b"\0\0\0\0\0\0\0\0\0\0\0\0"[..] {
+                let peer_addr = if ip_buf[4..] == b"\0\0\0\0\0\0\0\0\0\0\0\0"[..] {
                     IpAddr::from(Ipv4Addr::new(ip_buf[0], ip_buf[1], ip_buf[2], ip_buf[3]))
                 } else {
                     IpAddr::from(ip_buf)
@@ -210,10 +210,12 @@ impl ControlTypes {
                 let ack_number = buf.get_i32::<BigEndian>();
 
                 // if there is more data, use it. However, it's optional
-                let mut opt_read_next = move || if buf.remaining() > 4 {
-                    Some(buf.get_i32::<BigEndian>())
-                } else {
-                    None
+                let mut opt_read_next = move || {
+                    if buf.remaining() > 4 {
+                        Some(buf.get_i32::<BigEndian>())
+                    } else {
+                        None
+                    }
                 };
                 let rtt = opt_read_next();
                 let rtt_variance = opt_read_next();
@@ -236,7 +238,15 @@ impl ControlTypes {
             0x3 => {
                 // NAK
 
-                unimplemented!()
+                let mut loss_info = Vec::new();
+                while buf.remaining() > 4 {
+                    loss_info.push(buf.get_i32::<BigEndian>());
+                }
+
+                Ok(ControlTypes::Nak(NakControlInfo {
+                    loss_info
+                }))
+
             }
             0x5 => Ok(ControlTypes::Shutdown),
             0x6 => {
@@ -249,42 +259,40 @@ impl ControlTypes {
 
                 unimplemented!()
             }
-            x => {
-                return Err(Error::new(
-                    ErrorKind::InvalidData,
-                    format!("Unrecognized control packet type: {:?}", x),
-                ))
-            }
+            x => Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("Unrecognized control packet type: {:?}", x),
+            )),
         }
     }
 
     fn id_byte(&self) -> u8 {
-        match self {
-            &ControlTypes::Handshake(_) => 0x0,
-            &ControlTypes::KeepAlive => 0x1,
-            &ControlTypes::Ack(_, _) => 0x2,
-            &ControlTypes::Nak(_) => 0x3,
-            &ControlTypes::Shutdown => 0x5,
-            &ControlTypes::Ack2(_) => 0x6,
-            &ControlTypes::DropRequest(_, _) => 0x7,
+        match *self {
+            ControlTypes::Handshake(_) => 0x0,
+            ControlTypes::KeepAlive => 0x1,
+            ControlTypes::Ack(_, _) => 0x2,
+            ControlTypes::Nak(_) => 0x3,
+            ControlTypes::Shutdown => 0x5,
+            ControlTypes::Ack2(_) => 0x6,
+            ControlTypes::DropRequest(_, _) => 0x7,
         }
     }
 
-    fn add_info(&self) -> i32 {
-        match self {
-            &ControlTypes::Handshake(_) => 0,
-            &ControlTypes::KeepAlive => 0,
-            &ControlTypes::Ack(i, _) => i,
-            &ControlTypes::Nak(_) => 0,
-            &ControlTypes::Shutdown => 0,
-            &ControlTypes::Ack2(i) => i,
-            &ControlTypes::DropRequest(i, _) => i,
+    fn additional_info(&self) -> i32 {
+        match *self {
+            // These types have additional info
+            ControlTypes::Ack2(i) | ControlTypes::DropRequest(i, _) | ControlTypes::Ack(i, _) => i,
+            // These do not, just use zero
+            ControlTypes::Handshake(_)
+            | ControlTypes::KeepAlive
+            | ControlTypes::Nak(_)
+            | ControlTypes::Shutdown => 0,
         }
     }
 
     fn serialize<T: BufMut>(&self, into: &mut T) {
-        match self {
-            &ControlTypes::Handshake(ref c) => {
+        match *self {
+            ControlTypes::Handshake(ref c) => {
                 into.put_i32::<BigEndian>(c.udt_version);
                 into.put_i32::<BigEndian>(c.sock_type.to_i32());
                 into.put_i32::<BigEndian>(c.init_seq_num);
@@ -304,8 +312,7 @@ impl ControlTypes {
                     IpAddr::V6(six) => into.put(&six.octets()[..]),
                 }
             }
-            &ControlTypes::KeepAlive => {}
-            &ControlTypes::Ack(_, ref c) => {
+            ControlTypes::Ack(_, ref c) => {
                 into.put_i32::<BigEndian>(c.ack_number);
                 into.put_i32::<BigEndian>(c.rtt.unwrap_or(10_000));
                 into.put_i32::<BigEndian>(c.rtt_variance.unwrap_or(50_000));
@@ -313,19 +320,17 @@ impl ControlTypes {
                 into.put_i32::<BigEndian>(c.packet_recv_rate.unwrap_or(10_000));
                 into.put_i32::<BigEndian>(c.est_link_cap.unwrap_or(1_000));
             }
-            &ControlTypes::Nak(ref n) => {
-                for &loss in &n.loss_info {
-                    into.put_i32::<BigEndian>(loss);
-                }
-            }
-            &ControlTypes::Shutdown => {}
-            &ControlTypes::Ack2(_) => {}
-            &ControlTypes::DropRequest(_, ref _d) => unimplemented!(),
+            ControlTypes::Nak(ref n) => for &loss in &n.loss_info {
+                into.put_i32::<BigEndian>(loss);
+            },
+            ControlTypes::DropRequest(_, ref _d) => unimplemented!(),
+            // control data
+            ControlTypes::Shutdown | ControlTypes::Ack2(_) | ControlTypes::KeepAlive => {}
         };
     }
 }
 
-/// The DropRequest control info
+/// The `DropRequest` control info
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DropRequestControlInfo {
     /// The first message to drop
@@ -428,14 +433,14 @@ impl SocketType {
     }
 
     pub fn to_i32(&self) -> i32 {
-        match self {
-            &SocketType::Stream => 1,
-            &SocketType::Datagram => 2,
+        match *self {
+            SocketType::Stream => 1,
+            SocketType::Datagram => 2,
         }
     }
 }
 
-/// See https://tools.ietf.org/html/draft-gg-udt-03#page-10
+/// See <https://tools.ietf.org/html/draft-gg-udt-03#page-10>
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ConnectionType {
     /// A regular connection; one listener and one sender, 1
@@ -444,7 +449,7 @@ pub enum ConnectionType {
     /// A rendezvous connection, initial connect request, 0
     RendezvousFirst,
 
-    /// A rendezvous connection, response to intial connect request, -1
+    /// A rendezvous connection, response to initial connect request, -1
     /// Also a regular connection client response to the second handshake
     RendezvousRegularSecond,
 
@@ -467,11 +472,11 @@ impl ConnectionType {
     }
 
     pub fn to_i32(&self) -> i32 {
-        match self {
-            &ConnectionType::Regular => 1,
-            &ConnectionType::RendezvousFirst => 0,
-            &ConnectionType::RendezvousRegularSecond => -1,
-            &ConnectionType::RendezvousFinal => -2,
+        match *self {
+            ConnectionType::Regular => 1,
+            ConnectionType::RendezvousFirst => 0,
+            ConnectionType::RendezvousRegularSecond => -1,
+            ConnectionType::RendezvousFinal => -2,
         }
     }
 }
@@ -541,20 +546,20 @@ impl Packet {
     }
 
     pub fn serialize<T: BufMut>(&self, into: &mut T) {
-        match self {
-            &Packet::Control {
+        match *self {
+            Packet::Control {
                 ref timestamp,
                 ref dest_sockid,
                 ref control_type,
             } => {
                 // first half of first row, the control type and the 1st bit which is a one
-                into.put_i16::<BigEndian>((control_type.id_byte() as i16) | (0b1 << 15));
+                into.put_i16::<BigEndian>((i16::from(control_type.id_byte())) | (0b1 << 15));
 
                 // finish that row, which is reserved, so just fill with zeros
                 into.put_i16::<BigEndian>(0);
 
                 // the additonal info line
-                into.put_i32::<BigEndian>(control_type.add_info());
+                into.put_i32::<BigEndian>(control_type.additional_info());
 
                 // timestamp
                 into.put_i32::<BigEndian>(*timestamp);
@@ -565,7 +570,7 @@ impl Packet {
                 // the rest of the info
                 control_type.serialize(into);
             }
-            &Packet::Data {
+            Packet::Data {
                 ref timestamp,
                 ref seq_number,
                 ref message_number,
@@ -577,7 +582,7 @@ impl Packet {
                 into.put_i32::<BigEndian>(*seq_number);
                 into.put_i32::<BigEndian>(
                     message_number | message_loc.to_i32() |
-                    // the third bit in the second row is if it expects in order delivery
+                        // the third bit in the second row is if it expects in order delivery
                         if *in_order_delivery { 1 << 29 } else { 0 },
                 );
                 into.put_i32::<BigEndian>(*timestamp);
