@@ -70,9 +70,9 @@ where T: SrtObject {
             let PS = srt.max_packet_size();
 
             if B <= C {
-                1.0 / PS as f32
+                1.0 / PS as f64
             } else {
-                10.0.powf(((B - C) * PS * 8.0).log10().ceil()).max(1.0 / PS)
+                10f64.powf((((B - C) * PS) as f64 * 8.0).log10().ceil()).max(1f64 / PS as f64)
             }
         };
 
