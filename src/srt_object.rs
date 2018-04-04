@@ -23,7 +23,9 @@ pub trait SrtObject {
 
     /// Get the SRT timestamp, which is microseconds since `start_time`.
     fn get_timestamp(&self) -> i32 {
-        (self.sock_start_time.elapsed().as_secs() * 1_000_000
-            + (u64::from(self.sock_start_time.elapsed().subsec_nanos()) / 1_000)) as i32
+        let elapsed = self.start_time().elapsed();
+
+        (elapsed.as_secs() * 1_000_000
+            + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
     }
 }

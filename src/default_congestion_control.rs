@@ -78,8 +78,15 @@ where T: SrtObject {
 
         // 4) The SND period is updated as:
         //         SND = (SND * SYN) / (SND * inc + SYN).
-        vars.send_interval = (vars.send_interval * Duration::from_millis(10)) /
-            (vars.send_interval * inc + Duration::from_millis(10));
+        // I think the units for these are microseconds
+        vars.send_interval = {
+
+            let snd_total_micros = vars.send_interval.as_secs() * 1_000_000 + vars.send_interval.subsec_nanos() as u64 / 1_000;
+
+            let new_snd_total_micros = ((snd_total_micros * 10_000) as f64 / (snd_total_micros as f64 * inc + 10_000f64)) as u64;
+
+            Duration::new(new_snd_total_micros / 1_000_000, (new_snd_total_micros % 1_000_000) as u32 * 1_000)
+        };
 
 
         // We define a congestion period as the period between two NAKs in which
