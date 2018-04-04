@@ -241,19 +241,22 @@ impl<T> Sink for Sender<T>    where T: Stream<Item=(Packet, SocketAddr), Error=E
                 //    flow/congestion window size, wait until an ACK comes. Go to
                 //    1).
                 // b. Pack a new data packet and send it out.
-
-                self.send_packet(match self.pending_packets.pop_front() {
-                    Some(p) => p,
-                    None => return Ok(Async::Ready(())),
-                });
+                {
+                    let pack_to_send = match self.pending_packets.pop_front() {
+                        Some(p) => p,
+                        None => return Ok(Async::Ready(())),
+                    };
+                    self.send_packet(pack_to_send)?;
+                }
 
                 // 5) If the sequence number of the current packet is 16n, where n is an
                 //     integer, go to 2) (which is send another packet).
                 if (self.next_seq_number - 1) % 16 == 0 {
-                    self.send_packet(match self.pending_packets.pop_front() {
+                    let payload = match self.pending_packets.pop_front() {
                         Some(p) => p,
                         None => return Ok(Async::Ready(())),
-                    });
+                    };
+                    self.send_packet(payload)?;
                     continue;
                 }
             }
