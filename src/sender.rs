@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use CongestionControl;
+use congestion_control::{CCData, CCPacketData};
 
 pub struct Sender<T, CC> {
     sock: T,
@@ -103,6 +104,14 @@ where
             pkt_arr_rate: 0,
             est_link_cap: 0,
             snd_timer: Delay::new(Duration::from_millis(1)),
+        }
+    }
+
+    fn make_cc_info(&self) -> CCData {
+        CCData {
+            est_bandwidth: self.est_link_cap,
+            max_segment_size: 1316, // TODO,
+
         }
     }
 
