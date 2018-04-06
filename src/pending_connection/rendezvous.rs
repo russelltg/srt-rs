@@ -3,8 +3,8 @@ use std::net::SocketAddr;
 
 use futures::prelude::*;
 
-use connected::Connected;
 use Packet;
+use connected::Connected;
 
 pub struct Rendezvous<T> {
     local_public: SocketAddr,
@@ -13,8 +13,10 @@ pub struct Rendezvous<T> {
 }
 
 impl<T> Rendezvous<T>
-    where T: Stream<Item=(Packet, SocketAddr), Error=Error> +
-    Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
+where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+{
     pub fn new(sock: T, local_public: SocketAddr, remote_public: SocketAddr) -> Rendezvous<T> {
         Rendezvous {
             sock,
@@ -25,8 +27,10 @@ impl<T> Rendezvous<T>
 }
 
 impl<T> Future for Rendezvous<T>
-    where T: Stream<Item=(Packet, SocketAddr), Error=Error> +
-    Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
+where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+{
     type Item = Connected<T>;
     type Error = Error;
 

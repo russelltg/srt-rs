@@ -1,7 +1,7 @@
 use std::io::{Cursor, Error, Result};
 
-use packet::Packet;
 use bytes::BytesMut;
+use packet::Packet;
 use tokio_io::codec::{Decoder, Encoder};
 
 pub struct PacketCodec {}

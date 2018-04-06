@@ -1,14 +1,14 @@
-use std::io::{Error, Result};
-use std::time::{Duration, Instant};
-use std::net::SocketAddr;
 use std::cmp;
+use std::io::{Error, Result};
 use std::iter::Iterator;
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
-use packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet};
+use SrtObject;
 use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
-use SrtObject;
+use packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet};
 
 struct LossListEntry {
     seq_num: i32,
@@ -176,8 +176,10 @@ enum ReadyType {
 }
 
 impl<T> Receiver<T>
-    where T: Stream<Item=(Packet, SocketAddr), Error=Error> +
-    Sink<SinkItem=(Packet, SocketAddr), SinkError=Error>{
+where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+{
     pub fn new(
         sock: T,
         remote: SocketAddr,
@@ -209,7 +211,6 @@ impl<T> Receiver<T>
             sock_start_time,
         }
     }
-
 
     pub fn remote(&self) -> SocketAddr {
         self.remote
@@ -581,8 +582,10 @@ impl<T> Receiver<T>
 }
 
 impl<T> Stream for Receiver<T>
-    where T: Stream<Item=(Packet, SocketAddr), Error=Error> +
-    Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
+where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+{
     type Item = Bytes;
     type Error = Error;
 
@@ -636,7 +639,6 @@ impl<T> Stream for Receiver<T>
     }
 }
 
-
 impl<T> SrtObject for Receiver<T> {
     fn packet_arrival_rate(&self) -> i32 {
         unimplemented!()
@@ -649,7 +651,6 @@ impl<T> SrtObject for Receiver<T> {
     fn estimated_bandwidth(&self) -> i32 {
         unimplemented!()
     }
-
 
     /// Receiver doesn't have this info, so yields None
     fn packet_send_rate(&self) -> Option<i32> {
@@ -669,8 +670,6 @@ impl<T> SrtObject for Receiver<T> {
     fn get_timestamp(&self) -> i32 {
         let elapsed = self.start_time().elapsed();
 
-        (elapsed.as_secs() * 1_000_000
-            + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
+        (elapsed.as_secs() * 1_000_000 + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
     }
 }
-

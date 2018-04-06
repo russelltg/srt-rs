@@ -1,14 +1,14 @@
-use std::io::{Error, ErrorKind};
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::io::{Error, ErrorKind};
 use std::mem;
 use std::net::SocketAddr;
 use std::time::Instant;
 
 use futures::prelude::*;
 
-use packet::{ControlTypes, Packet};
 use connected::Connected;
+use packet::{ControlTypes, Packet};
 
 pub struct Listen<T> {
     state: ConnectionState,
@@ -18,8 +18,10 @@ pub struct Listen<T> {
 }
 
 impl<T> Listen<T>
-    where T: Stream<Item=(Packet, SocketAddr), Error=Error> + Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
-
+where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+{
     pub fn new(sock: T, local_socket_id: i32, socket_start_time: Instant) -> Listen<T> {
         Listen {
             sock: Some(sock),
@@ -38,7 +40,10 @@ enum ConnectionState {
 }
 
 impl<T> Future for Listen<T>
-    where T: Stream<Item=(Packet, SocketAddr), Error=Error> + Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
+where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+{
     type Item = Connected<T>;
     type Error = Error;
 
@@ -74,41 +79,41 @@ impl<T> Future for Listen<T>
                         timestamp,
                         ..
                     } = packet
-                        {
-                            info!("Handshake recieved from {:?}", addr);
+                    {
+                        info!("Handshake recieved from {:?}", addr);
 
-                            // https://tools.ietf.org/html/draft-gg-udt-03#page-9
-                            // When the server first receives the connection request from a client,
-                            // it generates a cookie value according to the client address and a
-                            // secret key and sends it back to the client. The client must then send
-                            // back the same cookie to the server.
+                        // https://tools.ietf.org/html/draft-gg-udt-03#page-9
+                        // When the server first receives the connection request from a client,
+                        // it generates a cookie value according to the client address and a
+                        // secret key and sends it back to the client. The client must then send
+                        // back the same cookie to the server.
 
-                            // generate the cookie, which is just a hash of the address
-                            // TODO: the reference impl uses the time, maybe we should here
-                            let cookie = {
-                                let mut hasher = DefaultHasher::new();
-                                shake.peer_addr.hash(&mut hasher);
-                                hasher.finish() as i32 // this will truncate, which is fine
-                            };
+                        // generate the cookie, which is just a hash of the address
+                        // TODO: the reference impl uses the time, maybe we should here
+                        let cookie = {
+                            let mut hasher = DefaultHasher::new();
+                            shake.peer_addr.hash(&mut hasher);
+                            hasher.finish() as i32 // this will truncate, which is fine
+                        };
 
-                            // construct a packet to send back
-                            let resp_handshake = Packet::Control {
-                                timestamp,
-                                dest_sockid: shake.socket_id,
-                                control_type: ControlTypes::Handshake({
-                                    let mut tmp = shake;
-                                    tmp.syn_cookie = cookie;
-                                    tmp.socket_id = self.local_socket_id;
+                        // construct a packet to send back
+                        let resp_handshake = Packet::Control {
+                            timestamp,
+                            dest_sockid: shake.socket_id,
+                            control_type: ControlTypes::Handshake({
+                                let mut tmp = shake;
+                                tmp.syn_cookie = cookie;
+                                tmp.socket_id = self.local_socket_id;
 
-                                    tmp
-                                }),
-                            };
+                                tmp
+                            }),
+                        };
 
-                            self.state = ConnectionState::WaitingForCookieResp(cookie);
+                        self.state = ConnectionState::WaitingForCookieResp(cookie);
 
-                            // send the packet
-                            sock.start_send((resp_handshake, addr))?;
-                        }
+                        // send the packet
+                        sock.start_send((resp_handshake, addr))?;
+                    }
                 }
 
                 // Received the first packet and waiting for the same cookie to come back
@@ -130,47 +135,47 @@ impl<T> Future for Listen<T>
                         timestamp,
                         ..
                     } = packet
-                        {
-                            // check that the cookie matches
-                            if shake.syn_cookie != cookie {
-                                // wait for the next one
-                                warn!(
-                                    "Received invalid cookie handshake from {:?}: {}, should be {}",
-                                    addr, shake.syn_cookie, cookie
-                                );
-                                continue;
-                            }
-
-                            info!("Cookie was correct, connection established to {:?}", addr);
-
-                            // select the smaller packet size and max window size
-                            // TODO: allow configuration of these parameters, for now just
-                            // use the remote ones
-
-                            // construct a packet to send back
-                            let resp_handshake = Packet::Control {
-                                timestamp,
-                                dest_sockid: shake.socket_id,
-                                control_type: ControlTypes::Handshake({
-                                    let mut tmp = shake;
-                                    tmp.syn_cookie = cookie;
-                                    tmp.socket_id = self.local_socket_id;
-
-                                    tmp
-                                }),
-                            };
-
-                            // send the packet
-                            sock.start_send((resp_handshake, addr))?;
-                            // poll_completed here beacuse we won't get a chance to call it later
-                            sock.poll_complete()?;
-
-                            // finish the connection
-                            self.state =
-                                ConnectionState::Done(addr, shake.socket_id, shake.init_seq_num);
-                            // break out to end the borrow on self.sock
-                            break;
+                    {
+                        // check that the cookie matches
+                        if shake.syn_cookie != cookie {
+                            // wait for the next one
+                            warn!(
+                                "Received invalid cookie handshake from {:?}: {}, should be {}",
+                                addr, shake.syn_cookie, cookie
+                            );
+                            continue;
                         }
+
+                        info!("Cookie was correct, connection established to {:?}", addr);
+
+                        // select the smaller packet size and max window size
+                        // TODO: allow configuration of these parameters, for now just
+                        // use the remote ones
+
+                        // construct a packet to send back
+                        let resp_handshake = Packet::Control {
+                            timestamp,
+                            dest_sockid: shake.socket_id,
+                            control_type: ControlTypes::Handshake({
+                                let mut tmp = shake;
+                                tmp.syn_cookie = cookie;
+                                tmp.socket_id = self.local_socket_id;
+
+                                tmp
+                            }),
+                        };
+
+                        // send the packet
+                        sock.start_send((resp_handshake, addr))?;
+                        // poll_completed here beacuse we won't get a chance to call it later
+                        sock.poll_complete()?;
+
+                        // finish the connection
+                        self.state =
+                            ConnectionState::Done(addr, shake.socket_id, shake.init_seq_num);
+                        // break out to end the borrow on self.sock
+                        break;
+                    }
                 }
                 // this should never happen
                 ConnectionState::Done(_, _, _) => panic!(),

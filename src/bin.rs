@@ -10,20 +10,20 @@ extern crate url;
 #[macro_use]
 extern crate clap;
 
-use std::net::{IpAddr, SocketAddr};
 use std::io::Error;
+use std::net::{IpAddr, SocketAddr};
 
-use log::LevelFilter;
-use tokio::net::UdpSocket;
-use tokio::net::UdpFramed;
-use tokio_io::codec::BytesCodec;
-use tokio::executor::current_thread;
-use futures::prelude::*;
-use futures::future;
-use url::{Host, Url};
 use bytes::Bytes;
+use futures::future;
+use futures::prelude::*;
+use log::LevelFilter;
+use tokio::executor::current_thread;
+use tokio::net::UdpFramed;
+use tokio::net::UdpSocket;
+use tokio_io::codec::BytesCodec;
+use url::{Host, Url};
 
-use srt::socket::SrtSocketBuilder;
+use srt::{ConnInitMethod, SrtSocketBuilder};
 
 fn main() {
     let matches = clap_app!(stransmit_rs =>
@@ -77,11 +77,14 @@ fn main() {
                 )),
             ),
             // TODO: flags
-            "srt" => {
-                Box::new(SrtSocketBuilder::new(input_host).build().unwrap().map(
-                    |c| -> Box<Stream<Item = Bytes, Error = Error>> { Box::new(c.receiver()) },
-                ))
-            }
+            "srt" => Box::new(
+                SrtSocketBuilder::new(input_host, ConnInitMethod::Listen)
+                    .build()
+                    .unwrap()
+                    .map(|c| -> Box<Stream<Item = Bytes, Error = Error>> {
+                        Box::new(c.receiver())
+                    }),
+            ),
             s => panic!("unrecognized scheme: {} designated in input url", s),
         };
 
@@ -108,9 +111,14 @@ fn main() {
                     BytesCodec::new(),
                 ).with(move |b| future::ok((b, output_host))),
             ))),
-            "srt" => Box::new(SrtSocketBuilder::new(output_host).build().unwrap().map(
-                |c| -> Box<Sink<SinkItem = Bytes, SinkError = Error>> { Box::new(c.sender()) },
-            )),
+            "srt" => Box::new(
+                SrtSocketBuilder::new(output_host, ConnInitMethod::Listen)
+                    .build()
+                    .unwrap()
+                    .map(|c| -> Box<Sink<SinkItem = Bytes, SinkError = Error>> {
+                        Box::new(c.sender())
+                    }),
+            ),
             s => panic!("unrecognized scheme: {} designated in output url", s),
         };
 

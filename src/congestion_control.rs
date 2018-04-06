@@ -2,47 +2,41 @@ use std::time::Duration;
 
 use srt_object::SrtObject;
 
-/// Timer variables to be manipulated by CC
-pub struct CCVariables {
-    /// Inter-packet interval
-    pub send_interval: Duration,
-
-    /// Window size
-    pub window_size: i32,
-
-    /// The number of wait for before an ACK
-    /// if -1, then time based ACK is used
-    pub ack_interval: i32,
-
-    /// The time between ACKs. Used if ack_interval is -1 (TODO: i think?)
-    pub ack_timer: Duration,
-
-    /// TODO: literally no clue what this is used for
-    pub rto: i32,
-}
-
-
-pub trait CongestionControl<T>
-    where T: SrtObject {
-
-    /// When the socket is connected
-    fn init(&mut self, srt: &T, vars: &mut CCVariables);
-
-    /// When the socket is closed
-    fn close(&mut self, srt: &T, vars: &mut CCVariables);
-
+/// Congestion control trait
+///
+/// Used to define custom congestion control
+/// TODO: should this be split into sender and receiver side?
+pub trait CongestionControl {
     /// When an ACK packet is received
-    fn on_ack(&mut self, srt: &T, vars: &mut CCVariables);
+    fn on_ack(&mut self, srt: &SrtObject);
 
     /// When a NAK packet is received
-    fn on_nak(&mut self, srt: &T, vars: &mut CCVariables);
+    fn on_nak(&mut self, srt: &SrtObject);
 
-    /// When a timeout occurs TODO: when is this? isn't this sender-only?
-    fn on_timeout(&mut self, srt: &T, vars: &mut CCVariables);
+    /// When a timeout occurs on the receiver
+    fn on_timeout(&mut self, srt: &SrtObject);
 
     /// On packet sent
-    fn on_packet_sent(&mut self, srt: &T, vars: &mut CCVariables);
+    fn on_packet_sent(&mut self, srt: &SrtObject);
 
-    /// When a packet is received TODO: same question
-    fn on_packet_recv(&mut self, srt: &T, vars: &mut CCVariables);
+    /// When a packet is received by the receiver
+    fn on_packet_recvd(&mut self, srt: &SrtObject);
+
+    /// Get the interval between sending packets
+    fn send_interval(&self) -> Duration;
+
+    /// Get the window size
+    /// This is the number of packets to wait for before ACK
+    fn window_size(&self) -> i32;
+
+    /// Get the ACK mode
+    fn ack_mode(&self) -> AckMode;
+}
+
+/// Defines the different kinds of deciding when to send an ACK packet
+pub enum AckMode {
+    /// Send an ACK packet every duration
+    Timer(Duration),
+    /// Send an ACK packet after a certain number of packets
+    PacketCount(i32),
 }

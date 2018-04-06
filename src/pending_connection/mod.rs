@@ -1,5 +1,5 @@
-pub mod listen;
 pub mod connect;
+pub mod listen;
 pub mod rendezvous;
 
 use std::io::Error;
@@ -10,8 +10,8 @@ use futures::prelude::*;
 
 use connected::Connected;
 
-pub use self::listen::Listen;
 pub use self::connect::Connect;
+pub use self::listen::Listen;
 pub use self::rendezvous::Rendezvous;
 pub use Packet;
 
@@ -22,10 +22,15 @@ pub enum PendingConnection<T> {
 }
 
 impl<T> PendingConnection<T>
-    where T: Stream<Item=(Packet, SocketAddr), Error=Error> +
-    Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
-
-    pub fn listen(sock: T, local_socket_id: i32, socket_start_time: Instant) -> PendingConnection<T> {
+where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+{
+    pub fn listen(
+        sock: T,
+        local_socket_id: i32,
+        socket_start_time: Instant,
+    ) -> PendingConnection<T> {
         PendingConnection::Listen(Listen::new(sock, local_socket_id, socket_start_time))
     }
 
@@ -43,9 +48,10 @@ impl<T> PendingConnection<T>
 }
 
 impl<T> Future for PendingConnection<T>
-    where T: Stream<Item=(Packet, SocketAddr), Error=Error> +
-    Sink<SinkItem=(Packet, SocketAddr), SinkError=Error>{
-
+where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+{
     type Item = Connected<T>;
     type Error = Error;
 

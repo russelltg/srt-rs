@@ -1,12 +1,13 @@
+use std::io::Error;
 use std::net::SocketAddr;
 use std::time::Instant;
-use std::io::Error;
 
 use futures::prelude::*;
 
+use DefaultCongestionControl;
+use Packet;
 use receiver::Receiver;
 use sender::Sender;
-use Packet;
 
 pub struct Connected<T> {
     socket: T,
@@ -18,8 +19,10 @@ pub struct Connected<T> {
 }
 
 impl<T> Connected<T>
-    where T: Stream<Item=(Packet, SocketAddr), Error=Error> + Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
-
+where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+{
     pub fn new(
         socket: T,
         remote: SocketAddr,
@@ -49,9 +52,10 @@ impl<T> Connected<T>
         )
     }
 
-    pub fn sender(self) -> Sender<T> {
+    pub fn sender(self) -> Sender<T, DefaultCongestionControl> {
         Sender::new(
             self.socket,
+            DefaultCongestionControl::new(),
             self.local_sockid,
             self.socket_start_time,
             self.remote,

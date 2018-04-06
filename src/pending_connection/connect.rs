@@ -18,8 +18,10 @@ impl<T> Connect<T> {
 }
 
 impl<T> Future for Connect<T>
-    where T: Stream<Item=(Packet, SocketAddr), Error=Error> +
-    Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
+where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+{
     type Item = Connected<T>;
     type Error = Error;
 

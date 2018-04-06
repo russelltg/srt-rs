@@ -1,8 +1,7 @@
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 /// A generic SRT object, defining things any SRT object (sender or receiver) should do
 pub trait SrtObject {
-
     /// The packet arrival rate recorded by the receiver, in packets per second
     /// This isn't optional because the receiver sends this
     /// information to the sender in ACK packets.
@@ -11,7 +10,6 @@ pub trait SrtObject {
     fn rtt(&self) -> Duration;
 
     fn estimated_bandwidth(&self) -> i32;
-
 
     /// Receiver doesn't have this info, so yields None
     fn packet_send_rate(&self) -> Option<i32>;
@@ -25,7 +23,6 @@ pub trait SrtObject {
     fn get_timestamp(&self) -> i32 {
         let elapsed = self.start_time().elapsed();
 
-        (elapsed.as_secs() * 1_000_000
-            + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
+        (elapsed.as_secs() * 1_000_000 + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
     }
 }

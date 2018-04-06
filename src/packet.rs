@@ -243,10 +243,7 @@ impl ControlTypes {
                     loss_info.push(buf.get_i32::<BigEndian>());
                 }
 
-                Ok(ControlTypes::Nak(NakControlInfo {
-                    loss_info
-                }))
-
+                Ok(ControlTypes::Nak(NakControlInfo { loss_info }))
             }
             0x5 => Ok(ControlTypes::Shutdown),
             0x6 => {

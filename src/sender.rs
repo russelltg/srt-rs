@@ -1,17 +1,20 @@
+use SrtObject;
+use bytes::Bytes;
+use futures::prelude::*;
+use futures_timer::Delay;
+use packet::{ControlTypes, Packet, PacketLocation};
 use std::collections::VecDeque;
 use std::io::{Error, Result};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
-use futures::prelude::*;
-use futures_timer::Delay;
+use CongestionControl;
 
-use SrtObject;
-use packet::{ControlTypes, Packet, PacketLocation};
-
-pub struct Sender<T> {
+pub struct Sender<T, CC> {
     sock: T,
+
+    /// The congestion control
+    congest_ctrl: CC,
 
     /// The local UDT socket id
     local_sockid: i32,
@@ -62,25 +65,28 @@ pub struct Sender<T> {
     /// estimated link capacity
     est_link_cap: i32,
 
-    /// The inter-packet interval, updated by cc
-    snd_duration: Duration,
-
     /// The send timer
     snd_timer: Delay,
 }
 
-impl<T> Sender<T>     where T: Stream<Item=(Packet, SocketAddr), Error=Error> + Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
-
+impl<T, CC> Sender<T, CC>
+where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+    CC: CongestionControl,
+{
     pub fn new(
         sock: T,
+        mut congest_ctrl: CC,
         local_sockid: i32,
         socket_start_time: Instant,
         remote: SocketAddr,
         remote_sockid: i32,
         initial_seq_num: i32,
-    ) -> Sender<T> {
+    ) -> Sender<T, CC> {
         Sender {
             sock,
+            congest_ctrl,
             local_sockid,
             socket_start_time,
             remote,
@@ -96,8 +102,6 @@ impl<T> Sender<T>     where T: Stream<Item=(Packet, SocketAddr), Error=Error> + 
             rtt_var: 0,
             pkt_arr_rate: 0,
             est_link_cap: 0,
-            // TODO: What should this actually be?
-            snd_duration: Duration::from_millis(1),
             snd_timer: Delay::new(Duration::from_millis(1)),
         }
     }
@@ -120,17 +124,17 @@ impl<T> Sender<T>     where T: Stream<Item=(Packet, SocketAddr), Error=Error> + 
                             dest_sockid: self.remote_sockid,
                             control_type: ControlTypes::Ack2(seq_num),
                         }, self.remote))?;
-                        
+
                         // 3) Update RTT and RTTVar.
                         self.rtt = data.rtt.unwrap_or(0);
                         self.rtt_var = data.rtt_variance.unwrap_or(0);
 
                         // 4) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
                         // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.
-   
+
                         // 5) Update flow window size.
-						// TODO: pretty sure this has to do with congestion control. So implement that.
-                        
+                        self.congest_ctrl.on_ack(self);
+
                         // 6) If this is a Light ACK, stop.
                         // TODO: wat
 
@@ -146,31 +150,29 @@ impl<T> Sender<T>     where T: Stream<Item=(Packet, SocketAddr), Error=Error> + 
 
                         // 9) Update sender's buffer (by releasing the buffer that has been
                         //    acknowledged).
-						while data.ack_number > self.first_seq {
-							self.buffer.pop_front();
-							self.first_seq += 1;
-						}
-                           
+                        while data.ack_number > self.first_seq {
+                            self.buffer.pop_front();
+                            self.first_seq += 1;
+                        }
+
                         // 10) Update sender's loss list (by removing all those that has been
                         //     acknowledged).
-						while let Some(pack) = self.loss_list.pop_front() {
-							if pack.seq_number().unwrap() >= data.ack_number {
-								self.loss_list.push_front(pack);
-							}
-						}
-                    },
+                        while let Some(pack) = self.loss_list.pop_front() {
+                            if pack.seq_number().unwrap() >= data.ack_number {
+                                self.loss_list.push_front(pack);
+                            }
+                        }
+                    }
                     ControlTypes::Ack2(_) => warn!("Sender received ACK2, unusual"),
                     ControlTypes::DropRequest(_msg_id, _info) => unimplemented!(),
                     ControlTypes::Handshake(_shake) => unimplemented!(),
-					// TODO: reset EXP-ish
-                    ControlTypes::KeepAlive => {},
-                    ControlTypes::Nak(_info) => {
-						
-					}
+                    // TODO: reset EXP-ish
+                    ControlTypes::KeepAlive => {}
+                    ControlTypes::Nak(_info) => {}
                     ControlTypes::Shutdown => unimplemented!(),
                 }
             }
-			Packet::Data { .. } => warn!("Sender received data packet"),
+            Packet::Data { .. } => warn!("Sender received data packet"),
         }
 
         Ok(())
@@ -200,8 +202,12 @@ impl<T> Sender<T>     where T: Stream<Item=(Packet, SocketAddr), Error=Error> + 
     }
 }
 
-impl<T> Sink for Sender<T>    where T: Stream<Item=(Packet, SocketAddr), Error=Error> + Sink<SinkItem=(Packet, SocketAddr), SinkError=Error> {
-
+impl<T, CC> Sink for Sender<T, CC>
+where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+    CC: CongestionControl,
+{
     type SinkItem = Bytes;
     type SinkError = Error;
 
@@ -266,8 +272,9 @@ impl<T> Sink for Sender<T>    where T: Stream<Item=(Packet, SocketAddr), Error=E
             //     1 to step 5. Go to 1).
 
             // TODO: update SND duration
+            self.congest_ctrl.on_packet_sent(self);
 
-            self.snd_timer.reset(self.snd_duration);
+            self.snd_timer.reset(self.congest_ctrl.send_interval());
         }
     }
 
@@ -277,7 +284,7 @@ impl<T> Sink for Sender<T>    where T: Stream<Item=(Packet, SocketAddr), Error=E
     }
 }
 
-impl<T> SrtObject for Sender<T> {
+impl<T, CC> SrtObject for Sender<T, CC> {
     fn packet_arrival_rate(&self) -> i32 {
         unimplemented!()
     }
@@ -289,7 +296,6 @@ impl<T> SrtObject for Sender<T> {
     fn estimated_bandwidth(&self) -> i32 {
         unimplemented!()
     }
-
 
     /// Receiver doesn't have this info, so yields None
     fn packet_send_rate(&self) -> Option<i32> {
@@ -309,7 +315,6 @@ impl<T> SrtObject for Sender<T> {
     fn get_timestamp(&self) -> i32 {
         let elapsed = self.start_time().elapsed();
 
-        (elapsed.as_secs() * 1_000_000
-            + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
+        (elapsed.as_secs() * 1_000_000 + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
     }
 }
