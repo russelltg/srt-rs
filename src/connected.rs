@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use futures::prelude::*;
 
-use DefaultCongestionControl;
+use DefaultSenderCongestionCtrl;
 use Packet;
 use receiver::Receiver;
 use sender::Sender;
@@ -52,10 +52,10 @@ where
         )
     }
 
-    pub fn sender(self) -> Sender<T, DefaultCongestionControl> {
+    pub fn sender(self) -> Sender<T, DefaultSenderCongestionCtrl> {
         Sender::new(
             self.socket,
-            DefaultCongestionControl::new(),
+            DefaultSenderCongestionCtrl::new(),
             self.local_sockid,
             self.socket_start_time,
             self.remote,

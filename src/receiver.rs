@@ -4,11 +4,11 @@ use std::iter::Iterator;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use SrtObject;
 use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
 use packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet};
+use loss_compression::compress_loss_list;
 
 struct LossListEntry {
     seq_num: i32,
@@ -16,7 +16,7 @@ struct LossListEntry {
     // last time it was feed into NAK
     feedback_time: i32,
 
-    // the nubmer of times this entry has been fed back into NAK
+    // the number of times this entry has been fed back into NAK
     k: i32,
 }
 
@@ -31,72 +31,6 @@ struct AckHistoryEntry {
     timestamp: i32,
 }
 
-// TODO: write tests for this, cuz it's often hard to get right
-// keep in mind loss_list must be sorted
-// takes in a list of i32, which is the loss list
-fn generated_compressed_loss<T>(mut loss_list: T) -> Vec<i32>
-where
-    T: Iterator<Item = i32>,
-{
-    let mut ret = Vec::new();
-
-    // The loss information carried in an NAK packet is an array of 32-bit
-    // integers. If an integer in the array is a normal sequence number (1st
-    // bit is 0), it means that the packet with this sequence number is
-    // lost; if the 1st bit is 1, it means all the packets starting from
-    // (including) this number to (including) the next number in the array
-    // (whose 1st bit must be 0) are lost.
-
-    // this algo works like this:
-    // there are two states: ranging and not ranging
-
-    // ranging means there's at least two elements in the list, the start and the (current) end
-    // if this next element can be a part of that range, then it just increments the end
-    // if not, it just adds this current element to the end, as a singleton, exiting range state
-
-    // not ranging means...well...not ranging. It checks if it can be turned into a range
-    // (last + 1 = current), in which case it will turn the second to last packet into a range (1<<31 | last)
-    // and add this packet, signifying the end of the range.
-
-    // add it as a starting element
-    if let Some(f) = loss_list.next() {
-        ret.push(f)
-    } else {
-        return ret;
-    }
-
-    let mut ranging = false;
-    for this in loss_list {
-        let last = *ret.last().unwrap();
-
-        if ranging {
-            // this means last is the end of the range
-
-            if last + 1 == this {
-                // continue ranging
-                *ret.last_mut().unwrap() += 1;
-            } else {
-                // done ranging
-                ret.push(this);
-                ranging = false;
-            }
-        // last was just the last element
-        } else if last + 1 == this {
-            // start ranging
-
-            // turn the last element into a start
-            *ret.last_mut().unwrap() |= 1 << 31;
-
-            ret.push(this);
-            ranging = true;
-        } else {
-            // keep on not ranging
-            ret.push(this);
-        }
-    }
-
-    ret
-}
 
 pub struct Receiver<T> {
     remote: SocketAddr,
@@ -564,7 +498,7 @@ where
         info!("Sending NAK");
 
         let pack = self.make_control_packet(ControlTypes::Nak(NakControlInfo {
-            loss_info: generated_compressed_loss(lost_seq_nums),
+            loss_info: compress_loss_list(lost_seq_nums).collect(),
         }));
 
         self.sock.start_send((pack, self.remote))?;
@@ -578,6 +512,13 @@ where
             dest_sockid: self.remote_sockid,
             control_type,
         }
+    }
+
+    /// Timestamp in us
+    fn get_timestamp(&self) -> i32 {
+        let elapsed = self.sock_start_time.elapsed();
+
+        (elapsed.as_secs() * 1_000_000 + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
     }
 }
 
@@ -636,40 +577,5 @@ where
                 Some(ReadyType::Shutdown) => return Ok(Async::Ready(None)),
             }
         }
-    }
-}
-
-impl<T> SrtObject for Receiver<T> {
-    fn packet_arrival_rate(&self) -> i32 {
-        unimplemented!()
-    }
-
-    fn rtt(&self) -> Duration {
-        unimplemented!()
-    }
-
-    fn estimated_bandwidth(&self) -> i32 {
-        unimplemented!()
-    }
-
-    /// Receiver doesn't have this info, so yields None
-    fn packet_send_rate(&self) -> Option<i32> {
-        unimplemented!()
-    }
-
-    /// The maximum packet size, in bytes
-    fn max_packet_size(&self) -> i32 {
-        unimplemented!()
-    }
-
-    fn start_time(&self) -> Instant {
-        self.sock_start_time
-    }
-
-    /// Get the SRT timestamp, which is microseconds since `start_time`.
-    fn get_timestamp(&self) -> i32 {
-        let elapsed = self.start_time().elapsed();
-
-        (elapsed.as_secs() * 1_000_000 + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
     }
 }

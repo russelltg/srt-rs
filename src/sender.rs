@@ -1,4 +1,3 @@
-use SrtObject;
 use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::Delay;
@@ -8,8 +7,7 @@ use std::io::{Error, Result};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use CongestionControl;
-use congestion_control::{CCData, CCPacketData};
+use {CCData, SenderCongestionCtrl};
 
 pub struct Sender<T, CC> {
     sock: T,
@@ -54,7 +52,7 @@ pub struct Sender<T, CC> {
     /// The sequence number of the largest acknowledged packet + 1
     lr_acked_packet: i32,
 
-    /// Round trip time
+    /// Round trip time, in microseconds
     rtt: i32,
 
     /// Round trip time variance
@@ -74,11 +72,11 @@ impl<T, CC> Sender<T, CC>
 where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
-    CC: CongestionControl,
+    CC: SenderCongestionCtrl,
 {
     pub fn new(
         sock: T,
-        mut congest_ctrl: CC,
+        congest_ctrl: CC,
         local_sockid: i32,
         socket_start_time: Instant,
         remote: SocketAddr,
@@ -110,8 +108,10 @@ where
     fn make_cc_info(&self) -> CCData {
         CCData {
             est_bandwidth: self.est_link_cap,
-            max_segment_size: 1316, // TODO,
-
+            max_segment_size: 1316, // TODO: use the real number decided in handshake
+            latest_seq_num: Some(self.next_seq_number - 1),
+            packet_arr_rate: None,
+            rtt: Duration::new(0, (self.rtt * 1_000) as u32), // TODO: may be better to not use just nanos to avoid overflow
         }
     }
 
@@ -142,7 +142,10 @@ where
                         // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.
 
                         // 5) Update flow window size.
-                        self.congest_ctrl.on_ack(self);
+                        {
+                            let cc_info = self.make_cc_info();
+                            self.congest_ctrl.on_ack(&cc_info);
+                        }
 
                         // 6) If this is a Light ACK, stop.
                         // TODO: wat
@@ -177,7 +180,14 @@ where
                     ControlTypes::Handshake(_shake) => unimplemented!(),
                     // TODO: reset EXP-ish
                     ControlTypes::KeepAlive => {}
-                    ControlTypes::Nak(_info) => {}
+                    ControlTypes::Nak(info) => {
+                        // 1) Add all sequence numbers carried in the NAK into the sender's loss list.
+                        // 2) Update the SND period by rate control (see section 3.6).
+                        // 3) Reset the EXP time variable.
+
+
+                        unimplemented!()
+                    }
                     ControlTypes::Shutdown => unimplemented!(),
                 }
             }
@@ -209,13 +219,20 @@ where
 
         Ok(())
     }
+
+    /// Timestamp in us
+    fn get_timestamp(&self) -> i32 {
+        let elapsed = self.socket_start_time.elapsed();
+
+        (elapsed.as_secs() * 1_000_000 + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
+    }
 }
 
 impl<T, CC> Sink for Sender<T, CC>
 where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
-    CC: CongestionControl,
+    CC: SenderCongestionCtrl,
 {
     type SinkItem = Bytes;
     type SinkError = Error;
@@ -279,9 +296,10 @@ where
             // 6) Wait (SND - t) time, where SND is the inter-packet interval
             //     updated by congestion control and t is the total time used by step
             //     1 to step 5. Go to 1).
-
-            // TODO: update SND duration
-            self.congest_ctrl.on_packet_sent(self);
+            {
+                let cc_info = self.make_cc_info();
+                self.congest_ctrl.on_packet_sent(&cc_info);
+            }
 
             self.snd_timer.reset(self.congest_ctrl.send_interval());
         }
@@ -290,40 +308,5 @@ where
     fn close(&mut self) -> Poll<(), Error> {
         // TODO: send shutdown packet
         self.poll_complete()
-    }
-}
-
-impl<T, CC> SrtObject for Sender<T, CC> {
-    fn packet_arrival_rate(&self) -> i32 {
-        unimplemented!()
-    }
-
-    fn rtt(&self) -> Duration {
-        unimplemented!()
-    }
-
-    fn estimated_bandwidth(&self) -> i32 {
-        unimplemented!()
-    }
-
-    /// Receiver doesn't have this info, so yields None
-    fn packet_send_rate(&self) -> Option<i32> {
-        unimplemented!()
-    }
-
-    /// The maximum packet size, in bytes
-    fn max_packet_size(&self) -> i32 {
-        unimplemented!()
-    }
-
-    fn start_time(&self) -> Instant {
-        self.socket_start_time
-    }
-
-    /// Get the SRT timestamp, which is microseconds since `start_time`.
-    fn get_timestamp(&self) -> i32 {
-        let elapsed = self.start_time().elapsed();
-
-        (elapsed.as_secs() * 1_000_000 + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
     }
 }

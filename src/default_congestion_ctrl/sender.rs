@@ -1,10 +1,9 @@
-use std::mem;
 use std::time::Duration;
+use std::mem;
 
-use srt_object::SrtObject;
-use {AckMode, CongestionControl};
+use {SenderCongestionCtrl, CCData, AckMode};
 
-pub struct DefaultCongestionControl {
+pub struct DefaultSenderCongestionCtrl {
     inter_interval: Duration,
     phase: Phase,
     avg_nak_num: i32,
@@ -14,12 +13,11 @@ pub struct DefaultCongestionControl {
 
     window_size: i32,
     send_interval: Duration,
-    inter_ack_duration: Duration,
 }
 
-impl DefaultCongestionControl {
-    pub fn new() -> DefaultCongestionControl {
-        DefaultCongestionControl {
+impl DefaultSenderCongestionCtrl {
+    pub fn new() -> DefaultSenderCongestionCtrl {
+        DefaultSenderCongestionCtrl {
             inter_interval: Duration::from_secs(0),
             phase: Phase::SlowStart,
             avg_nak_num: 1,
@@ -30,7 +28,6 @@ impl DefaultCongestionControl {
             window_size: 16,
             // TODO: what is the default SND
             send_interval: Duration::from_millis(1),
-            inter_ack_duration: Duration::from_millis(10), // SYN
         }
     }
 }
@@ -40,8 +37,8 @@ enum Phase {
     Operation,
 }
 
-impl CongestionControl for DefaultCongestionControl {
-    fn on_ack(&mut self, srt: &SrtObject) {
+impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
+    fn on_ack(&mut self, data: &CCData) {
         // On ACK packet received:
         // 1) If the current status is in the slow start phase, set the
         //     congestion window size to the product of packet arrival rate and
@@ -49,8 +46,9 @@ impl CongestionControl for DefaultCongestionControl {
 
         // 2) Set the congestion window size (CWND) to: CWND = A * (RTT + SYN) +
         //     16.
+        // TODO: literally no way the as_secs is a good idea
         self.window_size =
-            (srt.packet_arrival_rate() as f32 * (srt.rtt().as_secs() as f32 + 0.01)) as i32;
+            (data.packet_arr_rate.unwrap() as f32 * (data.rtt.as_secs() as f32 + 0.01)) as i32;
 
         if let Phase::SlowStart = mem::replace(&mut self.phase, Phase::Operation) {
             return;
@@ -67,16 +65,20 @@ impl CongestionControl for DefaultCongestionControl {
         //     fixed size of UDT packet counted in bytes. Beta is a constant
         //     value of 0.0000015.
         let inc = {
-            let B = srt.estimated_bandwidth();
-            let C = srt.packet_send_rate().unwrap_or(0); // on receiver side, this variable isn't even used, so this unwrap doesn't matter
-            let PS = srt.max_packet_size();
+            let B = data.est_bandwidth as f64;
+
+            let PS = data.max_segment_size as f64;
+            // 1/send_interval is packets/second
+            // packets/sec * packet_size = bytes/sec
+            let C = PS *
+                (1.0 / (self.send_interval.as_secs() as f64 + self.send_interval.subsec_nanos() as f64 / 1e9));
 
             if B <= C {
                 1.0 / PS as f64
             } else {
                 10f64
-                    .powf((((B - C) * PS) as f64 * 8.0).log10().ceil())
-                    .max(1f64 / PS as f64)
+                    .powf((((B - C) * PS) * 8.0).log10().ceil())
+                    .max(1.0 / PS)
             }
         };
 
@@ -107,18 +109,13 @@ impl CongestionControl for DefaultCongestionControl {
         // AvgNAKNum is the average number of NAKs in a congestion period.
         // NAKCount is the current number of NAKs in the current period.
     }
-    fn on_nak(&mut self, srt: &SrtObject) {}
-    fn on_timeout(&mut self, srt: &SrtObject) {}
-    fn on_packet_sent(&mut self, srt: &SrtObject) {}
-    fn on_packet_recvd(&mut self, srt: &SrtObject) {}
+    fn on_nak(&mut self, data: &CCData) { unimplemented!()}
+    fn on_packet_sent(&mut self, data: &CCData) { unimplemented!()}
 
     fn send_interval(&self) -> Duration {
         self.send_interval
     }
     fn window_size(&self) -> i32 {
         self.window_size
-    }
-    fn ack_mode(&self) -> AckMode {
-        AckMode::Timer(self.inter_ack_duration)
     }
 }
