@@ -48,7 +48,7 @@ where I: Iterator<Item = i32> {
             // the list must be sorted
             assert!(this < self.next.unwrap());
 
-            if self.looping && self.last_in_loop + 1 == this {
+            if self.looping && self.last_in_loop + 2 == self.next.unwrap() {
                 // continue with the loop
                 self.last_in_loop += 1;
 
@@ -142,17 +142,24 @@ pub fn decompress_loss_list<I: Iterator<Item=i32>>(loss_list: I) -> DecompressLo
 }
 
 #[test]
-fn test_compress() {
-    assert_eq!(
-        compress_loss_list((13..=19)).collect::<Vec<_>>(),
-        vec![13 | 1 << 31, 19]);
+fn tests() {
 
-    assert_eq!(
-        compress_loss_list([1, 2, 3, 4, 5, 9, 11, 12, 13, 16, 17].iter().cloned()).collect::<Vec<_>>(),
-        vec![1 << 31, 5, 9, 11 | 1 << 31, 13, 16 | 1 << 31, 17]);
-}
+    macro_rules! test_comp_decomp {
+        ($x:expr, $y:expr) => {{
+            assert_eq!(
+                compress_loss_list($x.iter().cloned()).collect::<Vec<_>>(),
+                $y.iter().cloned().collect::<Vec<_>>()
+            );
+            assert_eq!(
+                decompress_loss_list($y.iter().cloned()).collect::<Vec<_>>(),
+                $x.iter().cloned().collect::<Vec<_>>()
+            );
+        }}
+    }
+    let one = 1 << 31;
 
-#[test]
-fn test_decompress() {
+    test_comp_decomp!([13, 14, 15, 16, 17, 18, 19], [13 | one, 19]);
 
+    test_comp_decomp!([1, 2, 3, 4, 5, 9, 11, 12, 13, 16, 17],
+        [1 | 1 << 31, 5, 9, 11 | 1 << 31, 13, 16 | 1 << 31, 17]);
 }
