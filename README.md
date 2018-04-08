@@ -12,10 +12,10 @@ Reference implementation is available at https://github.com/haivision/srt
 # What works
 
 - [x] Listen server connecting
-- [ ] Client (connect) connecting
+- [x] Client (connect) connecting
 - [ ] Rendezvous connecting
 - [x] Receiving
-- [ ] Sending
+- [x] Sending
 - [ ] Special SRT packets
 - [ ] Actual SRT (TSBPD)
 
