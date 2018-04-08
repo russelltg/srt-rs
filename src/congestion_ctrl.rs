@@ -1,17 +1,20 @@
 use std::time::Duration;
+use SeqNumber;
 
 /// Congestion control trait, sender side
 ///
 /// Used to define custom congestion control
 pub trait SenderCongestionCtrl {
+    fn init(&mut self, init_seq_num: SeqNumber) {}
+
     /// When an ACK packet is received
-    fn on_ack(&mut self, data: &CCData);
+    fn on_ack(&mut self, data: &CCData) {}
 
     /// When a NAK packet is received
-    fn on_nak(&mut self, data: &CCData);
+    fn on_nak(&mut self, largest_seq_in_ll: SeqNumber, data: &CCData) {}
 
     /// On packet sent
-    fn on_packet_sent(&mut self, data: &CCData);
+    fn on_packet_sent(&mut self, data: &CCData) {}
 
     /// Get the interval between sending packets
     fn send_interval(&self) -> Duration;
@@ -41,16 +44,17 @@ pub struct CCData {
     pub rtt: Duration,
 
     /// The max segment size, in bytes
-    pub max_segment_size: usize,
+    pub max_segment_size: i32,
 
     /// Estimated bandwidth, in bytes/sec
     pub est_bandwidth: i32,
 
     /// The latest sequence number to be sent, sender only
-    pub latest_seq_num: Option<i32>,
+    pub latest_seq_num: Option<SeqNumber>,
 
-    /// The packet arrival rate, receiver only
-    pub packet_arr_rate: Option<i32>,
+    /// The packet arrival rate, both sender and receiver, as
+    /// the receiver sends this info to the sender in ACK packets
+    pub packet_arr_rate: i32,
 
 }
 

@@ -1,26 +1,30 @@
 use std::iter::Iterator;
 
+use SeqNumber;
+
 /// Iterator for compressing loss lists
 pub struct CompressLossList<I> {
     /// Underlying iterator
     iterator: I,
 
     /// The next item
-    next: Option<i32>,
+    next: Option<SeqNumber>,
 
-    /// True if looping
-    looping: bool,
-    last_in_loop: i32,
+    /// Some if looping
+    last_in_loop: Option<SeqNumber>,
 }
 
 impl<I> Iterator for CompressLossList<I>
-where I: Iterator<Item = i32> {
+where I: Iterator<Item = SeqNumber> {
     type Item = i32;
 
     fn next(&mut self) -> Option<i32> {
         // if we're at the start, assign a next
         if self.next.is_none() {
-            self.next = Some(self.iterator.next()?);
+            self.next = match self.iterator.next() {
+                None => return None,
+                a => a,
+            }
         }
 
         loop {
@@ -41,33 +45,34 @@ where I: Iterator<Item = i32> {
                     self.next = None;
 
                     // return the one we have
-                    return Some(this);
+                    return Some(this.0);
                 }
             };
 
             // the list must be sorted
             assert!(this < self.next.unwrap());
 
-            if self.looping && self.last_in_loop + 2 == self.next.unwrap() {
-                // continue with the loop
-                self.last_in_loop += 1;
+            if let Some(last_in_loop) = self.last_in_loop {
+                if last_in_loop + 2 == self.next.unwrap() {
+                    // continue with the loop
+                    self.last_in_loop = Some(last_in_loop + 1);
 
-                continue;
-            } else if self.looping {
-                // break out of the loop
-                self.looping = false;
+                    continue;
+                } else {
+                    // break out of the loop
+                    self.last_in_loop = None;
 
-                return Some(this);
+                    return Some(this.0);
+                }
             } else if this + 1 == self.next.unwrap() {
                 // create a loop
-                self.looping = true;
-                self.last_in_loop = this;
+                self.last_in_loop = Some(this);
 
                 // set the first bit to 1
-                return Some(this | 1 << 31);
+                return Some(this.0 | 1 << 31);
             } else {
                 // no looping necessary
-                return Some(this);
+                return Some(this.0);
             }
 
         }
@@ -76,15 +81,14 @@ where I: Iterator<Item = i32> {
 
 // keep in mind loss_list must be sorted
 // takes in a list of i32, which is the loss list
-pub fn compress_loss_list<I>(mut loss_list: I) -> CompressLossList<I>
+pub fn compress_loss_list<I>(loss_list: I) -> CompressLossList<I>
     where
-        I: Iterator<Item = i32>,
+        I: Iterator<Item = SeqNumber>,
 {
     CompressLossList {
         iterator: loss_list,
         next: None,
-        looping: false,
-        last_in_loop: 0
+        last_in_loop: None
     }
 }
 
@@ -95,21 +99,21 @@ pub struct DecompressLossList<I> {
 }
 
 impl<I: Iterator<Item = i32>> Iterator for DecompressLossList<I> {
-    type Item = i32;
+    type Item = SeqNumber;
 
-    fn next(&mut self) -> Option<i32> {
+    fn next(&mut self) -> Option<SeqNumber> {
         match self.loop_next_end {
             Some((next, end)) if next == end => {
                 // loop is over
                 self.loop_next_end = None;
 
-                Some(next)
+                Some(SeqNumber(next))
             },
             Some((next, end)) => {
                 // continue the loop
                 self.loop_next_end = Some((next + 1, end));
 
-                Some(next)
+                Some(SeqNumber(next))
             },
             None => {
                 // no current loop
@@ -124,10 +128,10 @@ impl<I: Iterator<Item = i32>> Iterator for DecompressLossList<I> {
                         None => panic!("unterminated loop while decompressing loss list"),
                     }));
 
-                    Some(next_num)
+                    Some(SeqNumber(next_num))
                 } else {
                     // no looping is possible
-                    Some(next)
+                    Some(SeqNumber(next))
                 }
             }
         }
@@ -147,12 +151,12 @@ fn tests() {
     macro_rules! test_comp_decomp {
         ($x:expr, $y:expr) => {{
             assert_eq!(
-                compress_loss_list($x.iter().cloned()).collect::<Vec<_>>(),
+                compress_loss_list($x.iter().cloned().map(SeqNumber)).collect::<Vec<_>>(),
                 $y.iter().cloned().collect::<Vec<_>>()
             );
             assert_eq!(
                 decompress_loss_list($y.iter().cloned()).collect::<Vec<_>>(),
-                $x.iter().cloned().collect::<Vec<_>>()
+                $x.iter().cloned().map(SeqNumber).collect::<Vec<_>>()
             );
         }}
     }

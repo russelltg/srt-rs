@@ -2,12 +2,17 @@ use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::Delay;
 use packet::{ControlTypes, Packet, PacketLocation};
-use std::collections::VecDeque;
-use std::io::{Error, Result};
-use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    io::{Error, Result, ErrorKind},
+    net::SocketAddr,
+    time::{Duration, Instant}
+};
+use SeqNumber;
 
-use {CCData, SenderCongestionCtrl};
+use {CCData, SenderCongestionCtrl, ConnectionSettings};
+
+use loss_compression::decompress_loss_list;
 
 pub struct Sender<T, CC> {
     sock: T,
@@ -15,23 +20,14 @@ pub struct Sender<T, CC> {
     /// The congestion control
     congest_ctrl: CC,
 
-    /// The local UDT socket id
-    local_sockid: i32,
-
-    /// The start time of the socket
-    socket_start_time: Instant,
-
-    /// The remote addr this is connected to
-    remote: SocketAddr,
-
-    /// The UDT socket ID of the remote
-    remote_sockid: i32,
+    /// The settings, including remote sockid and address
+    settings: ConnectionSettings,
 
     /// The list of pending packets
     pending_packets: VecDeque<Bytes>,
 
     /// The sequence number for the next data packet
-    next_seq_number: i32,
+    next_seq_number: SeqNumber,
 
     /// The messag number for the next message
     next_message_number: i32,
@@ -47,10 +43,10 @@ pub struct Sender<T, CC> {
 
     /// The first sequence number in buffer, so seq number i would be found at
     /// buffer[i - first_seq]
-    first_seq: i32,
+    first_seq: SeqNumber,
 
     /// The sequence number of the largest acknowledged packet + 1
-    lr_acked_packet: i32,
+    lr_acked_packet: SeqNumber,
 
     /// Round trip time, in microseconds
     rtt: i32,
@@ -77,26 +73,21 @@ where
     pub fn new(
         sock: T,
         congest_ctrl: CC,
-        local_sockid: i32,
-        socket_start_time: Instant,
-        remote: SocketAddr,
-        remote_sockid: i32,
-        initial_seq_num: i32,
+        settings: ConnectionSettings,
     ) -> Sender<T, CC> {
+        info!("Sending started to {:?}", settings.remote);
+
         Sender {
             sock,
             congest_ctrl,
-            local_sockid,
-            socket_start_time,
-            remote,
-            remote_sockid,
+            settings,
             pending_packets: VecDeque::new(),
-            next_seq_number: initial_seq_num,
+            next_seq_number: settings.init_seq_num,
             next_message_number: 0,
             loss_list: VecDeque::new(),
             buffer: VecDeque::new(),
-            first_seq: initial_seq_num,
-            lr_acked_packet: initial_seq_num,
+            first_seq: settings.init_seq_num,
+            lr_acked_packet: settings.init_seq_num,
             rtt: 10_000,
             rtt_var: 0,
             pkt_arr_rate: 0,
@@ -105,12 +96,20 @@ where
         }
     }
 
+    pub fn settings(&self) -> &ConnectionSettings {
+        &self.settings
+    }
+
+    pub fn remote(&self) -> SocketAddr {
+        self.settings.remote
+    }
+
     fn make_cc_info(&self) -> CCData {
         CCData {
             est_bandwidth: self.est_link_cap,
-            max_segment_size: 1316, // TODO: use the real number decided in handshake
+            max_segment_size: self.settings.max_packet_size,
             latest_seq_num: Some(self.next_seq_number - 1),
-            packet_arr_rate: None,
+            packet_arr_rate: self.pkt_arr_rate,
             rtt: Duration::new(0, (self.rtt * 1_000) as u32), // TODO: may be better to not use just nanos to avoid overflow
         }
     }
@@ -130,9 +129,9 @@ where
                         let now = self.get_timestamp();
                         self.sock.start_send((Packet::Control {
                             timestamp: now,
-                            dest_sockid: self.remote_sockid,
+                            dest_sockid: self.settings.remote_sockid,
                             control_type: ControlTypes::Ack2(seq_num),
-                        }, self.remote))?;
+                        }, self.settings.remote))?;
 
                         // 3) Update RTT and RTTVar.
                         self.rtt = data.rtt.unwrap_or(0);
@@ -169,14 +168,17 @@ where
 
                         // 10) Update sender's loss list (by removing all those that has been
                         //     acknowledged).
-                        while let Some(pack) = self.loss_list.pop_front() {
-                            if pack.seq_number().unwrap() >= data.ack_number {
-                                self.loss_list.push_front(pack);
-                            }
+                        // TODO: this isn't the most effiecnet algorithm, it checks the beginning of the array many times
+                        while let Some(id) =
+                            self.loss_list
+                                .iter()
+                                .position(|x| data.ack_number > x.seq_number().unwrap()) {
+
+                            self.loss_list.remove(id);
                         }
                     }
                     ControlTypes::Ack2(_) => warn!("Sender received ACK2, unusual"),
-                    ControlTypes::DropRequest(_msg_id, _info) => unimplemented!(),
+                    ControlTypes::DropRequest(msg_id, info) => unimplemented!(),
                     ControlTypes::Handshake(_shake) => unimplemented!(),
                     // TODO: reset EXP-ish
                     ControlTypes::KeepAlive => {}
@@ -185,8 +187,19 @@ where
                         // 2) Update the SND period by rate control (see section 3.6).
                         // 3) Reset the EXP time variable.
 
+                        for lost in decompress_loss_list(info.loss_info.iter().cloned()) {
+                            let packet = match self.buffer.iter().find(|pack| pack.seq_number().unwrap() == lost) {
+                                Some(p) => p,
+                                None => {warn!("NAK received for packet that's not in the buffer, maybe it's already been ACKed"); continue }
+                            };
 
-                        unimplemented!()
+                            self.loss_list.push_back(packet.clone());
+                        }
+                        {
+                            let cc_info = self.make_cc_info();
+                            self.congest_ctrl.on_nak(self.loss_list.back().unwrap().seq_number().unwrap(), &cc_info);
+                        }
+                        // TODO: reset EXP
                     }
                     ControlTypes::Shutdown => unimplemented!(),
                 }
@@ -198,33 +211,37 @@ where
     }
 
     fn send_packet(&mut self, payload: Bytes) -> Result<()> {
+        debug!("Sending packet with length={}", payload.len());
+
         let pack = Packet::Data {
-            dest_sockid: self.remote_sockid,
+            dest_sockid: self.settings.remote_sockid,
             in_order_delivery: false, // TODO: research this
             message_loc: PacketLocation::Only,
             message_number: {
                 self.next_message_number += 1;
+                self.next_message_number = self.next_message_number << 1 >> 1; // loop around
 
                 self.next_message_number - 1
             },
             seq_number: {
+                // this does looping for us
                 self.next_seq_number += 1;
 
                 self.next_seq_number - 1
             },
-            timestamp: self.get_timestamp(), // TODO: allow senders to put their own timestamps here
+            timestamp: self.get_timestamp(),
             payload,
         };
-        self.sock.start_send((pack, self.remote))?;
+        // add it to the buffer
+        self.buffer.push_back(pack.clone());
+
+        self.sock.start_send((pack, self.settings.remote))?;
 
         Ok(())
     }
 
-    /// Timestamp in us
     fn get_timestamp(&self) -> i32 {
-        let elapsed = self.socket_start_time.elapsed();
-
-        (elapsed.as_secs() * 1_000_000 + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
+        self.settings.get_timestamp()
     }
 }
 
@@ -244,54 +261,48 @@ where
     }
 
     fn poll_complete(&mut self) -> Poll<(), Error> {
+
+        // we need to poll_complete this until completion
+        // this poll_complete could have come from a wakeup of that, so call it
+        self.sock.poll_complete()?;
+
         loop {
+
             // do we have any packets to handle?
-            if let Async::Ready(Some((pack, _addr))) = self.sock.poll()? {
-                // TODO: use addr
-                self.handle_packet(pack)?;
-            }
-
-            // 1) If the sender's loss list is not empty,
-            if !self.loss_list.is_empty() {
-                // retransmit the first
-                // packet in the list and remove it from the list.
-
-                // get the payload
-                // TODO: implement congestion control
-                let packet = self.loss_list.pop_front().unwrap();
-
-                self.sock.start_send((packet, self.remote))?;
-            } else {
-                // 2) In messaging mode, if the packets has been the loss list for a
-                //    time more than the application specified TTL (time-to-live), send
-                //    a message drop request and remove all related packets from the
-                //    loss list. Go to 1).
-
-                // TODO: I honestly don't know what this means
-
-                // a. If the number of unacknowledged packets exceeds the
-                //    flow/congestion window size, wait until an ACK comes. Go to
-                //    1).
-                // b. Pack a new data packet and send it out.
-                {
-                    let pack_to_send = match self.pending_packets.pop_front() {
-                        Some(p) => p,
-                        None => return Ok(Async::Ready(())),
-                    };
-                    self.send_packet(pack_to_send)?;
-                }
-
-                // 5) If the sequence number of the current packet is 16n, where n is an
-                //     integer, go to 2) (which is send another packet).
-                if (self.next_seq_number - 1) % 16 == 0 {
-                    let payload = match self.pending_packets.pop_front() {
-                        Some(p) => p,
-                        None => return Ok(Async::Ready(())),
-                    };
-                    self.send_packet(payload)?;
-                    continue;
+            while let Async::Ready(a) = self.sock.poll()? {
+                match a {
+                    Some((pack, addr)) => {
+                        // ignore the packet if it isn't from the right address
+                        if addr == self.settings.remote {
+                            self.handle_packet(pack)?;
+                        }
+                    },
+                    // stream has ended
+                    None => {
+                        return Err(Error::new(ErrorKind::UnexpectedEof, "Unexpected EOF when sending packets"));
+                    }
                 }
             }
+            // if we're here, we are guaranteed to have a NotReady, so returning NotReady is OK
+
+
+            // 1) If the sender's loss list is not empty, send all the packets it in
+            while let Some(pack) = self.loss_list.pop_front() {
+                self.sock.start_send((pack, self.settings.remote))?;
+                self.sock.poll_complete()?;
+            }
+
+            // 2) In messaging mode, if the packets has been the loss list for a
+            //    time more than the application specified TTL (time-to-live), send
+            //    a message drop request and remove all related packets from the
+            //    loss list. Go to 1).
+
+            // TODO: I honestly don't know what this means
+
+            // 3) Wait until there is application data to be sent.
+
+            // wait for the SND timer to timeout
+            try_ready!(self.snd_timer.poll());
 
             // 6) Wait (SND - t) time, where SND is the inter-packet interval
             //     updated by congestion control and t is the total time used by step
@@ -301,7 +312,41 @@ where
                 self.congest_ctrl.on_packet_sent(&cc_info);
             }
 
+            // reset the timer
             self.snd_timer.reset(self.congest_ctrl.send_interval());
+
+            // a. If the number of unacknowledged packets exceeds the
+            //    flow/congestion window size, wait until an ACK comes. Go to
+            //    1).
+            // TODO: account for looping here
+            if self.lr_acked_packet < self.next_seq_number - self.congest_ctrl.window_size() {
+                // flow window exceeded, wait for ACK
+                info!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}", self.lr_acked_packet,
+                    self.next_seq_number, self.congest_ctrl.window_size(), self.next_seq_number - self.congest_ctrl.window_size());
+                return Ok(Async::NotReady);
+            }
+            // b. Pack a new data packet and send it out.
+            {
+                let payload = match self.pending_packets.pop_front() {
+                    Some(p) => p,
+                    // All packets have been flushed
+                    None => return self.sock.poll_complete(),
+                };
+                self.send_packet(payload)?;
+            }
+
+            // 5) If the sequence number of the current packet is 16n, where n is an
+            //     integer, go to 2) (which is send another packet).
+            if (self.next_seq_number - 1) % 16 == 0 {
+                let payload = match self.pending_packets.pop_front() {
+                    Some(p) => p,
+                    // All packets have been flushed
+                    None => return self.sock.poll_complete(),
+                };
+                self.send_packet(payload)?;
+            }
+
+            self.sock.poll_complete()?;
         }
     }
 

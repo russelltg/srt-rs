@@ -8,6 +8,8 @@ use byteorder::BigEndian;
 use std::io::{Cursor, Error, ErrorKind, Result};
 use std::net::{IpAddr, Ipv4Addr};
 
+use {SocketID, SeqNumber};
+
 /// Represents A UDT/SRT packet
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
@@ -30,7 +32,7 @@ pub enum Packet {
 
         /// Represented by a 31 bit unsigned integer, so
         /// Sequence number is wrapped after it recahed 2^31 - 1
-        seq_number: i32,
+        seq_number: SeqNumber,
 
         /// Message location
         /// Represented by the first two bits in the second row of 4 bytes
@@ -49,7 +51,7 @@ pub enum Packet {
         timestamp: i32,
 
         /// The dest socket id, used for UDP multiplexing
-        dest_sockid: i32,
+        dest_sockid: SocketID,
 
         /// The rest of the packet, the payload
         payload: Bytes,
@@ -77,7 +79,7 @@ pub enum Packet {
         timestamp: i32,
 
         /// The dest socket ID, used for multiplexing
-        dest_sockid: i32,
+        dest_sockid: SocketID,
 
         /// The extra data
         control_type: ControlTypes,
@@ -85,7 +87,7 @@ pub enum Packet {
 }
 
 impl Packet {
-    pub fn seq_number(&self) -> Option<i32> {
+    pub fn seq_number(&self) -> Option<SeqNumber> {
         if let Packet::Data { seq_number, .. } = *self {
             Some(seq_number)
         } else {
@@ -172,11 +174,11 @@ impl ControlTypes {
 
                 let udt_version = buf.get_i32::<BigEndian>();
                 let sock_type = SocketType::from_i32(buf.get_i32::<BigEndian>())?;
-                let init_seq_num = buf.get_i32::<BigEndian>();
+                let init_seq_num = SeqNumber(buf.get_i32::<BigEndian>());
                 let max_packet_size = buf.get_i32::<BigEndian>();
                 let max_flow_size = buf.get_i32::<BigEndian>();
                 let connection_type = ConnectionType::from_i32(buf.get_i32::<BigEndian>())?;
-                let socket_id = buf.get_i32::<BigEndian>();
+                let socket_id = SocketID(buf.get_i32::<BigEndian>());
                 let syn_cookie = buf.get_i32::<BigEndian>();
 
                 // get the IP
@@ -207,7 +209,7 @@ impl ControlTypes {
                 // ACK
 
                 // read control info
-                let ack_number = buf.get_i32::<BigEndian>();
+                let ack_number = SeqNumber(buf.get_i32::<BigEndian>());
 
                 // if there is more data, use it. However, it's optional
                 let mut opt_read_next = move || {
@@ -292,11 +294,11 @@ impl ControlTypes {
             ControlTypes::Handshake(ref c) => {
                 into.put_i32::<BigEndian>(c.udt_version);
                 into.put_i32::<BigEndian>(c.sock_type.to_i32());
-                into.put_i32::<BigEndian>(c.init_seq_num);
+                into.put_i32::<BigEndian>(c.init_seq_num.0);
                 into.put_i32::<BigEndian>(c.max_packet_size);
                 into.put_i32::<BigEndian>(c.max_flow_size);
                 into.put_i32::<BigEndian>(c.connection_type.to_i32());
-                into.put_i32::<BigEndian>(c.socket_id);
+                into.put_i32::<BigEndian>(c.socket_id.0);
                 into.put_i32::<BigEndian>(c.syn_cookie);
 
                 match c.peer_addr {
@@ -310,7 +312,7 @@ impl ControlTypes {
                 }
             }
             ControlTypes::Ack(_, ref c) => {
-                into.put_i32::<BigEndian>(c.ack_number);
+                into.put_i32::<BigEndian>(c.ack_number.0);
                 into.put_i32::<BigEndian>(c.rtt.unwrap_or(10_000));
                 into.put_i32::<BigEndian>(c.rtt_variance.unwrap_or(50_000));
                 into.put_i32::<BigEndian>(c.buffer_available.unwrap_or(8175)); // TODO: better defaults
@@ -330,11 +332,11 @@ impl ControlTypes {
 /// The `DropRequest` control info
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DropRequestControlInfo {
-    /// The first message to drop
-    pub first: i32,
+    /// The first sequence number in the message to drop
+    pub first: SeqNumber,
 
-    /// The last message to drop
-    pub last: i32,
+    /// The last sequence number in the message to drop
+    pub last: SeqNumber,
 }
 
 /// The NAK control info
@@ -354,7 +356,7 @@ pub struct NakControlInfo {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AckControlInfo {
     /// The packet sequence number that all packets have been recieved until (excluding)
-    pub ack_number: i32,
+    pub ack_number: SeqNumber,
 
     /// Round trip time
     pub rtt: Option<i32>,
@@ -382,7 +384,7 @@ pub struct HandshakeControlInfo {
     pub sock_type: SocketType,
 
     /// The initial sequence number, usually randomly initialized
-    pub init_seq_num: i32,
+    pub init_seq_num: SeqNumber,
 
     /// Max packet size, including UDP/IP headers. 1500 by default
     pub max_packet_size: i32,
@@ -394,7 +396,7 @@ pub struct HandshakeControlInfo {
     pub connection_type: ConnectionType,
 
     /// The socket ID that this request is originating from
-    pub socket_id: i32,
+    pub socket_id: SocketID,
 
     /// SYN cookie
     ///
@@ -502,7 +504,7 @@ impl Packet {
             // because the first bit is zero, we can just convert the first 4 bits into a
             // 32 bit integer
 
-            let seq_number = Cursor::new(first4).get_i32::<BigEndian>();
+            let seq_number = SeqNumber(Cursor::new(first4).get_i32::<BigEndian>());
 
             // get the first byte in the second row
             let second_line = buf.get_i32::<BigEndian>();
@@ -515,7 +517,7 @@ impl Packet {
             // clear the first three bits
             let message_number = second_line & !(0b111 << 29);
             let timestamp = buf.get_i32::<BigEndian>();
-            let dest_sockid = buf.get_i32::<BigEndian>();
+            let dest_sockid = SocketID(buf.get_i32::<BigEndian>());
 
             Ok(Packet::Data {
                 seq_number,
@@ -535,7 +537,7 @@ impl Packet {
 
             Ok(Packet::Control {
                 timestamp,
-                dest_sockid,
+                dest_sockid: SocketID(dest_sockid),
                 // just match against the second byte, as everything is in that
                 control_type: ControlTypes::deserialize(first4[1], add_info, buf)?,
             })
@@ -562,7 +564,7 @@ impl Packet {
                 into.put_i32::<BigEndian>(*timestamp);
 
                 // dest sock id
-                into.put_i32::<BigEndian>(*dest_sockid);
+                into.put_i32::<BigEndian>(dest_sockid.0);
 
                 // the rest of the info
                 control_type.serialize(into);
@@ -576,14 +578,14 @@ impl Packet {
                 ref payload,
                 ref in_order_delivery,
             } => {
-                into.put_i32::<BigEndian>(*seq_number);
+                into.put_i32::<BigEndian>(seq_number.0);
                 into.put_i32::<BigEndian>(
                     message_number | message_loc.to_i32() |
                         // the third bit in the second row is if it expects in order delivery
                         if *in_order_delivery { 1 << 29 } else { 0 },
                 );
                 into.put_i32::<BigEndian>(*timestamp);
-                into.put_i32::<BigEndian>(*dest_sockid);
+                into.put_i32::<BigEndian>(dest_sockid.0);
                 into.put(payload);
             }
         }
@@ -645,15 +647,15 @@ fn packet_location_to_i32_test() {
 fn handshake_ser_des_test() {
     let pack = Packet::Control {
         timestamp: 0,
-        dest_sockid: 0,
+        dest_sockid: SocketID(0),
         control_type: ControlTypes::Handshake(HandshakeControlInfo {
             udt_version: 4,
             sock_type: SocketType::Datagram,
-            init_seq_num: 1827131,
+            init_seq_num: SeqNumber(1827131),
             max_packet_size: 1500,
             max_flow_size: 25600,
             connection_type: ConnectionType::Regular,
-            socket_id: 1231,
+            socket_id: SocketID(1231),
             syn_cookie: 0,
             peer_addr: "127.0.0.1".parse().unwrap(),
         }),

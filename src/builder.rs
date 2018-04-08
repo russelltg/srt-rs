@@ -8,6 +8,7 @@ use tokio::net::{UdpFramed, UdpSocket};
 use codec::PacketCodec;
 use packet::Packet;
 use pending_connection::PendingConnection;
+use SocketID;
 
 use futures::prelude::*;
 
@@ -47,7 +48,7 @@ impl SrtSocketBuilder {
             ConnInitMethod::Listen => {
                 PendingConnection::listen(socket, SrtSocketBuilder::gen_sockid(), Instant::now())
             }
-            ConnInitMethod::Connect(addr) => PendingConnection::connect(socket, addr),
+            ConnInitMethod::Connect(addr) => PendingConnection::connect(socket, self.local_addr.ip(),addr, SrtSocketBuilder::gen_sockid(), Instant::now(), ),
             ConnInitMethod::Rendezvous {
                 local_public,
                 remote_public,
@@ -55,7 +56,7 @@ impl SrtSocketBuilder {
         })
     }
 
-    pub fn gen_sockid() -> i32 {
-        thread_rng().gen::<i32>()
+    pub fn gen_sockid() -> SocketID {
+        SocketID(thread_rng().gen::<i32>())
     }
 }

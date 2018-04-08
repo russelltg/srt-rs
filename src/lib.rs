@@ -1,6 +1,7 @@
 extern crate byteorder;
 extern crate bytes;
 
+#[macro_use]
 extern crate futures;
 extern crate futures_timer;
 #[macro_use]
@@ -20,6 +21,8 @@ pub mod pending_connection;
 pub mod receiver;
 pub mod sender;
 pub mod loss_compression;
+pub mod connection_settings;
+pub mod seq_number;
 
 pub use builder::{ConnInitMethod, SrtSocket, SrtSocketBuilder};
 pub use congestion_ctrl::{AckMode, SenderCongestionCtrl, RecvrCongestionCtrl, CCData};
@@ -29,3 +32,8 @@ pub use packet::Packet;
 pub use pending_connection::PendingConnection;
 pub use receiver::Receiver;
 pub use sender::Sender;
+pub use connection_settings::ConnectionSettings;
+pub use seq_number::SeqNumber;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct SocketID(i32);

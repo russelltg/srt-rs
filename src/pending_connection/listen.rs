@@ -8,12 +8,13 @@ use std::time::Instant;
 use futures::prelude::*;
 
 use connected::Connected;
-use packet::{ControlTypes, Packet};
+use packet::{ControlTypes, Packet, ConnectionType};
+use {ConnectionSettings, SocketID};
 
 pub struct Listen<T> {
     state: ConnectionState,
     sock: Option<T>,
-    local_socket_id: i32,
+    local_socket_id: SocketID,
     socket_start_time: Instant,
 }
 
@@ -22,7 +23,9 @@ where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
 {
-    pub fn new(sock: T, local_socket_id: i32, socket_start_time: Instant) -> Listen<T> {
+    pub fn new(sock: T, local_socket_id: SocketID, socket_start_time: Instant) -> Listen<T> {
+        info!("Listening...");
+
         Listen {
             sock: Some(sock),
             state: ConnectionState::WaitingForHandshake,
@@ -36,7 +39,7 @@ where
 enum ConnectionState {
     WaitingForHandshake,
     WaitingForCookieResp(i32 /*cookie*/),
-    Done(SocketAddr, i32, i32),
+    Done(ConnectionSettings),
 }
 
 impl<T> Future for Listen<T>
@@ -136,6 +139,11 @@ where
                         ..
                     } = packet
                     {
+                        if shake.connection_type != ConnectionType::RendezvousRegularSecond {
+                            // discard
+                            continue;
+                        }
+
                         // check that the cookie matches
                         if shake.syn_cookie != cookie {
                             // wait for the next one
@@ -172,23 +180,27 @@ where
 
                         // finish the connection
                         self.state =
-                            ConnectionState::Done(addr, shake.socket_id, shake.init_seq_num);
+                            ConnectionState::Done(ConnectionSettings {
+                                init_seq_num: shake.init_seq_num,
+                                remote_sockid: shake.socket_id,
+                                remote: addr,
+                                max_flow_size: 16000, // TODO: what is this?
+                                max_packet_size: shake.max_packet_size,
+                                local_sockid: self.local_socket_id,
+                                socket_start_time: self.socket_start_time
+                            });
                         // break out to end the borrow on self.sock
                         break;
                     }
                 }
                 // this should never happen
-                ConnectionState::Done(_, _, _) => panic!(),
+                ConnectionState::Done(_) => unreachable!(),
             }
         }
         match self.state {
-            ConnectionState::Done(addr, sockid, init_seq) => Ok(Async::Ready(Connected::new(
+            ConnectionState::Done(settings) => Ok(Async::Ready(Connected::new(
                 mem::replace(&mut self.sock, None).unwrap(),
-                addr,
-                sockid,
-                self.local_socket_id,
-                self.socket_start_time,
-                init_seq,
+                settings
             ))),
             _ => panic!(),
         }

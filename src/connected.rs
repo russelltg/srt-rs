@@ -8,14 +8,11 @@ use DefaultSenderCongestionCtrl;
 use Packet;
 use receiver::Receiver;
 use sender::Sender;
+use ConnectionSettings;
 
 pub struct Connected<T> {
     socket: T,
-    remote: SocketAddr,
-    remote_sockid: i32,
-    local_sockid: i32,
-    socket_start_time: Instant,
-    init_seq_num: i32,
+    settings: ConnectionSettings,
 }
 
 impl<T> Connected<T>
@@ -25,30 +22,18 @@ where
 {
     pub fn new(
         socket: T,
-        remote: SocketAddr,
-        remote_sockid: i32,
-        local_sockid: i32,
-        socket_start_time: Instant,
-        init_seq_num: i32,
+        settings: ConnectionSettings,
     ) -> Connected<T> {
         Connected {
             socket,
-            remote,
-            remote_sockid,
-            local_sockid,
-            socket_start_time,
-            init_seq_num,
+            settings,
         }
     }
 
     pub fn receiver(self) -> Receiver<T> {
         Receiver::new(
             self.socket,
-            self.remote,
-            self.remote_sockid,
-            self.init_seq_num,
-            self.local_sockid,
-            self.socket_start_time,
+            self.settings,
         )
     }
 
@@ -56,11 +41,7 @@ where
         Sender::new(
             self.socket,
             DefaultSenderCongestionCtrl::new(),
-            self.local_sockid,
-            self.socket_start_time,
-            self.remote,
-            self.remote_sockid,
-            self.init_seq_num,
+            self.settings,
         )
     }
 }

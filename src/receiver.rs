@@ -1,17 +1,21 @@
-use std::cmp;
-use std::io::{Error, Result};
-use std::iter::Iterator;
-use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::{
+    cmp,
+    io::{Error, Result},
+    iter::Iterator,
+    net::SocketAddr,
+    time::{Duration, Instant}
+};
 
 use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
 use packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet};
 use loss_compression::compress_loss_list;
+use {ConnectionSettings, SeqNumber};
+use seq_number::seq_num_range;
 
 struct LossListEntry {
-    seq_num: i32,
+    seq_num: SeqNumber,
 
     // last time it was feed into NAK
     feedback_time: i32,
@@ -22,7 +26,7 @@ struct LossListEntry {
 
 struct AckHistoryEntry {
     /// the highest packet sequence number received that this ACK packet ACKs + 1
-    ack_number: i32,
+    ack_number: SeqNumber,
 
     /// the ack sequence number
     ack_seq_num: i32,
@@ -33,8 +37,7 @@ struct AckHistoryEntry {
 
 
 pub struct Receiver<T> {
-    remote: SocketAddr,
-    remote_sockid: i32,
+    settings: ConnectionSettings,
 
     /// the round trip time, in microseconds
     /// is calculated each ACK2
@@ -43,9 +46,6 @@ pub struct Receiver<T> {
     /// the round trip time variance, in microseconds
     /// is calculated each ACK2
     rtt_variance: i32,
-
-    /// The socket ID of the local UDT entry
-    local_sockid: i32,
 
     /// the future to send or recieve packets
     sock: T,
@@ -70,20 +70,22 @@ pub struct Receiver<T> {
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// PKT History Window: A circular array that records the arrival time
     /// of each data packet.
-    packet_history_window: Vec<(i32, i32)>,
+    ///
+    /// First is sequence number, second is timestamp
+    packet_history_window: Vec<(SeqNumber, i32)>,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Packet Pair Window: A circular array that records the time
     /// interval between each probing packet pair.
     ///
     /// First is seq num, second is time
-    packet_pair_window: Vec<(i32, i32)>,
+    packet_pair_window: Vec<(SeqNumber, i32)>,
 
     /// Wakes the thread when an ACK or a NAK is to be sent
     ack_interval: Interval,
 
     /// the highest received packet sequence number + 1
-    lrsn: i32,
+    lrsn: SeqNumber,
 
     /// The number of consecutive timeouts
     exp_count: i32,
@@ -98,10 +100,8 @@ pub struct Receiver<T> {
     timeout_timer: Delay,
 
     /// The ACK sequence number of the largest ACK2 received, and the ack number
-    lr_ack_acked: (i32, i32),
+    lr_ack_acked: (i32, SeqNumber),
 
-    /// The socket start time, timestamp zero
-    sock_start_time: Instant,
 }
 
 enum ReadyType {
@@ -116,18 +116,11 @@ where
 {
     pub fn new(
         sock: T,
-        remote: SocketAddr,
-        remote_sockid: i32,
-        initial_seq_num: i32,
-        local_sockid: i32,
-        sock_start_time: Instant,
+        settings: ConnectionSettings,
     ) -> Receiver<T> {
         Receiver {
-            remote,
-            remote_sockid,
-            // TODO: what's the actual timeout
+            settings,
             sock,
-            local_sockid,
             rtt: 10_000,
             rtt_variance: 1_000,
             listen_timeout: Duration::from_secs(1),
@@ -136,18 +129,21 @@ where
             packet_history_window: Vec::new(),
             packet_pair_window: Vec::new(),
             ack_interval: Interval::new(Duration::from_millis(10)),
-            lrsn: initial_seq_num - 1,
+            lrsn: settings.init_seq_num - 1,
             next_ack: 1,
             exp_count: 1,
             probe_time: None,
             timeout_timer: Delay::new(Duration::from_secs(1)),
-            lr_ack_acked: (0, 0),
-            sock_start_time,
+            lr_ack_acked: (0, SeqNumber(0)),
         }
     }
 
+    pub fn settings(&self) -> &ConnectionSettings {
+        &self.settings
+    }
+
     pub fn remote(&self) -> SocketAddr {
-        self.remote
+        self.settings.remote
     }
 
     fn reset_timeout(&mut self) {
@@ -165,10 +161,7 @@ where
 
         // 2) If (a) the ACK number equals to the largest ACK number ever
         //    acknowledged by ACK2
-        if ack_number == {
-            let (_, a) = self.lr_ack_acked;
-            a
-        } {
+        if ack_number == self.lr_ack_acked.1 {
             // stop (do not send this ACK).
             return Ok(());
         }
@@ -271,7 +264,7 @@ where
             ack_seq_num,
             timestamp: now,
         });
-        self.sock.start_send((ack, self.remote))?;
+        self.sock.start_send((ack, self.settings.remote))?;
 
         Ok(())
     }
@@ -336,11 +329,22 @@ where
     // handles a packet, returning either a future, if there is something to send,
     // or the socket, and in the case of a data packet, a payload
     fn handle_packet(&mut self, packet: Packet, from: &SocketAddr) -> Result<Option<ReadyType>> {
+
+        // We don't care about packets from elsewhere
+        if *from != self.settings.remote {
+            info!("Packet received from unknown address: {:?}", from);
+            return Ok(None);
+        }
+
         match packet {
-            Packet::Control { control_type, .. } => {
+            Packet::Control { control_type,  dest_sockid, .. } => {
                 // handle the control packet
 
-                // TODO: check incoming socket id
+                if self.settings.local_sockid != dest_sockid {
+                    // packet isn't applicable
+                    return Ok(None);
+                }
+
 
                 match control_type {
                     ControlTypes::Ack(_, _) => warn!("Receiver received ACK packet, unusual"),
@@ -380,7 +384,7 @@ where
                             self.ack_interval = Interval::new(Duration::new(
                                 0,
                                 // convert to nanoseconds
-                                (4 * self.rtt + self.rtt_variance/* TODO: + syn */) as u32 * 1_000,
+                                (4 * self.rtt + self.rtt_variance + 10_000 /*SYN is 0.01 seconds, or 10_000 us*/) as u32 * 1_000,
                             ));
                         } else {
                             warn!(
@@ -392,8 +396,7 @@ where
                     ControlTypes::DropRequest(_to_drop, _info) => unimplemented!(),
                     ControlTypes::Handshake(info) => {
                         // just send it back
-                        // TODO: this should actually depend on where it comes from & dest sock id
-                        let sockid = self.local_sockid;
+                        let sockid = self.settings.local_sockid;
 
                         let ts = self.get_timestamp();
                         self.sock.start_send((
@@ -419,6 +422,8 @@ where
                 payload,
                 ..
             } => {
+                debug!("Data packet received; len={}", payload.len());
+
                 let now = self.get_timestamp();
 
                 // 1) Reset the ExpCount to 1. If there is no unacknowledged data
@@ -452,16 +457,16 @@ where
                 //    send them to the sender in an NAK packet.
                 if seq_number > self.lrsn + 1 {
                     let first_to_be_nak = self.lrsn;
-                    for i in first_to_be_nak..seq_number {
+                    for i in seq_num_range(first_to_be_nak, seq_number) {
                         self.loss_list.push(LossListEntry {
                             seq_num: i,
                             feedback_time: now,
-                            // k is initalized at 2, as stated on page 12 (very end)
+                            // k is initialized at 2, as stated on page 12 (very end)
                             k: 2,
                         })
                     }
 
-                    self.send_nak(first_to_be_nak..seq_number)?;
+                    self.send_nak(seq_num_range(first_to_be_nak, seq_number))?;
 
                 // b. If the sequence number is less than LRSN, remove it from the
                 //    receiver's loss list.
@@ -473,7 +478,7 @@ where
                         }
                         Err(_) => {
                             trace!(
-                                "Packet received that's not in the loss list: {}",
+                                "Packet received that's not in the loss list: {:?}",
                                 seq_number
                             );
                         }
@@ -493,7 +498,7 @@ where
     // send a NAK, and return the future
     fn send_nak<I>(&mut self, lost_seq_nums: I) -> Result<()>
     where
-        I: Iterator<Item = i32>,
+        I: Iterator<Item = SeqNumber>,
     {
         info!("Sending NAK");
 
@@ -501,7 +506,7 @@ where
             loss_info: compress_loss_list(lost_seq_nums).collect(),
         }));
 
-        self.sock.start_send((pack, self.remote))?;
+        self.sock.start_send((pack, self.settings.remote))?;
 
         Ok(())
     }
@@ -509,16 +514,14 @@ where
     fn make_control_packet(&self, control_type: ControlTypes) -> Packet {
         Packet::Control {
             timestamp: self.get_timestamp(),
-            dest_sockid: self.remote_sockid,
+            dest_sockid: self.settings.remote_sockid,
             control_type,
         }
     }
 
     /// Timestamp in us
     fn get_timestamp(&self) -> i32 {
-        let elapsed = self.sock_start_time.elapsed();
-
-        (elapsed.as_secs() * 1_000_000 + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
+        self.settings.get_timestamp()
     }
 }
 
