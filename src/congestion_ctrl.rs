@@ -1,5 +1,5 @@
-use std::time::Duration;
 use SeqNumber;
+use std::time::Duration;
 
 /// Congestion control trait, sender side
 ///
@@ -26,7 +26,6 @@ pub trait SenderCongestionCtrl {
 
 /// Congestion control trait, receiver side
 pub trait RecvrCongestionCtrl {
-
     /// When a timeout occurs on the receiver
     fn on_timeout(&mut self, data: &CCData);
 
@@ -39,7 +38,6 @@ pub trait RecvrCongestionCtrl {
 
 /// Defines all the data that CC algorithms need
 pub struct CCData {
-
     /// Round trip time
     pub rtt: Duration,
 
@@ -55,7 +53,6 @@ pub struct CCData {
     /// The packet arrival rate, both sender and receiver, as
     /// the receiver sends this info to the sender in ACK packets
     pub packet_arr_rate: i32,
-
 }
 
 /// Defines the different kinds of deciding when to send an ACK packet

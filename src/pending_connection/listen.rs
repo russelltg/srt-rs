@@ -8,7 +8,7 @@ use std::time::Instant;
 use futures::prelude::*;
 
 use connected::Connected;
-use packet::{ControlTypes, Packet, ConnectionType};
+use packet::{ConnectionType, ControlTypes, Packet};
 use {ConnectionSettings, SocketID};
 
 pub struct Listen<T> {
@@ -179,16 +179,15 @@ where
                         sock.poll_complete()?;
 
                         // finish the connection
-                        self.state =
-                            ConnectionState::Done(ConnectionSettings {
-                                init_seq_num: shake.init_seq_num,
-                                remote_sockid: shake.socket_id,
-                                remote: addr,
-                                max_flow_size: 16000, // TODO: what is this?
-                                max_packet_size: shake.max_packet_size,
-                                local_sockid: self.local_socket_id,
-                                socket_start_time: self.socket_start_time
-                            });
+                        self.state = ConnectionState::Done(ConnectionSettings {
+                            init_seq_num: shake.init_seq_num,
+                            remote_sockid: shake.socket_id,
+                            remote: addr,
+                            max_flow_size: 16000, // TODO: what is this?
+                            max_packet_size: shake.max_packet_size,
+                            local_sockid: self.local_socket_id,
+                            socket_start_time: self.socket_start_time,
+                        });
                         // break out to end the borrow on self.sock
                         break;
                     }
@@ -200,7 +199,7 @@ where
         match self.state {
             ConnectionState::Done(settings) => Ok(Async::Ready(Connected::new(
                 mem::replace(&mut self.sock, None).unwrap(),
-                settings
+                settings,
             ))),
             _ => panic!(),
         }

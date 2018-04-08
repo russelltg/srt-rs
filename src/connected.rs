@@ -4,11 +4,11 @@ use std::time::Instant;
 
 use futures::prelude::*;
 
+use ConnectionSettings;
 use DefaultSenderCongestionCtrl;
 use Packet;
 use receiver::Receiver;
 use sender::Sender;
-use ConnectionSettings;
 
 pub struct Connected<T> {
     socket: T,
@@ -20,21 +20,12 @@ where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
 {
-    pub fn new(
-        socket: T,
-        settings: ConnectionSettings,
-    ) -> Connected<T> {
-        Connected {
-            socket,
-            settings,
-        }
+    pub fn new(socket: T, settings: ConnectionSettings) -> Connected<T> {
+        Connected { socket, settings }
     }
 
     pub fn receiver(self) -> Receiver<T> {
-        Receiver::new(
-            self.socket,
-            self.settings,
-        )
+        Receiver::new(self.socket, self.settings)
     }
 
     pub fn sender(self) -> Sender<T, DefaultSenderCongestionCtrl> {

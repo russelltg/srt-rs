@@ -1,25 +1,12 @@
 extern crate futures;
-extern crate rand;
 extern crate futures_timer;
+extern crate rand;
 
-use std::{
-    time::{Duration, Instant},
-    collections::BinaryHeap,
-    cmp::Ordering,
-};
+use std::{cmp::Ordering, collections::BinaryHeap, time::{Duration, Instant}};
 
-use futures::{
-    prelude::*, sync::mpsc
-};
+use futures::{prelude::*, sync::mpsc};
 
-use rand::{
-    thread_rng,
-    distributions::{
-        IndependentSample,
-        Range,
-        Normal,
-    }
-};
+use rand::{thread_rng, distributions::{IndependentSample, Normal, Range}};
 
 use futures_timer::Delay;
 
@@ -33,7 +20,6 @@ struct LossyConn<T> {
 
     delay_buffer: BinaryHeap<TTime<T>>,
     delay: Delay,
-
 }
 
 struct TTime<T> {
@@ -88,8 +74,10 @@ impl<T> Sink for LossyConn<T> {
 
         // delay
         {
-            let center = self.delay_avg.as_secs() as f64 + self.delay_avg.subsec_nanos() as f64 / 1e9;
-            let stddev = self.delay_stddev.as_secs() as f64 + self.delay_stddev.subsec_nanos() as f64 / 1e9;
+            let center =
+                self.delay_avg.as_secs() as f64 + self.delay_avg.subsec_nanos() as f64 / 1e9;
+            let stddev =
+                self.delay_stddev.as_secs() as f64 + self.delay_stddev.subsec_nanos() as f64 / 1e9;
 
             let between = Normal::new(center, stddev);
             let delay_secs = between.ind_sample(&mut thread_rng());
@@ -129,7 +117,11 @@ impl<T> Sink for LossyConn<T> {
 }
 
 impl<T> LossyConn<T> {
-    fn new(loss_rate: f64, delay_avg: Duration, delay_stddev: Duration) -> (LossyConn<T>, LossyConn<T>) {
+    fn new(
+        loss_rate: f64,
+        delay_avg: Duration,
+        delay_stddev: Duration,
+    ) -> (LossyConn<T>, LossyConn<T>) {
         let (a2b, bfroma) = mpsc::channel(10000);
         let (b2a, afromb) = mpsc::channel(10000);
 
@@ -153,9 +145,7 @@ impl<T> LossyConn<T> {
 
                 delay_buffer: BinaryHeap::new(),
                 delay: Delay::new_at(Instant::now()),
-            }
+            },
         )
     }
 }
-
-

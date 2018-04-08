@@ -1,14 +1,14 @@
-use std::io::{Result};
+use std::io::Result;
 use std::net::SocketAddr;
 use std::time::Instant;
 
 use rand::{thread_rng, Rng};
 use tokio::net::{UdpFramed, UdpSocket};
 
+use SocketID;
 use codec::PacketCodec;
 use packet::Packet;
 use pending_connection::PendingConnection;
-use SocketID;
 
 use futures::prelude::*;
 
@@ -48,7 +48,13 @@ impl SrtSocketBuilder {
             ConnInitMethod::Listen => {
                 PendingConnection::listen(socket, SrtSocketBuilder::gen_sockid(), Instant::now())
             }
-            ConnInitMethod::Connect(addr) => PendingConnection::connect(socket, self.local_addr.ip(),addr, SrtSocketBuilder::gen_sockid(), Instant::now(), ),
+            ConnInitMethod::Connect(addr) => PendingConnection::connect(
+                socket,
+                self.local_addr.ip(),
+                addr,
+                SrtSocketBuilder::gen_sockid(),
+                Instant::now(),
+            ),
             ConnInitMethod::Rendezvous {
                 local_public,
                 remote_public,

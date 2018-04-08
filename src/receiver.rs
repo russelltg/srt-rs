@@ -1,18 +1,13 @@
-use std::{
-    cmp,
-    io::{Error, Result},
-    iter::Iterator,
-    net::SocketAddr,
-    time::{Duration, Instant}
-};
+use std::{cmp, collections::VecDeque, io::{Error, Result}, iter::Iterator, net::SocketAddr,
+          time::{Duration, Instant}};
 
 use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
-use packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet};
 use loss_compression::compress_loss_list;
-use {ConnectionSettings, SeqNumber};
+use packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet};
 use seq_number::seq_num_range;
+use {ConnectionSettings, SeqNumber};
 
 struct LossListEntry {
     seq_num: SeqNumber,
@@ -34,7 +29,6 @@ struct AckHistoryEntry {
     /// timestamp that it was sent at
     timestamp: i32,
 }
-
 
 pub struct Receiver<T> {
     settings: ConnectionSettings,
@@ -102,10 +96,14 @@ pub struct Receiver<T> {
     /// The ACK sequence number of the largest ACK2 received, and the ack number
     lr_ack_acked: (i32, SeqNumber),
 
+    /// Receive buffer
+    /// Used to store packets that were received out of order
+    buffer: Vec<Packet>,
+
+    last_released: SeqNumber,
 }
 
 enum ReadyType {
-    Packet(Bytes),
     Shutdown,
 }
 
@@ -114,10 +112,7 @@ where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
 {
-    pub fn new(
-        sock: T,
-        settings: ConnectionSettings,
-    ) -> Receiver<T> {
+    pub fn new(sock: T, settings: ConnectionSettings) -> Receiver<T> {
         Receiver {
             settings,
             sock,
@@ -135,6 +130,8 @@ where
             probe_time: None,
             timeout_timer: Delay::new(Duration::from_secs(1)),
             lr_ack_acked: (0, SeqNumber(0)),
+            buffer: Vec::new(),
+            last_released: settings.init_seq_num,
         }
     }
 
@@ -165,6 +162,9 @@ where
             // stop (do not send this ACK).
             return Ok(());
         }
+
+        info!("Sending ACK...");
+
         if let Some(&AckHistoryEntry {
             ack_number: last_ack_number,
             timestamp: last_timestamp,
@@ -201,13 +201,15 @@ where
                     .map(|&(_, ts)| ts)
                     .collect();
                 last_16.sort();
+
+                // the median timestamp
                 let ai = last_16[last_16.len() / 2];
 
                 // In these 16 values, remove those either greater than AI*8 or
                 // less than AI/8.
                 let filtered: Vec<i32> = last_16
                     .iter()
-                    .filter(|&&n| n < ai * 8 && n > ai / 8)
+                    .filter(|&&n| n / 8 < ai && n > ai / 8)
                     .cloned()
                     .collect();
 
@@ -215,7 +217,8 @@ where
                 // average of the left values AI', and the packet arrival speed is
                 // 1/AI' (number of packets per second). Otherwise, return 0.
                 if filtered.len() > 8 {
-                    filtered.iter().sum::<i32>() / filtered.len() as i32
+                    (filtered.iter().fold(0i64, |sum, &val| sum + val as i64)
+                        / filtered.len() as i64) as i32
                 } else {
                     0
                 }
@@ -300,6 +303,8 @@ where
             return Ok(());
         }
 
+        info!("Sending NAK with lost packets: {:?}", seq_nums);
+
         // send the nak
         self.send_nak(seq_nums.into_iter())?;
 
@@ -329,22 +334,27 @@ where
     // handles a packet, returning either a future, if there is something to send,
     // or the socket, and in the case of a data packet, a payload
     fn handle_packet(&mut self, packet: Packet, from: &SocketAddr) -> Result<Option<ReadyType>> {
-
         // We don't care about packets from elsewhere
         if *from != self.settings.remote {
             info!("Packet received from unknown address: {:?}", from);
             return Ok(None);
         }
 
+        // copy it to be used below
+        let packet_cpy = packet.clone();
+
         match packet {
-            Packet::Control { control_type,  dest_sockid, .. } => {
+            Packet::Control {
+                control_type,
+                dest_sockid,
+                ..
+            } => {
                 // handle the control packet
 
                 if self.settings.local_sockid != dest_sockid {
                     // packet isn't applicable
                     return Ok(None);
                 }
-
 
                 match control_type {
                     ControlTypes::Ack(_, _) => warn!("Receiver received ACK packet, unusual"),
@@ -353,7 +363,7 @@ where
                         //    ACK sequence number in this ACK2.
                         let id_in_wnd = match self.ack_history_window
                             .as_slice()
-                            .binary_search_by(|entry| entry.ack_seq_num.cmp(&seq_num))
+                            .binary_search_by(|entry| entry.ack_seq_num.cmp(&seq_num).reverse())
                         {
                             Ok(i) => Some(i),
                             Err(_) => None,
@@ -384,7 +394,8 @@ where
                             self.ack_interval = Interval::new(Duration::new(
                                 0,
                                 // convert to nanoseconds
-                                (4 * self.rtt + self.rtt_variance + 10_000 /*SYN is 0.01 seconds, or 10_000 us*/) as u32 * 1_000,
+                                (4 * self.rtt + self.rtt_variance + 10_000/*SYN is 0.01 seconds, or 10_000 us*/)
+                                    as u32 * 1_000,
                             ));
                         } else {
                             warn!(
@@ -488,7 +499,14 @@ where
                 // record that we got this packet
                 self.lrsn = cmp::max(seq_number, self.lrsn);
 
-                return Ok(Some(ReadyType::Packet(payload)));
+                // add it to the buffer at the right spot
+                // keep it sorted descending order
+                match self.buffer
+                    .binary_search_by(|pack| pack.seq_number().unwrap().cmp(&seq_number))
+                {
+                    Ok(_) => {}
+                    Err(pos) => self.buffer.insert(pos, packet_cpy),
+                }
             }
         };
 
@@ -500,10 +518,11 @@ where
     where
         I: Iterator<Item = SeqNumber>,
     {
-        info!("Sending NAK");
+        let vec: Vec<_> = lost_seq_nums.collect();
+        info!("Sending NAK for={:?}", vec);
 
         let pack = self.make_control_packet(ControlTypes::Nak(NakControlInfo {
-            loss_info: compress_loss_list(lost_seq_nums).collect(),
+            loss_info: compress_loss_list(vec.iter().cloned()).collect(),
         }));
 
         self.sock.start_send((pack, self.settings.remote))?;
@@ -534,6 +553,31 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Bytes>, Error> {
+        info!(
+            "Lat rel={:?} Buffer={:?}",
+            self.last_released,
+            self.buffer
+                .iter()
+                .map(|p| p.seq_number().unwrap())
+                .collect::<Vec<_>>()
+        );
+        // if data packets are ready, send them
+        while let Some(packet) = self.buffer.pop() {
+            if packet.seq_number().unwrap() < self.last_released + 1 {
+                self.last_released += 1;
+
+                if let Packet::Data { payload, .. } = packet {
+                    info!("Released packet");
+                    return Ok(Async::Ready(Some(payload)));
+                } else {
+                    panic!("Control packet in receiver buffer");
+                }
+            } else {
+                self.buffer.push(packet);
+                break;
+            }
+        }
+
         self.check_timers()?;
 
         self.sock.poll_complete()?;
@@ -576,7 +620,6 @@ where
 
             match res {
                 None => continue,
-                Some(ReadyType::Packet(p)) => return Ok(Async::Ready(Some(p))),
                 Some(ReadyType::Shutdown) => return Ok(Async::Ready(None)),
             }
         }

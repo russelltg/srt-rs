@@ -1,16 +1,12 @@
+use SeqNumber;
 use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::Delay;
 use packet::{ControlTypes, Packet, PacketLocation};
-use std::{
-    collections::VecDeque,
-    io::{Error, Result, ErrorKind},
-    net::SocketAddr,
-    time::{Duration, Instant}
-};
-use SeqNumber;
+use std::{collections::VecDeque, io::{Error, ErrorKind, Result}, net::SocketAddr,
+          time::{Duration, Instant}};
 
-use {CCData, SenderCongestionCtrl, ConnectionSettings};
+use {CCData, ConnectionSettings, SenderCongestionCtrl};
 
 use loss_compression::decompress_loss_list;
 
@@ -70,11 +66,7 @@ where
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
     CC: SenderCongestionCtrl,
 {
-    pub fn new(
-        sock: T,
-        congest_ctrl: CC,
-        settings: ConnectionSettings,
-    ) -> Sender<T, CC> {
+    pub fn new(sock: T, congest_ctrl: CC, settings: ConnectionSettings) -> Sender<T, CC> {
         info!("Sending started to {:?}", settings.remote);
 
         Sender {
@@ -152,7 +144,7 @@ where
                         // 7) Update packet arrival rate: A = (A * 7 + a) / 8, where a is the
                         //    value carried in the ACK.
                         self.pkt_arr_rate =
-                            (self.pkt_arr_rate * 7 + data.packet_recv_rate.unwrap_or(0)) / 8;
+                            self.pkt_arr_rate / 8 * 7 + data.packet_recv_rate.unwrap_or(0) / 8;
 
                         // 8) Update estimated link capacity: B = (B * 7 + b) / 8, where b is
                         //    the value carried in the ACK.
@@ -187,6 +179,8 @@ where
                         // 2) Update the SND period by rate control (see section 3.6).
                         // 3) Reset the EXP time variable.
 
+                        info!("Decompressing loss lost: {:?}", info.loss_info);
+
                         for lost in decompress_loss_list(info.loss_info.iter().cloned()) {
                             let packet = match self.buffer.iter().find(|pack| pack.seq_number().unwrap() == lost) {
                                 Some(p) => p,
@@ -195,7 +189,7 @@ where
 
                             self.loss_list.push_back(packet.clone());
                         }
-                        {
+                        if !self.loss_list.is_empty() {
                             let cc_info = self.make_cc_info();
                             self.congest_ctrl.on_nak(self.loss_list.back().unwrap().seq_number().unwrap(), &cc_info);
                         }
@@ -261,13 +255,11 @@ where
     }
 
     fn poll_complete(&mut self) -> Poll<(), Error> {
-
         // we need to poll_complete this until completion
         // this poll_complete could have come from a wakeup of that, so call it
         self.sock.poll_complete()?;
 
         loop {
-
             // do we have any packets to handle?
             while let Async::Ready(a) = self.sock.poll()? {
                 match a {
@@ -276,18 +268,24 @@ where
                         if addr == self.settings.remote {
                             self.handle_packet(pack)?;
                         }
-                    },
+                    }
                     // stream has ended
                     None => {
-                        return Err(Error::new(ErrorKind::UnexpectedEof, "Unexpected EOF when sending packets"));
+                        return Err(Error::new(
+                            ErrorKind::UnexpectedEof,
+                            "Unexpected EOF when sending packets",
+                        ));
                     }
                 }
             }
             // if we're here, we are guaranteed to have a NotReady, so returning NotReady is OK
 
-
             // 1) If the sender's loss list is not empty, send all the packets it in
             while let Some(pack) = self.loss_list.pop_front() {
+                info!(
+                    "Sending packet in loss list, seq={:?}",
+                    pack.seq_number().unwrap()
+                );
                 self.sock.start_send((pack, self.settings.remote))?;
                 self.sock.poll_complete()?;
             }

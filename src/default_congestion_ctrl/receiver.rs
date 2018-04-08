@@ -1,13 +1,10 @@
 use std::time::Duration;
 
-use {RecvrCongestionCtrl, AckMode, CCData};
+use {AckMode, CCData, RecvrCongestionCtrl};
 
-pub struct DefaultReceiverCongestionCtrl {
-
-}
+pub struct DefaultReceiverCongestionCtrl {}
 
 impl RecvrCongestionCtrl for DefaultReceiverCongestionCtrl {
-
     fn on_timeout(&mut self, data: &CCData) {
         unimplemented!()
     }
@@ -20,4 +17,3 @@ impl RecvrCongestionCtrl for DefaultReceiverCongestionCtrl {
         AckMode::Timer(Duration::from_millis(10)) // SYN
     }
 }
-

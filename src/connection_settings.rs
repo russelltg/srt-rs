@@ -1,13 +1,9 @@
-use std::{
-    time::Instant,
-    net::SocketAddr,
-};
+use std::{net::SocketAddr, time::Instant};
 
-use {SocketID, SeqNumber};
+use {SeqNumber, SocketID};
 
 #[derive(Clone, Copy)]
 pub struct ConnectionSettings {
-
     /// The remote socket to send & receive to
     pub remote: SocketAddr,
 
@@ -31,7 +27,6 @@ pub struct ConnectionSettings {
 }
 
 impl ConnectionSettings {
-
     /// Timestamp in us
     pub fn get_timestamp(&self) -> i32 {
         let elapsed = self.socket_start_time.elapsed();

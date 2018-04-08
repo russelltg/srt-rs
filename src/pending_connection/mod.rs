@@ -2,11 +2,7 @@ pub mod connect;
 pub mod listen;
 pub mod rendezvous;
 
-use std::{
-    io::Error,
-    net::{SocketAddr, IpAddr},
-    time::Instant,
-};
+use std::{io::Error, net::{IpAddr, SocketAddr}, time::Instant};
 
 use futures::prelude::*;
 
@@ -36,13 +32,20 @@ where
         PendingConnection::Listen(Listen::new(sock, local_socket_id, socket_start_time))
     }
 
-    pub fn connect(sock: T,
-                   local_addr: IpAddr,
-                   remote_addr: SocketAddr,
-                   local_socket_id: SocketID,
-                   socket_start_time: Instant,
+    pub fn connect(
+        sock: T,
+        local_addr: IpAddr,
+        remote_addr: SocketAddr,
+        local_socket_id: SocketID,
+        socket_start_time: Instant,
     ) -> PendingConnection<T> {
-        PendingConnection::Connect(Connect::new(sock, remote_addr, local_socket_id, socket_start_time, local_addr))
+        PendingConnection::Connect(Connect::new(
+            sock,
+            remote_addr,
+            local_socket_id,
+            socket_start_time,
+            local_addr,
+        ))
     }
 
     pub fn rendezvous(

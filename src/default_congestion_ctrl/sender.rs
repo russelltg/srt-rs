@@ -1,12 +1,9 @@
-use std::time::Duration;
 use std::mem;
+use std::time::Duration;
 
-use {SenderCongestionCtrl, CCData, AckMode, SeqNumber};
+use {AckMode, CCData, SenderCongestionCtrl, SeqNumber};
 
-use rand::{
-    thread_rng,
-    distributions::{Normal, IndependentSample}
-};
+use rand::{thread_rng, distributions::{IndependentSample, Normal}};
 
 pub struct DefaultSenderCongestionCtrl {
     inter_interval: Duration,
@@ -30,7 +27,7 @@ impl DefaultSenderCongestionCtrl {
             nak_count: 1,
             dec_count: 1,
             last_dec_seq: SeqNumber(0), // this is reassigned later
-            dec_random: 1, // TODO: real init size for this
+            dec_random: 1,              // TODO: real init size for this
 
             window_size: 1000,
             // TODO: what is the default SND
@@ -84,8 +81,8 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
             let PS = data.max_segment_size as f64;
             // 1/send_interval is packets/second
             // packets/sec * packet_size = bytes/sec
-            let C = PS *
-                (1.0 / (self.send_interval.as_secs() as f64 + self.send_interval.subsec_nanos() as f64 / 1e9));
+            let C = PS * (1.0 / (self.send_interval.as_secs() as f64
+                + self.send_interval.subsec_nanos() as f64 / 1e9));
 
             if B <= C {
                 // 1.0 / PS as f64
@@ -130,9 +127,10 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
 
         match mem::replace(&mut self.phase, Phase::Operation) {
             Phase::SlowStart => {
-                self.send_interval = Duration::new(0,((1.0 / data.packet_arr_rate as f64) * 1e9) as u32);
+                self.send_interval =
+                    Duration::new(0, ((1.0 / data.packet_arr_rate as f64) * 1e9) as u32);
                 return;
-            },
+            }
             Phase::Operation => {}
         }
 
@@ -149,7 +147,10 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
             self.dec_count = 1;
             self.dec_random = {
                 // TODO: what should the stddev be? This seems reasonable
-                let dist = Normal::new((1 + self.avg_nak_num) as f64 / 2.0, (self.avg_nak_num - 1) as f64 / 3.0);
+                let dist = Normal::new(
+                    (1 + self.avg_nak_num) as f64 / 2.0,
+                    ((self.avg_nak_num - 1) as f64 / 3.0).abs(),
+                );
 
                 dist.ind_sample(&mut thread_rng()) as i32
             }

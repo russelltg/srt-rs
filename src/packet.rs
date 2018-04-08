@@ -8,7 +8,7 @@ use byteorder::BigEndian;
 use std::io::{Cursor, Error, ErrorKind, Result};
 use std::net::{IpAddr, Ipv4Addr};
 
-use {SocketID, SeqNumber};
+use {SeqNumber, SocketID};
 
 /// Represents A UDT/SRT packet
 #[derive(Debug, Clone, PartialEq)]
@@ -241,7 +241,7 @@ impl ControlTypes {
                 // NAK
 
                 let mut loss_info = Vec::new();
-                while buf.remaining() > 4 {
+                while buf.remaining() >= 4 {
                     loss_info.push(buf.get_i32::<BigEndian>());
                 }
 

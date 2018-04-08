@@ -1,15 +1,9 @@
-use std::{
-    ops::{Add, Sub, Rem, AddAssign},
-    cmp::{Ord, Ordering},
-};
+use std::{cmp::{Ord, Ordering}, ops::{Add, AddAssign, Rem, Sub}};
 
-use rand::{
-    thread_rng,
-    Rng
-};
+use rand::{thread_rng, Rng};
 
 // The maximum sequence number is all ones but starts with a zero
-const MAX_SEQ_NUM: i32 = !0 >> 1;
+const MAX_SEQ_NUM: i32 = !(1 << 31);
 
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub struct SeqNumber(pub i32);
@@ -30,8 +24,8 @@ impl Add<i32> for SeqNumber {
             // no need to loop
             SeqNumber(self.0 + other)
         } else {
-            // loop it TODO: why -1?
-            SeqNumber(self.0 + other - 1 - MAX_SEQ_NUM)
+            // loop it
+            SeqNumber(self.0 - MAX_SEQ_NUM + other - 1)
         }
     }
 }
@@ -40,7 +34,6 @@ impl Sub<i32> for SeqNumber {
     type Output = Self;
 
     fn sub(self, other: i32) -> SeqNumber {
-
         if self.0 < other {
             // need to wrap
             SeqNumber(self.0 + MAX_SEQ_NUM - other)
@@ -92,14 +85,13 @@ impl Iterator for SeqNumberRange {
     type Item = SeqNumber;
 
     fn next(&mut self) -> Option<SeqNumber> {
-
         let ret = if self.current == self.end {
             None
         } else {
             Some(self.current)
         };
 
-        self.current = self.current + 1;
+        self.current += 1;
 
         ret
     }
@@ -112,9 +104,8 @@ pub fn seq_num_range(begin: SeqNumber, past_end: SeqNumber) -> SeqNumberRange {
     }
 }
 
-
 #[test]
 fn seq_num_test() {
     assert_eq!(SeqNumber(14), SeqNumber(5) + 9);
-    assert_eq!(SeqNumber(MAX_SEQ_NUM) + 1, 0);
+    assert_eq!(SeqNumber(MAX_SEQ_NUM) + 1, SeqNumber(0));
 }
