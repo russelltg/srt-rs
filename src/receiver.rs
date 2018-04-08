@@ -129,9 +129,9 @@ where
             exp_count: 1,
             probe_time: None,
             timeout_timer: Delay::new(Duration::from_secs(1)),
-            lr_ack_acked: (0, SeqNumber(0)),
+            lr_ack_acked: (0, settings.init_seq_num),
             buffer: Vec::new(),
-            last_released: settings.init_seq_num,
+            last_released: settings.init_seq_num - 1,
         }
     }
 
@@ -163,7 +163,7 @@ where
             return Ok(());
         }
 
-        info!("Sending ACK...");
+        info!("Sending ACK; ack_num={:?}, lr_ack_acked={:?}", ack_number, self.lr_ack_acked.1);
 
         if let Some(&AckHistoryEntry {
             ack_number: last_ack_number,
@@ -288,7 +288,7 @@ where
             let rtt = self.rtt;
             for pak in self.loss_list
                 .iter_mut()
-                .filter(|lle| lle.feedback_time > now - lle.k * rtt)
+                .filter(|lle| lle.feedback_time < now - lle.k * rtt)
             {
                 pak.k += 1;
                 pak.feedback_time = now;
@@ -363,7 +363,7 @@ where
                         //    ACK sequence number in this ACK2.
                         let id_in_wnd = match self.ack_history_window
                             .as_slice()
-                            .binary_search_by(|entry| entry.ack_seq_num.cmp(&seq_num).reverse())
+                            .binary_search_by(|entry| entry.ack_seq_num.cmp(&seq_num))
                         {
                             Ok(i) => Some(i),
                             Err(_) => None,
@@ -467,7 +467,8 @@ where
                 //    excluding) these two values into the receiver's loss list and
                 //    send them to the sender in an NAK packet.
                 if seq_number > self.lrsn + 1 {
-                    let first_to_be_nak = self.lrsn;
+                    // lrsn is the latest packet received, so nak the one after that
+                    let first_to_be_nak = self.lrsn + 1;
                     for i in seq_num_range(first_to_be_nak, seq_number) {
                         self.loss_list.push(LossListEntry {
                             seq_num: i,
@@ -499,11 +500,19 @@ where
                 // record that we got this packet
                 self.lrsn = cmp::max(seq_number, self.lrsn);
 
+                // we've already gotten this packet, drop it
+                if self.last_released >= seq_number {
+                    info!("Received packet {:?} twice", seq_number);
+                    return Ok(None);
+                }
+                info!("Adding packet {:?}", seq_number);
+
                 // add it to the buffer at the right spot
                 // keep it sorted descending order
                 match self.buffer
-                    .binary_search_by(|pack| pack.seq_number().unwrap().cmp(&seq_number))
+                    .binary_search_by(|pack| pack.seq_number().unwrap().cmp(&seq_number).reverse())
                 {
+                    // this packet is already in the buffer
                     Ok(_) => {}
                     Err(pos) => self.buffer.insert(pos, packet_cpy),
                 }
@@ -553,21 +562,17 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Bytes>, Error> {
-        info!(
-            "Lat rel={:?} Buffer={:?}",
-            self.last_released,
-            self.buffer
-                .iter()
-                .map(|p| p.seq_number().unwrap())
-                .collect::<Vec<_>>()
-        );
+
+        info!("lr={}, buffer={:?}", self.last_released.0, self.buffer.iter().map(|b| b.seq_number().unwrap().0).collect::<Vec<_>>());
+
         // if data packets are ready, send them
         while let Some(packet) = self.buffer.pop() {
-            if packet.seq_number().unwrap() < self.last_released + 1 {
+            if packet.seq_number().unwrap() <= self.last_released + 1 {
                 self.last_released += 1;
 
+                info!("Releasing {:?}", packet.seq_number().unwrap());
                 if let Packet::Data { payload, .. } = packet {
-                    info!("Released packet");
+
                     return Ok(Async::Ready(Some(payload)));
                 } else {
                     panic!("Control packet in receiver buffer");

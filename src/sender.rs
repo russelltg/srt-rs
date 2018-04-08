@@ -107,6 +107,7 @@ where
     }
 
     fn handle_packet(&mut self, pack: Packet) -> Result<()> {
+
         match pack {
             Packet::Control {
                 control_type,
@@ -264,6 +265,7 @@ where
             while let Async::Ready(a) = self.sock.poll()? {
                 match a {
                     Some((pack, addr)) => {
+                        info!("Got packet: {:?}", pack);
                         // ignore the packet if it isn't from the right address
                         if addr == self.settings.remote {
                             self.handle_packet(pack)?;
@@ -271,10 +273,7 @@ where
                     }
                     // stream has ended
                     None => {
-                        return Err(Error::new(
-                            ErrorKind::UnexpectedEof,
-                            "Unexpected EOF when sending packets",
-                        ));
+                        return Ok(Async::Ready(()));
                     }
                 }
             }
@@ -323,6 +322,7 @@ where
                     self.next_seq_number, self.congest_ctrl.window_size(), self.next_seq_number - self.congest_ctrl.window_size());
                 return Ok(Async::NotReady);
             }
+
             // b. Pack a new data packet and send it out.
             {
                 let payload = match self.pending_packets.pop_front() {
@@ -330,6 +330,7 @@ where
                     // All packets have been flushed
                     None => return self.sock.poll_complete(),
                 };
+                info!("Sending packet: {}", self.next_seq_number.0);
                 self.send_packet(payload)?;
             }
 
@@ -349,7 +350,13 @@ where
     }
 
     fn close(&mut self) -> Poll<(), Error> {
-        // TODO: send shutdown packet
+        let ts = self.get_timestamp();
+        self.sock.start_send((Packet::Control {
+            dest_sockid: self.settings.remote_sockid,
+            timestamp: ts,
+            control_type: ControlTypes::Shutdown,
+        }, self.settings.remote))?;
+
         self.poll_complete()
     }
 }

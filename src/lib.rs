@@ -36,4 +36,4 @@ pub use sender::Sender;
 pub use seq_number::SeqNumber;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct SocketID(i32);
+pub struct SocketID(pub i32);

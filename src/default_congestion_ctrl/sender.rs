@@ -59,7 +59,10 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
 
             (data.packet_arr_rate as f64 * (rtt_secs + 0.01)) as i32 + 16
         };
-        debug_assert!(self.window_size > 1);
+        // clamp it between 16 and 1000
+        self.window_size = i32::max(self.window_size, 16);
+        self.window_size = i32::min(self.window_size, 1000);
+        info!("New window size: {}", self.window_size);
 
         if let Phase::SlowStart = mem::replace(&mut self.phase, Phase::Operation) {
             return;
