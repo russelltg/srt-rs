@@ -303,7 +303,7 @@ where
             return Ok(());
         }
 
-        info!("Sending NAK with lost packets: {:?}", seq_nums);
+        info!("Sending NAK with lost packets: ll={:?} {:?}", self.loss_list.iter().map(|ll| ll.seq_num.0).collect::<Vec<_>>(), seq_nums);
 
         // send the nak
         self.send_nak(seq_nums.into_iter())?;
@@ -505,7 +505,6 @@ where
                     info!("Received packet {:?} twice", seq_number);
                     return Ok(None);
                 }
-                info!("Adding packet {:?}", seq_number);
 
                 // add it to the buffer at the right spot
                 // keep it sorted descending order
@@ -516,6 +515,8 @@ where
                     Ok(_) => {}
                     Err(pos) => self.buffer.insert(pos, packet_cpy),
                 }
+                info!("lr={}, buffer={:?}", self.last_released.0, self.buffer.iter().map(|b| b.seq_number().unwrap().0).collect::<Vec<_>>());
+
             }
         };
 
@@ -562,8 +563,6 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Bytes>, Error> {
-
-        info!("lr={}, buffer={:?}", self.last_released.0, self.buffer.iter().map(|b| b.seq_number().unwrap().0).collect::<Vec<_>>());
 
         // if data packets are ready, send them
         while let Some(packet) = self.buffer.pop() {

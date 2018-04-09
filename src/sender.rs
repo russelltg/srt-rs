@@ -180,8 +180,6 @@ where
                         // 2) Update the SND period by rate control (see section 3.6).
                         // 3) Reset the EXP time variable.
 
-                        info!("Decompressing loss lost: {:?}", info.loss_info);
-
                         for lost in decompress_loss_list(info.loss_info.iter().cloned()) {
                             let packet = match self.buffer.iter().find(|pack| pack.seq_number().unwrap() == lost) {
                                 Some(p) => p,
@@ -194,6 +192,9 @@ where
                             let cc_info = self.make_cc_info();
                             self.congest_ctrl.on_nak(self.loss_list.back().unwrap().seq_number().unwrap(), &cc_info);
                         }
+
+                        info!("Loss list={:?}", self.loss_list.iter().map(|ll| ll.seq_number().unwrap().0).collect::<Vec<_>>());
+
                         // TODO: reset EXP
                     }
                     ControlTypes::Shutdown => unimplemented!(),
@@ -279,24 +280,6 @@ where
             }
             // if we're here, we are guaranteed to have a NotReady, so returning NotReady is OK
 
-            // 1) If the sender's loss list is not empty, send all the packets it in
-            while let Some(pack) = self.loss_list.pop_front() {
-                info!(
-                    "Sending packet in loss list, seq={:?}",
-                    pack.seq_number().unwrap()
-                );
-                self.sock.start_send((pack, self.settings.remote))?;
-                self.sock.poll_complete()?;
-            }
-
-            // 2) In messaging mode, if the packets has been the loss list for a
-            //    time more than the application specified TTL (time-to-live), send
-            //    a message drop request and remove all related packets from the
-            //    loss list. Go to 1).
-
-            // TODO: I honestly don't know what this means
-
-            // 3) Wait until there is application data to be sent.
 
             // wait for the SND timer to timeout
             try_ready!(self.snd_timer.poll());
@@ -312,39 +295,58 @@ where
             // reset the timer
             self.snd_timer.reset(self.congest_ctrl.send_interval());
 
-            // a. If the number of unacknowledged packets exceeds the
-            //    flow/congestion window size, wait until an ACK comes. Go to
-            //    1).
-            // TODO: account for looping here
-            if self.lr_acked_packet < self.next_seq_number - self.congest_ctrl.window_size() {
-                // flow window exceeded, wait for ACK
-                info!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}", self.lr_acked_packet,
-                    self.next_seq_number, self.congest_ctrl.window_size(), self.next_seq_number - self.congest_ctrl.window_size());
-                return Ok(Async::NotReady);
-            }
+            // 1) If the sender's loss list is not empty, send all the packets it in
+            if let Some(pack) = self.loss_list.pop_front() {
+                info!(
+                    "Sending packet in loss list, seq={:?}",
+                    pack.seq_number().unwrap()
+                );
+                self.sock.start_send((pack, self.settings.remote))?;
+            } else {
+                // 2) In messaging mode, if the packets has been the loss list for a
+                //    time more than the application specified TTL (time-to-live), send
+                //    a message drop request and remove all related packets from the
+                //    loss list. Go to 1).
 
-            // b. Pack a new data packet and send it out.
-            {
-                let payload = match self.pending_packets.pop_front() {
-                    Some(p) => p,
-                    // All packets have been flushed
-                    None => return self.sock.poll_complete(),
-                };
-                info!("Sending packet: {}", self.next_seq_number.0);
-                self.send_packet(payload)?;
-            }
+                // TODO: I honestly don't know what this means
 
-            // 5) If the sequence number of the current packet is 16n, where n is an
-            //     integer, go to 2) (which is send another packet).
-            if (self.next_seq_number - 1) % 16 == 0 {
-                let payload = match self.pending_packets.pop_front() {
-                    Some(p) => p,
-                    // All packets have been flushed
-                    None => return self.sock.poll_complete(),
-                };
-                self.send_packet(payload)?;
-            }
+                // 3) Wait until there is application data to be sent.
 
+
+                // a. If the number of unacknowledged packets exceeds the
+                //    flow/congestion window size, wait until an ACK comes. Go to
+                //    1).
+                // TODO: account for looping here
+                if self.lr_acked_packet < self.next_seq_number - self.congest_ctrl.window_size() {
+                    // flow window exceeded, wait for ACK
+                    debug!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}", self.lr_acked_packet,
+                          self.next_seq_number, self.congest_ctrl.window_size(), self.next_seq_number - self.congest_ctrl.window_size());
+                    return Ok(Async::NotReady);
+                }
+
+                // b. Pack a new data packet and send it out.
+                {
+                    let payload = match self.pending_packets.pop_front() {
+                        Some(p) => p,
+                        // All packets have been flushed
+                        None => return self.sock.poll_complete(),
+                    };
+                    info!("Sending packet: {}", self.next_seq_number.0);
+                    self.send_packet(payload)?;
+                }
+
+                // 5) If the sequence number of the current packet is 16n, where n is an
+                //     integer, go to 2) (which is send another packet).
+                if (self.next_seq_number - 1) % 16 == 0 {
+                    let payload = match self.pending_packets.pop_front() {
+                        Some(p) => p,
+                        // All packets have been flushed
+                        None => return self.sock.poll_complete(),
+                    };
+                    self.send_packet(payload)?;
+                }
+
+            }
             self.sock.poll_complete()?;
         }
     }
