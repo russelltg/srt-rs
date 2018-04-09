@@ -1,12 +1,11 @@
 use std::mem;
 use std::time::Duration;
 
-use {AckMode, CCData, SenderCongestionCtrl, SeqNumber};
+use {CCData, SenderCongestionCtrl, SeqNumber};
 
 use rand::{thread_rng, distributions::{IndependentSample, Normal}};
 
 pub struct DefaultSenderCongestionCtrl {
-    inter_interval: Duration,
     phase: Phase,
     avg_nak_num: i32,
     nak_count: i32,
@@ -21,7 +20,6 @@ pub struct DefaultSenderCongestionCtrl {
 impl DefaultSenderCongestionCtrl {
     pub fn new() -> DefaultSenderCongestionCtrl {
         DefaultSenderCongestionCtrl {
-            inter_interval: Duration::from_secs(0),
             phase: Phase::SlowStart,
             avg_nak_num: 1,
             nak_count: 1,
@@ -79,21 +77,21 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
         //     fixed size of UDT packet counted in bytes. Beta is a constant
         //     value of 0.0000015.
         let inc = {
-            let B = data.est_bandwidth as f64;
+            let b = data.est_bandwidth as f64;
 
-            let PS = data.max_segment_size as f64;
+            let ps = data.max_segment_size as f64;
             // 1/send_interval is packets/second
             // packets/sec * packet_size = bytes/sec
-            let C = PS * (1.0 / (self.send_interval.as_secs() as f64
+            let c = ps * (1.0 / (self.send_interval.as_secs() as f64
                 + self.send_interval.subsec_nanos() as f64 / 1e9));
 
-            if B <= C {
+            if b <= c {
                 // 1.0 / PS as f64
                 0.01
             } else {
                 10f64
-                    .powf((((B - C) * PS) * 8.0).log10().ceil())
-                    .max(1.0 / PS)
+                    .powf((((b - c) * ps) * 8.0).log10().ceil())
+                    .max(1.0 / ps)
             }
         };
 

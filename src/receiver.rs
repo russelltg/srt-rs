@@ -1,5 +1,4 @@
-use std::{cmp, collections::VecDeque, io::{Error, Result}, iter::Iterator, net::SocketAddr,
-          time::{Duration, Instant}};
+use std::{cmp, io::{Error, Result}, iter::Iterator, net::SocketAddr, time::Duration};
 
 use bytes::Bytes;
 use futures::prelude::*;
@@ -163,7 +162,10 @@ where
             return Ok(());
         }
 
-        info!("Sending ACK; ack_num={:?}, lr_ack_acked={:?}", ack_number, self.lr_ack_acked.1);
+        info!(
+            "Sending ACK; ack_num={:?}, lr_ack_acked={:?}",
+            ack_number, self.lr_ack_acked.1
+        );
 
         if let Some(&AckHistoryEntry {
             ack_number: last_ack_number,
@@ -303,7 +305,14 @@ where
             return Ok(());
         }
 
-        info!("Sending NAK with lost packets: ll={:?} {:?}", self.loss_list.iter().map(|ll| ll.seq_num.0).collect::<Vec<_>>(), seq_nums);
+        info!(
+            "Sending NAK with lost packets: ll={:?} {:?}",
+            self.loss_list
+                .iter()
+                .map(|ll| ll.seq_num.0)
+                .collect::<Vec<_>>(),
+            seq_nums
+        );
 
         // send the nak
         self.send_nak(seq_nums.into_iter())?;
@@ -394,8 +403,8 @@ where
                             self.ack_interval = Interval::new(Duration::new(
                                 0,
                                 // convert to nanoseconds
-                                (4 * self.rtt + self.rtt_variance + 10_000/*SYN is 0.01 seconds, or 10_000 us*/)
-                                    as u32 * 1_000,
+                                // SYN is 0.01 seconds, or 10_000 us
+                                (4 * self.rtt + self.rtt_variance + 10_000) as u32 * 1_000,
                             ));
                         } else {
                             warn!(
@@ -515,8 +524,14 @@ where
                     Ok(_) => {}
                     Err(pos) => self.buffer.insert(pos, packet_cpy),
                 }
-                info!("lr={}, buffer={:?}", self.last_released.0, self.buffer.iter().map(|b| b.seq_number().unwrap().0).collect::<Vec<_>>());
-
+                info!(
+                    "lr={}, buffer={:?}",
+                    self.last_released.0,
+                    self.buffer
+                        .iter()
+                        .map(|b| b.seq_number().unwrap().0)
+                        .collect::<Vec<_>>()
+                );
             }
         };
 
@@ -563,7 +578,6 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Bytes>, Error> {
-
         // if data packets are ready, send them
         while let Some(packet) = self.buffer.pop() {
             if packet.seq_number().unwrap() <= self.last_released + 1 {
@@ -571,7 +585,6 @@ where
 
                 info!("Releasing {:?}", packet.seq_number().unwrap());
                 if let Packet::Data { payload, .. } = packet {
-
                     return Ok(Async::Ready(Some(payload)));
                 } else {
                     panic!("Control packet in receiver buffer");

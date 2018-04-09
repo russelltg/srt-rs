@@ -3,8 +3,7 @@ use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::Delay;
 use packet::{ControlTypes, Packet, PacketLocation};
-use std::{collections::VecDeque, io::{Error, ErrorKind, Result}, net::SocketAddr,
-          time::{Duration, Instant}};
+use std::{collections::VecDeque, io::{Error, Result}, net::SocketAddr, time::Duration};
 
 use {CCData, ConnectionSettings, SenderCongestionCtrl};
 
@@ -107,7 +106,6 @@ where
     }
 
     fn handle_packet(&mut self, pack: Packet) -> Result<()> {
-
         match pack {
             Packet::Control {
                 control_type,
@@ -171,7 +169,7 @@ where
                         }
                     }
                     ControlTypes::Ack2(_) => warn!("Sender received ACK2, unusual"),
-                    ControlTypes::DropRequest(msg_id, info) => unimplemented!(),
+                    ControlTypes::DropRequest(_msg_id, _info) => unimplemented!(),
                     ControlTypes::Handshake(_shake) => unimplemented!(),
                     // TODO: reset EXP-ish
                     ControlTypes::KeepAlive => {}
@@ -181,16 +179,23 @@ where
                         // 3) Reset the EXP time variable.
 
                         for lost in decompress_loss_list(info.loss_info.iter().cloned()) {
-                            let packet = match self.buffer.iter().find(|pack| pack.seq_number().unwrap() == lost) {
+                            let packet = match self.buffer
+                                .iter()
+                                .find(|pack| pack.seq_number().unwrap() == lost)
+                            {
                                 Some(p) => p,
                                 None => {warn!("NAK received for packet that's not in the buffer, maybe it's already been ACKed"); continue }
                             };
 
                             self.loss_list.push_back(packet.clone());
                         }
+
+                        // update CC
                         if !self.loss_list.is_empty() {
                             let cc_info = self.make_cc_info();
-                            self.congest_ctrl.on_nak(self.loss_list.back().unwrap().seq_number().unwrap(), &cc_info);
+                            self.congest_ctrl.on_nak(
+                                self.loss_list.back().unwrap().seq_number().unwrap(),
+                                &cc_info);
                         }
 
                         info!("Loss list={:?}", self.loss_list.iter().map(|ll| ll.seq_number().unwrap().0).collect::<Vec<_>>());
@@ -280,7 +285,6 @@ where
             }
             // if we're here, we are guaranteed to have a NotReady, so returning NotReady is OK
 
-
             // wait for the SND timer to timeout
             try_ready!(self.snd_timer.poll());
 
@@ -312,15 +316,18 @@ where
 
                 // 3) Wait until there is application data to be sent.
 
-
                 // a. If the number of unacknowledged packets exceeds the
                 //    flow/congestion window size, wait until an ACK comes. Go to
                 //    1).
                 // TODO: account for looping here
                 if self.lr_acked_packet < self.next_seq_number - self.congest_ctrl.window_size() {
                     // flow window exceeded, wait for ACK
-                    debug!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}", self.lr_acked_packet,
-                          self.next_seq_number, self.congest_ctrl.window_size(), self.next_seq_number - self.congest_ctrl.window_size());
+                    debug!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}", 
+                        self.lr_acked_packet,
+                        self.next_seq_number,
+                        self.congest_ctrl.window_size(),
+                        self.next_seq_number - self.congest_ctrl.window_size());
+
                     return Ok(Async::NotReady);
                 }
 
@@ -345,7 +352,6 @@ where
                     };
                     self.send_packet(payload)?;
                 }
-
             }
             self.sock.poll_complete()?;
         }
@@ -353,11 +359,14 @@ where
 
     fn close(&mut self) -> Poll<(), Error> {
         let ts = self.get_timestamp();
-        self.sock.start_send((Packet::Control {
-            dest_sockid: self.settings.remote_sockid,
-            timestamp: ts,
-            control_type: ControlTypes::Shutdown,
-        }, self.settings.remote))?;
+        self.sock.start_send((
+            Packet::Control {
+                dest_sockid: self.settings.remote_sockid,
+                timestamp: ts,
+                control_type: ControlTypes::Shutdown,
+            },
+            self.settings.remote,
+        ))?;
 
         self.poll_complete()
     }

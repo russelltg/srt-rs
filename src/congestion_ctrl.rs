@@ -5,16 +5,16 @@ use std::time::Duration;
 ///
 /// Used to define custom congestion control
 pub trait SenderCongestionCtrl {
-    fn init(&mut self, init_seq_num: SeqNumber) {}
+    fn init(&mut self, _init_seq_num: SeqNumber) {}
 
     /// When an ACK packet is received
-    fn on_ack(&mut self, data: &CCData) {}
+    fn on_ack(&mut self, _data: &CCData) {}
 
     /// When a NAK packet is received
-    fn on_nak(&mut self, largest_seq_in_ll: SeqNumber, data: &CCData) {}
+    fn on_nak(&mut self, _largest_seq_in_ll: SeqNumber, _data: &CCData) {}
 
     /// On packet sent
-    fn on_packet_sent(&mut self, data: &CCData) {}
+    fn on_packet_sent(&mut self, _data: &CCData) {}
 
     /// Get the interval between sending packets
     fn send_interval(&self) -> Duration;

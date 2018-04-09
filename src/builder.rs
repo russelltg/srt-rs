@@ -7,10 +7,7 @@ use tokio::net::{UdpFramed, UdpSocket};
 
 use SocketID;
 use codec::PacketCodec;
-use packet::Packet;
 use pending_connection::PendingConnection;
-
-use futures::prelude::*;
 
 pub type SrtSocket = UdpFramed<PacketCodec>;
 

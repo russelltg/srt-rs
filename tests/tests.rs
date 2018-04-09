@@ -1,24 +1,26 @@
+extern crate bytes;
 extern crate futures;
 extern crate futures_timer;
 extern crate rand;
+extern crate simple_logger;
 extern crate srt;
 extern crate tokio;
-extern crate bytes;
-extern crate simple_logger;
 #[macro_use]
 extern crate log;
 
-use bytes::{BytesMut, Bytes};
+use bytes::{Bytes, BytesMut};
 
-use std::{cmp::Ordering, collections::BinaryHeap, time::{Duration, Instant}, io::{Error, ErrorKind}, str, fmt::Debug, thread};
+use std::{str, thread, cmp::Ordering, collections::BinaryHeap, fmt::Debug, io::{Error, ErrorKind},
+          time::{Duration, Instant}};
 
-use futures::{prelude::*, sync::mpsc, stream::iter_ok};
+use futures::{prelude::*, stream::iter_ok, sync::mpsc};
 
 use rand::{thread_rng, distributions::{IndependentSample, Normal, Range}};
 
 use futures_timer::{Delay, Interval};
 
-use srt::{Sender, Receiver, DefaultSenderCongestionCtrl, DefaultReceiverCongestionCtrl, ConnectionSettings, SeqNumber, SocketID};
+use srt::{ConnectionSettings, DefaultReceiverCongestionCtrl, DefaultSenderCongestionCtrl,
+          Receiver, Sender, SeqNumber, SocketID};
 
 use tokio::executor::current_thread;
 
@@ -75,7 +77,6 @@ impl<T: Debug> Sink for LossyConn<T> {
     type SinkError = ();
 
     fn start_send(&mut self, to_send: T) -> StartSend<T, ()> {
-
         // should we drop it?
         {
             let between = Range::new(0f64, 1f64);
@@ -178,7 +179,13 @@ impl Sink for CounterChecker {
     type SinkError = Error;
 
     fn start_send(&mut self, by: Bytes) -> StartSend<Bytes, Error> {
-        assert_eq!(str::from_utf8(&by[..]).unwrap(), self.current.to_string(), "Expected data to be {}, was {}", self.current, str::from_utf8(&by[..]).unwrap());
+        assert_eq!(
+            str::from_utf8(&by[..]).unwrap(),
+            self.current.to_string(),
+            "Expected data to be {}, was {}",
+            self.current,
+            str::from_utf8(&by[..]).unwrap()
+        );
 
         if self.current % 10000 == 0 {
             println!("{} recognized", self.current);
@@ -199,7 +206,6 @@ impl Sink for CounterChecker {
 
 #[test]
 fn test_with_loss() {
-
     simple_logger::init().unwrap();
     log::set_max_level(LevelFilter::Info);
 
@@ -207,13 +213,10 @@ fn test_with_loss() {
     const iters: u64 = 1_000_000;
 
     // a stream of ascending stringified integers
-    let counting_stream =
-        iter_ok((init_seq_num as u64..(init_seq_num + iters)))
-            .map(|i| {
-                BytesMut::from(&i.to_string().bytes().collect::<Vec<_>>()[..]).freeze()
-            })
-            .zip(Interval::new(Duration::new(0, 10)))
-            .map(|(b, _)| b);
+    let counting_stream = iter_ok((init_seq_num as u64..(init_seq_num + iters)))
+        .map(|i| BytesMut::from(&i.to_string().bytes().collect::<Vec<_>>()[..]).freeze())
+        .zip(Interval::new(Duration::new(0, 10)))
+        .map(|(b, _)| b);
 
     let (send, recv) = LossyConn::new(0.2, Duration::from_secs(0), Duration::from_secs(0));
 
@@ -229,7 +232,8 @@ fn test_with_loss() {
             max_packet_size: 1316,
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
-        });
+        },
+    );
 
     let recvr = Receiver::new(
         recv.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
@@ -242,17 +246,22 @@ fn test_with_loss() {
             max_packet_size: 1316,
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(),
-        });
+        },
+    );
 
     let t1 = thread::spawn(|| {
-        counting_stream.forward(sender)
+        counting_stream
+            .forward(sender)
             .map_err(|e: Error| panic!("{:?}", e))
             .map(|_| ())
             .wait();
     });
 
     let t2 = thread::spawn(|| {
-        recvr.forward(CounterChecker{current: init_seq_num})
+        recvr
+            .forward(CounterChecker {
+                current: init_seq_num,
+            })
             .map_err(|e| panic!(e))
             .map(move |(_, c)| assert_eq!(c.current, init_seq_num + iters))
             .wait();

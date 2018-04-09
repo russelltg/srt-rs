@@ -1,6 +1,5 @@
 use std::io::Error;
 use std::net::SocketAddr;
-use std::time::Instant;
 
 use futures::prelude::*;
 

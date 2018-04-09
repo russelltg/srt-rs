@@ -1,6 +1,4 @@
-use std::{mem, io::Error, net::{IpAddr, Ipv4Addr, SocketAddr}, time::{Duration, Instant}};
-
-use rand::{thread_rng, Rng};
+use std::{mem, io::Error, net::{IpAddr, SocketAddr}, time::{Duration, Instant}};
 
 use futures::prelude::*;
 use futures_timer::Interval;
