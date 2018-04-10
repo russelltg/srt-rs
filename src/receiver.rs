@@ -524,13 +524,20 @@ where
                     Ok(_) => {}
                     Err(pos) => self.buffer.insert(pos, packet_cpy),
                 }
+                info!("Received packet: {}", seq_number.0);
+
                 info!(
-                    "lr={}, buffer={:?}",
+                    "lr={}, buffer.len()={}, buffer[0]={}, buffer[last]={}",
                     self.last_released.0,
+                    self.buffer.len(),
                     self.buffer
-                        .iter()
+                        .first()
                         .map(|b| b.seq_number().unwrap().0)
-                        .collect::<Vec<_>>()
+                        .unwrap_or(-1),
+                    self.buffer
+                        .last()
+                        .map(|b| b.seq_number().unwrap().0)
+                        .unwrap_or(-1),
                 );
             }
         };
@@ -578,28 +585,23 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Bytes>, Error> {
-        // if data packets are ready, send them
-        while let Some(packet) = self.buffer.pop() {
-            if packet.seq_number().unwrap() <= self.last_released + 1 {
-                self.last_released += 1;
-
-                info!("Releasing {:?}", packet.seq_number().unwrap());
-                if let Packet::Data { payload, .. } = packet {
-                    return Ok(Async::Ready(Some(payload)));
-                } else {
-                    panic!("Control packet in receiver buffer");
-                }
-            } else {
-                self.buffer.push(packet);
-                break;
-            }
-        }
-
         self.check_timers()?;
 
         self.sock.poll_complete()?;
 
         loop {
+            // if data packets are ready, send them
+            if let Some(packet) = self.buffer.pop() {
+                if packet.seq_number().unwrap() <= self.last_released + 1 {
+                    self.last_released += 1;
+
+                    info!("Releasing {:?}", packet.seq_number().unwrap());
+                    return Ok(Async::Ready(Some(packet.payload().unwrap())));
+                } else {
+                    self.buffer.push(packet);
+                }
+            }
+
             match self.timeout_timer.poll() {
                 Err(e) => panic!(e), // why would this ever happen
                 Ok(Async::Ready(_)) => {

@@ -86,8 +86,7 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
                 + self.send_interval.subsec_nanos() as f64 / 1e9));
 
             if b <= c {
-                // 1.0 / PS as f64
-                0.01
+                1.0 / ps
             } else {
                 10f64
                     .powf((((b - c) * ps) * 8.0).log10().ceil())

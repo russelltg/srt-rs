@@ -4,7 +4,6 @@ extern crate futures_timer;
 extern crate rand;
 extern crate simple_logger;
 extern crate srt;
-extern crate tokio;
 #[macro_use]
 extern crate log;
 
@@ -19,10 +18,7 @@ use rand::{thread_rng, distributions::{IndependentSample, Normal, Range}};
 
 use futures_timer::{Delay, Interval};
 
-use srt::{ConnectionSettings, DefaultReceiverCongestionCtrl, DefaultSenderCongestionCtrl,
-          Receiver, Sender, SeqNumber, SocketID};
-
-use tokio::executor::current_thread;
+use srt::{ConnectionSettings, DefaultSenderCongestionCtrl, Receiver, Sender, SeqNumber, SocketID};
 
 use log::LevelFilter;
 
@@ -90,6 +86,9 @@ impl<T: Debug> Sink for LossyConn<T> {
             }
         }
 
+        if self.delay_avg == Duration::from_secs(0) {
+            self.sender.start_send(to_send).unwrap();
+        } else
         // delay
         {
             let center =
@@ -105,11 +104,11 @@ impl<T: Debug> Sink for LossyConn<T> {
             self.delay_buffer.push(TTime {
                 data: to_send,
                 time: Instant::now() + delay,
-            })
-        }
+            });
 
-        // update the timer
-        self.delay.reset_at(self.delay_buffer.peek().unwrap().time);
+            // update the timer
+            self.delay.reset_at(self.delay_buffer.peek().unwrap().time);
+        }
 
         Ok(AsyncSink::Ready)
     }
@@ -132,6 +131,8 @@ impl<T: Debug> Sink for LossyConn<T> {
     }
 
     fn close(&mut self) -> Poll<(), ()> {
+        info!("Closing sink...");
+
         Ok(self.sender.close().unwrap()) // TODO: here too
     }
 }
@@ -171,7 +172,7 @@ impl<T> LossyConn<T> {
 }
 
 struct CounterChecker {
-    current: u64,
+    current: i32,
 }
 
 impl Sink for CounterChecker {
@@ -209,13 +210,13 @@ fn test_with_loss() {
     simple_logger::init().unwrap();
     log::set_max_level(LevelFilter::Info);
 
-    const init_seq_num: u64 = 812731;
-    const iters: u64 = 1_000_000;
+    const INIT_SEQ_NUM: i32 = 812731;
+    const ITERS: i32 = 10_000;
 
     // a stream of ascending stringified integers
-    let counting_stream = iter_ok((init_seq_num as u64..(init_seq_num + iters)))
+    let counting_stream = iter_ok(INIT_SEQ_NUM..(INIT_SEQ_NUM + ITERS))
         .map(|i| BytesMut::from(&i.to_string().bytes().collect::<Vec<_>>()[..]).freeze())
-        .zip(Interval::new(Duration::new(0, 10)))
+        .zip(Interval::new(Duration::from_millis(1)))
         .map(|(b, _)| b);
 
     let (send, recv) = LossyConn::new(0.2, Duration::from_secs(0), Duration::from_secs(0));
@@ -225,7 +226,7 @@ fn test_with_loss() {
             .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
         DefaultSenderCongestionCtrl::new(),
         ConnectionSettings {
-            init_seq_num: SeqNumber(812731),
+            init_seq_num: SeqNumber(INIT_SEQ_NUM),
             socket_start_time: Instant::now(),
             remote_sockid: SocketID(81),
             local_sockid: SocketID(13),
@@ -239,7 +240,7 @@ fn test_with_loss() {
         recv.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
             .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
         ConnectionSettings {
-            init_seq_num: SeqNumber(812731),
+            init_seq_num: SeqNumber(INIT_SEQ_NUM),
             socket_start_time: Instant::now(),
             remote_sockid: SocketID(13),
             local_sockid: SocketID(81),
@@ -250,23 +251,23 @@ fn test_with_loss() {
     );
 
     let t1 = thread::spawn(|| {
-        counting_stream
-            .forward(sender)
+        sender
+            .send_all(counting_stream)
             .map_err(|e: Error| panic!("{:?}", e))
-            .map(|_| ())
-            .wait();
+            .wait()
+            .unwrap();
     });
 
     let t2 = thread::spawn(|| {
-        recvr
-            .forward(CounterChecker {
-                current: init_seq_num,
-            })
+        CounterChecker {
+            current: INIT_SEQ_NUM,
+        }.send_all(recvr)
             .map_err(|e| panic!(e))
-            .map(move |(_, c)| assert_eq!(c.current, init_seq_num + iters))
-            .wait();
+            .map(move |(c, _)| assert_eq!(c.current, INIT_SEQ_NUM + ITERS))
+            .wait()
+            .unwrap();
     });
 
-    t1.join();
-    t2.join();
+    t1.join().unwrap();
+    t2.join().unwrap();
 }

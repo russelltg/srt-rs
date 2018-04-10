@@ -1,6 +1,6 @@
 [package]
 name = "srt-transport"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Russell Greene <russellgreene8@gmail.com>"]
 description = "SRT implementation in Rust"
 license = "Apache-2.0"

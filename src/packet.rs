@@ -94,6 +94,13 @@ impl Packet {
             None
         }
     }
+    pub fn payload(&self) -> Option<Bytes> {
+        if let Packet::Data { ref payload, .. } = *self {
+            Some(payload.clone())
+        } else {
+            None
+        }
+    }
 }
 
 /// Signifies the packet location in a message for a data packet

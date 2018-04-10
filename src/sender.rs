@@ -3,7 +3,7 @@ use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::Delay;
 use packet::{ControlTypes, Packet, PacketLocation};
-use std::{collections::VecDeque, io::{Error, Result}, net::SocketAddr, time::Duration};
+use std::{collections::VecDeque, io::{Error, ErrorKind, Result}, net::SocketAddr, time::Duration};
 
 use {CCData, ConnectionSettings, SenderCongestionCtrl};
 
@@ -264,7 +264,17 @@ where
     fn poll_complete(&mut self) -> Poll<(), Error> {
         // we need to poll_complete this until completion
         // this poll_complete could have come from a wakeup of that, so call it
-        self.sock.poll_complete()?;
+        if let Async::Ready(_) = self.sock.poll_complete()? {
+            // if everything is flushed, return Ok
+            if self.loss_list.is_empty() && self.pending_packets.is_empty()
+                && self.lr_acked_packet == self.next_seq_number
+                && self.buffer.is_empty()
+            {
+                // TODO: this is wrong for KeepAlive
+                info!("Returning ready");
+                return Ok(Async::Ready(()));
+            }
+        }
 
         loop {
             // do we have any packets to handle?
@@ -277,9 +287,12 @@ where
                             self.handle_packet(pack)?;
                         }
                     }
-                    // stream has ended
+                    // stream has ended, this is weird
                     None => {
-                        return Ok(Async::Ready(()));
+                        return Err(Error::new(
+                            ErrorKind::UnexpectedEof,
+                            "Unexpected EOF of underlying stream",
+                        ));
                     }
                 }
             }
@@ -328,7 +341,7 @@ where
                         self.congest_ctrl.window_size(),
                         self.next_seq_number - self.congest_ctrl.window_size());
 
-                    return Ok(Async::NotReady);
+                    continue;
                 }
 
                 // b. Pack a new data packet and send it out.
@@ -336,9 +349,14 @@ where
                     let payload = match self.pending_packets.pop_front() {
                         Some(p) => p,
                         // All packets have been flushed
-                        None => return self.sock.poll_complete(),
+                        None => continue,
                     };
-                    info!("Sending packet: {}", self.next_seq_number.0);
+                    info!(
+                        "Sending packet: {}; pending.len={}; SND={:?}",
+                        self.next_seq_number.0,
+                        self.pending_packets.len(),
+                        self.congest_ctrl.send_interval(),
+                    );
                     self.send_packet(payload)?;
                 }
 
@@ -348,7 +366,7 @@ where
                     let payload = match self.pending_packets.pop_front() {
                         Some(p) => p,
                         // All packets have been flushed
-                        None => return self.sock.poll_complete(),
+                        None => continue,
                     };
                     self.send_packet(payload)?;
                 }
@@ -358,6 +376,9 @@ where
     }
 
     fn close(&mut self) -> Poll<(), Error> {
+        try_ready!(self.poll_complete());
+
+        // once it's all flushed, send a Shutdown
         let ts = self.get_timestamp();
         self.sock.start_send((
             Packet::Control {
@@ -368,6 +389,6 @@ where
             self.settings.remote,
         ))?;
 
-        self.poll_complete()
+        return Ok(Async::Ready(()));
     }
 }
