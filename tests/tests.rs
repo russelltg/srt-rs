@@ -207,9 +207,6 @@ impl Sink for CounterChecker {
 
 #[test]
 fn test_with_loss() {
-    simple_logger::init().unwrap();
-    log::set_max_level(LevelFilter::Info);
-
     const INIT_SEQ_NUM: i32 = 812731;
     const ITERS: i32 = 10_000;
 
