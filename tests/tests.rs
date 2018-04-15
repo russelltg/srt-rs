@@ -188,7 +188,7 @@ impl Sink for CounterChecker {
             str::from_utf8(&by[..]).unwrap()
         );
 
-        if self.current % 10000 == 0 {
+        if self.current % 100 == 0 {
             println!("{} recognized", self.current);
         }
         self.current += 1;
