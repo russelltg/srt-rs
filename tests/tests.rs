@@ -1,8 +1,8 @@
 extern crate bytes;
+extern crate env_logger;
 extern crate futures;
 extern crate futures_timer;
 extern crate rand;
-extern crate simple_logger;
 extern crate srt;
 #[macro_use]
 extern crate log;
@@ -79,7 +79,7 @@ impl<T: Debug> Sink for LossyConn<T> {
             let sample = between.ind_sample(&mut thread_rng());
 
             if sample < self.loss_rate {
-                info!("Dropping packet: {:?}", to_send);
+                warn!("Dropping packet: {:?}", to_send);
 
                 // drop
                 return Ok(AsyncSink::Ready);
@@ -189,7 +189,7 @@ impl Sink for CounterChecker {
         );
 
         if self.current % 100 == 0 {
-            println!("{} recognized", self.current);
+            info!("{} recognized", self.current);
         }
         self.current += 1;
 
@@ -207,6 +207,8 @@ impl Sink for CounterChecker {
 
 #[test]
 fn test_with_loss() {
+    env_logger::init();
+
     const INIT_SEQ_NUM: i32 = 812731;
     const ITERS: i32 = 10_000;
 

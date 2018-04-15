@@ -198,7 +198,7 @@ where
                                 &cc_info);
                         }
 
-                        info!("Loss list={:?}", self.loss_list.iter().map(|ll| ll.seq_number().unwrap().0).collect::<Vec<_>>());
+                        trace!("Loss list={:?}", self.loss_list.iter().map(|ll| ll.seq_number().unwrap().0).collect::<Vec<_>>());
 
                         // TODO: reset EXP
                     }
@@ -271,7 +271,7 @@ where
                 && self.buffer.is_empty()
             {
                 // TODO: this is wrong for KeepAlive
-                info!("Returning ready");
+                debug!("Returning ready");
                 return Ok(Async::Ready(()));
             }
         }
@@ -281,7 +281,7 @@ where
             while let Async::Ready(a) = self.sock.poll()? {
                 match a {
                     Some((pack, addr)) => {
-                        info!("Got packet: {:?}", pack);
+                        debug!("Got packet: {:?}", pack);
                         // ignore the packet if it isn't from the right address
                         if addr == self.settings.remote {
                             self.handle_packet(pack)?;
@@ -314,7 +314,7 @@ where
 
             // 1) If the sender's loss list is not empty, send all the packets it in
             if let Some(pack) = self.loss_list.pop_front() {
-                info!(
+                debug!(
                     "Sending packet in loss list, seq={:?}",
                     pack.seq_number().unwrap()
                 );
@@ -335,7 +335,7 @@ where
                 // TODO: account for looping here
                 if self.lr_acked_packet < self.next_seq_number - self.congest_ctrl.window_size() {
                     // flow window exceeded, wait for ACK
-                    debug!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}", 
+                    trace!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}", 
                         self.lr_acked_packet,
                         self.next_seq_number,
                         self.congest_ctrl.window_size(),
@@ -351,7 +351,7 @@ where
                         // All packets have been flushed
                         None => continue,
                     };
-                    info!(
+                    debug!(
                         "Sending packet: {}; pending.len={}; SND={:?}",
                         self.next_seq_number.0,
                         self.pending_packets.len(),

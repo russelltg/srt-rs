@@ -1,9 +1,9 @@
 extern crate srt;
 
 extern crate bytes;
+extern crate env_logger;
 extern crate futures;
 extern crate log;
-extern crate simple_logger;
 extern crate tokio;
 extern crate tokio_io;
 extern crate url;
@@ -43,7 +43,7 @@ fn main() {
     };
 
     // Init logging
-    simple_logger::init().unwrap();
+    env_logger::init();
     log::set_max_level(match matches.occurrences_of("verbose") {
         0 => LevelFilter::Off,
         1 => LevelFilter::Error,

@@ -162,9 +162,10 @@ where
             return Ok(());
         }
 
-        info!(
+        trace!(
             "Sending ACK; ack_num={:?}, lr_ack_acked={:?}",
-            ack_number, self.lr_ack_acked.1
+            ack_number,
+            self.lr_ack_acked.1
         );
 
         if let Some(&AckHistoryEntry {
@@ -305,7 +306,7 @@ where
             return Ok(());
         }
 
-        info!(
+        trace!(
             "Sending NAK with lost packets: ll={:?} {:?}",
             self.loss_list
                 .iter()
@@ -442,7 +443,7 @@ where
                 payload,
                 ..
             } => {
-                debug!("Data packet received; len={}", payload.len());
+                trace!("Data packet received; len={}", payload.len());
 
                 let now = self.get_timestamp();
 
@@ -511,7 +512,7 @@ where
 
                 // we've already gotten this packet, drop it
                 if self.last_released >= seq_number {
-                    info!("Received packet {:?} twice", seq_number);
+                    debug!("Received packet {:?} twice", seq_number);
                     return Ok(None);
                 }
 
@@ -524,9 +525,9 @@ where
                     Ok(_) => {}
                     Err(pos) => self.buffer.insert(pos, packet_cpy),
                 }
-                info!("Received packet: {}", seq_number.0);
+                debug!("Received packet: {}", seq_number.0);
 
-                info!(
+                trace!(
                     "lr={}, buffer.len()={}, buffer[0]={}, buffer[last]={}",
                     self.last_released.0,
                     self.buffer.len(),
@@ -551,7 +552,7 @@ where
         I: Iterator<Item = SeqNumber>,
     {
         let vec: Vec<_> = lost_seq_nums.collect();
-        info!("Sending NAK for={:?}", vec);
+        debug!("Sending NAK for={:?}", vec);
 
         let pack = self.make_control_packet(ControlTypes::Nak(NakControlInfo {
             loss_info: compress_loss_list(vec.iter().cloned()).collect(),
@@ -595,7 +596,7 @@ where
                 if packet.seq_number().unwrap() <= self.last_released + 1 {
                     self.last_released += 1;
 
-                    info!("Releasing {:?}", packet.seq_number().unwrap());
+                    debug!("Releasing {:?}", packet.seq_number().unwrap());
                     return Ok(Async::Ready(Some(packet.payload().unwrap())));
                 } else {
                     self.buffer.push(packet);
