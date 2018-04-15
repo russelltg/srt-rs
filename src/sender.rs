@@ -212,7 +212,7 @@ where
     }
 
     fn send_packet(&mut self, payload: Bytes) -> Result<()> {
-        debug!("Sending packet with length={}", payload.len());
+        trace!("Sending packet with length={}", payload.len());
 
         let pack = Packet::Data {
             dest_sockid: self.settings.remote_sockid,
