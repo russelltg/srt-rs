@@ -210,7 +210,7 @@ fn test_with_loss() {
     env_logger::init();
 
     const INIT_SEQ_NUM: i32 = 812731;
-    const ITERS: i32 = 10_000;
+    const ITERS: i32 = 100_000;
 
     // a stream of ascending stringified integers
     let counting_stream = iter_ok(INIT_SEQ_NUM..(INIT_SEQ_NUM + ITERS))
@@ -218,7 +218,7 @@ fn test_with_loss() {
         .zip(Interval::new(Duration::from_millis(1)))
         .map(|(b, _)| b);
 
-    let (send, recv) = LossyConn::new(0.2, Duration::from_secs(0), Duration::from_secs(0));
+    let (send, recv) = LossyConn::new(0.01, Duration::from_secs(0), Duration::from_secs(0));
 
     let sender = Sender::new(
         send.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))

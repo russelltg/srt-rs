@@ -1,11 +1,11 @@
 use SeqNumber;
 use bytes::Bytes;
 use futures::prelude::*;
-use futures_timer::Delay;
+use futures_timer::{Delay, Interval};
 use packet::{ControlTypes, Packet, PacketLocation};
 use std::{collections::VecDeque, io::{Error, ErrorKind, Result}, net::SocketAddr, time::Duration};
 
-use {CCData, ConnectionSettings, SenderCongestionCtrl};
+use {CCData, ConnectionSettings, SenderCongestionCtrl, Stats};
 
 use loss_compression::decompress_loss_list;
 
@@ -57,6 +57,9 @@ pub struct Sender<T, CC> {
 
     /// The send timer
     snd_timer: Delay,
+
+    /// The interval to report stats with
+    stats_interval: Interval,
 }
 
 impl<T, CC> Sender<T, CC>
@@ -84,7 +87,17 @@ where
             pkt_arr_rate: 0,
             est_link_cap: 0,
             snd_timer: Delay::new(Duration::from_millis(1)),
+            stats_interval: Interval::new(Duration::from_secs(1)),
         }
+    }
+
+    /// Set the interval to get statistics on
+    /// Defaults to one second
+    pub fn set_stats_interval(&mut self, interval: Duration) {
+        self.stats_interval = Interval::new(interval);
+
+        // if make sure the thread is woken
+        self.poll().unwrap();
     }
 
     pub fn settings(&self) -> &ConnectionSettings {
@@ -93,6 +106,16 @@ where
 
     pub fn remote(&self) -> SocketAddr {
         self.settings.remote
+    }
+
+    pub fn stats(&self) -> Stats {
+        Stats {
+            est_link_cap: self.est_link_cap,
+            flow_size: self.congest_ctrl.window_size(),
+            lost_packets: 0, // TODO:
+            rtt: Duration::new(0, self.rtt as u32 * 1_000),
+            snd: self.congest_ctrl.send_interval(),
+        }
     }
 
     fn make_cc_info(&self) -> CCData {
@@ -390,5 +413,20 @@ where
         ))?;
 
         return Ok(Async::Ready(()));
+    }
+}
+
+// Stats streaming
+impl<T, CC> Stream for Sender<T, CC> where
+    T: Stream<Item = (Packet, SocketAddr), Error = Error>
+        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+    CC: SenderCongestionCtrl{
+    type Item = Stats;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Option<Stats>, Error> {
+        try_ready!(self.stats_interval.poll());
+
+        Ok(Async::Ready(Some(self.stats())))
     }
 }
