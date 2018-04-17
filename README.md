@@ -1,5 +1,7 @@
 # srt-rs
 
+[![Build Status](https://travis-ci.org/russelltg/srt-rs.svg?branch=master)](https://travis-ci.org/russelltg/srt-rs)
+
 Pure rust implementation of SRT (Secure Reliable Transport)
 
 Reference implementation is available at https://github.com/haivision/srt
