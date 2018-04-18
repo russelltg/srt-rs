@@ -59,7 +59,7 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
         };
         // clamp it between 16 and 1000
         self.window_size = i32::max(self.window_size, 16);
-        self.window_size = i32::min(self.window_size, 1000);
+        //self.window_size = i32::min(self.window_size, 1000);
         trace!("New window size: {}", self.window_size);
 
         if let Phase::SlowStart = mem::replace(&mut self.phase, Phase::Operation) {
@@ -80,19 +80,20 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
             let b = data.est_bandwidth as f64;
 
             let ps = data.max_segment_size as f64;
+
             // 1/send_interval is packets/second
-            // packets/sec * packet_size = bytes/sec
-            let c = ps * (1.0 / (self.send_interval.as_secs() as f64
-                + self.send_interval.subsec_nanos() as f64 / 1e9));
+            let c = 1.0 / (self.send_interval.as_secs() as f64
+                + self.send_interval.subsec_nanos() as f64 / 1e9);
 
             if b <= c {
                 1.0 / ps
             } else {
-                10f64
-                    .powf((((b - c) * ps) * 8.0).log10().ceil())
-                    .max(1.0 / ps)
+                f64::max(f64::powi(f64::log10(((b - c) * ps) * 8.0).ceil(), 10) * 1.5e-6 / ps, 1.0 / ps)
             }
         };
+
+        println!("inc={}", inc);
+
 
         // 4) The SND period is updated as:
         //         SND = (SND * SYN) / (SND * inc + SYN).
@@ -101,9 +102,13 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
             let snd_total_micros = self.send_interval.as_secs() * 1_000_000
                 + self.send_interval.subsec_nanos() as u64 / 1_000;
 
-            let new_snd_total_micros = ((snd_total_micros * 10_000) as f64
+            let mut new_snd_total_micros = ((snd_total_micros * 10_000) as f64
                 / (snd_total_micros as f64 * inc + 10_000f64))
                 as u64;
+
+            // clamp between 1s and 1us
+            new_snd_total_micros = u64::min(1_000_000, new_snd_total_micros);
+            new_snd_total_micros = u64::max(1, new_snd_total_micros);
 
             Duration::new(
                 new_snd_total_micros / 1_000_000,

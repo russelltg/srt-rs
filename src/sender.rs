@@ -118,7 +118,7 @@ where
             snd: {
                 let si = self.congest_ctrl.send_interval();
 
-                si.as_secs() as i32 * 1_000_000 + si.subsec_nanos() as i32 / 1_000
+                si.subsec_nanos() as i32 / 1_000
             },
         }
     }

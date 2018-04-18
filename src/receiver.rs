@@ -236,15 +236,20 @@ where
                 //  Calculate the median value of the last 16 packet pair
                 //  intervals (PI) using the values in Packet Pair Window, and the
                 //  link capacity is 1/PI (number of packets per second).
-                let mut last_16: Vec<_> = self.packet_pair_window
-                    [self.packet_pair_window.len() - 16..]
-                    .iter()
-                    .map(|&(_, time)| time)
-                    .collect();
-                last_16.sort();
-                let pi = last_16[last_16.len() / 2];
+                let pi = {
+                    let mut last_16: Vec<_> = self.packet_pair_window
+                        [self.packet_pair_window.len() - 16..]
+                        .iter()
+                        .map(|&(_, time)| time)
+                        .collect();
+                    last_16.sort();
+
+                    last_16[last_16.len() / 2]
+                };
+
 
                 // Multiply by 1M because pi is in microseconds
+                // pi is in us/packet
                 (1.0e6 / (pi as f32)) as i32
             }
         };
