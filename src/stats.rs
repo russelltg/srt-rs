@@ -1,16 +1,18 @@
-use std::time::Duration;
-
 /// Statistics that SRT can capture on
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Stats {
-    /// Round trip time
-    pub rtt: Duration,
+    /// Timestamp that the stats was captured, in us from socket start
+    pub timestamp: i32,
+
+    /// Round trip time, in us
+    pub rtt: i32,
 
     /// Flow window size
     pub flow_size: i32,
 
     /// SND time
-    /// The time between sending each packet
-    pub snd: Duration,
+    /// The time between sending each packet, in us
+    pub snd: i32,
 
     /// The number of lost packets
     pub lost_packets: i32,

@@ -1,9 +1,12 @@
-use SeqNumber;
 use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
 use packet::{ControlTypes, Packet, PacketLocation};
-use std::{collections::VecDeque, io::{Error, ErrorKind, Result}, net::SocketAddr, time::Duration};
+use std::{collections::VecDeque,
+          io::{Error, ErrorKind, Result},
+          net::SocketAddr,
+          time::{Duration, Instant}};
+use SeqNumber;
 
 use {CCData, ConnectionSettings, SenderCongestionCtrl, Stats};
 
@@ -95,9 +98,6 @@ where
     /// Defaults to one second
     pub fn set_stats_interval(&mut self, interval: Duration) {
         self.stats_interval = Interval::new(interval);
-
-        // if make sure the thread is woken
-        self.poll().unwrap();
     }
 
     pub fn settings(&self) -> &ConnectionSettings {
@@ -110,11 +110,16 @@ where
 
     pub fn stats(&self) -> Stats {
         Stats {
+            timestamp: self.get_timestamp(),
             est_link_cap: self.est_link_cap,
             flow_size: self.congest_ctrl.window_size(),
             lost_packets: 0, // TODO:
-            rtt: Duration::new(0, self.rtt as u32 * 1_000),
-            snd: self.congest_ctrl.send_interval(),
+            rtt: self.rtt,
+            snd: {
+                let si = self.congest_ctrl.send_interval();
+
+                si.as_secs() as i32 * 1_000_000 + si.subsec_nanos() as i32 / 1_000
+            },
         }
     }
 
@@ -417,10 +422,12 @@ where
 }
 
 // Stats streaming
-impl<T, CC> Stream for Sender<T, CC> where
+impl<T, CC> Stream for Sender<T, CC>
+where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
-    CC: SenderCongestionCtrl{
+    CC: SenderCongestionCtrl,
+{
     type Item = Stats;
     type Error = Error;
 

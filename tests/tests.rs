@@ -9,16 +9,23 @@ extern crate log;
 
 use bytes::{Bytes, BytesMut};
 
-use std::{str, thread, cmp::Ordering, collections::BinaryHeap, fmt::Debug, io::{Error, ErrorKind},
+use std::{cmp::Ordering,
+          collections::BinaryHeap,
+          fmt::Debug,
+          io::{Error, ErrorKind},
+          str,
+          thread,
           time::{Duration, Instant}};
 
 use futures::{prelude::*, stream::iter_ok, sync::mpsc};
 
-use rand::{thread_rng, distributions::{IndependentSample, Normal, Range}};
+use rand::{distributions::{IndependentSample, Normal, Range},
+           thread_rng};
 
 use futures_timer::{Delay, Interval};
 
-use srt::{ConnectionSettings, DefaultSenderCongestionCtrl, Receiver, Sender, SeqNumber, SocketID};
+use srt::{stats_printer::StatsPrinterSender, ConnectionSettings, DefaultSenderCongestionCtrl,
+          Receiver, Sender, SeqNumber, SocketID};
 
 use log::LevelFilter;
 
@@ -220,19 +227,22 @@ fn test_with_loss() {
 
     let (send, recv) = LossyConn::new(0.01, Duration::from_secs(0), Duration::from_secs(0));
 
-    let sender = Sender::new(
-        send.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
-            .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
-        DefaultSenderCongestionCtrl::new(),
-        ConnectionSettings {
-            init_seq_num: SeqNumber(INIT_SEQ_NUM),
-            socket_start_time: Instant::now(),
-            remote_sockid: SocketID(81),
-            local_sockid: SocketID(13),
-            max_packet_size: 1316,
-            max_flow_size: 50_000,
-            remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
-        },
+    let sender = StatsPrinterSender::new(
+        Sender::new(
+            send.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
+                .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
+            DefaultSenderCongestionCtrl::new(),
+            ConnectionSettings {
+                init_seq_num: SeqNumber(INIT_SEQ_NUM),
+                socket_start_time: Instant::now(),
+                remote_sockid: SocketID(81),
+                local_sockid: SocketID(13),
+                max_packet_size: 1316,
+                max_flow_size: 50_000,
+                remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
+            },
+        ),
+        Duration::from_millis(100),
     );
 
     let recvr = Receiver::new(

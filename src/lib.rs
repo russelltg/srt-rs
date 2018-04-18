@@ -7,9 +7,13 @@ extern crate futures_timer;
 #[macro_use]
 extern crate log;
 extern crate rand;
+extern crate serde;
+extern crate serde_json;
 extern crate tokio;
 extern crate tokio_core;
 extern crate tokio_io;
+#[macro_use]
+extern crate serde_derive;
 
 pub mod builder;
 pub mod codec;
