@@ -22,12 +22,20 @@ pub struct Sender<T, CC> {
     settings: ConnectionSettings,
 
     /// The list of pending packets
+    /// In the case of a message longer than the packet size,
+    /// It will be split into multiple packets, and the remaining
+    /// bits will be put back into pending packets, setting
+    /// at_msg_beginning to false
     pending_packets: VecDeque<Bytes>,
+
+    /// True if pending_packets.first() has the entirety of a message, and not
+    /// just the last segment.
+    at_msg_beginning: bool,
 
     /// The sequence number for the next data packet
     next_seq_number: SeqNumber,
 
-    /// The messag number for the next message
+    /// The message number for the next message
     next_message_number: i32,
 
     // 1) Sender's Loss List: The sender's loss list is used to store the
@@ -79,6 +87,7 @@ where
             congest_ctrl,
             settings,
             pending_packets: VecDeque::new(),
+            at_msg_beginning: true,
             next_seq_number: settings.init_seq_num,
             next_message_number: 0,
             loss_list: VecDeque::new(),
@@ -239,34 +248,64 @@ where
         Ok(())
     }
 
-    fn send_packet(&mut self, payload: Bytes) -> Result<()> {
-        trace!("Sending packet with length={}", payload.len());
+    /// Gets the next available message number
+    fn get_new_message_number(&mut self) -> i32 {
+        self.next_message_number += 1;
+        // TODO: I don't think this is actually right
+        self.next_message_number = self.next_message_number << 1 >> 1; // loop around
 
-        let pack = Packet::Data {
+        self.next_message_number - 1
+    }
+
+    /// Gets the next avilabe packet sequence number
+    fn get_new_sequence_number(&mut self) -> SeqNumber {
+        // this does looping for us
+        self.next_seq_number += 1;
+
+        self.next_seq_number - 1
+
+    }
+
+    fn get_next_payload(&mut self) -> Option<Packet> {
+
+        let (payload, is_msg_end, is_msg_begin) = {
+            let payload = match self.pending_packets.pop_front() {
+                Some(p) => p,
+                // All packets have been flushed
+                None => return None,
+            };
+
+            // cache this so we don't overwrite it
+            let is_msg_begin = self.at_msg_beginning;
+
+            // if we need to break this packet up
+            if payload.len() > self.settings.max_packet_size as usize {
+                // re-add the rest of the packet
+                self.pending_packets.push_front(payload.slice(self.settings.max_packet_size as usize, payload.len()));
+                self.at_msg_beginning = false;
+
+                (payload.slice(0, self.settings.max_packet_size as usize), false, is_msg_begin)
+            } else {
+                self.at_msg_beginning = true;
+                (payload, true, is_msg_begin)
+            }
+        };
+
+        Some(Packet::Data {
             dest_sockid: self.settings.remote_sockid,
             in_order_delivery: false, // TODO: research this
-            message_loc: PacketLocation::Only,
-            message_number: {
-                self.next_message_number += 1;
-                self.next_message_number = self.next_message_number << 1 >> 1; // loop around
-
-                self.next_message_number - 1
+            message_loc: match (is_msg_begin, is_msg_end) {
+                (true, true) => PacketLocation::Only,
+                (true, false) => PacketLocation::First,
+                (false, true) => PacketLocation::Last,
+                (false, false) => PacketLocation::Middle,
             },
-            seq_number: {
-                // this does looping for us
-                self.next_seq_number += 1;
-
-                self.next_seq_number - 1
-            },
+            // if this marks the beginning of the next message, get a new message number, else don't
+            message_number: if is_msg_begin { self.get_new_message_number() } else { self.next_message_number - 1},
+            seq_number: self.get_new_sequence_number(),
             timestamp: self.get_timestamp(),
             payload,
-        };
-        // add it to the buffer
-        self.buffer.push_back(pack.clone());
-
-        self.sock.start_send((pack, self.settings.remote))?;
-
-        Ok(())
+        })
     }
 
     fn get_timestamp(&self) -> i32 {
@@ -374,7 +413,7 @@ where
 
                 // b. Pack a new data packet and send it out.
                 {
-                    let payload = match self.pending_packets.pop_front() {
+                    let payload = match self.get_next_payload() {
                         Some(p) => p,
                         // All packets have been flushed
                         None => continue,
@@ -385,18 +424,18 @@ where
                         self.pending_packets.len(),
                         self.congest_ctrl.send_interval(),
                     );
-                    self.send_packet(payload)?;
+                    self.sock.start_send((payload, self.settings.remote))?;
                 }
 
                 // 5) If the sequence number of the current packet is 16n, where n is an
                 //     integer, go to 2) (which is send another packet).
                 if (self.next_seq_number - 1) % 16 == 0 {
-                    let payload = match self.pending_packets.pop_front() {
+                    let payload = match self.get_next_payload() {
                         Some(p) => p,
                         // All packets have been flushed
                         None => continue,
                     };
-                    self.send_packet(payload)?;
+                    self.sock.start_send((payload, self.settings.remote))?;
                 }
             }
             self.sock.poll_complete()?;
