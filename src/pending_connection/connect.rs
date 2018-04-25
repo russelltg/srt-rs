@@ -1,13 +1,16 @@
-use std::{mem, io::Error, net::{IpAddr, SocketAddr}, time::{Duration, Instant}};
+use std::{io::Error,
+          mem,
+          net::{IpAddr, SocketAddr},
+          time::{Duration, Instant}};
 
 use futures::prelude::*;
 use futures_timer::Interval;
 
+use connected::Connected;
+use packet::{ConnectionType, ControlTypes, HandshakeControlInfo, Packet, SocketType};
 use ConnectionSettings;
 use SeqNumber;
 use SocketID;
-use connected::Connected;
-use packet::{ConnectionType, ControlTypes, HandshakeControlInfo, Packet, SocketType};
 
 pub struct Connect<T> {
     remote: SocketAddr,

@@ -1,4 +1,8 @@
-use std::{cmp, io::{Error, Result}, iter::Iterator, net::SocketAddr, time::Duration};
+use std::{cmp,
+          io::{Error, Result},
+          iter::Iterator,
+          net::SocketAddr,
+          time::Duration};
 
 use bytes::Bytes;
 use futures::prelude::*;
@@ -246,7 +250,6 @@ where
 
                     last_16[last_16.len() / 2]
                 };
-
 
                 // Multiply by 1M because pi is in microseconds
                 // pi is in us/packet
@@ -557,7 +560,10 @@ where
         I: Iterator<Item = SeqNumber>,
     {
         let vec: Vec<_> = lost_seq_nums.collect();
-        debug!("Sending NAK for={:?}", vec);
+        debug!(
+            "Sending NAK for={:?}",
+            vec.iter().map(|s| s.0).collect::<Vec<_>>()
+        );
 
         let pack = self.make_control_packet(ControlTypes::Nak(NakControlInfo {
             loss_info: compress_loss_list(vec.iter().cloned()).collect(),

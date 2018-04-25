@@ -44,7 +44,7 @@ pub struct Sender<T, CC> {
     //    are stored in increasing order.
     loss_list: VecDeque<Packet>,
 
-    /// The buffer to store packets for retransmision
+    /// The buffer to store packets for retransmision, with sorted chronologically
     buffer: VecDeque<Packet>,
 
     /// The first sequence number in buffer, so seq number i would be found at
@@ -221,7 +221,7 @@ where
                                 .find(|pack| pack.seq_number().unwrap() == lost)
                             {
                                 Some(p) => p,
-                                None => {warn!("NAK received for packet that's not in the buffer, maybe it's already been ACKed"); continue }
+                                None => {warn!("NAK received for packet {} that's not in the buffer, maybe it's already been ACKed", lost.0); continue }
                             };
 
                             self.loss_list.push_back(packet.clone());
@@ -263,11 +263,9 @@ where
         self.next_seq_number += 1;
 
         self.next_seq_number - 1
-
     }
 
     fn get_next_payload(&mut self) -> Option<Packet> {
-
         let (payload, is_msg_end, is_msg_begin) = {
             let payload = match self.pending_packets.pop_front() {
                 Some(p) => p,
@@ -281,17 +279,23 @@ where
             // if we need to break this packet up
             if payload.len() > self.settings.max_packet_size as usize {
                 // re-add the rest of the packet
-                self.pending_packets.push_front(payload.slice(self.settings.max_packet_size as usize, payload.len()));
+                self.pending_packets.push_front(
+                    payload.slice(self.settings.max_packet_size as usize, payload.len()),
+                );
                 self.at_msg_beginning = false;
 
-                (payload.slice(0, self.settings.max_packet_size as usize), false, is_msg_begin)
+                (
+                    payload.slice(0, self.settings.max_packet_size as usize),
+                    false,
+                    is_msg_begin,
+                )
             } else {
                 self.at_msg_beginning = true;
                 (payload, true, is_msg_begin)
             }
         };
 
-        Some(Packet::Data {
+        let pack = Packet::Data {
             dest_sockid: self.settings.remote_sockid,
             in_order_delivery: false, // TODO: research this
             message_loc: match (is_msg_begin, is_msg_end) {
@@ -301,11 +305,20 @@ where
                 (false, false) => PacketLocation::Middle,
             },
             // if this marks the beginning of the next message, get a new message number, else don't
-            message_number: if is_msg_begin { self.get_new_message_number() } else { self.next_message_number - 1},
+            message_number: if is_msg_begin {
+                self.get_new_message_number()
+            } else {
+                self.next_message_number - 1
+            },
             seq_number: self.get_new_sequence_number(),
             timestamp: self.get_timestamp(),
             payload,
-        })
+        };
+
+        // add it to the buffer
+        self.buffer.push_back(pack.clone());
+
+        Some(pack)
     }
 
     fn get_timestamp(&self) -> i32 {

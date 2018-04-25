@@ -10,12 +10,14 @@ extern crate url;
 #[macro_use]
 extern crate clap;
 
-use std::{io::Error, net::{IpAddr, Ipv4Addr, SocketAddr}};
+use std::{io::Error,
+          net::{IpAddr, Ipv4Addr, SocketAddr}};
 
 use bytes::Bytes;
 use futures::{future, prelude::*};
 use log::LevelFilter;
-use tokio::{executor::current_thread, net::{UdpFramed, UdpSocket}};
+use tokio::{executor::current_thread,
+            net::{UdpFramed, UdpSocket}};
 use tokio_io::codec::BytesCodec;
 use url::{Host, Url};
 
