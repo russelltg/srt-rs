@@ -1,5 +1,9 @@
 language: rust
 
+os:
+  - osx
+  - linux
+
 rust:
   - stable
   - beta
@@ -10,3 +14,4 @@ cache: cargo
 script:
   - cargo build --verbose
   - RUST_LOG=srt=debug,tests=info cargo test --verbose
+
