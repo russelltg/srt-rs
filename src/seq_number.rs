@@ -52,6 +52,15 @@ impl Sub<i32> for SeqNumber {
     }
 }
 
+// Distance between two SeqNumber's
+impl Sub<SeqNumber> for SeqNumber {
+    type Output = usize;
+
+    fn sub(self, other: SeqNumber) -> usize {
+        unimplemented!()
+    }
+}
+
 impl Ord for SeqNumber {
     fn cmp(&self, other: &SeqNumber) -> Ordering {
         // this code is a bit tricky, and taken from the original implementation

@@ -1,4 +1,5 @@
 use std::{cmp,
+          collections::VecDeque,
           io::{Error, Result},
           iter::Iterator,
           net::SocketAddr,
@@ -101,8 +102,12 @@ pub struct Receiver<T> {
 
     /// Receive buffer
     /// Used to store packets that were received out of order
-    buffer: Vec<Packet>,
+    /// In ascending sequence numbers
+    /// There are no gaps between sequence nubmers
+    /// the index of sequence number i is at buffer[last_released - 1 - i]
+    buffer: VecDeque<Option<Packet>>,
 
+    /// the latest released sequence number
     last_released: SeqNumber,
 }
 
@@ -133,7 +138,7 @@ where
             probe_time: None,
             timeout_timer: Delay::new(Duration::from_secs(1)),
             lr_ack_acked: (0, settings.init_seq_num),
-            buffer: Vec::new(),
+            buffer: VecDeque::new(),
             last_released: settings.init_seq_num - 1,
         }
     }
@@ -313,15 +318,6 @@ where
         if seq_nums.is_empty() {
             return Ok(());
         }
-
-        trace!(
-            "Sending NAK with lost packets: ll={:?} {:?}",
-            self.loss_list
-                .iter()
-                .map(|ll| ll.seq_num.0)
-                .collect::<Vec<_>>(),
-            seq_nums
-        );
 
         // send the nak
         self.send_nak(seq_nums.into_iter())?;
@@ -523,33 +519,37 @@ where
                 }
 
                 // add it to the buffer at the right spot
-                // keep it sorted descending order
-                match self.buffer
-                    .binary_search_by(|pack| pack.seq_number().unwrap().cmp(&seq_number).reverse())
-                {
-                    // this packet is already in the buffer
-                    Ok(_) => debug!("Received packet {} is already in the buffer", seq_number.0),
-                    Err(pos) => self.buffer.insert(pos, packet_cpy),
-                }
-                debug!(
-                    "Received packet: seq_num={} len={}",
-                    seq_number.0,
-                    payload.len()
-                );
+                // keep it sorted ascending
 
-                trace!(
-                    "lr={}, buffer.len()={}, buffer[0]={}, buffer[last]={}",
-                    self.last_released.0,
-                    self.buffer.len(),
-                    self.buffer
-                        .first()
-                        .map(|b| b.seq_number().unwrap().0)
-                        .unwrap_or(-1),
-                    self.buffer
-                        .last()
-                        .map(|b| b.seq_number().unwrap().0)
-                        .unwrap_or(-1),
-                );
+                // make sure the buffer is big enough
+                // this cast is safe because last_released is garguneed to be >= seq_number
+                if self.last_released - 1 - seq_number > self.buffer.len() {
+                    self.buffer.resize(self.last_released - seq_number, None);
+                }
+
+                // add it the buffer
+                if self.buffer[self.last_released - 1 - seq_number].is_some() {
+                    debug!("Received packet {:?} twice", seq_number);
+                }
+                self.buffer[self.last_released - 1 - seq_number] = Some(packet_cpy);
+
+                if self.buffer.len() != 0 {
+                    trace!(
+                        "lr={}, buffer.len()={}, buffer[0]={}, buffer[last]={}",
+                        self.last_released.0,
+                        self.buffer.len(),
+                        self.buffer
+                            .front()
+                            .unwrap()
+                            .map(|p| p.seq_number().unwrap().0)
+                            .unwrap_or(-1),
+                        self.buffer
+                            .back()
+                            .unwrap()
+                            .map(|b| b.seq_number().unwrap().0)
+                            .unwrap_or(-1),
+                    );
+                }
             }
         };
 
@@ -605,91 +605,80 @@ where
 
         loop {
             // if data packets are ready, send them
-            if let Some(packet) = self.buffer.pop() {
+            if let Some(Some(packet)) = self.buffer.pop_front() {
                 // make sure to reconstruct messages correctly
+                assert_eq!(packet.seq_number().unwrap(), self.last_released + 1);
 
-                if packet.seq_number().unwrap() <= self.last_released + 1 {
-                    let message_loc = packet.packet_location().unwrap();
+                let message_loc = packet.packet_location().unwrap();
 
-                    match message_loc {
-                        PacketLocation::First => {
-                            let message_number = packet.message_number().unwrap();
+                match message_loc {
+                    PacketLocation::First => {
+                        let message_number = packet.message_number().unwrap();
 
-                            // see if the entire message is available
-                            let msg_avaialble = self.buffer
-                                .iter()
-                                .rev()
-                                // the packet we already popped was +1, so the one after that should be +2
-                                .scan(self.last_released + 2, |expected_seq, pack| {
-                                    if *expected_seq == pack.seq_number().unwrap()
-                                        && message_number == pack.message_number().unwrap()
-                                    {
-                                        *expected_seq += 1;
+                        // see if the entire message is available
+                        let msg_avaialble = self.buffer
+                            .iter()
+                            .rev()
+                            .scan((), |_, p| match p {
+                                Some(d) => match d.packet_location().unwrap() {
+                                    PacketLocation::First => {
+                                        warn!("`First` encountered in the middle of a message");
 
-                                        match pack.packet_location().unwrap() {
-                                            PacketLocation::First => {
-                                                warn!("'First' packet found in the middle of a message, without 'End' first");
-
-                                                None
-                                            }
-                                            PacketLocation::Only => {
-                                                warn!("'Only' packet found in the middle of a message, without 'End' first");
-
-                                                None
-                                            }
-                                            PacketLocation::Middle | PacketLocation::Last => {
-                                                Some(pack.packet_location().unwrap())
-                                            }
-                                        }
-                                    } else {
                                         None
                                     }
-                                })
-                                .find(|&i| i == PacketLocation::Last)
-                                .is_some();
+                                    PacketLocation::Middle => Some(PacketLocation::Middle),
+                                    PacketLocation::Only => {
+                                        warn!("`Only` encoutnered in the middle of a message");
 
-                            if msg_avaialble {
-                                debug!("Reassembling & releasing broken-up message");
-                                // concatenate the entire message
-                                let mut buffer = BytesMut::from(packet.payload().unwrap());
-
-                                loop {
-                                    let pack = self.buffer.pop().unwrap();
-
-                                    buffer.extend_from_slice(&pack.payload().unwrap()[..]);
-
-                                    if pack.packet_location().unwrap() == PacketLocation::Last {
-                                        break;
+                                        None
                                     }
-                                }
-                                return Ok(Async::Ready(Some(buffer.freeze())));
-                            } else {
-                                self.buffer.push(packet);
-                                debug!(
-                                    "Waiting for message end. Buffer={:?}",
-                                    self.buffer
-                                        .iter()
-                                        .map(|pack| (
-                                            pack.message_number().unwrap(),
-                                            pack.seq_number().unwrap(),
-                                            pack.packet_location().unwrap()
-                                        ))
-                                        .collect::<Vec<_>>()
-                                );
-                            }
-                        }
-                        PacketLocation::Last | PacketLocation::Middle => {
-                            warn!("Middle or Last packetlocation in packet without matching First. Discarding.");
-                        }
-                        PacketLocation::Only => {
-                            self.last_released += 1;
+                                    PacketLocation::Last => Some(PacketLocation::Last),
+                                },
+                                None => None,
+                            })
+                            .find(|l| *l == PacketLocation::Last)
+                            .is_some();
 
-                            debug!("Releasing {:?}", packet.seq_number().unwrap());
-                            return Ok(Async::Ready(Some(packet.payload().unwrap())));
+                        if msg_avaialble {
+                            debug!("Reassembling & releasing broken-up message");
+                            // concatenate the entire message
+                            let mut buffer = BytesMut::from(packet.payload().unwrap());
+
+                            loop {
+                                let pack = self.buffer.pop_front().unwrap();
+
+                                buffer.extend_from_slice(&pack.unwrap().payload().unwrap()[..]);
+
+                                if pack.unwrap().packet_location().unwrap() == PacketLocation::Last
+                                {
+                                    break;
+                                }
+                            }
+                            return Ok(Async::Ready(Some(buffer.freeze())));
+                        } else {
+                            self.buffer.push_front(Some(packet));
+                            debug!(
+                                "Waiting for message end. Buffer={:?}",
+                                self.buffer
+                                    .iter()
+                                    .map(|pack| pack.map(|p| Some((
+                                        p.message_number().unwrap(),
+                                        p.seq_number().unwrap(),
+                                        p.packet_location().unwrap()
+                                    ))))
+                                    .collect::<Vec<_>>()
+                            );
                         }
                     }
-                } else {
-                    self.buffer.push(packet);
+                    PacketLocation::Last | PacketLocation::Middle => {
+                        warn!("Middle or Last packetlocation in packet without matching First. Discarding.");
+                    }
+                    PacketLocation::Only => {
+                        self.last_released += 1;
+
+                        debug!("Releasing {:?}", packet.seq_number().unwrap());
+                        return Ok(Async::Ready(Some(packet.payload().unwrap())));
+                    }
                 }
             }
 
