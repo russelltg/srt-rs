@@ -24,13 +24,14 @@ use url::{Host, Url};
 use srt::{ConnInitMethod, SrtSocketBuilder};
 
 fn main() {
+    env_logger::init();
+
     let addr_any: IpAddr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
 
     let matches = clap_app!(stransmit_rs =>
 		(version: "1.0")
 		(author: "Russell Greene")
 		(about: "SRT sender and receiver written in rust")
-		(@arg verbose: -v --verbose ... "Log level. More -v's is more logging")
 		(@arg FROM: +required "Sets the input url")
 		(@arg TO: +required "Sets the output url")
 	).get_matches();
@@ -43,17 +44,6 @@ fn main() {
         Err(e) => panic!("Failed to parse output URL: {}", e),
         Ok(url) => url,
     };
-
-    // Init logging
-    env_logger::init();
-    log::set_max_level(match matches.occurrences_of("verbose") {
-        0 => LevelFilter::Off,
-        1 => LevelFilter::Error,
-        2 => LevelFilter::Warn,
-        3 => LevelFilter::Info,
-        4 => LevelFilter::Debug,
-        5 | _ => LevelFilter::Trace,
-    });
 
     // Resolve the receiver side
     // this will be a future that resolves to a stream of bytes
@@ -79,7 +69,7 @@ fn main() {
 
         let input_local_addr = SocketAddr::new(addr_any, input_local_port);
 
-        if output_url.scheme() == "udp" && input_local_port == 0 {
+        if input_url.scheme() == "udp" && input_local_port == 0 {
             panic!("Must not designate a ip to send to receive UDP. Example: udp://:1234, not udp://127.0.0.1:1234");
         }
 
