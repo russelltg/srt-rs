@@ -101,6 +101,20 @@ impl Packet {
             None
         }
     }
+    pub fn packet_location(&self) -> Option<PacketLocation> {
+        if let Packet::Data { message_loc, .. } = *self {
+            Some(message_loc)
+        } else {
+            None
+        }
+    }
+    pub fn message_number(&self) -> Option<i32> {
+        if let Packet::Data { message_number, .. } = *self {
+            Some(message_number)
+        } else {
+            None
+        }
+    }
 }
 
 /// Signifies the packet location in a message for a data packet

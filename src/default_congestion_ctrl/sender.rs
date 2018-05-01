@@ -96,8 +96,6 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
             }
         };
 
-        println!("inc={}", inc);
-
         // 4) The SND period is updated as:
         //         SND = (SND * SYN) / (SND * inc + SYN).
         // I think the units for these are microseconds

@@ -4,11 +4,11 @@ use std::{cmp,
           net::SocketAddr,
           time::Duration};
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
 use loss_compression::compress_loss_list;
-use packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet};
+use packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet, PacketLocation};
 use seq_number::seq_num_range;
 use {ConnectionSettings, SeqNumber};
 
@@ -451,8 +451,6 @@ where
                 payload,
                 ..
             } => {
-                trace!("Data packet received; len={}", payload.len());
-
                 let now = self.get_timestamp();
 
                 // 1) Reset the ExpCount to 1. If there is no unacknowledged data
@@ -530,10 +528,14 @@ where
                     .binary_search_by(|pack| pack.seq_number().unwrap().cmp(&seq_number).reverse())
                 {
                     // this packet is already in the buffer
-                    Ok(_) => {}
+                    Ok(_) => debug!("Received packet {} is already in the buffer", seq_number.0),
                     Err(pos) => self.buffer.insert(pos, packet_cpy),
                 }
-                debug!("Received packet: {}", seq_number.0);
+                debug!(
+                    "Received packet: seq_num={} len={}",
+                    seq_number.0,
+                    payload.len()
+                );
 
                 trace!(
                     "lr={}, buffer.len()={}, buffer[0]={}, buffer[last]={}",
@@ -604,11 +606,88 @@ where
         loop {
             // if data packets are ready, send them
             if let Some(packet) = self.buffer.pop() {
-                if packet.seq_number().unwrap() <= self.last_released + 1 {
-                    self.last_released += 1;
+                // make sure to reconstruct messages correctly
 
-                    debug!("Releasing {:?}", packet.seq_number().unwrap());
-                    return Ok(Async::Ready(Some(packet.payload().unwrap())));
+                if packet.seq_number().unwrap() <= self.last_released + 1 {
+                    let message_loc = packet.packet_location().unwrap();
+
+                    match message_loc {
+                        PacketLocation::First => {
+                            let message_number = packet.message_number().unwrap();
+
+                            // see if the entire message is available
+                            let msg_avaialble = self.buffer
+                                .iter()
+                                .rev()
+                                // the packet we already popped was +1, so the one after that should be +2
+                                .scan(self.last_released + 2, |expected_seq, pack| {
+                                    if *expected_seq == pack.seq_number().unwrap()
+                                        && message_number == pack.message_number().unwrap()
+                                    {
+                                        *expected_seq += 1;
+
+                                        match pack.packet_location().unwrap() {
+                                            PacketLocation::First => {
+                                                warn!("'First' packet found in the middle of a message, without 'End' first");
+
+                                                None
+                                            }
+                                            PacketLocation::Only => {
+                                                warn!("'Only' packet found in the middle of a message, without 'End' first");
+
+                                                None
+                                            }
+                                            PacketLocation::Middle | PacketLocation::Last => {
+                                                Some(pack.packet_location().unwrap())
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .find(|&i| i == PacketLocation::Last)
+                                .is_some();
+
+                            if msg_avaialble {
+                                debug!("Reassembling & releasing broken-up message");
+                                // concatenate the entire message
+                                let mut buffer = BytesMut::from(packet.payload().unwrap());
+
+                                loop {
+                                    let pack = self.buffer.pop().unwrap();
+
+                                    buffer.extend_from_slice(&pack.payload().unwrap()[..]);
+
+                                    if pack.packet_location().unwrap() == PacketLocation::Last {
+                                        break;
+                                    }
+                                }
+                                return Ok(Async::Ready(Some(buffer.freeze())));
+                            } else {
+                                self.buffer.push(packet);
+                                debug!(
+                                    "Waiting for message end. Buffer={:?}",
+                                    self.buffer
+                                        .iter()
+                                        .map(|pack| (
+                                            pack.message_number().unwrap(),
+                                            pack.seq_number().unwrap(),
+                                            pack.packet_location().unwrap()
+                                        ))
+                                        .collect::<Vec<_>>()
+                                );
+                            }
+                        }
+                        PacketLocation::Last | PacketLocation::Middle => {
+                            warn!("Middle or Last packetlocation in packet without matching First. Discarding.");
+                        }
+                        PacketLocation::Only => {
+                            self.last_released += 1;
+
+                            debug!("Releasing {:?}", packet.seq_number().unwrap());
+                            return Ok(Async::Ready(Some(packet.payload().unwrap())));
+                        }
+                    }
                 } else {
                     self.buffer.push(packet);
                 }
@@ -633,6 +712,7 @@ where
                 Ok(Async::Ready(None)) => {
                     // end of stream, shutdown
 
+                    info!("Received shutdown, closing receiver");
                     return Ok(Async::Ready(None));
                 }
                 // TODO: exp_count

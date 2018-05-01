@@ -71,6 +71,11 @@ pub struct Sender<T, CC> {
 
     /// The interval to report stats with
     stats_interval: Interval,
+
+    /// Tracks if the sender is closed
+    /// This means that `close` has been called and the sender has been flushed,
+    /// and it's just waiting for the socket to flush
+    closed: bool,
 }
 
 impl<T, CC> Sender<T, CC>
@@ -100,6 +105,7 @@ where
             est_link_cap: 0,
             snd_timer: Delay::new(Duration::from_millis(1)),
             stats_interval: Interval::new(Duration::from_secs(1)),
+            closed: false,
         }
     }
 
@@ -336,6 +342,8 @@ where
     type SinkError = Error;
 
     fn start_send(&mut self, item: Bytes) -> StartSend<Bytes, Error> {
+        assert!(!self.closed, "`start_send` called after sender close");
+
         self.pending_packets.push_back(item);
 
         Ok(AsyncSink::Ready)
@@ -433,7 +441,7 @@ where
                     };
                     debug!(
                         "Sending packet: {}; pending.len={}; SND={:?}",
-                        self.next_seq_number.0,
+                        self.next_seq_number.0 - 1,
                         self.pending_packets.len(),
                         self.congest_ctrl.send_interval(),
                     );
@@ -458,18 +466,23 @@ where
     fn close(&mut self) -> Poll<(), Error> {
         try_ready!(self.poll_complete());
 
-        // once it's all flushed, send a Shutdown
-        let ts = self.get_timestamp();
-        self.sock.start_send((
-            Packet::Control {
-                dest_sockid: self.settings.remote_sockid,
-                timestamp: ts,
-                control_type: ControlTypes::Shutdown,
-            },
-            self.settings.remote,
-        ))?;
+        if !self.closed {
+            // once it's all flushed, send a single Shutdown packet
+            info!("Sending shutdown");
+            let ts = self.get_timestamp();
+            self.sock.start_send((
+                Packet::Control {
+                    dest_sockid: self.settings.remote_sockid,
+                    timestamp: ts,
+                    control_type: ControlTypes::Shutdown,
+                },
+                self.settings.remote,
+            ))?;
+        }
 
-        return Ok(Async::Ready(()));
+        self.closed = true;
+
+        self.sock.poll_complete()
     }
 }
 
