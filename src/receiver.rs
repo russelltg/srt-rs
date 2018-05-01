@@ -104,7 +104,7 @@ pub struct Receiver<T> {
     /// Used to store packets that were received out of order
     /// In ascending sequence numbers
     /// There are no gaps between sequence nubmers
-    /// the index of sequence number i is at buffer[last_released - 1 - i]
+    /// the index of sequence number i is at buffer[i - last_released - 1]
     buffer: VecDeque<Option<Packet>>,
 
     /// the latest released sequence number
@@ -345,6 +345,13 @@ where
         Ok(())
     }
 
+    // gets the id in `buffer` of a given sequence number
+    fn id_in_buffer(&self, seq: SeqNumber) -> usize {
+        assert!(self.last_released < seq);
+
+        (seq - self.last_released - 1) as usize
+    }
+
     // handles a packet, returning either a future, if there is something to send,
     // or the socket, and in the case of a data packet, a payload
     fn handle_packet(&mut self, packet: Packet, from: &SocketAddr) -> Result<Option<ReadyType>> {
@@ -522,31 +529,30 @@ where
                 // keep it sorted ascending
 
                 // make sure the buffer is big enough
-                // this cast is safe because last_released is garguneed to be >= seq_number
-                if self.last_released - 1 - seq_number > self.buffer.len() {
-                    self.buffer.resize(self.last_released - seq_number, None);
+                // this cast is safe because last_released is garunteed to be >= seq_number
+                let seq_id_in_buffer = self.id_in_buffer(seq_number);
+                if seq_id_in_buffer > self.buffer.len() {
+                    self.buffer.resize(seq_id_in_buffer + 1, None);
                 }
 
                 // add it the buffer
-                if self.buffer[self.last_released - 1 - seq_number].is_some() {
+                if self.buffer[seq_id_in_buffer].is_some() {
                     debug!("Received packet {:?} twice", seq_number);
                 }
-                self.buffer[self.last_released - 1 - seq_number] = Some(packet_cpy);
+                self.buffer[seq_id_in_buffer] = Some(packet_cpy);
 
                 if self.buffer.len() != 0 {
                     trace!(
                         "lr={}, buffer.len()={}, buffer[0]={}, buffer[last]={}",
                         self.last_released.0,
                         self.buffer.len(),
-                        self.buffer
-                            .front()
-                            .unwrap()
-                            .map(|p| p.seq_number().unwrap().0)
+                        self.buffer[0]
+                            .as_ref()
+                            .map(|ref p| p.seq_number().unwrap().0)
                             .unwrap_or(-1),
-                        self.buffer
-                            .back()
-                            .unwrap()
-                            .map(|b| b.seq_number().unwrap().0)
+                        self.buffer[self.buffer.len() - 1]
+                            .as_ref()
+                            .map(|ref b| b.seq_number().unwrap().0)
                             .unwrap_or(-1),
                     );
                 }
@@ -645,11 +651,11 @@ where
                             let mut buffer = BytesMut::from(packet.payload().unwrap());
 
                             loop {
-                                let pack = self.buffer.pop_front().unwrap();
+                                let pack = self.buffer.pop_front().unwrap().unwrap();
 
-                                buffer.extend_from_slice(&pack.unwrap().payload().unwrap()[..]);
+                                buffer.extend_from_slice(&pack.payload().unwrap()[..]);
 
-                                if pack.unwrap().packet_location().unwrap() == PacketLocation::Last
+                                if pack.packet_location().unwrap() == PacketLocation::Last
                                 {
                                     break;
                                 }
@@ -661,7 +667,7 @@ where
                                 "Waiting for message end. Buffer={:?}",
                                 self.buffer
                                     .iter()
-                                    .map(|pack| pack.map(|p| Some((
+                                    .map(|pack| pack.as_ref().map(|p| Some((
                                         p.message_number().unwrap(),
                                         p.seq_number().unwrap(),
                                         p.packet_location().unwrap()

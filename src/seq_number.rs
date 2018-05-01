@@ -54,10 +54,22 @@ impl Sub<i32> for SeqNumber {
 
 // Distance between two SeqNumber's
 impl Sub<SeqNumber> for SeqNumber {
-    type Output = usize;
+    type Output = i32;
 
-    fn sub(self, other: SeqNumber) -> usize {
-        unimplemented!()
+    fn sub(self, other: SeqNumber) -> i32 {
+        // if this is true, assume there is no looping, and we can treat them as regular integers
+        if (self.0 - other.0).abs() < 0x1FFFFFFF {
+            self.0 - other.0
+        } else {
+            // here, there's looping going on.
+            // ie: self may be MAX_SEQ_NUM - 1
+            // and other could be 1
+            if self.0 > other.0 {
+                MAX_SEQ_NUM - (self.0 - other.0)
+            } else {
+                -(MAX_SEQ_NUM - (other.0 - self.0))
+            }
+        }
     }
 }
 
@@ -66,7 +78,7 @@ impl Ord for SeqNumber {
         // this code is a bit tricky, and taken from the original implementation
         // I think !0 >> 3 is decided to be "if they're this far apart, they must be looped"
         // which is fair
-        if (self.0 - other.0).abs() < !(1 << 31) {
+        if (self.0 - other.0).abs() < 0x1FFFFFFF {
             self.0.cmp(&other.0)
         } else {
             other.0.cmp(&self.0)
@@ -131,4 +143,6 @@ fn seq_num_test() {
         SeqNumber(40)
     );
     assert_eq!(SeqNumber(4) - 10, SeqNumber(MAX_SEQ_NUM - 6));
+    assert_eq!(SeqNumber(5) - SeqNumber(1), 4);
+    assert_eq!(SeqNumber(MAX_SEQ_NUM - 1) - SeqNumber(1), 2);
 }

@@ -15,7 +15,6 @@ use std::{io::Error,
 
 use bytes::Bytes;
 use futures::{future, prelude::*};
-use log::LevelFilter;
 use tokio::{executor::current_thread,
             net::{UdpFramed, UdpSocket}};
 use tokio_io::codec::BytesCodec;
