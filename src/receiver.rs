@@ -641,20 +641,30 @@ where
                             let msg_avaialble = self.buffer
                                 .iter()
                                 .scan((), |_, p| match p {
-                                    Some(d) => match d.packet_location().unwrap() {
-                                        PacketLocation::First => {
-                                            warn!("`First` encountered in the middle of a message");
-
-                                            None
+                                    Some(d) => {
+                                        if d.message_number().unwrap() != message_number {
+                                            warn!(
+                                                "Message number changed while waiting for message end"
+                                            );
+                                            return None;
                                         }
-                                        PacketLocation::Middle => Some(PacketLocation::Middle),
-                                        PacketLocation::Only => {
-                                            warn!("`Only` encoutnered in the middle of a message");
+                                        match d.packet_location().unwrap() {
+                                            PacketLocation::First => {
+                                                warn!("`First` encountered in the middle of a message");
 
-                                            None
+                                                None
+                                            }
+                                            PacketLocation::Middle => Some(PacketLocation::Middle),
+                                            PacketLocation::Only => {
+                                                warn!(
+                                                    "`Only` encoutnered in the middle of a message"
+                                                );
+
+                                                None
+                                            }
+                                            PacketLocation::Last => Some(PacketLocation::Last),
                                         }
-                                        PacketLocation::Last => Some(PacketLocation::Last),
-                                    },
+                                    }
                                     None => None,
                                 })
                                 .find(|l| *l == PacketLocation::Last)
