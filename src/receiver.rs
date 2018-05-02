@@ -457,6 +457,7 @@ where
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
                     ControlTypes::Nak(_info) => warn!("Receiver received NAK packet, unusual"),
                     ControlTypes::Shutdown => return Ok(Some(ReadyType::Shutdown)), // end of stream
+                    ControlTypes::Custom(_, _) => unimplemented!(),
                 }
             }
             Packet::Data { seq_number, .. } => {

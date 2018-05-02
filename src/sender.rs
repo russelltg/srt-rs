@@ -246,6 +246,7 @@ where
                         // TODO: reset EXP
                     }
                     ControlTypes::Shutdown => unimplemented!(),
+                    ControlTypes::Custom(_, _) => unimplemented!(),
                 }
             }
             Packet::Data { .. } => warn!("Sender received data packet"),

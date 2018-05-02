@@ -181,6 +181,11 @@ pub enum ControlTypes {
     /// Drop request, type 0x7
     /// Additional Info (the i32) is the message ID to drop
     DropRequest(i32, DropRequestControlInfo),
+
+    /// Custom packets
+    /// Mainly used for special SRT handshake packets
+    /// The i32 is the additonal info, which isn't used for SRT but meh it's not totally impossible
+    Custom(i32, Bytes),
 }
 
 impl ControlTypes {
@@ -269,13 +274,15 @@ impl ControlTypes {
             0x5 => Ok(ControlTypes::Shutdown),
             0x6 => {
                 // ACK2
-
                 Ok(ControlTypes::Ack2(extra_info))
             }
             0x7 => {
                 // Drop request
-
                 unimplemented!()
+            }
+            0xFF => {
+                // Custom
+                Ok(ControlTypes::Custom(extra_info, buf.collect()))
             }
             x => Err(Error::new(
                 ErrorKind::InvalidData,
@@ -293,13 +300,17 @@ impl ControlTypes {
             ControlTypes::Shutdown => 0x5,
             ControlTypes::Ack2(_) => 0x6,
             ControlTypes::DropRequest(_, _) => 0x7,
+            ControlTypes::Custom(_, _) => 0xFF,
         }
     }
 
     fn additional_info(&self) -> i32 {
         match *self {
             // These types have additional info
-            ControlTypes::Ack2(i) | ControlTypes::DropRequest(i, _) | ControlTypes::Ack(i, _) => i,
+            ControlTypes::Ack2(i)
+            | ControlTypes::DropRequest(i, _)
+            | ControlTypes::Ack(i, _)
+            | ControlTypes::Custom(i, _) => i,
             // These do not, just use zero
             ControlTypes::Handshake(_)
             | ControlTypes::KeepAlive
@@ -344,6 +355,7 @@ impl ControlTypes {
             ControlTypes::DropRequest(_, ref _d) => unimplemented!(),
             // control data
             ControlTypes::Shutdown | ControlTypes::Ack2(_) | ControlTypes::KeepAlive => {}
+            ControlTypes::Custom(_, ref data) => into.put(&data[..]),
         };
     }
 }
