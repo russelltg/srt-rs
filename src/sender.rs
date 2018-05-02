@@ -5,7 +5,7 @@ use packet::{ControlTypes, Packet, PacketLocation};
 use std::{collections::VecDeque,
           io::{Error, ErrorKind, Result},
           net::SocketAddr,
-          time::{Duration, Instant}};
+          time::Duration};
 use SeqNumber;
 
 use {CCData, ConnectionSettings, SenderCongestionCtrl, Stats};

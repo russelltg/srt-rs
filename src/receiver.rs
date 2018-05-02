@@ -79,8 +79,11 @@ pub struct Receiver<T> {
     /// First is seq num, second is time
     packet_pair_window: Vec<(SeqNumber, i32)>,
 
-    /// Wakes the thread when an ACK or a NAK is to be sent
+    /// Wakes the thread when an ACK
     ack_interval: Interval,
+
+    /// Wakes the thread when a NAK is to be sent
+    nak_interval: Delay,
 
     /// the highest received packet sequence number + 1
     lrsn: SeqNumber,
@@ -132,6 +135,7 @@ where
             packet_history_window: Vec::new(),
             packet_pair_window: Vec::new(),
             ack_interval: Interval::new(Duration::from_millis(10)),
+            nak_interval: Delay::new(Duration::from_millis(10)),
             lrsn: settings.init_seq_num - 1,
             next_ack: 1,
             exp_count: 1,
@@ -289,6 +293,16 @@ where
     }
 
     fn on_nak_event(&mut self) -> Result<()> {
+        // reset NAK timer, rtt and variance are in us, so convert to ns
+
+        // NAK is used to trigger a negative acknowledgement (NAK). Its period
+        // is dynamically updated to 4 * RTT_+ RTTVar + SYN, where RTTVar is the
+        // variance of RTT samples.
+        self.nak_interval.reset(Duration::new(
+            0,
+            (4 * self.rtt + self.rtt_variance + 10_000) as u32 * 1_000,
+        ));
+
         // Search the receiver's loss list, find out all those sequence numbers
         // whose last feedback time is k*RTT before, where k is initialized as 2
         // and increased by 1 each time the number is fed back. Compress
@@ -329,18 +343,14 @@ where
     // if a timer was triggered, then an RSFutureTimeout will be returned
     // if not, the socket is given back
     fn check_timers(&mut self) -> Result<()> {
-        // see if we need to ACK
-        // early return if the timer isn't triggered
-        match self.ack_interval.poll() {
-            Err(e) => panic!(e),
-            Ok(Async::NotReady) => return Ok(()),
-            Ok(Async::Ready(_)) => {}
+        // see if we need to ACK or NAK
+        if let Async::Ready(_) = self.ack_interval.poll()? {
+            self.on_ack_event()?;
         }
 
-        self.on_ack_event()?;
-
-        // TODO: does this get it's own timer?
-        self.on_nak_event()?;
+        if let Async::Ready(_) = self.nak_interval.poll()? {
+            self.on_nak_event()?;
+        }
 
         Ok(())
     }
@@ -449,11 +459,7 @@ where
                     ControlTypes::Shutdown => return Ok(Some(ReadyType::Shutdown)), // end of stream
                 }
             }
-            Packet::Data {
-                seq_number,
-                payload,
-                ..
-            } => {
+            Packet::Data { seq_number, .. } => {
                 let now = self.get_timestamp();
 
                 // 1) Reset the ExpCount to 1. If there is no unacknowledged data
