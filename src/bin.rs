@@ -4,8 +4,8 @@ extern crate bytes;
 extern crate env_logger;
 extern crate futures;
 extern crate log;
-extern crate tokio;
 extern crate tokio_io;
+extern crate tokio_udp;
 extern crate url;
 #[macro_use]
 extern crate clap;
@@ -15,8 +15,8 @@ use std::{io::Error,
 
 use bytes::Bytes;
 use futures::{future, prelude::*};
-use tokio::net::{UdpFramed, UdpSocket};
 use tokio_io::codec::BytesCodec;
+use tokio_udp::{UdpFramed, UdpSocket};
 use url::{Host, Url};
 
 use srt::{ConnInitMethod, SrtSocketBuilder};

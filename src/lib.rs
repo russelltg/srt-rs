@@ -1,17 +1,15 @@
-extern crate byteorder;
 extern crate bytes;
-
 #[macro_use]
 extern crate futures;
-extern crate futures_timer;
 #[macro_use]
 extern crate log;
+extern crate futures_timer;
 extern crate rand;
 extern crate serde;
 extern crate serde_json;
-extern crate tokio;
 extern crate tokio_core;
 extern crate tokio_io;
+extern crate tokio_udp;
 #[macro_use]
 extern crate serde_derive;
 

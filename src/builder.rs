@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::time::Instant;
 
 use rand::{thread_rng, Rng};
-use tokio::net::{UdpFramed, UdpSocket};
+use tokio_udp::{UdpFramed, UdpSocket};
 
 use codec::PacketCodec;
 use pending_connection::PendingConnection;

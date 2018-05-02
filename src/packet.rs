@@ -3,8 +3,6 @@
 
 use bytes::{Buf, BufMut, Bytes};
 
-use byteorder::BigEndian;
-
 use std::io::{Cursor, Error, ErrorKind, Result};
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -193,14 +191,14 @@ impl ControlTypes {
             0x0 => {
                 // Handshake
 
-                let udt_version = buf.get_i32::<BigEndian>();
-                let sock_type = SocketType::from_i32(buf.get_i32::<BigEndian>())?;
-                let init_seq_num = SeqNumber(buf.get_i32::<BigEndian>());
-                let max_packet_size = buf.get_i32::<BigEndian>();
-                let max_flow_size = buf.get_i32::<BigEndian>();
-                let connection_type = ConnectionType::from_i32(buf.get_i32::<BigEndian>())?;
-                let socket_id = SocketID(buf.get_i32::<BigEndian>());
-                let syn_cookie = buf.get_i32::<BigEndian>();
+                let udt_version = buf.get_i32_be();
+                let sock_type = SocketType::from_i32(buf.get_i32_be())?;
+                let init_seq_num = SeqNumber(buf.get_i32_be());
+                let max_packet_size = buf.get_i32_be();
+                let max_flow_size = buf.get_i32_be();
+                let connection_type = ConnectionType::from_i32(buf.get_i32_be())?;
+                let socket_id = SocketID(buf.get_i32_be());
+                let syn_cookie = buf.get_i32_be();
 
                 // get the IP
                 let mut ip_buf: [u8; 16] = [0; 16];
@@ -230,12 +228,12 @@ impl ControlTypes {
                 // ACK
 
                 // read control info
-                let ack_number = SeqNumber(buf.get_i32::<BigEndian>());
+                let ack_number = SeqNumber(buf.get_i32_be());
 
                 // if there is more data, use it. However, it's optional
                 let mut opt_read_next = move || {
                     if buf.remaining() > 4 {
-                        Some(buf.get_i32::<BigEndian>())
+                        Some(buf.get_i32_be())
                     } else {
                         None
                     }
@@ -263,7 +261,7 @@ impl ControlTypes {
 
                 let mut loss_info = Vec::new();
                 while buf.remaining() >= 4 {
-                    loss_info.push(buf.get_i32::<BigEndian>());
+                    loss_info.push(buf.get_i32_be());
                 }
 
                 Ok(ControlTypes::Nak(NakControlInfo { loss_info }))
@@ -313,14 +311,14 @@ impl ControlTypes {
     fn serialize<T: BufMut>(&self, into: &mut T) {
         match *self {
             ControlTypes::Handshake(ref c) => {
-                into.put_i32::<BigEndian>(c.udt_version);
-                into.put_i32::<BigEndian>(c.sock_type.to_i32());
-                into.put_i32::<BigEndian>(c.init_seq_num.0);
-                into.put_i32::<BigEndian>(c.max_packet_size);
-                into.put_i32::<BigEndian>(c.max_flow_size);
-                into.put_i32::<BigEndian>(c.connection_type.to_i32());
-                into.put_i32::<BigEndian>(c.socket_id.0);
-                into.put_i32::<BigEndian>(c.syn_cookie);
+                into.put_i32_be(c.udt_version);
+                into.put_i32_be(c.sock_type.to_i32());
+                into.put_i32_be(c.init_seq_num.0);
+                into.put_i32_be(c.max_packet_size);
+                into.put_i32_be(c.max_flow_size);
+                into.put_i32_be(c.connection_type.to_i32());
+                into.put_i32_be(c.socket_id.0);
+                into.put_i32_be(c.syn_cookie);
 
                 match c.peer_addr {
                     IpAddr::V4(four) => {
@@ -333,15 +331,15 @@ impl ControlTypes {
                 }
             }
             ControlTypes::Ack(_, ref c) => {
-                into.put_i32::<BigEndian>(c.ack_number.0);
-                into.put_i32::<BigEndian>(c.rtt.unwrap_or(10_000));
-                into.put_i32::<BigEndian>(c.rtt_variance.unwrap_or(50_000));
-                into.put_i32::<BigEndian>(c.buffer_available.unwrap_or(8175)); // TODO: better defaults
-                into.put_i32::<BigEndian>(c.packet_recv_rate.unwrap_or(10_000));
-                into.put_i32::<BigEndian>(c.est_link_cap.unwrap_or(1_000));
+                into.put_i32_be(c.ack_number.0);
+                into.put_i32_be(c.rtt.unwrap_or(10_000));
+                into.put_i32_be(c.rtt_variance.unwrap_or(50_000));
+                into.put_i32_be(c.buffer_available.unwrap_or(8175)); // TODO: better defaults
+                into.put_i32_be(c.packet_recv_rate.unwrap_or(10_000));
+                into.put_i32_be(c.est_link_cap.unwrap_or(1_000));
             }
             ControlTypes::Nak(ref n) => for &loss in &n.loss_info {
-                into.put_i32::<BigEndian>(loss);
+                into.put_i32_be(loss);
             },
             ControlTypes::DropRequest(_, ref _d) => unimplemented!(),
             // control data
@@ -525,10 +523,10 @@ impl Packet {
             // because the first bit is zero, we can just convert the first 4 bits into a
             // 32 bit integer
 
-            let seq_number = SeqNumber(Cursor::new(first4).get_i32::<BigEndian>());
+            let seq_number = SeqNumber(Cursor::new(first4).get_i32_be());
 
             // get the first byte in the second row
-            let second_line = buf.get_i32::<BigEndian>();
+            let second_line = buf.get_i32_be();
 
             let message_loc = PacketLocation::from_i32(second_line);
 
@@ -537,8 +535,8 @@ impl Packet {
 
             // clear the first three bits
             let message_number = second_line & !(0b111 << 29);
-            let timestamp = buf.get_i32::<BigEndian>();
-            let dest_sockid = SocketID(buf.get_i32::<BigEndian>());
+            let timestamp = buf.get_i32_be();
+            let dest_sockid = SocketID(buf.get_i32_be());
 
             Ok(Packet::Data {
                 seq_number,
@@ -552,9 +550,9 @@ impl Packet {
         } else {
             // this means it's a control packet
 
-            let add_info = buf.get_i32::<BigEndian>();
-            let timestamp = buf.get_i32::<BigEndian>();
-            let dest_sockid = buf.get_i32::<BigEndian>();
+            let add_info = buf.get_i32_be();
+            let timestamp = buf.get_i32_be();
+            let dest_sockid = buf.get_i32_be();
 
             Ok(Packet::Control {
                 timestamp,
@@ -573,19 +571,19 @@ impl Packet {
                 ref control_type,
             } => {
                 // first half of first row, the control type and the 1st bit which is a one
-                into.put_i16::<BigEndian>((i16::from(control_type.id_byte())) | (0b1 << 15));
+                into.put_i16_be((i16::from(control_type.id_byte())) | (0b1 << 15));
 
                 // finish that row, which is reserved, so just fill with zeros
-                into.put_i16::<BigEndian>(0);
+                into.put_i16_be(0);
 
                 // the additonal info line
-                into.put_i32::<BigEndian>(control_type.additional_info());
+                into.put_i32_be(control_type.additional_info());
 
                 // timestamp
-                into.put_i32::<BigEndian>(*timestamp);
+                into.put_i32_be(*timestamp);
 
                 // dest sock id
-                into.put_i32::<BigEndian>(dest_sockid.0);
+                into.put_i32_be(dest_sockid.0);
 
                 // the rest of the info
                 control_type.serialize(into);
@@ -599,14 +597,14 @@ impl Packet {
                 ref payload,
                 ref in_order_delivery,
             } => {
-                into.put_i32::<BigEndian>(seq_number.0);
-                into.put_i32::<BigEndian>(
+                into.put_i32_be(seq_number.0);
+                into.put_i32_be(
                     message_number | message_loc.to_i32() |
                         // the third bit in the second row is if it expects in order delivery
                         if *in_order_delivery { 1 << 29 } else { 0 },
                 );
-                into.put_i32::<BigEndian>(*timestamp);
-                into.put_i32::<BigEndian>(dest_sockid.0);
+                into.put_i32_be(*timestamp);
+                into.put_i32_be(dest_sockid.0);
                 into.put(payload);
             }
         }
