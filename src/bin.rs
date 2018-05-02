@@ -15,8 +15,7 @@ use std::{io::Error,
 
 use bytes::Bytes;
 use futures::{future, prelude::*};
-use tokio::{executor::current_thread,
-            net::{UdpFramed, UdpSocket}};
+use tokio::net::{UdpFramed, UdpSocket};
 use tokio_io::codec::BytesCodec;
 use url::{Host, Url};
 
@@ -147,12 +146,8 @@ fn main() {
         }
     };
 
-    current_thread::run(|_| {
-        current_thread::spawn(
-            from.join(to)
-                .and_then(|(from, to)| from.forward(to))
-                .map_err(|e| eprintln!("Error encountered: {:?}", e))
-                .map(|_| ()),
-        );
-    });
+    from.join(to)
+        .and_then(|(from, to)| from.forward(to))
+        .wait()
+        .unwrap();
 }
