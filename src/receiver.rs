@@ -531,7 +531,7 @@ where
                 // make sure the buffer is big enough
                 // this cast is safe because last_released is garunteed to be >= seq_number
                 let seq_id_in_buffer = self.id_in_buffer(seq_number);
-                if seq_id_in_buffer > self.buffer.len() {
+                if seq_id_in_buffer >= self.buffer.len() {
                     self.buffer.resize(seq_id_in_buffer + 1, None);
                 }
 
@@ -610,81 +610,95 @@ where
         self.sock.poll_complete()?;
 
         loop {
+            debug!(
+                "last_rel={} Buffer={:?}",
+                self.last_released.0,
+                self.buffer
+                    .iter()
+                    .map(|a| a.as_ref().map(|p| p.seq_number().unwrap().0))
+                    .collect::<Vec<_>>()
+            );
+
             // if data packets are ready, send them
-            if let Some(Some(packet)) = self.buffer.pop_front() {
-                // make sure to reconstruct messages correctly
-                assert_eq!(packet.seq_number().unwrap(), self.last_released + 1);
+            if let Some(packet) = self.buffer.pop_front() {
+                if let Some(packet) = packet {
+                    assert_eq!(packet.seq_number().unwrap(), self.last_released + 1);
 
-                let message_loc = packet.packet_location().unwrap();
+                    let message_loc = packet.packet_location().unwrap();
 
-                match message_loc {
-                    PacketLocation::First => {
-                        let message_number = packet.message_number().unwrap();
+                    // make sure to reconstruct messages correctly
+                    match message_loc {
+                        PacketLocation::First => {
+                            let message_number = packet.message_number().unwrap();
 
-                        // see if the entire message is available
-                        let msg_avaialble = self.buffer
-                            .iter()
-                            .rev()
-                            .scan((), |_, p| match p {
-                                Some(d) => match d.packet_location().unwrap() {
-                                    PacketLocation::First => {
-                                        warn!("`First` encountered in the middle of a message");
+                            // see if the entire message is available
+                            let msg_avaialble = self.buffer
+                                .iter()
+                                .scan((), |_, p| match p {
+                                    Some(d) => match d.packet_location().unwrap() {
+                                        PacketLocation::First => {
+                                            warn!("`First` encountered in the middle of a message");
 
-                                        None
+                                            None
+                                        }
+                                        PacketLocation::Middle => Some(PacketLocation::Middle),
+                                        PacketLocation::Only => {
+                                            warn!("`Only` encoutnered in the middle of a message");
+
+                                            None
+                                        }
+                                        PacketLocation::Last => Some(PacketLocation::Last),
+                                    },
+                                    None => None,
+                                })
+                                .find(|l| *l == PacketLocation::Last)
+                                .is_some();
+
+                            if msg_avaialble {
+                                debug!("Reassembling & releasing broken-up message");
+                                // concatenate the entire message
+                                let mut buffer = BytesMut::from(packet.payload().unwrap());
+
+                                loop {
+                                    let pack = self.buffer.pop_front().unwrap().unwrap();
+
+                                    buffer.extend_from_slice(&pack.payload().unwrap()[..]);
+
+                                    if pack.packet_location().unwrap() == PacketLocation::Last {
+                                        // update this so the indexing works right
+                                        self.last_released = pack.seq_number().unwrap();
+
+                                        break;
                                     }
-                                    PacketLocation::Middle => Some(PacketLocation::Middle),
-                                    PacketLocation::Only => {
-                                        warn!("`Only` encoutnered in the middle of a message");
-
-                                        None
-                                    }
-                                    PacketLocation::Last => Some(PacketLocation::Last),
-                                },
-                                None => None,
-                            })
-                            .find(|l| *l == PacketLocation::Last)
-                            .is_some();
-
-                        if msg_avaialble {
-                            debug!("Reassembling & releasing broken-up message");
-                            // concatenate the entire message
-                            let mut buffer = BytesMut::from(packet.payload().unwrap());
-
-                            loop {
-                                let pack = self.buffer.pop_front().unwrap().unwrap();
-
-                                buffer.extend_from_slice(&pack.payload().unwrap()[..]);
-
-                                if pack.packet_location().unwrap() == PacketLocation::Last
-                                {
-                                    break;
                                 }
+                                return Ok(Async::Ready(Some(buffer.freeze())));
+                            } else {
+                                self.buffer.push_front(Some(packet));
+                                debug!(
+                                    "Waiting for message end. Buffer={:?}",
+                                    self.buffer
+                                        .iter()
+                                        .map(|pack| pack.as_ref().map(|p| Some((
+                                            p.message_number().unwrap(),
+                                            p.seq_number().unwrap(),
+                                            p.packet_location().unwrap()
+                                        ))))
+                                        .collect::<Vec<_>>()
+                                );
                             }
-                            return Ok(Async::Ready(Some(buffer.freeze())));
-                        } else {
-                            self.buffer.push_front(Some(packet));
-                            debug!(
-                                "Waiting for message end. Buffer={:?}",
-                                self.buffer
-                                    .iter()
-                                    .map(|pack| pack.as_ref().map(|p| Some((
-                                        p.message_number().unwrap(),
-                                        p.seq_number().unwrap(),
-                                        p.packet_location().unwrap()
-                                    ))))
-                                    .collect::<Vec<_>>()
-                            );
+                        }
+                        PacketLocation::Last | PacketLocation::Middle => {
+                            warn!("Middle or Last packe tlocation in packet without matching First. Discarding.");
+                        }
+                        PacketLocation::Only => {
+                            self.last_released += 1;
+
+                            debug!("Releasing {:?}", packet.seq_number().unwrap());
+                            return Ok(Async::Ready(Some(packet.payload().unwrap())));
                         }
                     }
-                    PacketLocation::Last | PacketLocation::Middle => {
-                        warn!("Middle or Last packetlocation in packet without matching First. Discarding.");
-                    }
-                    PacketLocation::Only => {
-                        self.last_released += 1;
-
-                        debug!("Releasing {:?}", packet.seq_number().unwrap());
-                        return Ok(Async::Ready(Some(packet.payload().unwrap())));
-                    }
+                } else {
+                    self.buffer.push_front(packet);
                 }
             }
 
