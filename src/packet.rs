@@ -184,14 +184,20 @@ pub enum ControlTypes {
 
     /// Custom packets
     /// Mainly used for special SRT handshake packets
-    /// The i32 is the additonal info, which isn't used for SRT but meh it's not totally impossible
-    Custom(i32, Bytes),
+    /// The i32 is the second 16 bits of the first line, which is reserved for this use.
+    Custom(u16, Bytes),
 }
 
 impl ControlTypes {
     /// Deserialize a control info
-    /// packet_type: The packet ID byte, the second byte in the second row
-    fn deserialize<T: Buf>(packet_type: u8, extra_info: i32, mut buf: T) -> Result<ControlTypes> {
+    /// * `packet_type` - The packet ID byte, the second byte in the first row
+    /// * `reserved` - the second 16 bytes of the first row, reserved for custom packets
+    fn deserialize<T: Buf>(
+        packet_type: u8,
+        reserved: u16,
+        extra_info: i32,
+        mut buf: T,
+    ) -> Result<ControlTypes> {
         match packet_type {
             0x0 => {
                 // Handshake
@@ -282,7 +288,7 @@ impl ControlTypes {
             }
             0xFF => {
                 // Custom
-                Ok(ControlTypes::Custom(extra_info, buf.collect()))
+                Ok(ControlTypes::Custom(reserved, buf.collect()))
             }
             x => Err(Error::new(
                 ErrorKind::InvalidData,
@@ -307,15 +313,16 @@ impl ControlTypes {
     fn additional_info(&self) -> i32 {
         match *self {
             // These types have additional info
-            ControlTypes::Ack2(i)
-            | ControlTypes::DropRequest(i, _)
-            | ControlTypes::Ack(i, _)
-            | ControlTypes::Custom(i, _) => i,
+            ControlTypes::Ack2(i) | ControlTypes::DropRequest(i, _) | ControlTypes::Ack(i, _) => i,
             // These do not, just use zero
-            ControlTypes::Handshake(_)
-            | ControlTypes::KeepAlive
-            | ControlTypes::Nak(_)
-            | ControlTypes::Shutdown => 0,
+            _ => 0,
+        }
+    }
+
+    fn reserved(&self) -> u16 {
+        match *self {
+            ControlTypes::Custom(a, _) => a,
+            _ => 0,
         }
     }
 
@@ -562,6 +569,9 @@ impl Packet {
         } else {
             // this means it's a control packet
 
+            // get reserved data, which is the last two bytes of the first four bytes
+            let reserved = Cursor::new(&first4[2..]).get_u16_be();
+
             let add_info = buf.get_i32_be();
             let timestamp = buf.get_i32_be();
             let dest_sockid = buf.get_i32_be();
@@ -570,7 +580,7 @@ impl Packet {
                 timestamp,
                 dest_sockid: SocketID(dest_sockid),
                 // just match against the second byte, as everything is in that
-                control_type: ControlTypes::deserialize(first4[1], add_info, buf)?,
+                control_type: ControlTypes::deserialize(first4[1], reserved, add_info, buf)?,
             })
         }
     }
@@ -585,8 +595,8 @@ impl Packet {
                 // first half of first row, the control type and the 1st bit which is a one
                 into.put_i16_be((i16::from(control_type.id_byte())) | (0b1 << 15));
 
-                // finish that row, which is reserved, so just fill with zeros
-                into.put_i16_be(0);
+                // finish that row, which is reserved
+                into.put_u16_be(control_type.reserved());
 
                 // the additonal info line
                 into.put_i32_be(control_type.additional_info());

@@ -12,6 +12,8 @@ extern crate tokio_io;
 extern crate tokio_udp;
 #[macro_use]
 extern crate serde_derive;
+#[macro_use]
+extern crate bitflags;
 
 pub mod builder;
 pub mod codec;
@@ -25,6 +27,8 @@ pub mod pending_connection;
 pub mod receiver;
 pub mod sender;
 pub mod seq_number;
+pub mod srt_packet;
+pub mod srt_version;
 pub mod stats;
 pub mod stats_printer;
 
@@ -38,6 +42,7 @@ pub use pending_connection::PendingConnection;
 pub use receiver::Receiver;
 pub use sender::Sender;
 pub use seq_number::SeqNumber;
+pub use srt_version::SrtVersion;
 pub use stats::Stats;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
