@@ -25,8 +25,8 @@ impl DefaultSenderCongestionCtrl {
             avg_nak_num: 1,
             nak_count: 1,
             dec_count: 1,
-            last_dec_seq: SeqNumber(0), // this is reassigned later
-            dec_random: 1,              // TODO: real init size for this
+            last_dec_seq: SeqNumber::new(0), // this is reassigned later
+            dec_random: 1,                   // TODO: real init size for this
 
             window_size: 1000,
             // TODO: what is the default SND

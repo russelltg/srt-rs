@@ -45,7 +45,7 @@ where
                     self.next = None;
 
                     // return the one we have
-                    return Some(this.0);
+                    return Some(this.to_i32());
                 }
             };
 
@@ -67,17 +67,17 @@ where
                     // break out of the loop
                     self.last_in_loop = None;
 
-                    return Some(this.0);
+                    return Some(this.to_i32());
                 }
             } else if this + 1 == self.next.unwrap() {
                 // create a loop
                 self.last_in_loop = Some(this);
 
                 // set the first bit to 1
-                return Some(this.0 | 1 << 31);
+                return Some(this.to_i32() | 1 << 31);
             } else {
                 // no looping necessary
-                return Some(this.0);
+                return Some(this.to_i32());
             }
         }
     }
@@ -111,13 +111,13 @@ impl<I: Iterator<Item = i32>> Iterator for DecompressLossList<I> {
                 // loop is over
                 self.loop_next_end = None;
 
-                Some(SeqNumber(next))
+                Some(SeqNumber::new(next))
             }
             Some((next, end)) => {
                 // continue the loop
                 self.loop_next_end = Some((next + 1, end));
 
-                Some(SeqNumber(next))
+                Some(SeqNumber::new(next))
             }
             None => {
                 // no current loop
@@ -135,10 +135,10 @@ impl<I: Iterator<Item = i32>> Iterator for DecompressLossList<I> {
                         },
                     ));
 
-                    Some(SeqNumber(next_num))
+                    Some(SeqNumber::new(next_num))
                 } else {
                     // no looping is possible
-                    Some(SeqNumber(next))
+                    Some(SeqNumber::new(next))
                 }
             }
         }
@@ -157,12 +157,12 @@ fn loss_compression_test() {
     macro_rules! test_comp_decomp {
         ($x:expr, $y:expr) => {{
             assert_eq!(
-                compress_loss_list($x.iter().cloned().map(SeqNumber)).collect::<Vec<_>>(),
+                compress_loss_list($x.iter().cloned().map(SeqNumber::new)).collect::<Vec<_>>(),
                 $y.iter().cloned().collect::<Vec<_>>()
             );
             assert_eq!(
                 decompress_loss_list($y.iter().cloned()).collect::<Vec<_>>(),
-                $x.iter().cloned().map(SeqNumber).collect::<Vec<_>>()
+                $x.iter().cloned().map(SeqNumber::new).collect::<Vec<_>>()
             );
         }};
     }

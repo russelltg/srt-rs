@@ -1,4 +1,5 @@
 use std::{cmp::{Ord, Ordering},
+          fmt,
           ops::{Add, AddAssign, Rem, Sub}};
 
 use rand::{thread_rng, Rng};
@@ -7,13 +8,21 @@ use rand::{thread_rng, Rng};
 const MAX_SEQ_NUM: i32 = 0x7FFFFFFF;
 
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
-pub struct SeqNumber(pub i32);
+pub struct SeqNumber(i32);
 
 impl SeqNumber {
+    pub fn new(num: i32) -> SeqNumber {
+        SeqNumber(num)
+    }
+
     /// Generate a random sequence number
     /// Guaranteed to be in the bounds of a sequence number
     pub fn random() -> SeqNumber {
         SeqNumber(0) + thread_rng().gen::<i32>().abs()
+    }
+
+    pub fn to_i32(&self) -> i32 {
+        self.0
     }
 }
 
@@ -103,6 +112,12 @@ impl PartialOrd for SeqNumber {
 impl AddAssign<i32> for SeqNumber {
     fn add_assign(&mut self, rhs: i32) {
         *self = *self + rhs
+    }
+}
+
+impl fmt::Display for SeqNumber {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

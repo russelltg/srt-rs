@@ -204,7 +204,7 @@ impl ControlTypes {
 
                 let udt_version = buf.get_i32_be();
                 let sock_type = SocketType::from_i32(buf.get_i32_be())?;
-                let init_seq_num = SeqNumber(buf.get_i32_be());
+                let init_seq_num = SeqNumber::new(buf.get_i32_be());
                 let max_packet_size = buf.get_i32_be();
                 let max_flow_size = buf.get_i32_be();
                 let connection_type = ConnectionType::from_i32(buf.get_i32_be())?;
@@ -239,7 +239,7 @@ impl ControlTypes {
                 // ACK
 
                 // read control info
-                let ack_number = SeqNumber(buf.get_i32_be());
+                let ack_number = SeqNumber::new(buf.get_i32_be());
 
                 // if there is more data, use it. However, it's optional
                 let mut opt_read_next = move || {
@@ -331,7 +331,7 @@ impl ControlTypes {
             ControlTypes::Handshake(ref c) => {
                 into.put_i32_be(c.udt_version);
                 into.put_i32_be(c.sock_type.to_i32());
-                into.put_i32_be(c.init_seq_num.0);
+                into.put_i32_be(c.init_seq_num.to_i32());
                 into.put_i32_be(c.max_packet_size);
                 into.put_i32_be(c.max_flow_size);
                 into.put_i32_be(c.connection_type.to_i32());
@@ -349,7 +349,7 @@ impl ControlTypes {
                 }
             }
             ControlTypes::Ack(_, ref c) => {
-                into.put_i32_be(c.ack_number.0);
+                into.put_i32_be(c.ack_number.to_i32());
                 into.put_i32_be(c.rtt.unwrap_or(10_000));
                 into.put_i32_be(c.rtt_variance.unwrap_or(50_000));
                 into.put_i32_be(c.buffer_available.unwrap_or(8175)); // TODO: better defaults
@@ -542,7 +542,7 @@ impl Packet {
             // because the first bit is zero, we can just convert the first 4 bits into a
             // 32 bit integer
 
-            let seq_number = SeqNumber(Cursor::new(first4).get_i32_be());
+            let seq_number = SeqNumber::new(Cursor::new(first4).get_i32_be());
 
             // get the first byte in the second row
             let second_line = buf.get_i32_be();
@@ -619,7 +619,7 @@ impl Packet {
                 ref payload,
                 ref in_order_delivery,
             } => {
-                into.put_i32_be(seq_number.0);
+                into.put_i32_be(seq_number.to_i32());
                 into.put_i32_be(
                     message_number | message_loc.to_i32() |
                         // the third bit in the second row is if it expects in order delivery
@@ -692,7 +692,7 @@ fn handshake_ser_des_test() {
         control_type: ControlTypes::Handshake(HandshakeControlInfo {
             udt_version: 4,
             sock_type: SocketType::Datagram,
-            init_seq_num: SeqNumber(1827131),
+            init_seq_num: SeqNumber::new(1827131),
             max_packet_size: 1500,
             max_flow_size: 25600,
             connection_type: ConnectionType::Regular,

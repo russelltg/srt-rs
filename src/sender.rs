@@ -227,7 +227,7 @@ where
                                 .find(|pack| pack.seq_number().unwrap() == lost)
                             {
                                 Some(p) => p,
-                                None => {warn!("NAK received for packet {} that's not in the buffer, maybe it's already been ACKed", lost.0); continue }
+                                None => {warn!("NAK received for packet {} that's not in the buffer, maybe it's already been ACKed", lost); continue }
                             };
 
                             self.loss_list.push_back(packet.clone());
@@ -241,7 +241,7 @@ where
                                 &cc_info);
                         }
 
-                        trace!("Loss list={:?}", self.loss_list.iter().map(|ll| ll.seq_number().unwrap().0).collect::<Vec<_>>());
+                        trace!("Loss list={:?}", self.loss_list.iter().map(|ll| ll.seq_number().unwrap()).collect::<Vec<_>>());
 
                         // TODO: reset EXP
                     }
@@ -442,7 +442,7 @@ where
                     };
                     debug!(
                         "Sending packet: {}; pending.len={}; SND={:?}",
-                        self.next_seq_number.0 - 1,
+                        self.next_seq_number - 1,
                         self.pending_packets.len(),
                         self.congest_ctrl.send_interval(),
                     );

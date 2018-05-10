@@ -9,25 +9,23 @@ extern crate log;
 
 use bytes::{Bytes, BytesMut};
 
-use std::{cmp::Ordering,
-          collections::BinaryHeap,
-          fmt::Debug,
-          io::{Error, ErrorKind},
-          str,
-          thread,
-          time::{Duration, Instant}};
+use std::{
+    cmp::Ordering, collections::BinaryHeap, fmt::Debug, io::{Error, ErrorKind}, str, thread,
+    time::{Duration, Instant},
+};
 
 use futures::{prelude::*, stream::iter_ok, sync::mpsc};
 
-use rand::{distributions::{IndependentSample, Normal, Range},
-           thread_rng};
+use rand::{
+    distributions::{IndependentSample, Normal, Range}, thread_rng,
+};
 
 use futures_timer::{Delay, Interval};
 
-use srt::{stats_printer::StatsPrinterSender, ConnectionSettings, DefaultSenderCongestionCtrl,
-          Receiver, Sender, SeqNumber, SocketID};
-
-use log::LevelFilter;
+use srt::{
+    stats_printer::StatsPrinterSender, ConnectionSettings, DefaultSenderCongestionCtrl, Receiver,
+    Sender, SeqNumber, SocketID,
+};
 
 struct LossyConn<T> {
     sender: mpsc::Sender<T>,
@@ -233,7 +231,7 @@ fn test_with_loss() {
                 .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
             DefaultSenderCongestionCtrl::new(),
             ConnectionSettings {
-                init_seq_num: SeqNumber(INIT_SEQ_NUM),
+                init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
                 socket_start_time: Instant::now(),
                 remote_sockid: SocketID(81),
                 local_sockid: SocketID(13),
@@ -250,7 +248,7 @@ fn test_with_loss() {
         recv.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
             .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
         ConnectionSettings {
-            init_seq_num: SeqNumber(INIT_SEQ_NUM),
+            init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
             socket_start_time: Instant::now(),
             remote_sockid: SocketID(13),
             local_sockid: SocketID(81),

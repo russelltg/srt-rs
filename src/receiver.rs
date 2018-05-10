@@ -1,9 +1,7 @@
-use std::{cmp,
-          collections::VecDeque,
-          io::{Cursor, Error, ErrorKind, Result},
-          iter::Iterator,
-          net::SocketAddr,
-          time::Duration};
+use std::{
+    cmp, collections::VecDeque, io::{Cursor, Error, ErrorKind, Result}, iter::Iterator,
+    net::SocketAddr, time::{Duration, Instant},
+};
 
 use bytes::{Bytes, BytesMut};
 use futures::prelude::*;
@@ -110,7 +108,8 @@ pub struct Receiver<T> {
     /// In ascending sequence numbers
     /// There are no gaps between sequence nubmers
     /// the index of sequence number i is at buffer[i - last_released - 1]
-    buffer: VecDeque<Option<Packet>>,
+    /// The instant is the estimated send time, calculated as recv_time - rtt / 2
+    buffer: VecDeque<Option<(Instant, Packet)>>,
 
     /// the latest released sequence number
     last_released: SeqNumber,
@@ -394,10 +393,10 @@ where
                 }
 
                 // make sure the sender flag is set, or else neither sender nor recv are set, which is bad
-                if shake.flags.contains(SrtShakeFlags::TSBPDSND) {
+                if !shake.flags.contains(SrtShakeFlags::TSBPDSND) {
                     return Err(Error::new(
                         ErrorKind::Other,
-                        "Got SRT handshake packet with neither receiver or sender set",
+                        format!("Got SRT handshake packet with neither receiver or sender set. Flags={:#b}", shake.flags.bits()),
                     ));
                 }
 
@@ -617,21 +616,24 @@ where
                 if self.buffer[seq_id_in_buffer].is_some() {
                     debug!("Received packet {:?} twice", seq_number);
                 }
-                self.buffer[seq_id_in_buffer] = Some(packet_cpy);
+                self.buffer[seq_id_in_buffer] = Some((
+                    Instant::now() - Duration::new(0, self.rtt as u32 / 2 * 1_000),
+                    packet_cpy,
+                ));
 
                 if self.buffer.len() != 0 {
                     trace!(
                         "lr={}, buffer.len()={}, buffer[0]={}, buffer[last]={}",
-                        self.last_released.0,
+                        self.last_released,
                         self.buffer.len(),
                         self.buffer[0]
                             .as_ref()
-                            .map(|ref p| p.seq_number().unwrap().0)
-                            .unwrap_or(-1),
+                            .map(|(_, ref p)| p.seq_number().unwrap())
+                            .unwrap_or(SeqNumber::new(-1)),
                         self.buffer[self.buffer.len() - 1]
                             .as_ref()
-                            .map(|ref b| b.seq_number().unwrap().0)
-                            .unwrap_or(-1),
+                            .map(|(_, ref p)| p.seq_number().unwrap())
+                            .unwrap_or(SeqNumber::new(-1)),
                     );
                 }
             }
@@ -640,16 +642,164 @@ where
         Ok(None)
     }
 
+    // in non-tsbpd mode, see if there are packets to release
+    fn try_release_no_tsbpd(&mut self) -> Option<Bytes> {
+        // if data packets are ready, send them
+        if let Some(packet) = self.buffer.pop_front() {
+            if let Some((send_time, packet)) = packet {
+                assert_eq!(packet.seq_number().unwrap(), self.last_released + 1);
+
+                let message_loc = packet.packet_location().unwrap();
+
+                // make sure to reconstruct messages correctly
+                match message_loc {
+                    PacketLocation::First => {
+                        let message_number = packet.message_number().unwrap();
+
+                        // see if the entire message is available
+                        let msg_avaialble = self.buffer
+                            .iter()
+                            .scan((), |_, p| match p {
+                                Some((_, d)) => {
+                                    if d.message_number().unwrap() != message_number {
+                                        warn!(
+                                            "Message number changed while waiting for message end"
+                                        );
+                                        return None;
+                                    }
+                                    match d.packet_location().unwrap() {
+                                        PacketLocation::First => {
+                                            warn!("`First` encountered in the middle of a message");
+
+                                            None
+                                        }
+                                        PacketLocation::Middle => Some(PacketLocation::Middle),
+                                        PacketLocation::Only => {
+                                            warn!("`Only` encoutnered in the middle of a message");
+
+                                            None
+                                        }
+                                        PacketLocation::Last => Some(PacketLocation::Last),
+                                    }
+                                }
+                                None => None,
+                            })
+                            .find(|l| *l == PacketLocation::Last)
+                            .is_some();
+
+                        if msg_avaialble {
+                            debug!("Reassembling & releasing broken-up message");
+                            // concatenate the entire message
+                            let mut buffer = BytesMut::from(packet.payload().unwrap());
+
+                            loop {
+                                let pack = self.buffer.pop_front().unwrap().unwrap().1;
+
+                                buffer.extend_from_slice(&pack.payload().unwrap()[..]);
+
+                                if pack.packet_location().unwrap() == PacketLocation::Last {
+                                    // update this so the indexing works right
+                                    self.last_released = pack.seq_number().unwrap();
+
+                                    break;
+                                }
+                            }
+                            return Some(buffer.freeze());
+                        } else {
+                            self.buffer.push_front(Some((send_time, packet)));
+                            debug!(
+                                "Waiting for message end. Buffer={:?}",
+                                self.buffer
+                                    .iter()
+                                    .map(|pack| pack.as_ref().map(|(_, p)| Some((
+                                        p.message_number().unwrap(),
+                                        p.seq_number().unwrap(),
+                                        p.packet_location().unwrap()
+                                    ))))
+                                    .collect::<Vec<_>>()
+                            );
+                        }
+                    }
+                    PacketLocation::Last | PacketLocation::Middle => {
+                        warn!("Middle or Last packe tlocation in packet without matching First. Discarding.");
+                    }
+                    PacketLocation::Only => {
+                        self.last_released += 1;
+
+                        debug!("Releasing {:?}", packet.seq_number().unwrap());
+                        return Some(packet.payload().unwrap());
+                    }
+                }
+            } else {
+                self.buffer.push_front(packet);
+            }
+        }
+
+        None
+    }
+
+    fn try_release_tsbpd(&mut self, tsbpd: Duration) -> Option<Bytes> {
+        let first = self.buffer.pop_front()?;
+
+        match first {
+            Some((send_time, pack)) => {
+                // if ready to release, do
+                // TODO: deal with messages (yuck)
+                if Instant::now() >= send_time + tsbpd {
+                    self.last_released += 1;
+                    Some(pack.payload().unwrap())
+                } else {
+                    self.buffer.push_front(Some((send_time, pack))); // re-add
+                    None
+                }
+            }
+            // if the most recent packet hasn't been received yet, see if we need to discard some packets
+            None => {
+                // find if the first actually received packet should be released
+                let time = self.buffer
+                    .iter()
+                    .find(|ref a| a.is_some())?
+                    .as_ref()?
+                    .0
+                    .clone();
+
+                if Instant::now() >= time + tsbpd {
+                    // drop all the missing packets
+                    // unwrap is safe b/c we know there is a Some packet, as the ? above didn't return
+                    while let None = self.buffer.front().unwrap() {
+                        self.last_released += 1;
+                        warn!(
+                            "Dropping packet {}, did not arrive in time",
+                            self.last_released
+                        );
+                        self.buffer.pop_front();
+                    }
+                    self.last_released += 1;
+                    let payload = self.buffer
+                        .pop_front()
+                        .unwrap() // we know there is at least one element
+                        .unwrap() // we know it is non-null, cuz the while let terminated
+                        .1 // get the packet, not the time
+                        .payload()
+                        .unwrap();
+
+                    Some(payload)
+                } else {
+                    // re-add the initial packet
+                    self.buffer.push_front(None);
+                    None
+                }
+            }
+        }
+    }
+
     // send a NAK, and return the future
     fn send_nak<I>(&mut self, lost_seq_nums: I) -> Result<()>
     where
         I: Iterator<Item = SeqNumber>,
     {
         let vec: Vec<_> = lost_seq_nums.collect();
-        debug!(
-            "Sending NAK for={:?}",
-            vec.iter().map(|s| s.0).collect::<Vec<_>>()
-        );
+        debug!("Sending NAK for={:?}", vec);
 
         let pack = self.make_control_packet(ControlTypes::Nak(NakControlInfo {
             loss_info: compress_loss_list(vec.iter().cloned()).collect(),
@@ -690,104 +840,20 @@ where
         loop {
             debug!(
                 "last_rel={} Buffer={:?}",
-                self.last_released.0,
+                self.last_released,
                 self.buffer
                     .iter()
-                    .map(|a| a.as_ref().map(|p| p.seq_number().unwrap().0))
+                    .map(|a| a.as_ref().map(|(_, p)| p.seq_number().unwrap()))
                     .collect::<Vec<_>>()
             );
 
-            // if data packets are ready, send them
-            if let Some(packet) = self.buffer.pop_front() {
-                if let Some(packet) = packet {
-                    assert_eq!(packet.seq_number().unwrap(), self.last_released + 1);
-
-                    let message_loc = packet.packet_location().unwrap();
-
-                    // make sure to reconstruct messages correctly
-                    match message_loc {
-                        PacketLocation::First => {
-                            let message_number = packet.message_number().unwrap();
-
-                            // see if the entire message is available
-                            let msg_avaialble = self.buffer
-                                .iter()
-                                .scan((), |_, p| match p {
-                                    Some(d) => {
-                                        if d.message_number().unwrap() != message_number {
-                                            warn!(
-                                                "Message number changed while waiting for message end"
-                                            );
-                                            return None;
-                                        }
-                                        match d.packet_location().unwrap() {
-                                            PacketLocation::First => {
-                                                warn!("`First` encountered in the middle of a message");
-
-                                                None
-                                            }
-                                            PacketLocation::Middle => Some(PacketLocation::Middle),
-                                            PacketLocation::Only => {
-                                                warn!(
-                                                    "`Only` encoutnered in the middle of a message"
-                                                );
-
-                                                None
-                                            }
-                                            PacketLocation::Last => Some(PacketLocation::Last),
-                                        }
-                                    }
-                                    None => None,
-                                })
-                                .find(|l| *l == PacketLocation::Last)
-                                .is_some();
-
-                            if msg_avaialble {
-                                debug!("Reassembling & releasing broken-up message");
-                                // concatenate the entire message
-                                let mut buffer = BytesMut::from(packet.payload().unwrap());
-
-                                loop {
-                                    let pack = self.buffer.pop_front().unwrap().unwrap();
-
-                                    buffer.extend_from_slice(&pack.payload().unwrap()[..]);
-
-                                    if pack.packet_location().unwrap() == PacketLocation::Last {
-                                        // update this so the indexing works right
-                                        self.last_released = pack.seq_number().unwrap();
-
-                                        break;
-                                    }
-                                }
-                                return Ok(Async::Ready(Some(buffer.freeze())));
-                            } else {
-                                self.buffer.push_front(Some(packet));
-                                debug!(
-                                    "Waiting for message end. Buffer={:?}",
-                                    self.buffer
-                                        .iter()
-                                        .map(|pack| pack.as_ref().map(|p| Some((
-                                            p.message_number().unwrap(),
-                                            p.seq_number().unwrap(),
-                                            p.packet_location().unwrap()
-                                        ))))
-                                        .collect::<Vec<_>>()
-                                );
-                            }
-                        }
-                        PacketLocation::Last | PacketLocation::Middle => {
-                            warn!("Middle or Last packe tlocation in packet without matching First. Discarding.");
-                        }
-                        PacketLocation::Only => {
-                            self.last_released += 1;
-
-                            debug!("Releasing {:?}", packet.seq_number().unwrap());
-                            return Ok(Async::Ready(Some(packet.payload().unwrap())));
-                        }
-                    }
-                } else {
-                    self.buffer.push_front(packet);
-                }
+            // try to release packets
+            match match self.tsbpd {
+                Some(tsbpd) => self.try_release_tsbpd(tsbpd),
+                None => self.try_release_no_tsbpd(),
+            } {
+                Some(p) => return Ok(Async::Ready(Some(p))),
+                None => {}
             }
 
             match self.timeout_timer.poll() {
