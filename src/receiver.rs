@@ -407,6 +407,12 @@ where
                     shake.latency,
                 ));
 
+                info!(
+                    "Got SRT handshake, using TSBPD={}ms",
+                    self.tsbpd.unwrap().as_secs() * 1_000
+                        + self.tsbpd.unwrap().subsec_nanos() as u64 / 1_000
+                );
+
                 // return the response
                 let mut bytes = BytesMut::new();
                 let reserved = SrtControlPacket::HandshakeResponse(SrtHandshake {

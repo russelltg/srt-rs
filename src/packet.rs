@@ -193,7 +193,7 @@ impl ControlTypes {
     /// * `packet_type` - The packet ID byte, the second byte in the first row
     /// * `reserved` - the second 16 bytes of the first row, reserved for custom packets
     fn deserialize<T: Buf>(
-        packet_type: u8,
+        packet_type: u16,
         reserved: u16,
         extra_info: i32,
         mut buf: T,
@@ -297,7 +297,7 @@ impl ControlTypes {
         }
     }
 
-    fn id_byte(&self) -> u8 {
+    fn id_byte(&self) -> u16 {
         match *self {
             ControlTypes::Handshake(_) => 0x0,
             ControlTypes::KeepAlive => 0x1,
@@ -306,7 +306,7 @@ impl ControlTypes {
             ControlTypes::Shutdown => 0x5,
             ControlTypes::Ack2(_) => 0x6,
             ControlTypes::DropRequest(_, _) => 0x7,
-            ControlTypes::Custom(_, _) => 0xFF,
+            ControlTypes::Custom(_, _) => 0x7FFF,
         }
     }
 
@@ -580,7 +580,12 @@ impl Packet {
                 timestamp,
                 dest_sockid: SocketID(dest_sockid),
                 // just match against the second byte, as everything is in that
-                control_type: ControlTypes::deserialize(first4[1], reserved, add_info, buf)?,
+                control_type: ControlTypes::deserialize(
+                    ((first4[0] << 1 >> 1) as u16) << 8 + first4[1] as u16,
+                    reserved,
+                    add_info,
+                    buf,
+                )?,
             })
         }
     }
@@ -593,7 +598,7 @@ impl Packet {
                 ref control_type,
             } => {
                 // first half of first row, the control type and the 1st bit which is a one
-                into.put_i16_be((i16::from(control_type.id_byte())) | (0b1 << 15));
+                into.put_u16_be(control_type.id_byte() | (0b1 << 15));
 
                 // finish that row, which is reserved
                 into.put_u16_be(control_type.reserved());
