@@ -18,6 +18,7 @@ pub enum SrtControlPacket {
 }
 
 /// The SRT handshake object
+/// It's just these three fields encoded as i32's
 pub struct SrtHandshake {
     /// The SRT version
     pub version: SrtVersion,
@@ -77,7 +78,18 @@ impl SrtControlPacket {
     }
 
     pub fn serialize<T: BufMut>(&self, into: &mut T) -> u16 {
-        unimplemented!()
+        match *self {
+            SrtControlPacket::HandshakeRequest(ref s) => {
+                s.serialize(into);
+
+                1
+            }
+            SrtControlPacket::HandshakeResponse(ref s) => {
+                s.serialize(into);
+
+                2
+            }
+        }
     }
 }
 
@@ -107,5 +119,14 @@ impl SrtHandshake {
             flags,
             latency: Duration::new(0, latency as u32 * 1_000_000), // latency is in ms, convert to ns
         })
+    }
+
+    pub fn serialize<T: BufMut>(&self, into: &mut T) {
+        into.put_i32_be(self.version.to_i32());
+        into.put_i32_be(self.flags.bits());
+        into.put_i32_be(
+            (self.latency.subsec_nanos() / 1_000_000) as i32
+                + self.latency.as_secs() as i32 * 1_000,
+        );
     }
 }
