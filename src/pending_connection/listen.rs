@@ -1,9 +1,8 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::io::{Error, ErrorKind};
-use std::mem;
-use std::net::SocketAddr;
-use std::time::Instant;
+use std::{collections::hash_map::DefaultHasher,
+          hash::{Hash, Hasher},
+          io::{Error, ErrorKind},
+          net::SocketAddr,
+          time::{Duration, Instant}};
 
 use futures::prelude::*;
 
@@ -187,6 +186,7 @@ where
                             max_packet_size: shake.max_packet_size,
                             local_sockid: self.local_socket_id,
                             socket_start_time: self.socket_start_time,
+                            tsbpd_latency: Some(Duration::from_millis(120)), // 120 ms by default, TODO: configurable
                         });
                         // break out to end the borrow on self.sock
                         break;
@@ -198,7 +198,7 @@ where
         }
         match self.state {
             ConnectionState::Done(settings) => Ok(Async::Ready(Connected::new(
-                mem::replace(&mut self.sock, None).unwrap(),
+                self.sock.take().unwrap(),
                 settings,
             ))),
             _ => panic!(),

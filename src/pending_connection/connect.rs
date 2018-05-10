@@ -1,5 +1,4 @@
 use std::{io::Error,
-          mem,
           net::{IpAddr, SocketAddr},
           time::{Duration, Instant}};
 
@@ -122,7 +121,7 @@ where
 
                         // this packet has the final settings in it, and after this the connection is done
                         return Ok(Async::Ready(Connected::new(
-                            mem::replace(&mut self.sock, None).unwrap(),
+                            self.sock.take().unwrap(),
                             ConnectionSettings {
                                 remote: self.remote,
                                 max_flow_size: info.max_flow_size,
@@ -131,6 +130,7 @@ where
                                 socket_start_time: self.socket_start_time,
                                 local_sockid: self.local_socket_id,
                                 remote_sockid: info.socket_id,
+                                tsbpd_latency: Some(Duration::from_millis(120)), // 120 ms by default, TODO: configurable
                             },
                         )));
                     }

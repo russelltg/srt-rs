@@ -1,6 +1,6 @@
 use std::{cmp,
           collections::VecDeque,
-          io::{Error, Result},
+          io::{Cursor, Error, ErrorKind, Result},
           iter::Iterator,
           net::SocketAddr,
           time::Duration};
@@ -11,6 +11,8 @@ use futures_timer::{Delay, Interval};
 use loss_compression::compress_loss_list;
 use packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet, PacketLocation};
 use seq_number::seq_num_range;
+use srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
+use srt_version;
 use {ConnectionSettings, SeqNumber};
 
 struct LossListEntry {
@@ -112,6 +114,10 @@ pub struct Receiver<T> {
 
     /// the latest released sequence number
     last_released: SeqNumber,
+
+    /// The TSBPD time
+    /// If this is None, TSBPD is disabled
+    tsbpd: Option<Duration>,
 }
 
 enum ReadyType {
@@ -144,6 +150,7 @@ where
             lr_ack_acked: (0, settings.init_seq_num),
             buffer: VecDeque::new(),
             last_released: settings.init_seq_num - 1,
+            tsbpd: None,
         }
     }
 
@@ -362,6 +369,64 @@ where
         (seq - self.last_released - 1) as usize
     }
 
+    // handles a SRT control packet
+    fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<()> {
+        match pack {
+            SrtControlPacket::HandshakeRequest(shake) => {
+                // make sure the SRT version matches ours
+                if srt_version::CURRENT != shake.version {
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        format!(
+                            "Incomatible version, local is {}, remote is {}",
+                            srt_version::CURRENT,
+                            shake.version
+                        ),
+                    ));
+                }
+
+                // make sure it's a sender, cuz otherwise we have a problem
+                if shake.flags.contains(SrtShakeFlags::TSBPDRCV) {
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        "Receiver tried to connect with another receiver, aborting.",
+                    ));
+                }
+
+                // make sure the sender flag is set, or else neither sender nor recv are set, which is bad
+                if shake.flags.contains(SrtShakeFlags::TSBPDSND) {
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        "Got SRT handshake packet with neither receiver or sender set",
+                    ));
+                }
+
+                self.tsbpd = Some(Duration::max(
+                    self.settings
+                        .tsbpd_latency
+                        .unwrap_or(Duration::from_millis(0)), // if we never specified TSBPD, just use the sender's
+                    shake.latency,
+                ));
+
+                // return the response
+                let mut bytes = BytesMut::new();
+                let reserved = SrtControlPacket::HandshakeResponse(SrtHandshake {
+                    version: srt_version::CURRENT,
+                    flags: SrtShakeFlags::TSBPDRCV, // TODO: the reference implementation sets a lot more of these, research
+                    latency: self.tsbpd.unwrap(),
+                }).serialize(&mut bytes);
+
+                let pack = self.make_control_packet(ControlTypes::Custom(reserved, bytes.freeze()));
+                self.sock.start_send((pack, self.settings.remote))?;
+            }
+            SrtControlPacket::HandshakeResponse(_) => {
+                warn!("Receiver received SRT handshake response, unusual.")
+            }
+        }
+
+        Ok(())
+    }
+
     // handles a packet, returning either a future, if there is something to send,
     // or the socket, and in the case of a data packet, a payload
     fn handle_packet(&mut self, packet: Packet, from: &SocketAddr) -> Result<Option<ReadyType>> {
@@ -457,7 +522,13 @@ where
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
                     ControlTypes::Nak(_info) => warn!("Receiver received NAK packet, unusual"),
                     ControlTypes::Shutdown => return Ok(Some(ReadyType::Shutdown)), // end of stream
-                    ControlTypes::Custom(_, _) => unimplemented!(),
+                    ControlTypes::Custom(reserved, ref bytes) => {
+                        // decode srt packet
+                        let srt_packet =
+                            SrtControlPacket::parse(reserved, &mut Cursor::new(bytes))?;
+
+                        self.handle_srt_control_packet(srt_packet)?;
+                    }
                 }
             }
             Packet::Data { seq_number, .. } => {

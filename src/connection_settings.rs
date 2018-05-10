@@ -1,4 +1,5 @@
-use std::{net::SocketAddr, time::Instant};
+use std::{net::SocketAddr,
+          time::{Duration, Instant}};
 
 use {SeqNumber, SocketID};
 
@@ -24,6 +25,9 @@ pub struct ConnectionSettings {
 
     /// The maxiumum flow size
     pub max_flow_size: i32,
+
+    /// The TSBPD latency
+    pub tsbpd_latency: Option<Duration>,
 }
 
 impl ConnectionSettings {

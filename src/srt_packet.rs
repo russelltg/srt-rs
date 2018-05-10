@@ -1,5 +1,6 @@
-use bytes::Buf;
-use std::io::{Error, ErrorKind, Result};
+use bytes::{Buf, BufMut};
+use std::{io::{Error, ErrorKind, Result},
+          time::Duration};
 
 use SrtVersion;
 
@@ -19,13 +20,13 @@ pub enum SrtControlPacket {
 /// The SRT handshake object
 pub struct SrtHandshake {
     /// The SRT version
-    version: SrtVersion,
+    pub version: SrtVersion,
 
     /// SRT connection init flags
-    flags: SrtShakeFlags,
+    pub flags: SrtShakeFlags,
 
-    /// The latency in ms?
-    latency: i32,
+    /// The TSBPD latency
+    pub latency: Duration,
 }
 
 bitflags! {
@@ -74,6 +75,10 @@ impl SrtControlPacket {
             SrtControlPacket::HandshakeResponse(_) => 2,
         }
     }
+
+    pub fn serialize<T: BufMut>(&self, into: &mut T) -> u16 {
+        unimplemented!()
+    }
 }
 
 impl SrtHandshake {
@@ -100,7 +105,7 @@ impl SrtHandshake {
         Ok(SrtHandshake {
             version,
             flags,
-            latency,
+            latency: Duration::new(0, latency as u32 * 1_000_000), // latency is in ms, convert to ns
         })
     }
 }

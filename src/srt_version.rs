@@ -1,4 +1,10 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, fmt};
+
+pub const CURRENT: SrtVersion = SrtVersion {
+    major: 1,
+    minor: 2,
+    patch: 2,
+};
 
 /// Serialied, it looks like:
 /// major * 0x10000 + minor * 0x100 + patch
@@ -10,6 +16,15 @@ pub struct SrtVersion {
 }
 
 impl SrtVersion {
+    /// Create a new SRT version
+    pub fn new(major: u8, minor: u8, patch: u8) -> SrtVersion {
+        SrtVersion {
+            major,
+            minor,
+            patch,
+        }
+    }
+
     /// Parse from an i32
     pub fn parse(from: i32) -> SrtVersion {
         SrtVersion {
@@ -40,5 +55,11 @@ impl PartialOrd for SrtVersion {
 impl Ord for SrtVersion {
     fn cmp(&self, other: &SrtVersion) -> Ordering {
         self.partial_cmp(other).unwrap() // this cannot fail
+    }
+}
+
+impl fmt::Display for SrtVersion {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
     }
 }
