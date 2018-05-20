@@ -1,7 +1,5 @@
-use std::{
-    cmp, collections::VecDeque, io::{Cursor, Error, ErrorKind, Result}, iter::Iterator,
-    net::SocketAddr, time::{Duration, Instant},
-};
+use std::{cmp, collections::VecDeque, io::{Cursor, Error, ErrorKind, Result}, iter::Iterator,
+          net::SocketAddr, time::{Duration, Instant}};
 
 use bytes::{Bytes, BytesMut};
 use futures::prelude::*;
@@ -635,11 +633,11 @@ where
                         self.buffer[0]
                             .as_ref()
                             .map(|(_, ref p)| p.seq_number().unwrap())
-                            .unwrap_or(SeqNumber::new(-1)),
+                            .unwrap_or(SeqNumber::new(0)),
                         self.buffer[self.buffer.len() - 1]
                             .as_ref()
                             .map(|(_, ref p)| p.seq_number().unwrap())
-                            .unwrap_or(SeqNumber::new(-1)),
+                            .unwrap_or(SeqNumber::new(0)),
                     );
                 }
             }

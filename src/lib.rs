@@ -46,4 +46,4 @@ pub use srt_version::SrtVersion;
 pub use stats::Stats;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct SocketID(pub i32);
+pub struct SocketID(pub u32);

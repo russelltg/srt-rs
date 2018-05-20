@@ -1,12 +1,9 @@
+use SeqNumber;
 use bytes::Bytes;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
 use packet::{ControlTypes, Packet, PacketLocation};
-use std::{collections::VecDeque,
-          io::{Error, ErrorKind, Result},
-          net::SocketAddr,
-          time::Duration};
-use SeqNumber;
+use std::{collections::VecDeque, io::{Error, ErrorKind, Result}, net::SocketAddr, time::Duration};
 
 use {CCData, ConnectionSettings, SenderCongestionCtrl, Stats};
 

@@ -1,5 +1,4 @@
-use std::{net::SocketAddr,
-          time::{Duration, Instant}};
+use std::{net::SocketAddr, time::{Duration, Instant}};
 
 use {SeqNumber, SocketID};
 

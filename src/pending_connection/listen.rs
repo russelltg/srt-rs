@@ -1,8 +1,5 @@
-use std::{collections::hash_map::DefaultHasher,
-          hash::{Hash, Hasher},
-          io::{Error, ErrorKind},
-          net::SocketAddr,
-          time::{Duration, Instant}};
+use std::{collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, io::{Error, ErrorKind},
+          net::SocketAddr, time::{Duration, Instant}};
 
 use futures::prelude::*;
 

@@ -1,6 +1,5 @@
 use bytes::{Buf, BufMut};
-use std::{io::{Error, ErrorKind, Result},
-          time::Duration};
+use std::{io::{Error, ErrorKind, Result}, time::Duration};
 
 use SrtVersion;
 

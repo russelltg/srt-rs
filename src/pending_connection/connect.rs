@@ -1,15 +1,15 @@
-use std::{io::Error,
-          net::{IpAddr, SocketAddr},
-          time::{Duration, Instant}};
+use std::{io::Error, net::{IpAddr, SocketAddr}, time::{Duration, Instant}};
 
 use futures::prelude::*;
 use futures_timer::Interval;
 
-use connected::Connected;
-use packet::{ConnectionType, ControlTypes, HandshakeControlInfo, Packet, SocketType};
+use rand::{thread_rng, Rng};
+
 use ConnectionSettings;
 use SeqNumber;
 use SocketID;
+use connected::Connected;
+use packet::{ConnectionType, ControlTypes, HandshakeControlInfo, Packet, SocketType};
 
 pub struct Connect<T> {
     remote: SocketAddr,
@@ -44,7 +44,7 @@ impl<T> Connect<T> {
             sock: Some(sock),
             local_socket_id,
             socket_start_time,
-            init_seq_num: SeqNumber::random(),
+            init_seq_num: thread_rng().gen::<SeqNumber>(),
             send_interval: Interval::new(Duration::from_millis(100)),
             state: State::Starting,
             local_addr,
@@ -111,7 +111,7 @@ where
                         if info.connection_type != ConnectionType::RendezvousRegularSecond {
                             info!(
                                 "Was waiting for -1 connection type, got {:?}",
-                                info.connection_type.to_i32()
+                                info.connection_type.as_i32()
                             );
                             // discard
                             continue;

@@ -8,7 +8,7 @@ pub struct Stats {
     pub rtt: i32,
 
     /// Flow window size
-    pub flow_size: i32,
+    pub flow_size: u32,
 
     /// SND time
     /// The time between sending each packet, in us

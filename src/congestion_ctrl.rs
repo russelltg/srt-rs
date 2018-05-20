@@ -1,5 +1,5 @@
-use std::time::Duration;
 use SeqNumber;
+use std::time::Duration;
 
 /// Congestion control trait, sender side
 ///
@@ -21,7 +21,7 @@ pub trait SenderCongestionCtrl {
 
     /// Get the window size
     /// This is the number of packets to wait for before ACK
-    fn window_size(&self) -> i32;
+    fn window_size(&self) -> u32;
 }
 
 /// Congestion control trait, receiver side

@@ -142,7 +142,7 @@ impl PacketLocation {
         }
     }
 
-    fn to_i32(&self) -> i32 {
+    fn as_i32(&self) -> i32 {
         match *self {
             PacketLocation::First => 0b10 << 30,
             PacketLocation::Middle => 0b00,
@@ -203,12 +203,12 @@ impl ControlTypes {
                 // Handshake
 
                 let udt_version = buf.get_i32_be();
-                let sock_type = SocketType::from_i32(buf.get_i32_be())?;
-                let init_seq_num = SeqNumber::new(buf.get_i32_be());
+                let sock_type = SocketType::from_u32(buf.get_u32_be())?;
+                let init_seq_num = SeqNumber::new(buf.get_u32_be());
                 let max_packet_size = buf.get_i32_be();
                 let max_flow_size = buf.get_i32_be();
                 let connection_type = ConnectionType::from_i32(buf.get_i32_be())?;
-                let socket_id = SocketID(buf.get_i32_be());
+                let socket_id = SocketID(buf.get_u32_be());
                 let syn_cookie = buf.get_i32_be();
 
                 // get the IP
@@ -239,7 +239,7 @@ impl ControlTypes {
                 // ACK
 
                 // read control info
-                let ack_number = SeqNumber::new(buf.get_i32_be());
+                let ack_number = SeqNumber::new(buf.get_u32_be());
 
                 // if there is more data, use it. However, it's optional
                 let mut opt_read_next = move || {
@@ -272,7 +272,7 @@ impl ControlTypes {
 
                 let mut loss_info = Vec::new();
                 while buf.remaining() >= 4 {
-                    loss_info.push(buf.get_i32_be());
+                    loss_info.push(buf.get_u32_be());
                 }
 
                 Ok(ControlTypes::Nak(NakControlInfo { loss_info }))
@@ -330,12 +330,12 @@ impl ControlTypes {
         match *self {
             ControlTypes::Handshake(ref c) => {
                 into.put_i32_be(c.udt_version);
-                into.put_i32_be(c.sock_type.to_i32());
-                into.put_i32_be(c.init_seq_num.to_i32());
+                into.put_u32_be(c.sock_type.as_u32());
+                into.put_u32_be(c.init_seq_num.as_u32());
                 into.put_i32_be(c.max_packet_size);
                 into.put_i32_be(c.max_flow_size);
-                into.put_i32_be(c.connection_type.to_i32());
-                into.put_i32_be(c.socket_id.0);
+                into.put_i32_be(c.connection_type.as_i32());
+                into.put_u32_be(c.socket_id.0);
                 into.put_i32_be(c.syn_cookie);
 
                 match c.peer_addr {
@@ -349,7 +349,7 @@ impl ControlTypes {
                 }
             }
             ControlTypes::Ack(_, ref c) => {
-                into.put_i32_be(c.ack_number.to_i32());
+                into.put_u32_be(c.ack_number.as_u32());
                 into.put_i32_be(c.rtt.unwrap_or(10_000));
                 into.put_i32_be(c.rtt_variance.unwrap_or(50_000));
                 into.put_i32_be(c.buffer_available.unwrap_or(8175)); // TODO: better defaults
@@ -357,7 +357,7 @@ impl ControlTypes {
                 into.put_i32_be(c.est_link_cap.unwrap_or(1_000));
             }
             ControlTypes::Nak(ref n) => for &loss in &n.loss_info {
-                into.put_i32_be(loss);
+                into.put_u32_be(loss);
             },
             ControlTypes::DropRequest(_, ref _d) => unimplemented!(),
             // control data
@@ -387,7 +387,7 @@ pub struct NakControlInfo {
     /// If a packet that's not a seq number (first bit 1),
     /// then all packets starting from this number (including)
     /// to the number in the next integer (including), which must have a zero first bit.
-    pub loss_info: Vec<i32>,
+    pub loss_info: Vec<u32>,
 }
 
 /// The ACK control info struct
@@ -458,7 +458,7 @@ pub enum SocketType {
 }
 
 impl SocketType {
-    pub fn from_i32(num: i32) -> Result<SocketType> {
+    pub fn from_u32(num: u32) -> Result<SocketType> {
         match num {
             1 => Ok(SocketType::Stream),
             2 => Ok(SocketType::Datagram),
@@ -469,7 +469,7 @@ impl SocketType {
         }
     }
 
-    pub fn to_i32(&self) -> i32 {
+    pub fn as_u32(&self) -> u32 {
         match *self {
             SocketType::Stream => 1,
             SocketType::Datagram => 2,
@@ -508,7 +508,7 @@ impl ConnectionType {
         }
     }
 
-    pub fn to_i32(&self) -> i32 {
+    pub fn as_i32(&self) -> i32 {
         match *self {
             ConnectionType::Regular => 1,
             ConnectionType::RendezvousFirst => 0,
@@ -542,7 +542,7 @@ impl Packet {
             // because the first bit is zero, we can just convert the first 4 bits into a
             // 32 bit integer
 
-            let seq_number = SeqNumber::new(Cursor::new(first4).get_i32_be());
+            let seq_number = SeqNumber::new(Cursor::new(first4).get_u32_be());
 
             // get the first byte in the second row
             let second_line = buf.get_i32_be();
@@ -555,7 +555,7 @@ impl Packet {
             // clear the first three bits
             let message_number = second_line & !(0b111 << 29);
             let timestamp = buf.get_i32_be();
-            let dest_sockid = SocketID(buf.get_i32_be());
+            let dest_sockid = SocketID(buf.get_u32_be());
 
             Ok(Packet::Data {
                 seq_number,
@@ -574,7 +574,7 @@ impl Packet {
 
             let add_info = buf.get_i32_be();
             let timestamp = buf.get_i32_be();
-            let dest_sockid = buf.get_i32_be();
+            let dest_sockid = buf.get_u32_be();
 
             Ok(Packet::Control {
                 timestamp,
@@ -610,7 +610,7 @@ impl Packet {
                 into.put_i32_be(*timestamp);
 
                 // dest sock id
-                into.put_i32_be(dest_sockid.0);
+                into.put_u32_be(dest_sockid.0);
 
                 // the rest of the info
                 control_type.serialize(into);
@@ -624,14 +624,14 @@ impl Packet {
                 ref payload,
                 ref in_order_delivery,
             } => {
-                into.put_i32_be(seq_number.to_i32());
+                into.put_u32_be(seq_number.as_u32());
                 into.put_i32_be(
-                    message_number | message_loc.to_i32() |
+                    message_number | message_loc.as_i32() |
                         // the third bit in the second row is if it expects in order delivery
                         if *in_order_delivery { 1 << 29 } else { 0 },
                 );
                 into.put_i32_be(*timestamp);
-                into.put_i32_be(dest_sockid.0);
+                into.put_u32_be(dest_sockid.0);
                 into.put(payload);
             }
         }
@@ -682,11 +682,11 @@ fn packet_location_from_i32_test() {
 }
 
 #[test]
-fn packet_location_to_i32_test() {
-    assert_eq!(PacketLocation::First.to_i32(), 0b10 << 30);
-    assert_eq!(PacketLocation::Middle.to_i32(), 0b0);
-    assert_eq!(PacketLocation::Last.to_i32(), 0b01 << 30);
-    assert_eq!(PacketLocation::Only.to_i32(), 0b11 << 30);
+fn packet_location_as_i32_test() {
+    assert_eq!(PacketLocation::First.as_i32(), 0b10 << 30);
+    assert_eq!(PacketLocation::Middle.as_i32(), 0b0);
+    assert_eq!(PacketLocation::Last.as_i32(), 0b01 << 30);
+    assert_eq!(PacketLocation::Only.as_i32(), 0b11 << 30);
 }
 
 #[test]

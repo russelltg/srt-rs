@@ -1,104 +1,98 @@
-use std::{cmp::{Ord, Ordering},
-          fmt,
-          ops::{Add, AddAssign, Rem, Sub}};
+use std::{fmt, cmp::{Ord, Ordering}, ops::{Add, AddAssign, Rem, Sub}};
 
-use rand::{thread_rng, Rng};
+use rand::{Rand, Rng};
 
 // The maximum sequence number is all ones but starts with a zero
-const MAX_SEQ_NUM: i32 = 0x7FFFFFFF;
+const MAX_SEQ_NUM: u32 = 0x7FFFFFFF;
+const MAX_DIFF: u32 = 0x1FFFFFFF;
 
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
-pub struct SeqNumber(i32);
+pub struct SeqNumber(u32);
 
 impl SeqNumber {
-    pub fn new(num: i32) -> SeqNumber {
-        SeqNumber(num)
+    pub fn new(num: u32) -> SeqNumber {
+        SeqNumber(num % MAX_SEQ_NUM)
     }
 
-    /// Generate a random sequence number
-    /// Guaranteed to be in the bounds of a sequence number
-    pub fn random() -> SeqNumber {
-        SeqNumber(0) + thread_rng().gen::<i32>().abs()
-    }
-
-    pub fn to_i32(&self) -> i32 {
+    pub fn as_u32(&self) -> u32 {
         self.0
     }
 }
 
-impl Add<i32> for SeqNumber {
-    type Output = Self;
-
-    fn add(self, other: i32) -> SeqNumber {
-        if other < 0 {
-            return self - -other;
-        }
-
-        if MAX_SEQ_NUM - self.0 >= other {
-            // no need to loop
-            SeqNumber(self.0 + other)
-        } else {
-            // loop it
-            SeqNumber(self.0 - MAX_SEQ_NUM + other - 1)
-        }
+impl Rand for SeqNumber {
+    fn rand<T: Rng>(rng: &mut T) -> SeqNumber {
+        SeqNumber(0) + rng.gen::<u32>()
     }
 }
 
-impl Sub<i32> for SeqNumber {
+impl Add<u32> for SeqNumber {
     type Output = Self;
 
-    fn sub(self, other: i32) -> SeqNumber {
-        if other < 0 {
-            return self + -other;
-        }
+    fn add(self, other: u32) -> SeqNumber {
+        let added = u32::wrapping_add(self.0, other);
 
+        SeqNumber(added % MAX_SEQ_NUM)
+    }
+}
+
+/// Move a sequence number backwards by an offset
+/// ie: SeqNumber(3) - 2 == 1
+/// and SeqNumber(0) - 1 == SeqNumber(MAX_SEQ_NUM)
+impl Sub<u32> for SeqNumber {
+    type Output = Self;
+
+    fn sub(self, other: u32) -> SeqNumber {
         if self.0 < other {
-            // need to wrap
-            SeqNumber(MAX_SEQ_NUM - other + self.0)
+            // wrap
+            SeqNumber(MAX_SEQ_NUM - (other - self.0))
         } else {
             SeqNumber(self.0 - other)
         }
     }
 }
 
-// Distance between two SeqNumber's
+/// Gets the distance between two sequence numbers
+/// Always measured with first one first and the second one second
+/// ie: SeqNumber(0) - SeqNumber(MAX_SEQ_NUM) == 1
+/// and SeqNumber(1) - SeqNumber(0) == 1
 impl Sub<SeqNumber> for SeqNumber {
-    type Output = i32;
+    type Output = u32;
 
-    fn sub(self, other: SeqNumber) -> i32 {
-        // if this is true, assume there is no looping, and we can treat them as regular integers
-        if (self.0 - other.0).abs() < 0x1FFFFFFF {
+    fn sub(self, other: SeqNumber) -> u32 {
+        if self.0 > other.0 {
+            // no wrap required
             self.0 - other.0
         } else {
-            // here, there's looping going on.
-            // ie: self may be MAX_SEQ_NUM - 1
-            // and other could be 1
-            if self.0 > other.0 {
-                MAX_SEQ_NUM - (self.0 - other.0)
-            } else {
-                -(MAX_SEQ_NUM - (other.0 - self.0))
-            }
+            MAX_SEQ_NUM - (other.0 - self.0)
         }
     }
 }
 
+/// Ordering sequence numbers is difficult, as they are modular
+/// How it works is if the absolute value of the difference between sequence numbers is greater than
+/// MAX_DIFF, then wrapping is assumed
 impl Ord for SeqNumber {
     fn cmp(&self, other: &SeqNumber) -> Ordering {
-        // this code is a bit tricky, and taken from the original implementation
-        // I think !0 >> 3 is decided to be "if they're this far apart, they must be looped"
-        // which is fair
-        if (self.0 - other.0).abs() < 0x1FFFFFFF {
-            self.0.cmp(&other.0)
+        let diff = *self - *other;
+
+        if diff == 0 {
+            return Ordering::Equal;
+        }
+
+        if diff < MAX_DIFF {
+            // this means self was bigger than other
+            Ordering::Greater
         } else {
-            other.0.cmp(&self.0)
+            // this means other was greater
+            Ordering::Less
         }
     }
 }
 
-impl Rem<i32> for SeqNumber {
-    type Output = i32;
+impl Rem<u32> for SeqNumber {
+    type Output = u32;
 
-    fn rem(self, other: i32) -> i32 {
+    fn rem(self, other: u32) -> u32 {
         self.0 % other
     }
 }
@@ -109,8 +103,8 @@ impl PartialOrd for SeqNumber {
     }
 }
 
-impl AddAssign<i32> for SeqNumber {
-    fn add_assign(&mut self, rhs: i32) {
+impl AddAssign<u32> for SeqNumber {
+    fn add_assign(&mut self, rhs: u32) {
         *self = *self + rhs
     }
 }

@@ -1,9 +1,6 @@
 use Sender;
 
-use std::{io::Error,
-          net::SocketAddr,
-          ops::{Deref, DerefMut},
-          time::Duration};
+use std::{io::Error, net::SocketAddr, ops::{Deref, DerefMut}, time::Duration};
 
 use bytes::Bytes;
 use futures::prelude::*;

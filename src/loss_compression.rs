@@ -18,9 +18,9 @@ impl<I> Iterator for CompressLossList<I>
 where
     I: Iterator<Item = SeqNumber>,
 {
-    type Item = i32;
+    type Item = u32;
 
-    fn next(&mut self) -> Option<i32> {
+    fn next(&mut self) -> Option<u32> {
         // if we're at the start, assign a next
         if self.next.is_none() {
             self.next = match self.iterator.next() {
@@ -45,7 +45,7 @@ where
                     self.next = None;
 
                     // return the one we have
-                    return Some(this.to_i32());
+                    return Some(this.as_u32());
                 }
             };
 
@@ -67,24 +67,24 @@ where
                     // break out of the loop
                     self.last_in_loop = None;
 
-                    return Some(this.to_i32());
+                    return Some(this.as_u32());
                 }
             } else if this + 1 == self.next.unwrap() {
                 // create a loop
                 self.last_in_loop = Some(this);
 
                 // set the first bit to 1
-                return Some(this.to_i32() | 1 << 31);
+                return Some(this.as_u32() | 1 << 31);
             } else {
                 // no looping necessary
-                return Some(this.to_i32());
+                return Some(this.as_u32());
             }
         }
     }
 }
 
 // keep in mind loss_list must be sorted
-// takes in a list of i32, which is the loss list
+// takes in a list of u32, which is the loss list
 pub fn compress_loss_list<I>(loss_list: I) -> CompressLossList<I>
 where
     I: Iterator<Item = SeqNumber>,
@@ -99,10 +99,10 @@ where
 pub struct DecompressLossList<I> {
     iterator: I,
 
-    loop_next_end: Option<(i32, i32)>,
+    loop_next_end: Option<(u32, u32)>,
 }
 
-impl<I: Iterator<Item = i32>> Iterator for DecompressLossList<I> {
+impl<I: Iterator<Item = u32>> Iterator for DecompressLossList<I> {
     type Item = SeqNumber;
 
     fn next(&mut self) -> Option<SeqNumber> {
@@ -145,7 +145,7 @@ impl<I: Iterator<Item = i32>> Iterator for DecompressLossList<I> {
     }
 }
 
-pub fn decompress_loss_list<I: Iterator<Item = i32>>(loss_list: I) -> DecompressLossList<I> {
+pub fn decompress_loss_list<I: Iterator<Item = u32>>(loss_list: I) -> DecompressLossList<I> {
     DecompressLossList {
         iterator: loss_list,
         loop_next_end: None,

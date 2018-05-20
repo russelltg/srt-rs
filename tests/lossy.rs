@@ -9,23 +9,17 @@ extern crate log;
 
 use bytes::{Bytes, BytesMut};
 
-use std::{
-    cmp::Ordering, collections::BinaryHeap, fmt::Debug, io::{Error, ErrorKind}, str, thread,
-    time::{Duration, Instant},
-};
+use std::{str, thread, cmp::Ordering, collections::BinaryHeap, fmt::Debug, io::{Error, ErrorKind},
+          time::{Duration, Instant}};
 
 use futures::{prelude::*, stream::iter_ok, sync::mpsc};
 
-use rand::{
-    distributions::{IndependentSample, Normal, Range}, thread_rng,
-};
+use rand::{thread_rng, distributions::{IndependentSample, Normal, Range}};
 
 use futures_timer::{Delay, Interval};
 
-use srt::{
-    stats_printer::StatsPrinterSender, ConnectionSettings, DefaultSenderCongestionCtrl, Receiver,
-    Sender, SeqNumber, SocketID,
-};
+use srt::{ConnectionSettings, DefaultSenderCongestionCtrl, Receiver, Sender, SeqNumber, SocketID,
+          stats_printer::StatsPrinterSender};
 
 struct LossyConn<T> {
     sender: mpsc::Sender<T>,

@@ -3,8 +3,7 @@ use std::time::Duration;
 
 use {CCData, SenderCongestionCtrl, SeqNumber};
 
-use rand::{distributions::{IndependentSample, Normal},
-           thread_rng};
+use rand::{thread_rng, distributions::{IndependentSample, Normal}};
 
 pub struct DefaultSenderCongestionCtrl {
     phase: Phase,
@@ -14,7 +13,7 @@ pub struct DefaultSenderCongestionCtrl {
     last_dec_seq: SeqNumber,
     dec_random: i32,
 
-    window_size: i32,
+    window_size: u32,
     send_interval: Duration,
 }
 
@@ -56,10 +55,10 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
         self.window_size = {
             let rtt_secs = data.rtt.as_secs() as f64 + data.rtt.subsec_nanos() as f64 / 1e9;
 
-            (data.packet_arr_rate as f64 * (rtt_secs + 0.01)) as i32 + 16
+            (data.packet_arr_rate as f64 * (rtt_secs + 0.01)) as u32 + 16
         };
         // clamp it between 16 and 1000
-        self.window_size = i32::max(self.window_size, 16);
+        self.window_size = u32::max(self.window_size, 16);
         //self.window_size = i32::min(self.window_size, 1000);
         trace!("New window size: {}", self.window_size);
 
@@ -177,7 +176,7 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
     fn send_interval(&self) -> Duration {
         self.send_interval
     }
-    fn window_size(&self) -> i32 {
+    fn window_size(&self) -> u32 {
         self.window_size
     }
 }
