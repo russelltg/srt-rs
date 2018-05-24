@@ -171,7 +171,7 @@ impl<T> LossyConn<T> {
 }
 
 struct CounterChecker {
-    current: i32,
+    current: u32,
 }
 
 impl Sink for CounterChecker {
@@ -208,8 +208,8 @@ impl Sink for CounterChecker {
 fn test_with_loss() {
     env_logger::init();
 
-    const INIT_SEQ_NUM: i32 = 812731;
-    const ITERS: i32 = 10_000;
+    const INIT_SEQ_NUM: u32 = 812731;
+    const ITERS: u32 = 10_000;
 
     // a stream of ascending stringified integers
     let counting_stream = iter_ok(INIT_SEQ_NUM..(INIT_SEQ_NUM + ITERS))

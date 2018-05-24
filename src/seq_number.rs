@@ -3,7 +3,8 @@ use std::{fmt, cmp::{Ord, Ordering}, ops::{Add, AddAssign, Rem, Sub}};
 use rand::{Rand, Rng};
 
 // The maximum sequence number is all ones but starts with a zero
-const MAX_SEQ_NUM: u32 = 0x7FFFFFFF;
+// this is the max seq num + 1
+const MAX_SEQ_NUM: u32 = 0x80000000;
 const MAX_DIFF: u32 = 0x1FFFFFFF;
 
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
@@ -146,12 +147,12 @@ pub fn seq_num_range(begin: SeqNumber, past_end: SeqNumber) -> SeqNumberRange {
 #[test]
 fn seq_num_test() {
     assert_eq!(SeqNumber(14), SeqNumber(5) + 9);
-    assert_eq!(SeqNumber(MAX_SEQ_NUM) + 1, SeqNumber(0));
+    assert_eq!(SeqNumber(MAX_SEQ_NUM - 1) + 1, SeqNumber(0));
     assert_eq!(
         SeqNumber(MAX_SEQ_NUM - 10) - (MAX_SEQ_NUM - 50),
         SeqNumber(40)
     );
     assert_eq!(SeqNumber(4) - 10, SeqNumber(MAX_SEQ_NUM - 6));
     assert_eq!(SeqNumber(5) - SeqNumber(1), 4);
-    assert_eq!(SeqNumber(MAX_SEQ_NUM - 1) - SeqNumber(1), 2);
+    assert_eq!(SeqNumber(2) - SeqNumber(MAX_SEQ_NUM - 1), 3);
 }
