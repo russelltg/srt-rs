@@ -330,8 +330,8 @@ impl ControlTypes {
         match *self {
             ControlTypes::Handshake(ref c) => {
                 into.put_i32_be(c.udt_version);
-                into.put_u32_be(c.sock_type.as_u32());
-                into.put_u32_be(c.init_seq_num.as_u32());
+                into.put_u32_be(c.sock_type as u32);
+                into.put_u32_be(c.init_seq_num.raw());
                 into.put_i32_be(c.max_packet_size);
                 into.put_i32_be(c.max_flow_size);
                 into.put_i32_be(c.connection_type.as_i32());
@@ -349,7 +349,7 @@ impl ControlTypes {
                 }
             }
             ControlTypes::Ack(_, ref c) => {
-                into.put_u32_be(c.ack_number.as_u32());
+                into.put_u32_be(c.ack_number.raw());
                 into.put_i32_be(c.rtt.unwrap_or(10_000));
                 into.put_i32_be(c.rtt_variance.unwrap_or(50_000));
                 into.put_i32_be(c.buffer_available.unwrap_or(8175)); // TODO: better defaults
@@ -450,29 +450,22 @@ pub struct HandshakeControlInfo {
 /// The socket type for a handshake.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SocketType {
-    /// A stream socket, 1 when serialized
-    Stream,
+    /// A stream socket, 0 when serialized
+    Stream = 0,
 
     /// A datagram socket, 2 when serialied
-    Datagram,
+    Datagram = 1,
 }
 
 impl SocketType {
     pub fn from_u32(num: u32) -> Result<SocketType> {
         match num {
-            1 => Ok(SocketType::Stream),
-            2 => Ok(SocketType::Datagram),
+            0 => Ok(SocketType::Stream),
+            1 => Ok(SocketType::Datagram),
             i => Err(Error::new(
                 ErrorKind::InvalidData,
-                format!("Unrecognized socket type: {:?}", i),
+                format!("Unrecognized socket type: {:?}, expected 0 (STREAM) or 1 (DGRAM)", i),
             )),
-        }
-    }
-
-    pub fn as_u32(&self) -> u32 {
-        match *self {
-            SocketType::Stream => 1,
-            SocketType::Datagram => 2,
         }
     }
 }
@@ -624,7 +617,10 @@ impl Packet {
                 ref payload,
                 ref in_order_delivery,
             } => {
-                into.put_u32_be(seq_number.as_u32());
+
+				assert!(seq_number.raw() & (1 << 31) == 0);
+
+                into.put_u32_be(seq_number.raw());
                 into.put_i32_be(
                     message_number | message_loc.as_i32() |
                         // the third bit in the second row is if it expects in order delivery

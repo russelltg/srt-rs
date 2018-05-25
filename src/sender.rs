@@ -63,6 +63,15 @@ pub struct Sender<T, CC> {
     /// estimated link capacity
     est_link_cap: i32,
 
+    /// Total lost packets
+    lost_packets: u32,
+
+    /// Total retransmitted packets
+    retrans_packets: u32,
+
+    /// Total received packets (packets that have been ACKed)
+    recvd_packets: u32,
+
     /// The send timer
     snd_timer: Delay,
 
@@ -100,6 +109,9 @@ where
             rtt_var: 0,
             pkt_arr_rate: 0,
             est_link_cap: 0,
+            lost_packets: 0,
+            retrans_packets: 0,
+            recvd_packets: 0,
             snd_timer: Delay::new(Duration::from_millis(1)),
             stats_interval: Interval::new(Duration::from_secs(1)),
             closed: false,
@@ -125,7 +137,9 @@ where
             timestamp: self.get_timestamp(),
             est_link_cap: self.est_link_cap,
             flow_size: self.congest_ctrl.window_size(),
-            lost_packets: 0, // TODO:
+            lost_packets: self.lost_packets,
+            received_packets: self.recvd_packets,
+            retransmitted_packets: self.retrans_packets,
             rtt: self.rtt,
             snd: {
                 let si = self.congest_ctrl.send_interval();
@@ -153,10 +167,15 @@ where
             } => {
                 match control_type {
                     ControlTypes::Ack(seq_num, data) => {
+
+						// update the packets received count
+						self.recvd_packets += data.ack_number - self.lr_acked_packet;
+
                         // 1) Update the largest acknowledged sequence number, which is the ACK number
                         self.lr_acked_packet = data.ack_number;
 
                         // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
+						trace!("Sending ACK2 for {}", seq_num);
                         let now = self.get_timestamp();
                         self.sock.start_send((Packet::Control {
                             timestamp: now,
@@ -206,6 +225,9 @@ where
                                 .position(|x| data.ack_number > x.seq_number().unwrap()) {
 
                             self.loss_list.remove(id);
+
+							// this means a packet was lost then retransmitted
+							self.retrans_packets += 1;
                         }
                     }
                     ControlTypes::Ack2(_) => warn!("Sender received ACK2, unusual"),

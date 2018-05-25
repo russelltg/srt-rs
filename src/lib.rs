@@ -26,11 +26,13 @@ pub mod packet;
 pub mod pending_connection;
 pub mod receiver;
 pub mod sender;
-pub mod seq_number;
 pub mod srt_packet;
 pub mod srt_version;
 pub mod stats;
 pub mod stats_printer;
+#[macro_use]
+pub mod modular_num;
+pub mod seq_number;
 
 pub use builder::{ConnInitMethod, SrtSocket, SrtSocketBuilder};
 pub use congestion_ctrl::{AckMode, CCData, RecvrCongestionCtrl, SenderCongestionCtrl};
@@ -46,4 +48,4 @@ pub use srt_version::SrtVersion;
 pub use stats::Stats;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct SocketID(pub u32);
+pub struct SocketID(pub u32); 

@@ -442,6 +442,8 @@ where
         // copy it to be used below
         let packet_cpy = packet.clone();
 
+		trace!("Received packet: {:?}", packet);
+
         match packet {
             Packet::Control {
                 control_type,
@@ -589,9 +591,13 @@ where
                             ()
                         }
                         Err(_) => {
-                            trace!(
-                                "Packet received that's not in the loss list: {:?}",
-                                seq_number
+                            warn!(
+                                "Packet received that's not in the loss list: {:?}, loss_list={:?}",
+                                seq_number,
+                                self.loss_list
+                                    .iter()
+                                    .map(|ll| ll.seq_num.raw())
+                                    .collect::<Vec<_>>()
                             );
                         }
                     };
@@ -602,7 +608,7 @@ where
 
                 // we've already gotten this packet, drop it
                 if self.last_released >= seq_number {
-                    debug!("Received packet {:?} twice", seq_number);
+                    warn!("Received packet {:?} twice", seq_number);
                     return Ok(None);
                 }
 
@@ -842,7 +848,7 @@ where
         self.sock.poll_complete()?;
 
         loop {
-            debug!(
+            trace!(
                 "last_rel={} Buffer={:?}",
                 self.last_released,
                 self.buffer

@@ -14,11 +14,11 @@ fn message_splitting() {
 
     let sender = SrtSocketBuilder::new(
         "127.0.0.1:0".parse().unwrap(),
-        ConnInitMethod::Connect("127.0.0.1:8172".parse().unwrap()),
+        ConnInitMethod::Connect("127.0.0.1:11124".parse().unwrap()),
     ).build()
         .unwrap();
 
-    let recvr = SrtSocketBuilder::new("127.0.0.1:8172".parse().unwrap(), ConnInitMethod::Listen)
+    let recvr = SrtSocketBuilder::new("127.0.0.1:11124".parse().unwrap(), ConnInitMethod::Listen)
         .build()
         .unwrap();
 
@@ -29,7 +29,7 @@ fn message_splitting() {
             info!("Connected!");
 
             // send a really really long packet
-            let long_message = bytes::BytesMut::from(&[b'0'; 16384][..]).freeze();
+            let long_message = bytes::BytesMut::from(&[b'8'; 16384][..]).freeze();
 
             sender
                 .start_send(long_message)
@@ -51,7 +51,7 @@ fn message_splitting() {
                             // this is necessary as the receiver needs to continue to get poll events to ACK.
                             recvr.into_future().map(|(empty_data, recvr)| {
                                 assert_eq!(data.as_ref().unwrap().len(), 16384);
-                                assert_eq!(&data.unwrap()[..], &[b'0'; 16384][..]);
+                                assert_eq!(&data.unwrap()[..], &[b'8'; 16384][..]);
                                 assert!(empty_data.is_none());
 
                                 info!("Got end of stream, good");

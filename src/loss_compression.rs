@@ -45,7 +45,7 @@ where
                     self.next = None;
 
                     // return the one we have
-                    return Some(this.as_u32());
+                    return Some(this.raw());
                 }
             };
 
@@ -67,17 +67,17 @@ where
                     // break out of the loop
                     self.last_in_loop = None;
 
-                    return Some(this.as_u32());
+                    return Some(this.raw());
                 }
             } else if this + 1 == self.next.unwrap() {
                 // create a loop
                 self.last_in_loop = Some(this);
 
                 // set the first bit to 1
-                return Some(this.as_u32() | 1 << 31);
+                return Some(this.raw() | 1 << 31);
             } else {
                 // no looping necessary
-                return Some(this.as_u32());
+                return Some(this.raw());
             }
         }
     }
