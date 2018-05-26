@@ -19,6 +19,9 @@ macro_rules! modular_num {
 macro_rules! modular_num_impls {
 	($x:ident, $type:ident, $max_num:expr, $max_diff:expr) => {
 
+		use std::{fmt, cmp::Ordering, ops::{Add, Rem, Sub, AddAssign}};
+		use rand::{Rand, Rng};
+
 		impl $x {
 			pub fn new(from: $type) -> $x { $x(from % $max_num) }
 
@@ -130,8 +133,6 @@ mod tests {
 
 
 	const MAX_SEQ_NUM: u32 = 1 << 31;
-
-	use std::cmp::Ordering;
 
     #[test]
     fn mod_num_addition() {

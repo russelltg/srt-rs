@@ -1,11 +1,3 @@
-use std::{fmt, cmp::{Ord, Ordering}, ops::{Add, AddAssign, Rem, Sub}};
-
-use rand::{Rand, Rng};
-
-// The maximum sequence number is all ones but starts with a zero
-// this is the max seq num + 1
-const MAX_SEQ_NUM: u32 = 0x80000000;
-const MAX_DIFF: u32 = 0x1FFFFFFF;
 
 modular_num! {
 	pub SeqNumber(u32, 31)
