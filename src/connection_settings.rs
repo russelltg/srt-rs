@@ -20,10 +20,10 @@ pub struct ConnectionSettings {
     pub init_seq_num: SeqNumber,
 
     /// The maximum packet size
-    pub max_packet_size: i32,
+    pub max_packet_size: u32,
 
     /// The maxiumum flow size
-    pub max_flow_size: i32,
+    pub max_flow_size: u32,
 
     /// The TSBPD latency
     pub tsbpd_latency: Option<Duration>,

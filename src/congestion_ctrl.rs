@@ -42,7 +42,7 @@ pub struct CCData {
     pub rtt: Duration,
 
     /// The max segment size, in bytes
-    pub max_segment_size: i32,
+    pub max_segment_size: u32,
 
     /// Estimated bandwidth, in bytes/sec
     pub est_bandwidth: i32,

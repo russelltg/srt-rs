@@ -205,8 +205,8 @@ impl ControlTypes {
                 let udt_version = buf.get_i32_be();
                 let sock_type = SocketType::from_u32(buf.get_u32_be())?;
                 let init_seq_num = SeqNumber::new(buf.get_u32_be());
-                let max_packet_size = buf.get_i32_be();
-                let max_flow_size = buf.get_i32_be();
+                let max_packet_size = buf.get_u32_be();
+                let max_flow_size = buf.get_u32_be();
                 let connection_type = ConnectionType::from_i32(buf.get_i32_be())?;
                 let socket_id = SocketID(buf.get_u32_be());
                 let syn_cookie = buf.get_i32_be();
@@ -332,8 +332,8 @@ impl ControlTypes {
                 into.put_i32_be(c.udt_version);
                 into.put_u32_be(c.sock_type as u32);
                 into.put_u32_be(c.init_seq_num.raw());
-                into.put_i32_be(c.max_packet_size);
-                into.put_i32_be(c.max_flow_size);
+                into.put_u32_be(c.max_packet_size);
+                into.put_u32_be(c.max_flow_size);
                 into.put_i32_be(c.connection_type.as_i32());
                 into.put_u32_be(c.socket_id.0);
                 into.put_i32_be(c.syn_cookie);
@@ -425,10 +425,10 @@ pub struct HandshakeControlInfo {
     pub init_seq_num: SeqNumber,
 
     /// Max packet size, including UDP/IP headers. 1500 by default
-    pub max_packet_size: i32,
+    pub max_packet_size: u32,
 
     /// Max flow window size, by default 25600
-    pub max_flow_size: i32,
+    pub max_flow_size: u32,
 
     /// Connection type, either rendezvois (0) or regular (1)
     pub connection_type: ConnectionType,

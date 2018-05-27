@@ -27,7 +27,7 @@ impl DefaultSenderCongestionCtrl {
             last_dec_seq: SeqNumber::new(0), // this is reassigned later
             dec_random: 1,                   // TODO: real init size for this
 
-            window_size: 1000,
+            window_size: 100,
             // TODO: what is the default SND
             send_interval: Duration::from_millis(1),
         }
@@ -89,11 +89,13 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
                 1.0 / ps
             } else {
                 f64::max(
-                    f64::powi(f64::log10(((b - c) * ps) * 8.0).ceil(), 10) * 1.5e-6 / ps,
+                    10f64.powf(f64::log10(((b - c) * ps) * 8.0).ceil()) * 1.5e-6 / ps,
                     1.0 / ps,
                 )
             }
         };
+
+		println!("inc={}", inc);
 
         // 4) The SND period is updated as:
         //         SND = (SND * SYN) / (SND * inc + SYN).

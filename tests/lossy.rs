@@ -206,7 +206,7 @@ impl Sink for CounterChecker {
 
 #[test]
 fn test_with_loss() {
-    env_logger::init();
+    let _ = env_logger::init();
 
     const INIT_SEQ_NUM: u32 = 812731;
     const ITERS: u32 = 10_000;
@@ -217,7 +217,7 @@ fn test_with_loss() {
         .zip(Interval::new(Duration::from_millis(1)))
         .map(|(b, _)| b);
 
-    let (send, recv) = LossyConn::new(0.01, Duration::from_secs(0), Duration::from_secs(0));
+    let (send, recv) = LossyConn::new(0.05, Duration::from_secs(1), Duration::from_secs(0));
 
     let sender = StatsPrinterSender::new(
         Sender::new(
@@ -274,3 +274,96 @@ fn test_with_loss() {
     t1.join().unwrap();
     t2.join().unwrap();
 }
+
+#[test]
+fn tsbpd() {
+
+	let _ = env_logger::init();
+
+	const INIT_SEQ_NUM: u32 = 12314;
+
+    // a stream of ascending stringified integers
+	// 1 ms between packets
+    let counting_stream = iter_ok(1..)
+        .map(|i| BytesMut::from(&i.to_string().bytes().collect::<Vec<_>>()[..]).freeze())
+        .zip(Interval::new(Duration::from_millis(1)))
+        .map(|(b, _)| b);
+
+	// 1% packet loss, 1 sec latency with 0.2 s variance
+    let (send, recv) = LossyConn::new(0.01, Duration::from_secs(1), Duration::from_millis(200));
+
+    let sender = StatsPrinterSender::new(
+        Sender::new(
+            send.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
+                .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
+            DefaultSenderCongestionCtrl::new(),
+            ConnectionSettings {
+                init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
+                socket_start_time: Instant::now(),
+                remote_sockid: SocketID(81),
+                local_sockid: SocketID(13),
+                max_packet_size: 1316,
+                max_flow_size: 50_000,
+                remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
+                tsbpd_latency: Some(Duration::from_secs(4)), // four seconds TSBPD, should be plenty for no loss
+            },
+        ),
+        Duration::from_millis(100),
+    );
+
+    let recvr = Receiver::new(
+        recv.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
+            .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
+        ConnectionSettings {
+            init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
+            socket_start_time: Instant::now(),
+            remote_sockid: SocketID(13),
+            local_sockid: SocketID(81),
+            max_packet_size: 1316,
+            max_flow_size: 50_000,
+            remote: "0.0.0.0:0".parse().unwrap(),
+            tsbpd_latency: Some(Duration::from_secs(4)), // four seconds TSBPD, should be plenty for no loss
+        },
+    );
+
+    let t1 = thread::spawn(|| {
+        sender
+            .send_all(counting_stream)
+            .map_err(|e: Error| panic!("{:?}", e))
+            .wait()
+            .unwrap();
+    });
+
+    let t2 = thread::spawn(|| {
+
+		let mut iter = recvr.wait();
+
+		iter.next().unwrap().unwrap();
+
+		let mut last_time = Instant::now();
+		let mut next_num = INIT_SEQ_NUM + 1;
+
+		for by in iter { 
+			let by = by.unwrap();
+			 assert_eq!(
+				str::from_utf8(&by[..]).unwrap(),
+				next_num.to_string(),
+				"Expected data to be {}, was {}",
+				next_num,
+				str::from_utf8(&by[..]).unwrap());
+
+		 	next_num += 1;
+
+			// we want between 0.9 ms and 2 ms latency
+			let ms =  (last_time.elapsed().subsec_nanos() as f64 + last_time.elapsed().as_secs() as f64 * 1e9)  / 1e6;
+			assert!(last_time.elapsed() > Duration::new(0, 900_000), "time elapsed={}ms", ms);
+			assert!(last_time.elapsed() < Duration::from_millis(2), "time elapsed={}ms", ms);
+
+			last_time = Instant::now();
+		}
+    });
+
+    t1.join().unwrap();
+    t2.join().unwrap();
+}
+

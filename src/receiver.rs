@@ -272,6 +272,7 @@ where
 
         // Pack the ACK packet with RTT, RTT Variance, and flow window size (available
         // receiver buffer size).
+		info!("Sending ACK packet for {}", ack_number);
         let ack = self.make_control_packet(ControlTypes::Ack(
             ack_seq_num,
             AckControlInfo {
@@ -302,9 +303,10 @@ where
         // NAK is used to trigger a negative acknowledgement (NAK). Its period
         // is dynamically updated to 4 * RTT_+ RTTVar + SYN, where RTTVar is the
         // variance of RTT samples.
+		let nak_interval_us = 4 * self.rtt as u64 + self.rtt_variance as u64 + 10_000;
         self.nak_interval.reset(Duration::new(
-            0,
-            (4 * self.rtt + self.rtt_variance + 10_000) as u32 * 1_000,
+            nak_interval_us / 1_000_000,
+			(nak_interval_us % 1_000_000) as u32 * 1_000
         ));
 
         // Search the receiver's loss list, find out all those sequence numbers
@@ -492,11 +494,10 @@ where
                                 / 4;
 
                             // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
+                            let ack_us = 4 * self.rtt as u64 + self.rtt_variance as u64 + 10_000;
                             self.ack_interval = Interval::new(Duration::new(
-                                0,
-                                // convert to nanoseconds
-                                // SYN is 0.01 seconds, or 10_000 us
-                                (4 * self.rtt + self.rtt_variance + 10_000) as u32 * 1_000,
+                                ack_us / 1_000_000,
+								((ack_us % 1_000_000) * 1_000) as u32,
                             ));
                         } else {
                             warn!(

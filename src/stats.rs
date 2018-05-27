@@ -7,6 +7,9 @@ pub struct Stats {
     /// Round trip time, in us
     pub rtt: i32,
 
+	/// Round trip average variance, in us
+	pub rtt_var: i32,
+
     /// Flow window size
     pub flow_size: u32,
 
@@ -19,6 +22,9 @@ pub struct Stats {
 
     /// The number of packets that have been retransmitted but still received in time
     pub retransmitted_packets: u32,
+
+	/// The number of bytes in the sender buffer waiting to be sent
+	pub sender_buffer: u32,
 
     /// The number of permanatly lost packets; always zero when not in SRT mode
     pub lost_packets: u32,
