@@ -5,7 +5,7 @@ use futures_timer::{Delay, Interval};
 use packet::{ControlTypes, Packet, PacketLocation};
 use srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
 use srt_version;
-use std::{collections::VecDeque, io::{Error, ErrorKind, Result}, net::SocketAddr, time::Duration};
+use std::{collections::VecDeque, io::{Error, ErrorKind, Result, Cursor}, net::SocketAddr, time::Duration};
 
 use {CCData, ConnectionSettings, SenderCongestionCtrl, Stats};
 
@@ -176,7 +176,8 @@ where
                 match control_type {
                     ControlTypes::Ack(seq_num, data) => {
 
-						assert!(data.ack_number > self.lr_acked_packet);
+						// this can be equal if an ACK2 is dropped
+						assert!(data.ack_number >= self.lr_acked_packet);
 
 						// update the packets received count
 						self.recvd_packets += data.ack_number - self.lr_acked_packet;
@@ -251,6 +252,7 @@ where
                         // 3) Reset the EXP time variable.
 
                         for lost in decompress_loss_list(info.loss_info.iter().cloned()) {
+							// TODO: this prob doens't need to be a find
                             let packet = match self.buffer
                                 .iter()
                                 .find(|pack| pack.seq_number().unwrap() == lost)
@@ -275,7 +277,13 @@ where
                         // TODO: reset EXP
                     }
                     ControlTypes::Shutdown => unimplemented!(),
-                    ControlTypes::Custom(_, _) => unimplemented!(),
+                    ControlTypes::Custom(reserved, ref bytes) => {
+						// decode srt packet
+                        let srt_packet =
+                            SrtControlPacket::parse(reserved, &mut Cursor::new(bytes))?;
+
+                        self.handle_srt_control_packet(srt_packet)?;
+					}
                 }
             }
             Packet::Data { .. } => warn!("Sender received data packet"),
@@ -283,6 +291,40 @@ where
 
         Ok(())
     }
+
+	fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<()> {
+		match pack {
+			SrtControlPacket::HandshakeRequest(_) => warn!("Sender received SRT handshake request"),
+			SrtControlPacket::HandshakeResponse(shake) => {
+				// make sure the SRT version matches ours
+                if srt_version::CURRENT != shake.version {
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        format!(
+                            "Incomatible version, local is {}, remote is {}",
+                            srt_version::CURRENT,
+                            shake.version
+                        ),
+                    ));
+                }
+
+				// make sure the other side is a receiver
+				if shake.flags.contains(SrtShakeFlags::TSBPDSND) {
+					return Err(Error::new(ErrorKind::Other, format!("Sender received SRT handshake from another sender")));
+				}
+
+				// make sure the recvr flag is set, otherwise nothing is set
+				if !shake.flags.contains(SrtShakeFlags::TSBPDRCV) {
+					return Err(Error::new(ErrorKind::Other, format!("Sender received SRT handshake with neither sender or receiver bits set")));
+				}
+
+				// all setup, using TSBPD from the shake
+				info!("Got SRT handshake packet, using tsbpd={:?}", shake.latency);
+			}
+		}	
+
+		Ok(())
+	}
 
     /// Gets the next available message number
     fn get_new_message_number(&mut self) -> i32 {

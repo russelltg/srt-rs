@@ -272,7 +272,7 @@ where
 
         // Pack the ACK packet with RTT, RTT Variance, and flow window size (available
         // receiver buffer size).
-		info!("Sending ACK packet for {}", ack_number);
+		debug!("Sending ACK packet for {}", ack_number);
         let ack = self.make_control_packet(ControlTypes::Ack(
             ack_seq_num,
             AckControlInfo {

@@ -21,6 +21,7 @@ pub mod congestion_ctrl;
 pub mod connected;
 pub mod connection_settings;
 pub mod default_congestion_ctrl;
+pub mod srt_congestion_ctrl;
 pub mod loss_compression;
 pub mod packet;
 pub mod pending_connection;
@@ -39,6 +40,7 @@ pub use congestion_ctrl::{AckMode, CCData, RecvrCongestionCtrl, SenderCongestion
 pub use connected::Connected;
 pub use connection_settings::ConnectionSettings;
 pub use default_congestion_ctrl::{DefaultReceiverCongestionCtrl, DefaultSenderCongestionCtrl};
+pub use srt_congestion_ctrl::SrtSenderCongestionCtrl;
 pub use packet::Packet;
 pub use pending_connection::PendingConnection;
 pub use receiver::Receiver;

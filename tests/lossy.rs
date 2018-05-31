@@ -18,7 +18,7 @@ use rand::{thread_rng, distributions::{IndependentSample, Normal, Range}};
 
 use futures_timer::{Delay, Interval};
 
-use srt::{ConnectionSettings, DefaultSenderCongestionCtrl, Receiver, Sender, SeqNumber, SocketID,
+use srt::{ConnectionSettings, SrtSenderCongestionCtrl, Receiver, Sender, SeqNumber, SocketID,
           stats_printer::StatsPrinterSender};
 
 struct LossyConn<T> {
@@ -206,7 +206,7 @@ impl Sink for CounterChecker {
 
 #[test]
 fn test_with_loss() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     const INIT_SEQ_NUM: u32 = 812731;
     const ITERS: u32 = 10_000;
@@ -217,13 +217,13 @@ fn test_with_loss() {
         .zip(Interval::new(Duration::from_millis(1)))
         .map(|(b, _)| b);
 
-    let (send, recv) = LossyConn::new(0.05, Duration::from_secs(1), Duration::from_secs(0));
+    let (send, recv) = LossyConn::new(0.05, Duration::from_secs(0), Duration::from_secs(0));
 
-    let sender = StatsPrinterSender::new(
+    let sender = 
         Sender::new(
             send.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
                 .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
-            DefaultSenderCongestionCtrl::new(),
+            SrtSenderCongestionCtrl::new(),
             ConnectionSettings {
                 init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
                 socket_start_time: Instant::now(),
@@ -234,9 +234,7 @@ fn test_with_loss() {
                 remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
                 tsbpd_latency: None,
             },
-        ),
-        Duration::from_millis(100),
-    );
+        );
 
     let recvr = Receiver::new(
         recv.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
@@ -278,13 +276,13 @@ fn test_with_loss() {
 #[test]
 fn tsbpd() {
 
-	let _ = env_logger::init();
+	let _ = env_logger::try_init();
 
 	const INIT_SEQ_NUM: u32 = 12314;
 
     // a stream of ascending stringified integers
 	// 1 ms between packets
-    let counting_stream = iter_ok(1..)
+    let counting_stream = iter_ok(INIT_SEQ_NUM..)
         .map(|i| BytesMut::from(&i.to_string().bytes().collect::<Vec<_>>()[..]).freeze())
         .zip(Interval::new(Duration::from_millis(1)))
         .map(|(b, _)| b);
@@ -292,11 +290,11 @@ fn tsbpd() {
 	// 1% packet loss, 1 sec latency with 0.2 s variance
     let (send, recv) = LossyConn::new(0.01, Duration::from_secs(1), Duration::from_millis(200));
 
-    let sender = StatsPrinterSender::new(
+    let sender = 
         Sender::new(
             send.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
                 .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
-            DefaultSenderCongestionCtrl::new(),
+            SrtSenderCongestionCtrl::new(),
             ConnectionSettings {
                 init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
                 socket_start_time: Instant::now(),
@@ -307,9 +305,7 @@ fn tsbpd() {
                 remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
                 tsbpd_latency: Some(Duration::from_secs(4)), // four seconds TSBPD, should be plenty for no loss
             },
-        ),
-        Duration::from_millis(100),
-    );
+        );
 
     let recvr = Receiver::new(
         recv.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
