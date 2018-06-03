@@ -1,14 +1,12 @@
 use Sender;
 
-use std::{
-    io::Error, net::SocketAddr, ops::{Deref, DerefMut}, time::Duration,
+use {
+    bytes::Bytes, futures::prelude::*, serde_json,
+    std::{
+        io::Error, net::SocketAddr, ops::{Deref, DerefMut}, time::Duration,
+    },
+    Packet, CongestCtrl,
 };
-
-use bytes::Bytes;
-use futures::prelude::*;
-use {Packet, SenderCongestionCtrl};
-
-use serde_json;
 
 pub struct StatsPrinterSender<T, CC> {
     sender: Sender<T, CC>,
@@ -18,7 +16,7 @@ impl<T, CC> StatsPrinterSender<T, CC>
 where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
-    CC: SenderCongestionCtrl,
+    CC: CongestCtrl,
 {
     pub fn new(mut sender: Sender<T, CC>, interval: Duration) -> StatsPrinterSender<T, CC> {
         sender.set_stats_interval(interval);
@@ -44,7 +42,7 @@ impl<T, CC> Sink for StatsPrinterSender<T, CC>
 where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
-    CC: SenderCongestionCtrl,
+    CC: CongestCtrl,
 {
     type SinkItem = Bytes;
     type SinkError = Error;

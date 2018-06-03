@@ -4,7 +4,7 @@ use SeqNumber;
 /// Congestion control trait, sender side
 ///
 /// Used to define custom congestion control
-pub trait SenderCongestionCtrl {
+pub trait CongestCtrl {
     fn init(&mut self, _init_seq_num: SeqNumber) {}
 
     /// When an ACK packet is received
@@ -24,18 +24,6 @@ pub trait SenderCongestionCtrl {
     fn window_size(&self) -> u32;
 }
 
-/// Congestion control trait, receiver side
-pub trait RecvrCongestionCtrl {
-    /// When a timeout occurs on the receiver
-    fn on_timeout(&mut self, data: &CCData);
-
-    /// When a packet is received by the receiver
-    fn on_packet_recvd(&mut self, data: &CCData);
-
-    /// Get the ACK mode
-    fn ack_mode(&self) -> AckMode;
-}
-
 /// Defines all the data that CC algorithms need
 pub struct CCData {
     /// Round trip time
@@ -53,12 +41,4 @@ pub struct CCData {
     /// The packet arrival rate, both sender and receiver, as
     /// the receiver sends this info to the sender in ACK packets
     pub packet_arr_rate: i32,
-}
-
-/// Defines the different kinds of deciding when to send an ACK packet
-pub enum AckMode {
-    /// Send an ACK packet every duration
-    Timer(Duration),
-    /// Send an ACK packet after a certain number of packets
-    PacketCount(i32),
 }

@@ -1,13 +1,7 @@
-use std::io::Error;
-use std::net::SocketAddr;
-
-use futures::prelude::*;
-
-use receiver::Receiver;
-use sender::Sender;
-use ConnectionSettings;
-use DefaultSenderCongestionCtrl;
-use Packet;
+use {
+    futures::prelude::*, receiver::Receiver, sender::Sender, std::io::Error, std::net::SocketAddr,
+    ConnectionSettings, DefaultCongestCtrl, Packet, CongestCtrl
+};
 
 pub struct Connected<T> {
     socket: T,
@@ -27,11 +21,10 @@ where
         Receiver::new(self.socket, self.settings)
     }
 
-    pub fn sender(self) -> Sender<T, DefaultSenderCongestionCtrl> {
-        Sender::new(
-            self.socket,
-            DefaultSenderCongestionCtrl::new(),
-            self.settings,
-        )
+    pub fn sender(self) -> Sender<T, DefaultCongestCtrl> {
+        self.sender_with_cc(DefaultCongestCtrl::new())
+    }
+    pub fn sender_with_cc<CC: CongestCtrl>(self, cc: CC) -> Sender<T, CC> {
+        Sender::new(self.socket, cc, self.settings)
     }
 }

@@ -1,17 +1,13 @@
-use bytes::{Bytes, BytesMut};
-use futures::prelude::*;
-use futures_timer::{Delay, Interval};
-use packet::{ControlTypes, Packet, PacketLocation};
-use srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
-use srt_version;
-use std::{
-    collections::VecDeque, io::{Cursor, Error, ErrorKind, Result}, net::SocketAddr, time::Duration,
+use {
+    bytes::{Bytes, BytesMut}, futures::prelude::*, futures_timer::{Delay, Interval},
+    packet::{ControlTypes, Packet, PacketLocation},
+    srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags}, srt_version,
+    std::{
+        collections::VecDeque, io::{Cursor, Error, ErrorKind, Result}, net::SocketAddr,
+        time::Duration,
+    },
+    CCData, CongestCtrl, ConnectionSettings, SeqNumber, Stats,loss_compression::decompress_loss_list
 };
-use SeqNumber;
-
-use {CCData, ConnectionSettings, SenderCongestionCtrl, Stats};
-
-use loss_compression::decompress_loss_list;
 
 pub struct Sender<T, CC> {
     sock: T,
@@ -95,7 +91,7 @@ impl<T, CC> Sender<T, CC>
 where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
-    CC: SenderCongestionCtrl,
+    CC: CongestCtrl,
 {
     pub fn new(sock: T, congest_ctrl: CC, settings: ConnectionSettings) -> Sender<T, CC> {
         info!("Sending started to {:?}", settings.remote);
@@ -444,7 +440,7 @@ impl<T, CC> Sink for Sender<T, CC>
 where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
-    CC: SenderCongestionCtrl,
+    CC: CongestCtrl,
 {
     type SinkItem = Bytes;
     type SinkError = Error;
@@ -605,7 +601,7 @@ impl<T, CC> Stream for Sender<T, CC>
 where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
-    CC: SenderCongestionCtrl,
+    CC: CongestCtrl,
 {
     type Item = Stats;
     type Error = Error;

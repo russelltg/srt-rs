@@ -1,13 +1,11 @@
-use std::mem;
-use std::time::Duration;
-
-use {CCData, SenderCongestionCtrl, SeqNumber};
-
-use rand::{
-    distributions::{IndependentSample, Normal}, thread_rng,
+use {
+    rand::{
+        distributions::{IndependentSample, Normal}, thread_rng,
+    }, std::mem,
+    std::time::Duration, CCData, CongestCtrl, SeqNumber,
 };
 
-pub struct DefaultSenderCongestionCtrl {
+pub struct DefaultCongestCtrl {
     phase: Phase,
     avg_nak_num: i32,
     nak_count: i32,
@@ -19,9 +17,9 @@ pub struct DefaultSenderCongestionCtrl {
     send_interval: Duration,
 }
 
-impl DefaultSenderCongestionCtrl {
-    pub fn new() -> DefaultSenderCongestionCtrl {
-        DefaultSenderCongestionCtrl {
+impl DefaultCongestCtrl {
+    pub fn new() -> DefaultCongestCtrl {
+        DefaultCongestCtrl {
             phase: Phase::SlowStart,
             avg_nak_num: 1,
             nak_count: 1,
@@ -41,7 +39,7 @@ enum Phase {
     Operation,
 }
 
-impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
+impl CongestCtrl for DefaultCongestCtrl {
     fn init(&mut self, init_seq_num: SeqNumber) {
         self.last_dec_seq = init_seq_num - 1;
     }
