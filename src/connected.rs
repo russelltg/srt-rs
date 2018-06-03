@@ -3,11 +3,11 @@ use std::net::SocketAddr;
 
 use futures::prelude::*;
 
+use receiver::Receiver;
+use sender::Sender;
 use ConnectionSettings;
 use DefaultSenderCongestionCtrl;
 use Packet;
-use receiver::Receiver;
-use sender::Sender;
 
 pub struct Connected<T> {
     socket: T,

@@ -1,5 +1,5 @@
-use SeqNumber;
 use std::time::Duration;
+use SeqNumber;
 
 /// Congestion control trait, sender side
 ///

@@ -5,9 +5,9 @@ use std::time::Instant;
 use rand::{thread_rng, Rng};
 use tokio_udp::{UdpFramed, UdpSocket};
 
-use SocketID;
 use codec::PacketCodec;
 use pending_connection::PendingConnection;
+use SocketID;
 
 pub type SrtSocket = UdpFramed<PacketCodec>;
 

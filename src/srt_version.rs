@@ -1,4 +1,4 @@
-use std::{fmt, cmp::Ordering};
+use std::{cmp::Ordering, fmt};
 
 pub const CURRENT: SrtVersion = SrtVersion {
     major: 1,

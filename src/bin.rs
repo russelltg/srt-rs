@@ -10,7 +10,9 @@ extern crate url;
 #[macro_use]
 extern crate clap;
 
-use std::{io::Error, net::{IpAddr, Ipv4Addr, SocketAddr}};
+use std::{
+    io::Error, net::{IpAddr, Ipv4Addr, SocketAddr},
+};
 
 use bytes::Bytes;
 use futures::{future, prelude::*};

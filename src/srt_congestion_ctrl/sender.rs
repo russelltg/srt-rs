@@ -1,23 +1,21 @@
 use std::time::Duration;
 
-use {SenderCongestionCtrl};
+use SenderCongestionCtrl;
 
-pub struct SrtSenderCongestionCtrl {
-
-}
+pub struct SrtSenderCongestionCtrl {}
 
 impl SrtSenderCongestionCtrl {
-	pub fn new() ->SrtSenderCongestionCtrl { SrtSenderCongestionCtrl{} }
+    pub fn new() -> SrtSenderCongestionCtrl {
+        SrtSenderCongestionCtrl {}
+    }
 }
 
 impl SenderCongestionCtrl for SrtSenderCongestionCtrl {
-	fn send_interval(&self) -> Duration {
-		Duration::from_secs(0)		
-	}	
+    fn send_interval(&self) -> Duration {
+        Duration::from_secs(0)
+    }
 
-	fn window_size(&self) -> u32 {
-		100000
-	}
-
+    fn window_size(&self) -> u32 {
+        100000
+    }
 }
-

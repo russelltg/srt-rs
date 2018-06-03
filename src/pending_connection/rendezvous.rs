@@ -3,8 +3,8 @@ use std::net::SocketAddr;
 
 use futures::prelude::*;
 
-use Packet;
 use connected::Connected;
+use Packet;
 
 pub struct Rendezvous<T> {
     local_public: SocketAddr,

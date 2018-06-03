@@ -2,18 +2,18 @@
 
 #[macro_export]
 macro_rules! modular_num {
-	(pub $x:ident($type:ident, $num:expr)) => {
-		#[derive(Eq, PartialEq, Clone, Copy, Debug)]
-		pub struct $x (pub $type);
+    (pub $x:ident($type:ident, $num:expr)) => {
+        #[derive(Eq, PartialEq, Clone, Copy, Debug)]
+        pub struct $x(pub $type);
 
-		modular_num_impls!($x, $type, 1 << $num, 1 << ($num - 1));
-	};
-	($x:ident($type:ident, $num:expr)) => {
-		#[derive(Eq, PartialEq, Clone, Copy, Debug)]
-		struct $x ($type);
+        modular_num_impls!($x, $type, 1 << $num, 1 << ($num - 1));
+    };
+    ($x:ident($type:ident, $num:expr)) => {
+        #[derive(Eq, PartialEq, Clone, Copy, Debug)]
+        struct $x($type);
 
-		modular_num_impls!($x, $type, 1 << $num, 1 <<($num - 1));
-	}
+        modular_num_impls!($x, $type, 1 << $num, 1 << ($num - 1));
+    };
 }
 
 macro_rules! modular_num_impls {
@@ -33,7 +33,7 @@ macro_rules! modular_num_impls {
 				$x::new(rng.gen::<$type>())
 			}
 		}
-				
+
 		impl Add<$type> for $x {
 			type Output = Self;
 
@@ -129,10 +129,9 @@ macro_rules! modular_num_impls {
 #[cfg(test)]
 mod tests {
 
-	modular_num! { SeqNumber(u32, 31) }
+    modular_num! { SeqNumber(u32, 31) }
 
-
-	const MAX_SEQ_NUM: u32 = 1 << 31;
+    const MAX_SEQ_NUM: u32 = 1 << 31;
 
     #[test]
     fn mod_num_addition() {

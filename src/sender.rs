@@ -1,11 +1,13 @@
-use SeqNumber;
 use bytes::{Bytes, BytesMut};
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
 use packet::{ControlTypes, Packet, PacketLocation};
 use srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
 use srt_version;
-use std::{collections::VecDeque, io::{Error, ErrorKind, Result, Cursor}, net::SocketAddr, time::Duration};
+use std::{
+    collections::VecDeque, io::{Cursor, Error, ErrorKind, Result}, net::SocketAddr, time::Duration,
+};
+use SeqNumber;
 
 use {CCData, ConnectionSettings, SenderCongestionCtrl, Stats};
 
@@ -80,8 +82,8 @@ pub struct Sender<T, CC> {
     /// The interval to report stats with
     stats_interval: Interval,
 
-	/// Interval to send SRT handshake packets with
-	srt_handshake_interval: Option<Interval>,
+    /// Interval to send SRT handshake packets with
+    srt_handshake_interval: Option<Interval>,
 
     /// Tracks if the sender is closed
     /// This means that `close` has been called and the sender has been flushed,
@@ -119,7 +121,9 @@ where
             recvd_packets: 0,
             snd_timer: Delay::new(Duration::from_millis(1)),
             stats_interval: Interval::new(Duration::from_secs(1)),
-			srt_handshake_interval: settings.tsbpd_latency.map(|_| Interval::new(Duration::from_millis(100))),
+            srt_handshake_interval: settings
+                .tsbpd_latency
+                .map(|_| Interval::new(Duration::from_millis(100))),
             closed: false,
         }
     }
@@ -147,8 +151,8 @@ where
             received_packets: self.recvd_packets,
             retransmitted_packets: self.retrans_packets,
             rtt: self.rtt,
-			rtt_var: self.rtt_var,
-			sender_buffer: self.buffer.len() as u32 * self.settings.max_packet_size,
+            rtt_var: self.rtt_var,
+            sender_buffer: self.buffer.len() as u32 * self.settings.max_packet_size,
             snd: {
                 let si = self.congest_ctrl.send_interval();
 
@@ -163,7 +167,10 @@ where
             max_segment_size: self.settings.max_packet_size,
             latest_seq_num: Some(self.next_seq_number - 1),
             packet_arr_rate: self.pkt_arr_rate,
-            rtt: Duration::new(self.rtt as u64/ 1_000_000, ((self.rtt % 1_000_000) * 1_000) as u32), 
+            rtt: Duration::new(
+                self.rtt as u64 / 1_000_000,
+                ((self.rtt % 1_000_000) * 1_000) as u32,
+            ),
         }
     }
 
@@ -177,7 +184,7 @@ where
                     ControlTypes::Ack(seq_num, data) => {
 
 						// this can be equal if an ACK2 is dropped
-						assert!(data.ack_number >= self.lr_acked_packet);
+						assert!(data.ack_number >= self.lr_acked_packet, "Newer ACK number {} < previous ACK number {}", data.ack_number, self.lr_acked_packet);
 
 						// update the packets received count
 						self.recvd_packets += data.ack_number - self.lr_acked_packet;
@@ -292,11 +299,11 @@ where
         Ok(())
     }
 
-	fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<()> {
-		match pack {
-			SrtControlPacket::HandshakeRequest(_) => warn!("Sender received SRT handshake request"),
-			SrtControlPacket::HandshakeResponse(shake) => {
-				// make sure the SRT version matches ours
+    fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<()> {
+        match pack {
+            SrtControlPacket::HandshakeRequest(_) => warn!("Sender received SRT handshake request"),
+            SrtControlPacket::HandshakeResponse(shake) => {
+                // make sure the SRT version matches ours
                 if srt_version::CURRENT != shake.version {
                     return Err(Error::new(
                         ErrorKind::Other,
@@ -308,23 +315,26 @@ where
                     ));
                 }
 
-				// make sure the other side is a receiver
-				if shake.flags.contains(SrtShakeFlags::TSBPDSND) {
-					return Err(Error::new(ErrorKind::Other, format!("Sender received SRT handshake from another sender")));
-				}
+                // make sure the other side is a receiver
+                if shake.flags.contains(SrtShakeFlags::TSBPDSND) {
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        format!("Sender received SRT handshake from another sender"),
+                    ));
+                }
 
-				// make sure the recvr flag is set, otherwise nothing is set
-				if !shake.flags.contains(SrtShakeFlags::TSBPDRCV) {
-					return Err(Error::new(ErrorKind::Other, format!("Sender received SRT handshake with neither sender or receiver bits set")));
-				}
+                // make sure the recvr flag is set, otherwise nothing is set
+                if !shake.flags.contains(SrtShakeFlags::TSBPDRCV) {
+                    return Err(Error::new(ErrorKind::Other, format!("Sender received SRT handshake with neither sender or receiver bits set")));
+                }
 
-				// all setup, using TSBPD from the shake
-				info!("Got SRT handshake packet, using tsbpd={:?}", shake.latency);
-			}
-		}	
+                // all setup, using TSBPD from the shake
+                info!("Got SRT handshake packet, using tsbpd={:?}", shake.latency);
+            }
+        }
 
-		Ok(())
-	}
+        Ok(())
+    }
 
     /// Gets the next available message number
     fn get_new_message_number(&mut self) -> i32 {
@@ -399,28 +409,31 @@ where
         Some(pack)
     }
 
-	fn send_srt_handshake(&mut self) -> Result<()> {
+    fn send_srt_handshake(&mut self) -> Result<()> {
+        debug!("Sending SRT handshake packet");
 
-		debug!("Sending SRT handshake packet");
-
-		// make SRT handshake packet
-		let mut bytes = BytesMut::new();
-		let reserved = SrtControlPacket::HandshakeRequest(SrtHandshake {
+        // make SRT handshake packet
+        let mut bytes = BytesMut::new();
+        let reserved = SrtControlPacket::HandshakeRequest(SrtHandshake {
             version: srt_version::CURRENT,
             flags: SrtShakeFlags::TSBPDSND, // TODO: the reference implementation sets a lot more of these, research
-            latency: self.settings.tsbpd_latency.unwrap_or(Duration::from_millis(120)),
+            latency: self.settings
+                .tsbpd_latency
+                .unwrap_or(Duration::from_millis(120)),
         }).serialize(&mut bytes);
-		
-		let now = self.get_timestamp();
-		 self.sock.start_send((Packet::Control {
-			timestamp: now,
-			dest_sockid: self.settings.remote_sockid,
-			control_type: ControlTypes::Custom(reserved, bytes.freeze())
-		}, self.settings.remote))?;
 
+        let now = self.get_timestamp();
+        self.sock.start_send((
+            Packet::Control {
+                timestamp: now,
+                dest_sockid: self.settings.remote_sockid,
+                control_type: ControlTypes::Custom(reserved, bytes.freeze()),
+            },
+            self.settings.remote,
+        ))?;
 
-		Ok(())
-	}
+        Ok(())
+    }
 
     fn get_timestamp(&self) -> i32 {
         self.settings.get_timestamp()
@@ -459,11 +472,11 @@ where
             }
         }
 
-		if self.srt_handshake_interval.is_some() {
-			if let Async::Ready(_) = self.srt_handshake_interval.as_mut().unwrap().poll()? {
-				self.send_srt_handshake()?;
-			}
-		}
+        if self.srt_handshake_interval.is_some() {
+            if let Async::Ready(_) = self.srt_handshake_interval.as_mut().unwrap().poll()? {
+                self.send_srt_handshake()?;
+            }
+        }
 
         loop {
             // do we have any packets to handle?

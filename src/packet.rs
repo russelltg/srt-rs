@@ -464,7 +464,10 @@ impl SocketType {
             1 => Ok(SocketType::Datagram),
             i => Err(Error::new(
                 ErrorKind::InvalidData,
-                format!("Unrecognized socket type: {:?}, expected 0 (STREAM) or 1 (DGRAM)", i),
+                format!(
+                    "Unrecognized socket type: {:?}, expected 0 (STREAM) or 1 (DGRAM)",
+                    i
+                ),
             )),
         }
     }
@@ -617,8 +620,7 @@ impl Packet {
                 ref payload,
                 ref in_order_delivery,
             } => {
-
-				assert!(seq_number.raw() & (1 << 31) == 0);
+                assert!(seq_number.raw() & (1 << 31) == 0);
 
                 into.put_u32_be(seq_number.raw());
                 into.put_i32_be(

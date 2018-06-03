@@ -2,7 +2,9 @@ pub mod connect;
 pub mod listen;
 pub mod rendezvous;
 
-use std::{io::Error, net::{IpAddr, SocketAddr}, time::Instant};
+use std::{
+    io::Error, net::{IpAddr, SocketAddr}, time::Instant,
+};
 
 use futures::prelude::*;
 

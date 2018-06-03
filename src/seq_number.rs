@@ -1,6 +1,5 @@
-
 modular_num! {
-	pub SeqNumber(u32, 31)
+    pub SeqNumber(u32, 31)
 }
 
 pub struct SeqNumberRange {
@@ -30,4 +29,3 @@ pub fn seq_num_range(begin: SeqNumber, past_end: SeqNumber) -> SeqNumberRange {
         end: past_end,
     }
 }
-

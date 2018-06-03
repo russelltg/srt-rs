@@ -9,17 +9,23 @@ extern crate log;
 
 use bytes::{Bytes, BytesMut};
 
-use std::{str, thread, cmp::Ordering, collections::BinaryHeap, fmt::Debug, io::{Error, ErrorKind},
-          time::{Duration, Instant}};
+use std::{
+    cmp::Ordering, collections::BinaryHeap, fmt::Debug, io::{Error, ErrorKind}, str, thread,
+    time::{Duration, Instant},
+};
 
 use futures::{prelude::*, stream::iter_ok, sync::mpsc};
 
-use rand::{thread_rng, distributions::{IndependentSample, Normal, Range}};
+use rand::{
+    distributions::{IndependentSample, Normal, Range}, thread_rng,
+};
 
 use futures_timer::{Delay, Interval};
 
-use srt::{ConnectionSettings, SrtSenderCongestionCtrl, Receiver, Sender, SeqNumber, SocketID,
-          stats_printer::StatsPrinterSender};
+use srt::{
+    stats_printer::StatsPrinterSender, ConnectionSettings, Receiver, Sender, SeqNumber, SocketID,
+    SrtSenderCongestionCtrl,
+};
 
 struct LossyConn<T> {
     sender: mpsc::Sender<T>,
@@ -219,22 +225,21 @@ fn test_with_loss() {
 
     let (send, recv) = LossyConn::new(0.05, Duration::from_secs(0), Duration::from_secs(0));
 
-    let sender = 
-        Sender::new(
-            send.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
-                .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
-            SrtSenderCongestionCtrl::new(),
-            ConnectionSettings {
-                init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
-                socket_start_time: Instant::now(),
-                remote_sockid: SocketID(81),
-                local_sockid: SocketID(13),
-                max_packet_size: 1316,
-                max_flow_size: 50_000,
-                remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
-                tsbpd_latency: None,
-            },
-        );
+    let sender = Sender::new(
+        send.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
+            .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
+        SrtSenderCongestionCtrl::new(),
+        ConnectionSettings {
+            init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
+            socket_start_time: Instant::now(),
+            remote_sockid: SocketID(81),
+            local_sockid: SocketID(13),
+            max_packet_size: 1316,
+            max_flow_size: 50_000,
+            remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
+            tsbpd_latency: None,
+        },
+    );
 
     let recvr = Receiver::new(
         recv.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
@@ -275,37 +280,35 @@ fn test_with_loss() {
 
 #[test]
 fn tsbpd() {
+    let _ = env_logger::try_init();
 
-	let _ = env_logger::try_init();
-
-	const INIT_SEQ_NUM: u32 = 12314;
+    const INIT_SEQ_NUM: u32 = 12314;
 
     // a stream of ascending stringified integers
-	// 1 ms between packets
+    // 1 ms between packets
     let counting_stream = iter_ok(INIT_SEQ_NUM..)
         .map(|i| BytesMut::from(&i.to_string().bytes().collect::<Vec<_>>()[..]).freeze())
         .zip(Interval::new(Duration::from_millis(1)))
         .map(|(b, _)| b);
 
-	// 1% packet loss, 1 sec latency with 0.2 s variance
+    // 1% packet loss, 1 sec latency with 0.2 s variance
     let (send, recv) = LossyConn::new(0.01, Duration::from_secs(1), Duration::from_millis(200));
 
-    let sender = 
-        Sender::new(
-            send.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
-                .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
-            SrtSenderCongestionCtrl::new(),
-            ConnectionSettings {
-                init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
-                socket_start_time: Instant::now(),
-                remote_sockid: SocketID(81),
-                local_sockid: SocketID(13),
-                max_packet_size: 1316,
-                max_flow_size: 50_000,
-                remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
-                tsbpd_latency: Some(Duration::from_secs(4)), // four seconds TSBPD, should be plenty for no loss
-            },
-        );
+    let sender = Sender::new(
+        send.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
+            .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
+        SrtSenderCongestionCtrl::new(),
+        ConnectionSettings {
+            init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
+            socket_start_time: Instant::now(),
+            remote_sockid: SocketID(81),
+            local_sockid: SocketID(13),
+            max_packet_size: 1316,
+            max_flow_size: 50_000,
+            remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
+            tsbpd_latency: Some(Duration::from_secs(4)), // four seconds TSBPD, should be plenty for no loss
+        },
+    );
 
     let recvr = Receiver::new(
         recv.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
@@ -331,35 +334,43 @@ fn tsbpd() {
     });
 
     let t2 = thread::spawn(|| {
+        let mut iter = recvr.wait();
 
-		let mut iter = recvr.wait();
+        iter.next().unwrap().unwrap();
 
-		iter.next().unwrap().unwrap();
+        let mut last_time = Instant::now();
+        let mut next_num = INIT_SEQ_NUM + 1;
 
-		let mut last_time = Instant::now();
-		let mut next_num = INIT_SEQ_NUM + 1;
+        for by in iter {
+            let by = by.unwrap();
+            assert_eq!(
+                str::from_utf8(&by[..]).unwrap(),
+                next_num.to_string(),
+                "Expected data to be {}, was {}",
+                next_num,
+                str::from_utf8(&by[..]).unwrap()
+            );
 
-		for by in iter { 
-			let by = by.unwrap();
-			 assert_eq!(
-				str::from_utf8(&by[..]).unwrap(),
-				next_num.to_string(),
-				"Expected data to be {}, was {}",
-				next_num,
-				str::from_utf8(&by[..]).unwrap());
+            next_num += 1;
 
-		 	next_num += 1;
+            // we want between 0.9 ms and 2 ms latency
+            let ms = (last_time.elapsed().subsec_nanos() as f64
+                + last_time.elapsed().as_secs() as f64 * 1e9) / 1e6;
+            assert!(
+                last_time.elapsed() > Duration::new(0, 900_000),
+                "time elapsed={}ms",
+                ms
+            );
+            assert!(
+                last_time.elapsed() < Duration::from_millis(2),
+                "time elapsed={}ms",
+                ms
+            );
 
-			// we want between 0.9 ms and 2 ms latency
-			let ms =  (last_time.elapsed().subsec_nanos() as f64 + last_time.elapsed().as_secs() as f64 * 1e9)  / 1e6;
-			assert!(last_time.elapsed() > Duration::new(0, 900_000), "time elapsed={}ms", ms);
-			assert!(last_time.elapsed() < Duration::from_millis(2), "time elapsed={}ms", ms);
-
-			last_time = Instant::now();
-		}
+            last_time = Instant::now();
+        }
     });
 
     t1.join().unwrap();
     t2.join().unwrap();
 }
-

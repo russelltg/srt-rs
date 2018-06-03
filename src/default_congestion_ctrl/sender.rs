@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use {CCData, SenderCongestionCtrl, SeqNumber};
 
-use rand::{thread_rng, distributions::{IndependentSample, Normal}};
+use rand::{
+    distributions::{IndependentSample, Normal}, thread_rng,
+};
 
 pub struct DefaultSenderCongestionCtrl {
     phase: Phase,
@@ -95,7 +97,7 @@ impl SenderCongestionCtrl for DefaultSenderCongestionCtrl {
             }
         };
 
-		info!("inc={}", inc);
+        info!("inc={}", inc);
 
         // 4) The SND period is updated as:
         //         SND = (SND * SYN) / (SND * inc + SYN).

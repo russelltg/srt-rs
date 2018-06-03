@@ -1,15 +1,17 @@
-use std::{io::Error, net::{IpAddr, SocketAddr}, time::{Duration, Instant}};
+use std::{
+    io::Error, net::{IpAddr, SocketAddr}, time::{Duration, Instant},
+};
 
 use futures::prelude::*;
 use futures_timer::Interval;
 
 use rand::{thread_rng, Rng};
 
+use connected::Connected;
+use packet::{ConnectionType, ControlTypes, HandshakeControlInfo, Packet, SocketType};
 use ConnectionSettings;
 use SeqNumber;
 use SocketID;
-use connected::Connected;
-use packet::{ConnectionType, ControlTypes, HandshakeControlInfo, Packet, SocketType};
 
 pub struct Connect<T> {
     remote: SocketAddr,
