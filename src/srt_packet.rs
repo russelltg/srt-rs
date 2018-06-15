@@ -19,20 +19,22 @@ pub enum SrtControlPacket {
 }
 
 /// The SRT handshake object
-/// It's just these three fields encoded as i32's
 pub struct SrtHandshake {
     /// The SRT version
+	/// Serialized just as the u32 that SrtVersion serialized to
     pub version: SrtVersion,
 
     /// SRT connection init flags
     pub flags: SrtShakeFlags,
 
     /// The TSBPD latency
+	/// This is serialized as the lower 16 bits of the third 32-bit word
+	/// see csrtcc.cpp:132 in the reference implementation
     pub latency: Duration,
 }
 
 bitflags! {
-    pub struct SrtShakeFlags: i32 {
+    pub struct SrtShakeFlags: u32 {
         /// Timestamp-based Packet delivery real-time data sender
         const TSBPDSND = 0x00000001;
 
@@ -103,8 +105,8 @@ impl SrtHandshake {
             ));
         }
 
-        let version = SrtVersion::parse(buf.get_i32_be());
-        let flags = match SrtShakeFlags::from_bits(buf.get_i32_be()) {
+        let version = SrtVersion::parse(buf.get_u32_be());
+        let flags = match SrtShakeFlags::from_bits(buf.get_u32_be()) {
             Some(i) => i,
             None => {
                 return Err(Error::new(
@@ -113,21 +115,27 @@ impl SrtHandshake {
                 ))
             }
         };
-        let latency = buf.get_i32_be();
+		// the latency is the lower 16 bits, discard the upper 16
+		buf.get_u16_be();
+
+        let latency = buf.get_u16_be();
 
         Ok(SrtHandshake {
             version,
             flags,
-            latency: Duration::new(0, latency as u32 * 1_000_000), // latency is in ms, convert to ns
+            latency: Duration::from_millis(latency as u64),
         })
     }
 
     pub fn serialize<T: BufMut>(&self, into: &mut T) {
-        into.put_i32_be(self.version.to_i32());
-        into.put_i32_be(self.flags.bits());
-        into.put_i32_be(
-            (self.latency.subsec_nanos() / 1_000_000) as i32
-                + self.latency.as_secs() as i32 * 1_000,
+        into.put_u32_be(self.version.to_u32());
+        into.put_u32_be(self.flags.bits());
+		// upper 16 bits are all zero
+		into.put_u16_be(0);
+		// lower 16 is latency
+        into.put_u16_be(
+            (self.latency.subsec_nanos() / 1_000_000) as u16
+                + self.latency.as_secs() as u16 * 1_000,
         );
     }
 }

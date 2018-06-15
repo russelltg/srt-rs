@@ -25,8 +25,8 @@ impl SrtVersion {
         }
     }
 
-    /// Parse from an i32
-    pub fn parse(from: i32) -> SrtVersion {
+    /// Parse from an u32
+    pub fn parse(from: u32) -> SrtVersion {
         SrtVersion {
             major: (from / 0x10000) as u8,
             minor: ((from / 0x100) % 0x100) as u8,
@@ -34,9 +34,9 @@ impl SrtVersion {
         }
     }
 
-    /// Convert to an i32
-    pub fn to_i32(&self) -> i32 {
-        self.major as i32 * 0x10000 + self.minor as i32 * 0x100 + self.patch as i32
+    /// Convert to an u32
+    pub fn to_u32(&self) -> u32 {
+        self.major as u32 * 0x10000 + self.minor as u32 * 0x100 + self.patch as u32
     }
 }
 

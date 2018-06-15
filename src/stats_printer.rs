@@ -5,7 +5,7 @@ use {
     std::{
         io::Error, net::SocketAddr, ops::{Deref, DerefMut}, time::Duration,
     },
-    Packet, CongestCtrl,
+    CongestCtrl, Packet,
 };
 
 pub struct StatsPrinterSender<T, CC> {

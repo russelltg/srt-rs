@@ -1,17 +1,15 @@
-use std::{
-    cmp, collections::VecDeque, io::{Cursor, Error, ErrorKind, Result}, iter::Iterator,
-    net::SocketAddr, time::{Duration, Instant},
+use {
+    bytes::{Bytes, BytesMut}, futures::prelude::*, futures_timer::{Delay, Interval},
+    loss_compression::compress_loss_list,
+    packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet, PacketLocation},
+    seq_number::seq_num_range, srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags},
+    srt_version,
+    std::{
+        cmp, collections::VecDeque, io::{Cursor, Error, ErrorKind, Result}, iter::Iterator,
+        net::SocketAddr, time::{Duration, Instant},
+    },
+    ConnectionSettings, SeqNumber,
 };
-
-use bytes::{Bytes, BytesMut};
-use futures::prelude::*;
-use futures_timer::{Delay, Interval};
-use loss_compression::compress_loss_list;
-use packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet, PacketLocation};
-use seq_number::seq_num_range;
-use srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
-use srt_version;
-use {ConnectionSettings, SeqNumber};
 
 struct LossListEntry {
     seq_num: SeqNumber,
@@ -180,6 +178,9 @@ where
             // stop (do not send this ACK).
             return Ok(());
         }
+
+		// make sure this ACK number is greater or equal to a one sent previously
+		assert!(self.ack_history_window.last().map(|a| a.ack_number).unwrap_or(SeqNumber::new(0)) <= ack_number);
 
         trace!(
             "Sending ACK; ack_num={:?}, lr_ack_acked={:?}",
@@ -540,6 +541,9 @@ where
                 }
             }
             Packet::Data { seq_number, .. } => {
+
+				debug!("Received data packet seq_num={}", seq_number);
+
                 let now = self.get_timestamp();
 
                 // 1) Reset the ExpCount to 1. If there is no unacknowledged data
@@ -756,9 +760,13 @@ where
 
         match first {
             Some((send_time, pack)) => {
+				// TODO: is this right? XXX debug
+				let send_time_ts = pack.timestamp();
+
+
                 // if ready to release, do
                 // TODO: deal with messages (yuck)
-                if Instant::now() >= send_time + tsbpd {
+                if self.get_timestamp() >= send_time_ts as i32 + { tsbpd.as_secs() as u32 * 1_000_000 + tsbpd.subsec_nanos() / 1_000 } as i32  {
                     self.last_released += 1;
                     Some(pack.payload().unwrap())
                 } else {

@@ -1,6 +1,4 @@
-use std::iter::Iterator;
-
-use SeqNumber;
+use {std::iter::Iterator, SeqNumber};
 
 /// Iterator for compressing loss lists
 pub struct CompressLossList<I> {
@@ -152,33 +150,40 @@ pub fn decompress_loss_list<I: Iterator<Item = u32>>(loss_list: I) -> Decompress
     }
 }
 
-#[test]
-fn loss_compression_test() {
-    macro_rules! test_comp_decomp {
-        ($x:expr, $y:expr) => {{
-            assert_eq!(
-                compress_loss_list($x.iter().cloned().map(SeqNumber::new)).collect::<Vec<_>>(),
-                $y.iter().cloned().collect::<Vec<_>>()
-            );
-            assert_eq!(
-                decompress_loss_list($y.iter().cloned()).collect::<Vec<_>>(),
-                $x.iter().cloned().map(SeqNumber::new).collect::<Vec<_>>()
-            );
-        }};
+#[cfg(test)]
+mod test {
+
+    use super::{compress_loss_list, decompress_loss_list};
+    use SeqNumber;
+
+    #[test]
+    fn loss_compression_test() {
+        macro_rules! test_comp_decomp {
+            ($x:expr, $y:expr) => {{
+                assert_eq!(
+                    compress_loss_list($x.iter().cloned().map(SeqNumber::new)).collect::<Vec<_>>(),
+                    $y.iter().cloned().collect::<Vec<_>>()
+                );
+                assert_eq!(
+                    decompress_loss_list($y.iter().cloned()).collect::<Vec<_>>(),
+                    $x.iter().cloned().map(SeqNumber::new).collect::<Vec<_>>()
+                );
+            }};
+        }
+        let one = 1 << 31;
+
+        test_comp_decomp!([13, 14, 15, 16, 17, 18, 19], [13 | one, 19]);
+
+        test_comp_decomp!(
+            [1, 2, 3, 4, 5, 9, 11, 12, 13, 16, 17],
+            [1 | 1 << 31, 5, 9, 11 | 1 << 31, 13, 16 | 1 << 31, 17]
+        );
+
+        test_comp_decomp!([15, 16], [15 | 1 << 31, 16]);
+
+        test_comp_decomp!(
+            [1687761238, 1687761239],
+            [1687761238 | 1 << 31 /*-459722410*/, 1687761239]
+        );
     }
-    let one = 1 << 31;
-
-    test_comp_decomp!([13, 14, 15, 16, 17, 18, 19], [13 | one, 19]);
-
-    test_comp_decomp!(
-        [1, 2, 3, 4, 5, 9, 11, 12, 13, 16, 17],
-        [1 | 1 << 31, 5, 9, 11 | 1 << 31, 13, 16 | 1 << 31, 17]
-    );
-
-    test_comp_decomp!([15, 16], [15 | 1 << 31, 16]);
-
-    test_comp_decomp!(
-        [1687761238, 1687761239],
-        [1687761238 | 1 << 31 /*-459722410*/, 1687761239]
-    );
 }

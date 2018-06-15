@@ -20,7 +20,7 @@ macro_rules! modular_num_impls {
 	($x:ident, $type:ident, $max_num:expr, $max_diff:expr) => {
 
 		use std::{fmt, cmp::Ordering, ops::{Add, Rem, Sub, AddAssign}};
-		use rand::{Rand, Rng};
+		use rand::{distributions::{Distribution, Standard}, Rng};
 
 		impl $x {
 			pub fn new(from: $type) -> $x { $x(from % $max_num) }
@@ -28,8 +28,8 @@ macro_rules! modular_num_impls {
 			pub fn raw(&self) -> $type { self.0 }
 		}
 
-		impl Rand for $x {
-			fn rand<T: Rng>(rng: &mut T) -> Self {
+		impl Distribution<$x> for Standard {
+			fn sample<T: Rng + ?Sized>(&self, rng: &mut T) -> $x {
 				$x::new(rng.gen::<$type>())
 			}
 		}

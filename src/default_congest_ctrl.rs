@@ -1,7 +1,6 @@
 use {
-    rand::{
-        distributions::{IndependentSample, Normal}, thread_rng,
-    }, std::mem,
+	rand::{self, distributions::{Distribution, Normal}},
+    std::mem,
     std::time::Duration, CCData, CongestCtrl, SeqNumber,
 };
 
@@ -159,7 +158,7 @@ impl CongestCtrl for DefaultCongestCtrl {
                     ((self.avg_nak_num - 1) as f64 / 3.0).abs(),
                 );
 
-                dist.ind_sample(&mut thread_rng()) as i32
+                dist.sample(&mut rand::thread_rng()) as i32
             }
         }
 

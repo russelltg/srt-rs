@@ -1,12 +1,12 @@
 use {
     bytes::{Bytes, BytesMut}, futures::prelude::*, futures_timer::{Delay, Interval},
-    packet::{ControlTypes, Packet, PacketLocation},
+    loss_compression::decompress_loss_list, packet::{ControlTypes, Packet, PacketLocation},
     srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags}, srt_version,
     std::{
         collections::VecDeque, io::{Cursor, Error, ErrorKind, Result}, net::SocketAddr,
         time::Duration,
     },
-    CCData, CongestCtrl, ConnectionSettings, SeqNumber, Stats,loss_compression::decompress_loss_list
+    CCData, CongestCtrl, ConnectionSettings, SeqNumber, Stats,
 };
 
 pub struct Sender<T, CC> {
@@ -179,8 +179,12 @@ where
                 match control_type {
                     ControlTypes::Ack(seq_num, data) => {
 
-						// this can be equal if an ACK2 is dropped
-						assert!(data.ack_number >= self.lr_acked_packet, "Newer ACK number {} < previous ACK number {}", data.ack_number, self.lr_acked_packet);
+						// if this ack number is less than or equal to 
+						// the largest received ack number, than discard it
+						// this can happen thorough packet reordering OR losing an ACK2 packet
+						if data.ack_number <= self.lr_acked_packet {
+							return Ok(());
+						}
 
 						// update the packets received count
 						self.recvd_packets += data.ack_number - self.lr_acked_packet;

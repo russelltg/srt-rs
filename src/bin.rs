@@ -6,21 +6,18 @@ extern crate futures;
 extern crate log;
 extern crate tokio_io;
 extern crate tokio_udp;
+extern crate tokio_codec;
 extern crate url;
 #[macro_use]
 extern crate clap;
 
-use std::{
-    io::Error, net::{IpAddr, Ipv4Addr, SocketAddr},
+use {
+    bytes::Bytes, futures::{future, prelude::*}, srt::{ConnInitMethod, SrtSocketBuilder},
+    std::{
+        io::Error, net::{IpAddr, Ipv4Addr, SocketAddr},
+    },
+    tokio_codec::BytesCodec, tokio_udp::{UdpFramed, UdpSocket}, url::{Host, Url},
 };
-
-use bytes::Bytes;
-use futures::{future, prelude::*};
-use tokio_io::codec::BytesCodec;
-use tokio_udp::{UdpFramed, UdpSocket};
-use url::{Host, Url};
-
-use srt::{ConnInitMethod, SrtSocketBuilder};
 
 fn main() {
     env_logger::init();

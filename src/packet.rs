@@ -1,12 +1,10 @@
 // Packet structures
 // see https://tools.ietf.org/html/draft-gg-udt-03#page-5
 
-use bytes::{Buf, BufMut, Bytes};
-
-use std::io::{Cursor, Error, ErrorKind, Result};
-use std::net::{IpAddr, Ipv4Addr};
-
-use {SeqNumber, SocketID};
+use {
+    bytes::{Buf, BufMut, Bytes}, std::io::{Cursor, Error, ErrorKind, Result},
+    std::net::{IpAddr, Ipv4Addr}, SeqNumber, SocketID,
+};
 
 /// Represents A UDT/SRT packet
 #[derive(Debug, Clone, PartialEq)]
@@ -113,6 +111,12 @@ impl Packet {
             None
         }
     }
+	// TODO: should this be u32?
+	pub fn timestamp(&self) -> i32 {
+		match *self { 
+			Packet::Data { timestamp, .. } | Packet::Control { timestamp, .. } => timestamp
+		}
+	}
 }
 
 /// Signifies the packet location in a message for a data packet
