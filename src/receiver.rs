@@ -1,15 +1,14 @@
 use {
-    bytes::{Bytes, BytesMut}, futures::prelude::*, futures_timer::{Delay, Interval},
-    loss_compression::compress_loss_list,
+    bytes::{Bytes, BytesMut}, failure::Error, futures::prelude::*,
+    futures_timer::{Delay, Interval}, loss_compression::compress_loss_list,
     packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet, PacketLocation},
     seq_number::seq_num_range, srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags},
     srt_version,
     std::{
-        cmp, collections::VecDeque, io::Cursor, iter::Iterator,
-        net::SocketAddr, time::{Duration, Instant},
+        cmp, collections::VecDeque, io::Cursor, iter::Iterator, net::SocketAddr,
+        time::{Duration, Instant},
     },
     ConnectionSettings, SeqNumber,
-	failure::Error,
 };
 
 struct LossListEntry {
@@ -116,10 +115,6 @@ pub struct Receiver<T> {
     /// The TSBPD time
     /// If this is None, TSBPD is disabled
     tsbpd: Option<Duration>,
-}
-
-enum ReadyType {
-    Shutdown,
 }
 
 impl<T> Receiver<T>
@@ -384,21 +379,24 @@ where
             SrtControlPacket::HandshakeRequest(shake) => {
                 // make sure the SRT version matches ours
                 if srt_version::CURRENT != shake.version {
-                        bail!(
-                            "Incomatible version, local is {}, remote is {}",
-                            srt_version::CURRENT,
-                            shake.version
-                        );
+                    bail!(
+                        "Incomatible version, local is {}, remote is {}",
+                        srt_version::CURRENT,
+                        shake.version
+                    );
                 }
 
                 // make sure it's a sender, cuz otherwise we have a problem
                 if shake.flags.contains(SrtShakeFlags::TSBPDRCV) {
-                        bail!("Receiver tried to connect with another receiver, aborting.");
+                    bail!("Receiver tried to connect with another receiver, aborting.");
                 }
 
                 // make sure the sender flag is set, or else neither sender nor recv are set, which is bad
                 if !shake.flags.contains(SrtShakeFlags::TSBPDSND) {
-                        bail!("Got SRT handshake packet with neither receiver or sender set. Flags={:#b}", shake.flags.bits());
+                    bail!(
+                        "Got SRT handshake packet with neither receiver or sender set. Flags={:#b}",
+                        shake.flags.bits()
+                    );
                 }
 
                 self.tsbpd = Some(Duration::max(
@@ -433,13 +431,12 @@ where
         Ok(())
     }
 
-    // handles a packet, returning either a future, if there is something to send,
-    // or the socket, and in the case of a data packet, a payload
-    fn handle_packet(&mut self, packet: Packet, from: &SocketAddr) -> Result<Option<ReadyType>, Error> {
+    // handles an incomming a packet, returning if it was a shutdown packet and the socket should close
+    fn handle_packet(&mut self, packet: Packet, from: &SocketAddr) -> Result<bool, Error> {
         // We don't care about packets from elsewhere
         if *from != self.settings.remote {
             info!("Packet received from unknown address: {:?}", from);
-            return Ok(None);
+            return Ok(false);
         }
 
         // copy it to be used below
@@ -457,7 +454,7 @@ where
 
                 if self.settings.local_sockid != dest_sockid {
                     // packet isn't applicable
-                    return Ok(None);
+                    return Ok(false);
                 }
 
                 match control_type {
@@ -529,7 +526,7 @@ where
                     }
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
                     ControlTypes::Nak(_info) => warn!("Receiver received NAK packet, unusual"),
-                    ControlTypes::Shutdown => return Ok(Some(ReadyType::Shutdown)), // end of stream
+                    ControlTypes::Shutdown => return Ok(true), // end of stream
                     ControlTypes::Custom(reserved, ref bytes) => {
                         // decode srt packet
                         let srt_packet =
@@ -614,7 +611,7 @@ where
                 // we've already gotten this packet, drop it
                 if self.last_released >= seq_number {
                     warn!("Received packet {:?} twice", seq_number);
-                    return Ok(None);
+                    return Ok(false);
                 }
 
                 // add it to the buffer at the right spot
@@ -654,7 +651,7 @@ where
             }
         };
 
-        Ok(None)
+        Ok(false)
     }
 
     // in non-tsbpd mode, see if there are packets to release
@@ -916,9 +913,8 @@ where
             // TODO: should this be here for optimal performance?
             self.sock.poll_complete()?;
 
-            match res {
-                None => continue,
-                Some(ReadyType::Shutdown) => return Ok(Async::Ready(None)),
+            if res {
+                return Ok(Async::Ready(None));
             }
         }
     }

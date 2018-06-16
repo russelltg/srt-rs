@@ -1,10 +1,10 @@
 use std::{
-    collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, 
-    net::SocketAddr, time::{Duration, Instant},
+    collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, net::SocketAddr,
+    time::{Duration, Instant},
 };
 
-use futures::prelude::*;
 use failure::Error;
+use futures::prelude::*;
 
 use connected::Connected;
 use packet::{ConnectionType, ControlTypes, Packet};

@@ -10,19 +10,16 @@ extern crate log;
 extern crate failure;
 
 use {
-    bytes::{Bytes, BytesMut}, futures::{prelude::*, stream::iter_ok, sync::mpsc},
+    bytes::{Bytes, BytesMut}, failure::Error, futures::{prelude::*, stream::iter_ok, sync::mpsc},
     futures_timer::{Delay, Interval}, rand::distributions::{Distribution, Normal},
     srt::{
         stats_printer::StatsPrinterSender, ConnectionSettings, Receiver, Sender, SeqNumber,
         SocketID, SrtCongestCtrl,
     },
     std::{
-        cmp::Ordering, collections::BinaryHeap, fmt::Debug, str, thread,
-        time::{Duration, Instant},
+        cmp::Ordering, collections::BinaryHeap, fmt::Debug, str, thread, time::{Duration, Instant},
     },
-	failure::Error,
 };
-
 
 struct LossyConn<T> {
     sender: mpsc::Sender<T>,

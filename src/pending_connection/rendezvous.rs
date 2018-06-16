@@ -7,9 +7,9 @@ use connected::Connected;
 use Packet;
 
 pub struct Rendezvous<T> {
-    local_public: SocketAddr,
-    remote_public: SocketAddr,
-    sock: T,
+    _local_public: SocketAddr,
+    _remote_public: SocketAddr,
+    _sock: T,
 }
 
 impl<T> Rendezvous<T>
@@ -17,11 +17,11 @@ where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
 {
-    pub fn new(sock: T, local_public: SocketAddr, remote_public: SocketAddr) -> Rendezvous<T> {
+    pub fn new(_sock: T, _local_public: SocketAddr, _remote_public: SocketAddr) -> Rendezvous<T> {
         Rendezvous {
-            sock,
-            local_public,
-            remote_public,
+            _sock,
+            _local_public,
+            _remote_public,
         }
     }
 }

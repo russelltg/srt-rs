@@ -3,7 +3,7 @@ pub mod listen;
 pub mod rendezvous;
 
 use std::{
-     net::{IpAddr, SocketAddr}, time::Instant,
+    net::{IpAddr, SocketAddr}, time::Instant,
 };
 
 use failure::Error;

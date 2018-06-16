@@ -4,9 +4,10 @@ extern crate futures;
 extern crate srt;
 #[macro_use]
 extern crate log;
+extern crate tokio_udp;
 
 use futures::prelude::*;
-use srt::{ConnInitMethod, SrtSocketBuilder};
+use srt::{PendingConnection, SrtSocketBuilder};
 
 #[test]
 fn message_splitting() {

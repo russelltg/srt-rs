@@ -1,5 +1,5 @@
 use std::{
-     net::{IpAddr, SocketAddr}, time::{Duration, Instant},
+    net::{IpAddr, SocketAddr}, time::{Duration, Instant},
 };
 
 use failure::Error;
@@ -114,7 +114,8 @@ where
                         if info.connection_type != ConnectionType::RendezvousRegularSecond {
                             info!(
                                 "Was waiting for -1 connection type, got {:?}",
-                                info.connection_type                            );
+                                info.connection_type
+                            );
                             // discard
                             continue;
                         }

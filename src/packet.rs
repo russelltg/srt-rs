@@ -208,16 +208,16 @@ impl ControlTypes {
 
                 let udt_version = buf.get_i32_be();
                 let sock_type = match SocketType::from_u32(buf.get_u32_be()) {
-					Ok(st) => st,
-					Err(err_ty) => bail!("Invalid socket type {}", err_ty),
-				};
+                    Ok(st) => st,
+                    Err(err_ty) => bail!("Invalid socket type {}", err_ty),
+                };
                 let init_seq_num = SeqNumber::new(buf.get_u32_be());
                 let max_packet_size = buf.get_u32_be();
                 let max_flow_size = buf.get_u32_be();
                 let connection_type = match ConnectionType::from_i32(buf.get_i32_be()) {
-					Ok(ct) => ct,
-					Err(err_ct) => bail!("Invalid connection type {}", err_ct),		
-				};
+                    Ok(ct) => ct,
+                    Err(err_ct) => bail!("Invalid connection type {}", err_ct),
+                };
                 let socket_id = SocketID(buf.get_u32_be());
                 let syn_cookie = buf.get_i32_be();
 
@@ -253,7 +253,7 @@ impl ControlTypes {
 
                 // if there is more data, use it. However, it's optional
                 let mut opt_read_next = move || {
-                    if buf.remaining() > 4 {
+                    if buf.remaining() >= 4 {
                         Some(buf.get_i32_be())
                     } else {
                         None
@@ -465,7 +465,7 @@ pub enum SocketType {
 }
 
 impl SocketType {
-    /// Turns a u32 into a SocketType. If the u32 wasn't valid (only 0 and 1 are valid), than it returns Err(num) 
+    /// Turns a u32 into a SocketType. If the u32 wasn't valid (only 0 and 1 are valid), than it returns Err(num)
     pub fn from_u32(num: u32) -> Result<SocketType, u32> {
         match num {
             0 => Ok(SocketType::Stream),
@@ -519,7 +519,7 @@ impl Packet {
         // Check if the first bit is one or zero;
         // if it's one it's a cotnrol packet,
         // if zero it's a data packet
-        if (first4[0] & 0b1 << 7) == 0 {
+        if (first4[0] & 0x80) == 0 {
             // this means it's a data packet
 
             // get the sequence number, which is the last 31 bits of the header
@@ -565,7 +565,7 @@ impl Packet {
                 dest_sockid: SocketID(dest_sockid),
                 // just match against the second byte, as everything is in that
                 control_type: ControlTypes::deserialize(
-                    ((first4[0] << 1 >> 1) as u16) << 8 + first4[1] as u16,
+                    ((first4[0] << 1 >> 1) as u16) << 8 | first4[1] as u16,
                     reserved,
                     add_info,
                     buf,
@@ -627,9 +627,12 @@ impl Packet {
 #[cfg(test)]
 mod test {
 
-	use std::io::Cursor;
-	use super::{SocketType, HandshakeControlInfo, PacketLocation, Packet, ControlTypes, ConnectionType};
-	use {SocketID, SeqNumber};
+    use super::{
+        AckControlInfo, ConnectionType, ControlTypes, HandshakeControlInfo, Packet, PacketLocation,
+        SocketType,
+    };
+    use std::io::Cursor;
+    use {SeqNumber, SocketID};
 
     #[test]
     fn packet_location_from_i32_test() {
@@ -702,6 +705,34 @@ mod test {
 
         let mut buf = vec![];
         pack.serialize(&mut buf);
+
+        let des = Packet::parse(Cursor::new(buf)).unwrap();
+
+        assert_eq!(pack, des);
+    }
+
+    #[test]
+    fn ack_ser_des_test() {
+        let pack = Packet::Control {
+            timestamp: 113703,
+            dest_sockid: SocketID(2453706529),
+            control_type: ControlTypes::Ack(
+                1,
+                AckControlInfo {
+                    ack_number: SeqNumber::new(282049186),
+                    rtt: Some(10002),
+                    rtt_variance: Some(1000),
+                    buffer_available: Some(1314),
+                    packet_recv_rate: Some(0),
+                    est_link_cap: Some(0),
+                },
+            ),
+        };
+
+        let mut buf = vec![];
+        pack.serialize(&mut buf);
+
+        println!("len={}, {:x?}", buf.len(), &buf);
 
         let des = Packet::parse(Cursor::new(buf)).unwrap();
 

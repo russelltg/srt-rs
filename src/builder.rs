@@ -1,9 +1,9 @@
 use std::net::SocketAddr;
 use std::time::Instant;
 
-use rand::{thread_rng, Rng};
-use tokio_udp::{UdpFramed, UdpSocket};
 use failure::Error;
+use rand;
+use tokio_udp::{UdpFramed, UdpSocket};
 
 use codec::PacketCodec;
 use pending_connection::PendingConnection;
@@ -60,6 +60,6 @@ impl SrtSocketBuilder {
     }
 
     pub fn gen_sockid() -> SocketID {
-        SocketID(thread_rng().gen::<u32>())
+        SocketID(rand::random())
     }
 }

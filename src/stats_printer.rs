@@ -1,12 +1,11 @@
 use Sender;
 
 use {
-    bytes::Bytes, futures::prelude::*, serde_json,
+    bytes::Bytes, failure::Error, futures::prelude::*, serde_json,
     std::{
         net::SocketAddr, ops::{Deref, DerefMut}, time::Duration,
-    },
-    CongestCtrl, Packet,
-	failure::Error,
+    }, CongestCtrl,
+    Packet,
 };
 
 pub struct StatsPrinterSender<T, CC> {

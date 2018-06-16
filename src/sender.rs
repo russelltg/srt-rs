@@ -1,13 +1,10 @@
 use {
-    bytes::{Bytes, BytesMut}, futures::prelude::*, futures_timer::{Delay, Interval},
-    loss_compression::decompress_loss_list, packet::{ControlTypes, Packet, PacketLocation},
+    bytes::{Bytes, BytesMut}, failure::Error, futures::prelude::*,
+    futures_timer::{Delay, Interval}, loss_compression::decompress_loss_list,
+    packet::{ControlTypes, Packet, PacketLocation},
     srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags}, srt_version,
-    std::{
-        collections::VecDeque, io::Cursor, net::SocketAddr,
-        time::Duration,
-    },
-	failure::Error,
-    CCData, CongestCtrl, ConnectionSettings, SeqNumber, Stats,
+    std::{collections::VecDeque, io::Cursor, net::SocketAddr, time::Duration}, CCData, CongestCtrl,
+    ConnectionSettings, SeqNumber, Stats,
 };
 
 pub struct Sender<T, CC> {
@@ -306,16 +303,16 @@ where
             SrtControlPacket::HandshakeResponse(shake) => {
                 // make sure the SRT version matches ours
                 if srt_version::CURRENT != shake.version {
-                        bail!(
-                            "Incomatible version, local is {}, remote is {}",
-                            srt_version::CURRENT,
-                            shake.version
-                        );
+                    bail!(
+                        "Incomatible version, local is {}, remote is {}",
+                        srt_version::CURRENT,
+                        shake.version
+                    );
                 }
 
                 // make sure the other side is a receiver
                 if shake.flags.contains(SrtShakeFlags::TSBPDSND) {
-                        bail!("Sender received SRT handshake from another sender");
+                    bail!("Sender received SRT handshake from another sender");
                 }
 
                 // make sure the recvr flag is set, otherwise nothing is set
@@ -488,7 +485,7 @@ where
                     }
                     // stream has ended, this is weird
                     None => {
-                            bail!("Unexpected EOF of underlying stream");
+                        bail!("Unexpected EOF of underlying stream");
                     }
                 }
             }
