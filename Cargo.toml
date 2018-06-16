@@ -25,10 +25,8 @@ bitflags = "1"
 serde = "1"
 serde_json = "1"
 serde_derive = "1"
-
-[patch.crates-io]
-net2 = { path = "../net2-rs", version = "0.2.32" }
-mio = { path = "../mio", version = "0.6.14" }
+failure = "0.1"
+failure_derive = "0.1"
 
 [lib]
 name = "srt"

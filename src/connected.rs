@@ -1,6 +1,7 @@
 use {
-    futures::prelude::*, receiver::Receiver, sender::Sender, std::io::Error, std::net::SocketAddr,
+    futures::prelude::*, receiver::Receiver, sender::Sender, std::net::SocketAddr,
     CongestCtrl, ConnectionSettings, DefaultCongestCtrl, Packet,
+	failure::Error,
 };
 
 pub struct Connected<T> {

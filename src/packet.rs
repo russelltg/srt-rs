@@ -2,8 +2,8 @@
 // see https://tools.ietf.org/html/draft-gg-udt-03#page-5
 
 use {
-    bytes::{Buf, BufMut, Bytes}, std::io::{Cursor, Error, ErrorKind, Result},
-    std::net::{IpAddr, Ipv4Addr}, SeqNumber, SocketID,
+    bytes::{Buf, BufMut, Bytes}, failure::Error, std::io::Cursor, std::net::{IpAddr, Ipv4Addr},
+    SeqNumber, SocketID,
 };
 
 /// Represents A UDT/SRT packet
@@ -201,17 +201,23 @@ impl ControlTypes {
         reserved: u16,
         extra_info: i32,
         mut buf: T,
-    ) -> Result<ControlTypes> {
+    ) -> Result<ControlTypes, Error> {
         match packet_type {
             0x0 => {
                 // Handshake
 
                 let udt_version = buf.get_i32_be();
-                let sock_type = SocketType::from_u32(buf.get_u32_be())?;
+                let sock_type = match SocketType::from_u32(buf.get_u32_be()) {
+					Ok(st) => st,
+					Err(err_ty) => bail!("Invalid socket type {}", err_ty),
+				};
                 let init_seq_num = SeqNumber::new(buf.get_u32_be());
                 let max_packet_size = buf.get_u32_be();
                 let max_flow_size = buf.get_u32_be();
-                let connection_type = ConnectionType::from_i32(buf.get_i32_be())?;
+                let connection_type = match ConnectionType::from_i32(buf.get_i32_be()) {
+					Ok(ct) => ct,
+					Err(err_ct) => bail!("Invalid connection type {}", err_ct),		
+				};
                 let socket_id = SocketID(buf.get_u32_be());
                 let syn_cookie = buf.get_i32_be();
 
@@ -294,10 +300,7 @@ impl ControlTypes {
                 // Custom
                 Ok(ControlTypes::Custom(reserved, buf.collect()))
             }
-            x => Err(Error::new(
-                ErrorKind::InvalidData,
-                format!("Unrecognized control packet type: {:?}", x),
-            )),
+            x => Err(format_err!("Unrecognized control packet type: {:?}", x)),
         }
     }
 
@@ -338,7 +341,7 @@ impl ControlTypes {
                 into.put_u32_be(c.init_seq_num.raw());
                 into.put_u32_be(c.max_packet_size);
                 into.put_u32_be(c.max_flow_size);
-                into.put_i32_be(c.connection_type.as_i32());
+                into.put_i32_be(c.connection_type as i32);
                 into.put_u32_be(c.socket_id.0);
                 into.put_i32_be(c.syn_cookie);
 
@@ -462,17 +465,12 @@ pub enum SocketType {
 }
 
 impl SocketType {
-    pub fn from_u32(num: u32) -> Result<SocketType> {
+    /// Turns a u32 into a SocketType. If the u32 wasn't valid (only 0 and 1 are valid), than it returns Err(num) 
+    pub fn from_u32(num: u32) -> Result<SocketType, u32> {
         match num {
             0 => Ok(SocketType::Stream),
             1 => Ok(SocketType::Datagram),
-            i => Err(Error::new(
-                ErrorKind::InvalidData,
-                format!(
-                    "Unrecognized socket type: {:?}, expected 0 (STREAM) or 1 (DGRAM)",
-                    i
-                ),
-            )),
+            i => Err(i),
         }
     }
 }
@@ -481,52 +479,38 @@ impl SocketType {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ConnectionType {
     /// A regular connection; one listener and one sender, 1
-    Regular,
+    Regular = 1,
 
     /// A rendezvous connection, initial connect request, 0
-    RendezvousFirst,
+    RendezvousFirst = 0,
 
     /// A rendezvous connection, response to initial connect request, -1
     /// Also a regular connection client response to the second handshake
-    RendezvousRegularSecond,
+    RendezvousRegularSecond = -1,
 
     /// Final rendezvous check, -2
-    RendezvousFinal,
+    RendezvousFinal = -2,
 }
 
 impl ConnectionType {
-    pub fn from_i32(num: i32) -> Result<ConnectionType> {
+    /// Turns an i32 into a `ConnectionType`, returning Err(num) if no valid one was passed.
+    pub fn from_i32(num: i32) -> Result<ConnectionType, i32> {
         match num {
             1 => Ok(ConnectionType::Regular),
             0 => Ok(ConnectionType::RendezvousFirst),
             -1 => Ok(ConnectionType::RendezvousRegularSecond),
             -2 => Ok(ConnectionType::RendezvousFinal),
-            i => Err(Error::new(
-                ErrorKind::InvalidData,
-                format!("Unrecognized connection type: {:?}", i),
-            )),
-        }
-    }
-
-    pub fn as_i32(&self) -> i32 {
-        match *self {
-            ConnectionType::Regular => 1,
-            ConnectionType::RendezvousFirst => 0,
-            ConnectionType::RendezvousRegularSecond => -1,
-            ConnectionType::RendezvousFinal => -2,
+            i => Err(i),
         }
     }
 }
 
 impl Packet {
-    pub fn parse<T: Buf>(mut buf: T) -> Result<Packet> {
+    pub fn parse<T: Buf>(mut buf: T) -> Result<Packet, Error> {
         // Buffer must be at least 16 bytes,
         // the length of a header packet
         if buf.remaining() < 16 {
-            return Err(Error::new(
-                ErrorKind::UnexpectedEof,
-                "Packet not long enough to have a header",
-            ));
+            bail!("Packet not long enough to have a header");
         }
 
         // get the first four bytes
@@ -640,79 +624,87 @@ impl Packet {
     }
 }
 
-#[test]
-fn packet_location_from_i32_test() {
-    assert_eq!(PacketLocation::from_i32(0b10 << 30), PacketLocation::First);
-    assert_eq!(
-        PacketLocation::from_i32(!(0b01 << 30)),
-        PacketLocation::First
-    );
-    assert_eq!(
-        PacketLocation::from_i32(0b101010101110 << 20),
-        PacketLocation::First
-    );
+#[cfg(test)]
+mod test {
 
-    assert_eq!(PacketLocation::from_i32(0b00), PacketLocation::Middle);
-    assert_eq!(
-        PacketLocation::from_i32(!(0b11 << 30)),
-        PacketLocation::Middle
-    );
-    assert_eq!(
-        PacketLocation::from_i32(0b001010101110 << 20),
-        PacketLocation::Middle
-    );
+	use std::io::Cursor;
+	use super::{SocketType, HandshakeControlInfo, PacketLocation, Packet, ControlTypes, ConnectionType};
+	use {SocketID, SeqNumber};
 
-    assert_eq!(PacketLocation::from_i32(0b01 << 30), PacketLocation::Last);
-    assert_eq!(
-        PacketLocation::from_i32(!(0b10 << 30)),
-        PacketLocation::Last
-    );
-    assert_eq!(
-        PacketLocation::from_i32(0b011100101110 << 20),
-        PacketLocation::Last
-    );
+    #[test]
+    fn packet_location_from_i32_test() {
+        assert_eq!(PacketLocation::from_i32(0b10 << 30), PacketLocation::First);
+        assert_eq!(
+            PacketLocation::from_i32(!(0b01 << 30)),
+            PacketLocation::First
+        );
+        assert_eq!(
+            PacketLocation::from_i32(0b101010101110 << 20),
+            PacketLocation::First
+        );
 
-    assert_eq!(PacketLocation::from_i32(0b11 << 30), PacketLocation::Only);
-    assert_eq!(
-        PacketLocation::from_i32(!(0b00 << 30)),
-        PacketLocation::Only
-    );
-    assert_eq!(
-        PacketLocation::from_i32(0b110100101110 << 20),
-        PacketLocation::Only
-    );
-}
+        assert_eq!(PacketLocation::from_i32(0b00), PacketLocation::Middle);
+        assert_eq!(
+            PacketLocation::from_i32(!(0b11 << 30)),
+            PacketLocation::Middle
+        );
+        assert_eq!(
+            PacketLocation::from_i32(0b001010101110 << 20),
+            PacketLocation::Middle
+        );
 
-#[test]
-fn packet_location_as_i32_test() {
-    assert_eq!(PacketLocation::First.as_i32(), 0b10 << 30);
-    assert_eq!(PacketLocation::Middle.as_i32(), 0b0);
-    assert_eq!(PacketLocation::Last.as_i32(), 0b01 << 30);
-    assert_eq!(PacketLocation::Only.as_i32(), 0b11 << 30);
-}
+        assert_eq!(PacketLocation::from_i32(0b01 << 30), PacketLocation::Last);
+        assert_eq!(
+            PacketLocation::from_i32(!(0b10 << 30)),
+            PacketLocation::Last
+        );
+        assert_eq!(
+            PacketLocation::from_i32(0b011100101110 << 20),
+            PacketLocation::Last
+        );
 
-#[test]
-fn handshake_ser_des_test() {
-    let pack = Packet::Control {
-        timestamp: 0,
-        dest_sockid: SocketID(0),
-        control_type: ControlTypes::Handshake(HandshakeControlInfo {
-            udt_version: 4,
-            sock_type: SocketType::Datagram,
-            init_seq_num: SeqNumber::new(1827131),
-            max_packet_size: 1500,
-            max_flow_size: 25600,
-            connection_type: ConnectionType::Regular,
-            socket_id: SocketID(1231),
-            syn_cookie: 0,
-            peer_addr: "127.0.0.1".parse().unwrap(),
-        }),
-    };
+        assert_eq!(PacketLocation::from_i32(0b11 << 30), PacketLocation::Only);
+        assert_eq!(
+            PacketLocation::from_i32(!(0b00 << 30)),
+            PacketLocation::Only
+        );
+        assert_eq!(
+            PacketLocation::from_i32(0b110100101110 << 20),
+            PacketLocation::Only
+        );
+    }
 
-    let mut buf = vec![];
-    pack.serialize(&mut buf);
+    #[test]
+    fn packet_location_as_i32_test() {
+        assert_eq!(PacketLocation::First.as_i32(), 0b10 << 30);
+        assert_eq!(PacketLocation::Middle.as_i32(), 0b0);
+        assert_eq!(PacketLocation::Last.as_i32(), 0b01 << 30);
+        assert_eq!(PacketLocation::Only.as_i32(), 0b11 << 30);
+    }
 
-    let des = Packet::parse(Cursor::new(buf)).unwrap();
+    #[test]
+    fn handshake_ser_des_test() {
+        let pack = Packet::Control {
+            timestamp: 0,
+            dest_sockid: SocketID(0),
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                udt_version: 4,
+                sock_type: SocketType::Datagram,
+                init_seq_num: SeqNumber::new(1827131),
+                max_packet_size: 1500,
+                max_flow_size: 25600,
+                connection_type: ConnectionType::Regular,
+                socket_id: SocketID(1231),
+                syn_cookie: 0,
+                peer_addr: "127.0.0.1".parse().unwrap(),
+            }),
+        };
 
-    assert_eq!(pack, des);
+        let mut buf = vec![];
+        pack.serialize(&mut buf);
+
+        let des = Packet::parse(Cursor::new(buf)).unwrap();
+
+        assert_eq!(pack, des);
+    }
 }

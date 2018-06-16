@@ -5,10 +5,11 @@ use {
     seq_number::seq_num_range, srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags},
     srt_version,
     std::{
-        cmp, collections::VecDeque, io::{Cursor, Error, ErrorKind, Result}, iter::Iterator,
+        cmp, collections::VecDeque, io::Cursor, iter::Iterator,
         net::SocketAddr, time::{Duration, Instant},
     },
     ConnectionSettings, SeqNumber,
+	failure::Error,
 };
 
 struct LossListEntry {
@@ -163,7 +164,7 @@ where
         self.timeout_timer.reset(self.listen_timeout)
     }
 
-    fn on_ack_event(&mut self) -> Result<()> {
+    fn on_ack_event(&mut self) -> Result<(), Error> {
         // get largest inclusive received packet number
         let ack_number = match self.loss_list.first() {
             // There is an element in the loss list
@@ -305,7 +306,7 @@ where
         Ok(())
     }
 
-    fn on_nak_event(&mut self) -> Result<()> {
+    fn on_nak_event(&mut self) -> Result<(), Error> {
         // reset NAK timer, rtt and variance are in us, so convert to ns
 
         // NAK is used to trigger a negative acknowledgement (NAK). Its period
@@ -357,7 +358,7 @@ where
     // checks the timers
     // if a timer was triggered, then an RSFutureTimeout will be returned
     // if not, the socket is given back
-    fn check_timers(&mut self) -> Result<()> {
+    fn check_timers(&mut self) -> Result<(), Error> {
         // see if we need to ACK or NAK
         if let Async::Ready(_) = self.ack_interval.poll()? {
             self.on_ack_event()?;
@@ -378,35 +379,26 @@ where
     }
 
     // handles a SRT control packet
-    fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<()> {
+    fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
         match pack {
             SrtControlPacket::HandshakeRequest(shake) => {
                 // make sure the SRT version matches ours
                 if srt_version::CURRENT != shake.version {
-                    return Err(Error::new(
-                        ErrorKind::Other,
-                        format!(
+                        bail!(
                             "Incomatible version, local is {}, remote is {}",
                             srt_version::CURRENT,
                             shake.version
-                        ),
-                    ));
+                        );
                 }
 
                 // make sure it's a sender, cuz otherwise we have a problem
                 if shake.flags.contains(SrtShakeFlags::TSBPDRCV) {
-                    return Err(Error::new(
-                        ErrorKind::Other,
-                        "Receiver tried to connect with another receiver, aborting.",
-                    ));
+                        bail!("Receiver tried to connect with another receiver, aborting.");
                 }
 
                 // make sure the sender flag is set, or else neither sender nor recv are set, which is bad
                 if !shake.flags.contains(SrtShakeFlags::TSBPDSND) {
-                    return Err(Error::new(
-                        ErrorKind::Other,
-                        format!("Got SRT handshake packet with neither receiver or sender set. Flags={:#b}", shake.flags.bits()),
-                    ));
+                        bail!("Got SRT handshake packet with neither receiver or sender set. Flags={:#b}", shake.flags.bits());
                 }
 
                 self.tsbpd = Some(Duration::max(
@@ -443,7 +435,7 @@ where
 
     // handles a packet, returning either a future, if there is something to send,
     // or the socket, and in the case of a data packet, a payload
-    fn handle_packet(&mut self, packet: Packet, from: &SocketAddr) -> Result<Option<ReadyType>> {
+    fn handle_packet(&mut self, packet: Packet, from: &SocketAddr) -> Result<Option<ReadyType>, Error> {
         // We don't care about packets from elsewhere
         if *from != self.settings.remote {
             info!("Packet received from unknown address: {:?}", from);
@@ -826,7 +818,7 @@ where
     }
 
     // send a NAK, and return the future
-    fn send_nak<I>(&mut self, lost_seq_nums: I) -> Result<()>
+    fn send_nak<I>(&mut self, lost_seq_nums: I) -> Result<(), Error>
     where
         I: Iterator<Item = SeqNumber>,
     {

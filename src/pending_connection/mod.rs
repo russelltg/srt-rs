@@ -3,9 +3,10 @@ pub mod listen;
 pub mod rendezvous;
 
 use std::{
-    io::Error, net::{IpAddr, SocketAddr}, time::Instant,
+     net::{IpAddr, SocketAddr}, time::Instant,
 };
 
+use failure::Error;
 use futures::prelude::*;
 
 use connected::Connected;

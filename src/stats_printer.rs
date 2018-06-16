@@ -3,9 +3,10 @@ use Sender;
 use {
     bytes::Bytes, futures::prelude::*, serde_json,
     std::{
-        io::Error, net::SocketAddr, ops::{Deref, DerefMut}, time::Duration,
+        net::SocketAddr, ops::{Deref, DerefMut}, time::Duration,
     },
     CongestCtrl, Packet,
+	failure::Error,
 };
 
 pub struct StatsPrinterSender<T, CC> {

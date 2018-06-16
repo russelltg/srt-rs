@@ -14,6 +14,8 @@ extern crate tokio_udp;
 extern crate serde_derive;
 #[macro_use]
 extern crate bitflags;
+#[macro_use]
+extern crate failure;
 
 pub mod builder;
 pub mod codec;
