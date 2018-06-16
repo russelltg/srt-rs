@@ -21,15 +21,15 @@ pub enum SrtControlPacket {
 /// The SRT handshake object
 pub struct SrtHandshake {
     /// The SRT version
-	/// Serialized just as the u32 that SrtVersion serialized to
+    /// Serialized just as the u32 that SrtVersion serialized to
     pub version: SrtVersion,
 
     /// SRT connection init flags
     pub flags: SrtShakeFlags,
 
     /// The TSBPD latency
-	/// This is serialized as the lower 16 bits of the third 32-bit word
-	/// see csrtcc.cpp:132 in the reference implementation
+    /// This is serialized as the lower 16 bits of the third 32-bit word
+    /// see csrtcc.cpp:132 in the reference implementation
     pub latency: Duration,
 }
 
@@ -115,8 +115,8 @@ impl SrtHandshake {
                 ))
             }
         };
-		// the latency is the lower 16 bits, discard the upper 16
-		buf.get_u16_be();
+        // the latency is the lower 16 bits, discard the upper 16
+        buf.get_u16_be();
 
         let latency = buf.get_u16_be();
 
@@ -130,9 +130,9 @@ impl SrtHandshake {
     pub fn serialize<T: BufMut>(&self, into: &mut T) {
         into.put_u32_be(self.version.to_u32());
         into.put_u32_be(self.flags.bits());
-		// upper 16 bits are all zero
-		into.put_u16_be(0);
-		// lower 16 is latency
+        // upper 16 bits are all zero
+        into.put_u16_be(0);
+        // lower 16 is latency
         into.put_u16_be(
             (self.latency.subsec_nanos() / 1_000_000) as u16
                 + self.latency.as_secs() as u16 * 1_000,

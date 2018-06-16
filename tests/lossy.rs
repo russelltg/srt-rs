@@ -9,8 +9,7 @@ extern crate log;
 
 use {
     bytes::{Bytes, BytesMut}, futures::{prelude::*, stream::iter_ok, sync::mpsc},
-    futures_timer::{Delay, Interval},
-	rand::distributions::{Normal, Distribution},
+    futures_timer::{Delay, Interval}, rand::distributions::{Distribution, Normal},
     srt::{
         stats_printer::StatsPrinterSender, ConnectionSettings, Receiver, Sender, SeqNumber,
         SocketID, SrtCongestCtrl,
@@ -222,17 +221,16 @@ fn test_with_loss() {
     });
 
     let t2 = thread::spawn(|| {
+        let mut next_data = INIT_SEQ_NUM;
 
-		let mut next_data = INIT_SEQ_NUM;
+        for payload in recvr.wait() {
+            let payload = payload.unwrap();
+            assert_eq!(next_data.to_string(), str::from_utf8(&payload[..]).unwrap());
 
-		for payload in recvr.wait() {
-			let payload = payload.unwrap();
-			assert_eq!(next_data.to_string(), str::from_utf8(&payload[..]).unwrap());
+            next_data += 1;
+        }
 
-			next_data+=1;
-		}
-
-		assert_eq!(next_data, INIT_SEQ_NUM + ITERS);
+        assert_eq!(next_data, INIT_SEQ_NUM + ITERS);
     });
 
     t1.join().unwrap();
@@ -284,7 +282,7 @@ fn tsbpd() {
             max_packet_size: 1316,
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(),
-            tsbpd_latency: Some(Duration::from_secs(5)), 
+            tsbpd_latency: Some(Duration::from_secs(5)),
         },
     );
 
@@ -301,18 +299,20 @@ fn tsbpd() {
 
         let mut next_num = INIT_SEQ_NUM;
 
-		// wait 5ish seconds for some good warmup
-		{
-			let start = Instant::now();
+        // wait 5ish seconds for some good warmup
+        {
+            let start = Instant::now();
 
-			while start.elapsed() < Duration::from_secs(5) { iter.next().unwrap().unwrap(); next_num += 1; }
-		}
+            while start.elapsed() < Duration::from_secs(5) {
+                iter.next().unwrap().unwrap();
+                next_num += 1;
+            }
+        }
 
         let mut last_time = Instant::now();
 
         for by in iter {
-
-			println!("Next!");
+            println!("Next!");
 
             let by = by.unwrap();
             assert_eq!(
@@ -329,7 +329,8 @@ fn tsbpd() {
             let ms = (last_time.elapsed().subsec_nanos() as f64
                 + last_time.elapsed().as_secs() as f64 * 1e9) / 1e6;
             assert!(
-                last_time.elapsed() > Duration::new(0, 900_000) && last_time.elapsed() < Duration::from_millis(2),
+                last_time.elapsed() > Duration::new(0, 900_000)
+                    && last_time.elapsed() < Duration::from_millis(2),
                 "time elapsed={}ms, expected between 0.9ms and 2ms",
                 ms
             );

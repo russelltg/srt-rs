@@ -1,6 +1,7 @@
 use {
-	rand::{self, distributions::{Distribution, Normal}},
-    std::mem,
+    rand::{
+        self, distributions::{Distribution, Normal},
+    }, std::mem,
     std::time::Duration, CCData, CongestCtrl, SeqNumber,
 };
 

@@ -50,7 +50,8 @@ where
 
     fn poll(&mut self) -> Poll<Connected<T>, Error> {
         loop {
-            let sock = self.sock
+            let sock = self
+                .sock
                 .as_mut()
                 .expect("Poll after PendingConnection completion");
             sock.poll_complete()?;

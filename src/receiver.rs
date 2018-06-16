@@ -179,8 +179,13 @@ where
             return Ok(());
         }
 
-		// make sure this ACK number is greater or equal to a one sent previously
-		assert!(self.ack_history_window.last().map(|a| a.ack_number).unwrap_or(SeqNumber::new(0)) <= ack_number);
+        // make sure this ACK number is greater or equal to a one sent previously
+        assert!(
+            self.ack_history_window
+                .last()
+                .map(|a| a.ack_number)
+                .unwrap_or(SeqNumber::new(0)) <= ack_number
+        );
 
         trace!(
             "Sending ACK; ack_num={:?}, lr_ack_acked={:?}",
@@ -325,7 +330,8 @@ where
             let mut ret = Vec::new();
 
             let rtt = self.rtt;
-            for pak in self.loss_list
+            for pak in self
+                .loss_list
                 .iter_mut()
                 .filter(|lle| lle.feedback_time < now - lle.k * rtt)
             {
@@ -467,7 +473,8 @@ where
                     ControlTypes::Ack2(seq_num) => {
                         // 1) Locate the related ACK in the ACK History Window according to the
                         //    ACK sequence number in this ACK2.
-                        let id_in_wnd = match self.ack_history_window
+                        let id_in_wnd = match self
+                            .ack_history_window
                             .as_slice()
                             .binary_search_by(|entry| entry.ack_seq_num.cmp(&seq_num))
                         {
@@ -541,8 +548,7 @@ where
                 }
             }
             Packet::Data { seq_number, .. } => {
-
-				debug!("Received data packet seq_num={}", seq_number);
+                debug!("Received data packet seq_num={}", seq_number);
 
                 let now = self.get_timestamp();
 
@@ -674,7 +680,8 @@ where
                         let message_number = packet.message_number().unwrap();
 
                         // see if the entire message is available
-                        let msg_avaialble = self.buffer
+                        let msg_avaialble = self
+                            .buffer
                             .iter()
                             .scan((), |_, p| match p {
                                 Some((_, d)) => {
@@ -760,13 +767,16 @@ where
 
         match first {
             Some((send_time, pack)) => {
-				// TODO: is this right? XXX debug
-				let send_time_ts = pack.timestamp();
-
+                // TODO: is this right? XXX debug
+                let send_time_ts = pack.timestamp();
 
                 // if ready to release, do
                 // TODO: deal with messages (yuck)
-                if self.get_timestamp() >= send_time_ts as i32 + { tsbpd.as_secs() as u32 * 1_000_000 + tsbpd.subsec_nanos() / 1_000 } as i32  {
+                if self.get_timestamp()
+                    >= send_time_ts as i32 + {
+                        tsbpd.as_secs() as u32 * 1_000_000 + tsbpd.subsec_nanos() / 1_000
+                    } as i32
+                {
                     self.last_released += 1;
                     Some(pack.payload().unwrap())
                 } else {
@@ -777,7 +787,8 @@ where
             // if the most recent packet hasn't been received yet, see if we need to discard some packets
             None => {
                 // find if the first actually received packet should be released
-                let time = self.buffer
+                let time = self
+                    .buffer
                     .iter()
                     .find(|ref a| a.is_some())?
                     .as_ref()?

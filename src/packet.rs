@@ -111,12 +111,12 @@ impl Packet {
             None
         }
     }
-	// TODO: should this be u32?
-	pub fn timestamp(&self) -> i32 {
-		match *self { 
-			Packet::Data { timestamp, .. } | Packet::Control { timestamp, .. } => timestamp
-		}
-	}
+    // TODO: should this be u32?
+    pub fn timestamp(&self) -> i32 {
+        match *self {
+            Packet::Data { timestamp, .. } | Packet::Control { timestamp, .. } => timestamp,
+        }
+    }
 }
 
 /// Signifies the packet location in a message for a data packet

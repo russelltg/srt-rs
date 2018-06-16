@@ -417,7 +417,8 @@ where
         let reserved = SrtControlPacket::HandshakeRequest(SrtHandshake {
             version: srt_version::CURRENT,
             flags: SrtShakeFlags::TSBPDSND, // TODO: the reference implementation sets a lot more of these, research
-            latency: self.settings
+            latency: self
+                .settings
                 .tsbpd_latency
                 .unwrap_or(Duration::from_millis(120)),
         }).serialize(&mut bytes);
@@ -462,7 +463,8 @@ where
         // this poll_complete could have come from a wakeup of that, so call it
         if let Async::Ready(_) = self.sock.poll_complete()? {
             // if everything is flushed, return Ok
-            if self.loss_list.is_empty() && self.pending_packets.is_empty()
+            if self.loss_list.is_empty()
+                && self.pending_packets.is_empty()
                 && self.lr_acked_packet == self.next_seq_number
                 && self.buffer.is_empty()
             {
