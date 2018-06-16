@@ -14,5 +14,5 @@ cache: cargo
 
 script:
   - cargo build --verbose
-  - RUST_LOG=srt=debug,tests=info cargo test --verbose
+  - RUST_LOG=srt=info,lossy=info cargo test --verbose
 
