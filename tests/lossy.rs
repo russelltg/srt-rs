@@ -6,6 +6,8 @@ extern crate rand;
 extern crate srt;
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate failure;
 
 use {
     bytes::{Bytes, BytesMut}, futures::{prelude::*, stream::iter_ok, sync::mpsc},
@@ -15,10 +17,12 @@ use {
         SocketID, SrtCongestCtrl,
     },
     std::{
-        cmp::Ordering, collections::BinaryHeap, fmt::Debug, io::{Error, ErrorKind}, str, thread,
+        cmp::Ordering, collections::BinaryHeap, fmt::Debug, str, thread,
         time::{Duration, Instant},
     },
+	failure::Error,
 };
+
 
 struct LossyConn<T> {
     sender: mpsc::Sender<T>,
@@ -182,8 +186,8 @@ fn test_with_loss() {
     let (send, recv) = LossyConn::new(0.05, Duration::from_secs(0), Duration::from_secs(0));
 
     let sender = Sender::new(
-        send.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
-            .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
+        send.map_err(|_| format_err!(""))
+            .sink_map_err(|_| format_err!("")),
         SrtCongestCtrl,
         ConnectionSettings {
             init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
@@ -198,8 +202,8 @@ fn test_with_loss() {
     );
 
     let recvr = Receiver::new(
-        recv.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
-            .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
+        recv.map_err(|_| format_err!(""))
+            .sink_map_err(|_| format_err!("")),
         ConnectionSettings {
             init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
             socket_start_time: Instant::now(),
@@ -256,8 +260,8 @@ fn tsbpd() {
     let (send, recv) = LossyConn::new(0.01, Duration::from_secs(1), Duration::from_millis(200));
 
     let sender = Sender::new(
-        send.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
-            .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
+        send.map_err(|_| format_err!(""))
+            .sink_map_err(|_| format_err!("")),
         SrtCongestCtrl,
         ConnectionSettings {
             init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
@@ -272,8 +276,8 @@ fn tsbpd() {
     );
 
     let recvr = Receiver::new(
-        recv.map_err(|_| Error::new(ErrorKind::Other, "bad bad"))
-            .sink_map_err(|_| Error::new(ErrorKind::Other, "bad bad")),
+        recv.map_err(|_| format_err!(""))
+            .sink_map_err(|_| format_err!("")),
         ConnectionSettings {
             init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
             socket_start_time: Instant::now(),

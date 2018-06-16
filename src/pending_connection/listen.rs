@@ -1,9 +1,10 @@
 use std::{
-    collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, io::{Error, ErrorKind},
+    collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, 
     net::SocketAddr, time::{Duration, Instant},
 };
 
 use futures::prelude::*;
+use failure::Error;
 
 use connected::Connected;
 use packet::{ConnectionType, ControlTypes, Packet};
@@ -59,10 +60,7 @@ where
             let (packet, addr) = match sock.poll() {
                 Ok(Async::Ready(Some(p))) => p,
                 Ok(Async::Ready(None)) => {
-                    return Err(Error::new(
-                        ErrorKind::UnexpectedEof,
-                        "Unexpected EOF when reading stream",
-                    ));
+                    bail!("Unexpected EOF when reading stream");
                 }
                 Ok(Async::NotReady) => return Ok(Async::NotReady),
                 Err(e) => {

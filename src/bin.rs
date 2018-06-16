@@ -10,13 +10,15 @@ extern crate tokio_udp;
 extern crate url;
 #[macro_use]
 extern crate clap;
+extern crate failure;
 
 use {
     bytes::Bytes, futures::{future, prelude::*}, srt::{ConnInitMethod, SrtSocketBuilder},
     std::{
-        io::Error, net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
     }, tokio_codec::BytesCodec,
     tokio_udp::{UdpFramed, UdpSocket}, url::{Host, Url},
+	failure::Error,
 };
 
 fn main() {
@@ -75,7 +77,7 @@ fn main() {
                     UdpFramed::new(
                         UdpSocket::bind(&input_local_addr).unwrap(),
                         BytesCodec::new(),
-                    ).map(|(b, _)| b.freeze()),
+                    ).map(|(b, _)| b.freeze()).map_err(From::from),
                 )),
             ),
             // TODO: flags

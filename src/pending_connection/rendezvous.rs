@@ -1,6 +1,6 @@
-use std::io::Error;
 use std::net::SocketAddr;
 
+use failure::Error;
 use futures::prelude::*;
 
 use connected::Connected;

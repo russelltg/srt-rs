@@ -1,9 +1,9 @@
-use std::io::Result;
 use std::net::SocketAddr;
 use std::time::Instant;
 
 use rand::{thread_rng, Rng};
 use tokio_udp::{UdpFramed, UdpSocket};
+use failure::Error;
 
 use codec::PacketCodec;
 use pending_connection::PendingConnection;
@@ -36,7 +36,7 @@ impl SrtSocketBuilder {
         }
     }
 
-    pub fn build(self) -> Result<PendingConnection<SrtSocket>> {
+    pub fn build(self) -> Result<PendingConnection<SrtSocket>, Error> {
         trace!("Listening on {:?}", self.local_addr);
 
         let socket = UdpFramed::new(UdpSocket::bind(&self.local_addr)?, PacketCodec {});

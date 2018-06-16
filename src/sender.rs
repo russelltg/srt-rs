@@ -3,9 +3,10 @@ use {
     loss_compression::decompress_loss_list, packet::{ControlTypes, Packet, PacketLocation},
     srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags}, srt_version,
     std::{
-        collections::VecDeque, io::{Cursor, Error, ErrorKind, Result}, net::SocketAddr,
+        collections::VecDeque, io::Cursor, net::SocketAddr,
         time::Duration,
     },
+	failure::Error,
     CCData, CongestCtrl, ConnectionSettings, SeqNumber, Stats,
 };
 
@@ -170,7 +171,7 @@ where
         }
     }
 
-    fn handle_packet(&mut self, pack: Packet) -> Result<()> {
+    fn handle_packet(&mut self, pack: Packet) -> Result<(), Error> {
         match pack {
             Packet::Control {
                 control_type,
@@ -299,33 +300,27 @@ where
         Ok(())
     }
 
-    fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<()> {
+    fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
         match pack {
             SrtControlPacket::HandshakeRequest(_) => warn!("Sender received SRT handshake request"),
             SrtControlPacket::HandshakeResponse(shake) => {
                 // make sure the SRT version matches ours
                 if srt_version::CURRENT != shake.version {
-                    return Err(Error::new(
-                        ErrorKind::Other,
-                        format!(
+                        bail!(
                             "Incomatible version, local is {}, remote is {}",
                             srt_version::CURRENT,
                             shake.version
-                        ),
-                    ));
+                        );
                 }
 
                 // make sure the other side is a receiver
                 if shake.flags.contains(SrtShakeFlags::TSBPDSND) {
-                    return Err(Error::new(
-                        ErrorKind::Other,
-                        format!("Sender received SRT handshake from another sender"),
-                    ));
+                        bail!("Sender received SRT handshake from another sender");
                 }
 
                 // make sure the recvr flag is set, otherwise nothing is set
                 if !shake.flags.contains(SrtShakeFlags::TSBPDRCV) {
-                    return Err(Error::new(ErrorKind::Other, format!("Sender received SRT handshake with neither sender or receiver bits set")));
+                    bail!("Sender received SRT handshake with neither sender or receiver bits set");
                 }
 
                 // all setup, using TSBPD from the shake
@@ -409,7 +404,7 @@ where
         Some(pack)
     }
 
-    fn send_srt_handshake(&mut self) -> Result<()> {
+    fn send_srt_handshake(&mut self) -> Result<(), Error> {
         debug!("Sending SRT handshake packet");
 
         // make SRT handshake packet
@@ -493,10 +488,7 @@ where
                     }
                     // stream has ended, this is weird
                     None => {
-                        return Err(Error::new(
-                            ErrorKind::UnexpectedEof,
-                            "Unexpected EOF of underlying stream",
-                        ));
+                            bail!("Unexpected EOF of underlying stream");
                     }
                 }
             }
