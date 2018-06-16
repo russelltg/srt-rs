@@ -7,7 +7,7 @@ extern crate log;
 extern crate tokio_udp;
 
 use futures::prelude::*;
-use srt::{PendingConnection, SrtSocketBuilder};
+use srt::{PendingConnection, SrtSocketBuilder, ConnInitMethod};
 
 #[test]
 fn message_splitting() {
