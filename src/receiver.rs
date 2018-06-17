@@ -176,12 +176,9 @@ where
         }
 
         // make sure this ACK number is greater or equal to a one sent previously
-        assert!(
-            self.ack_history_window
-                .last()
-                .map(|a| a.ack_number)
-                .unwrap_or(SeqNumber::new(0)) <= ack_number
-        );
+		if let Some(w) = self.ack_history_window.last() {
+			assert!(w.ack_number <= ack_number);
+		}
 
         trace!(
             "Sending ACK; ack_num={:?}, lr_ack_acked={:?}",
