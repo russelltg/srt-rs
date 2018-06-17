@@ -1,7 +1,7 @@
 use {
     bytes::{Bytes, BytesMut}, failure::Error, futures::prelude::*,
     futures_timer::{Delay, Interval}, loss_compression::decompress_loss_list,
-    packet::{ControlTypes, Packet, PacketLocation},
+    packet::{ControlTypes, Packet, PacketLocationOrder},
     srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags}, srt_version,
     std::{collections::VecDeque, io::Cursor, net::SocketAddr, time::Duration}, CCData, CongestCtrl,
     ConnectionSettings, SeqNumber, Stats,

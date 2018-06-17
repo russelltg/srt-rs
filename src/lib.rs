@@ -36,6 +36,7 @@ pub mod stats_printer;
 #[macro_use]
 pub mod modular_num;
 pub mod seq_number;
+pub mod msg_number;
 
 pub use builder::{ConnInitMethod, SrtSocket, SrtSocketBuilder};
 pub use congest_ctrl::{CCData, CongestCtrl};
@@ -47,6 +48,7 @@ pub use pending_connection::PendingConnection;
 pub use receiver::Receiver;
 pub use sender::Sender;
 pub use seq_number::SeqNumber;
+pub use msg_number::MsgNumber;
 pub use srt_congest_ctrl::SrtCongestCtrl;
 pub use srt_version::SrtVersion;
 pub use stats::Stats;

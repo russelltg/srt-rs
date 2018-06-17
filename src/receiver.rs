@@ -1,7 +1,7 @@
 use {
     bytes::{Bytes, BytesMut}, failure::Error, futures::prelude::*,
     futures_timer::{Delay, Interval}, loss_compression::compress_loss_list,
-    packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet, PacketLocation},
+    packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet, PacketLocationOrder},
     seq_number::seq_num_range, srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags},
     srt_version,
     std::{
@@ -176,9 +176,9 @@ where
         }
 
         // make sure this ACK number is greater or equal to a one sent previously
-		if let Some(w) = self.ack_history_window.last() {
-			assert!(w.ack_number <= ack_number);
-		}
+        if let Some(w) = self.ack_history_window.last() {
+            assert!(w.ack_number <= ack_number);
+        }
 
         trace!(
             "Sending ACK; ack_num={:?}, lr_ack_acked={:?}",
@@ -595,7 +595,7 @@ where
                                 seq_number,
                                 self.loss_list
                                     .iter()
-                                    .map(|ll| ll.seq_num.raw())
+                                    .map(|ll| ll.seq_num.as_raw())
                                     .collect::<Vec<_>>()
                             );
                         }
@@ -658,11 +658,18 @@ where
             if let Some((send_time, packet)) = packet {
                 assert_eq!(packet.seq_number().unwrap(), self.last_released + 1);
 
-                let message_loc = packet.packet_location().unwrap();
+                let message_loc = packet.packet_location_order().unwrap();
 
                 // make sure to reconstruct messages correctly
-                match message_loc {
-                    PacketLocation::First => {
+                if message_loc.contains(PacketLocationOrder::FIRST) {
+					if message_loc.contains(PacketLocationOrdder::LAST) {
+						// only packet in message
+						self.last_released += 1;
+
+                        debug!("Releasing {:?}", packet.seq_number().unwrap());
+                        return Some(packet.payload().unwrap());
+
+					} else {
                         let message_number = packet.message_number().unwrap();
 
                         // see if the entire message is available
@@ -677,7 +684,7 @@ where
                                         );
                                         return None;
                                     }
-                                    match d.packet_location().unwrap() {
+                                    match d.packet_location_order().unwrap() {
                                         PacketLocation::First => {
                                             warn!("`First` encountered in the middle of a message");
 
@@ -729,17 +736,10 @@ where
                                     .collect::<Vec<_>>()
                             );
                         }
-                    }
-                    PacketLocation::Last | PacketLocation::Middle => {
-                        warn!("Middle or Last packe tlocation in packet without matching First. Discarding.");
-                    }
-                    PacketLocation::Only => {
-                        self.last_released += 1;
-
-                        debug!("Releasing {:?}", packet.seq_number().unwrap());
-                        return Some(packet.payload().unwrap());
-                    }
-                }
+                    } 
+                } else {
+					warn!("Unexpected middle of message (firt bit not set), expected first. This probably indicates a bug in the sender.");
+				}
             } else {
                 self.buffer.push_front(packet);
             }

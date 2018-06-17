@@ -3,128 +3,137 @@
 #[macro_export]
 macro_rules! modular_num {
     (pub $x:ident($type:ident, $num:expr)) => {
-        #[derive(Eq, PartialEq, Clone, Copy, Debug)]
-        pub struct $x(pub $type);
-
         modular_num_impls!($x, $type, 1 << $num, 1 << ($num - 1));
+
+        pub use self::mod_num_impl::$x;
     };
     ($x:ident($type:ident, $num:expr)) => {
         #[derive(Eq, PartialEq, Clone, Copy, Debug)]
         struct $x($type);
 
         modular_num_impls!($x, $type, 1 << $num, 1 << ($num - 1));
+
+        use self::mod_num_impl::$x;
     };
 }
 
 macro_rules! modular_num_impls {
 	($x:ident, $type:ident, $max_num:expr, $max_diff:expr) => {
 
-		use std::{fmt, cmp::Ordering, ops::{Add, Rem, Sub, AddAssign}};
-		use rand::{distributions::{Distribution, Standard}, Rng};
+		mod mod_num_impl {
 
-		impl $x {
-			pub fn new(from: $type) -> $x { $x(from % $max_num) }
 
-			pub fn raw(&self) -> $type { self.0 }
-		}
+			use std::{fmt, cmp::Ordering, ops::{Add, Rem, Sub, AddAssign}};
+			use rand::{distributions::{Distribution, Standard}, Rng};
 
-		impl Distribution<$x> for Standard {
-			fn sample<T: Rng + ?Sized>(&self, rng: &mut T) -> $x {
-				$x::new(rng.gen::<$type>())
+			#[derive(Eq, PartialEq, Clone, Copy, Debug)]
+			pub struct $x(pub $type);
+
+			impl $x {
+				pub fn new(from: $type) -> $x { $x(from % $max_num) }
+
+				pub fn as_raw(&self) -> $type { self.0 }
 			}
-		}
 
-		impl Add<$type> for $x {
-			type Output = Self;
-
-			fn add(self, other: $type) -> Self {
-				let added = $type::wrapping_add(self.0, other);
-
-				$x(added % $max_num)
-			}
-		}
-
-		/// Move a sequence number backwards by an offset
-		/// ie: SeqNumber(3) - 2 == 1
-		/// and SeqNumber(0) - 1 == SeqNumber(MAX_SEQ_NUM)
-		impl Sub<$type> for $x {
-			type Output = Self;
-
-			fn sub(self, other: $type) -> Self {
-				if self.0 < other {
-					// wrap
-					$x($max_num - (other - self.0))
-				} else {
-					$x(self.0 - other)
+			impl Distribution<$x> for Standard {
+				fn sample<T: Rng + ?Sized>(&self, rng: &mut T) -> $x {
+					$x::new(rng.gen::<$type>())
 				}
 			}
-		}
 
-		/// Gets the distance between two sequence numbers
-		/// Always measured with first one first and the second one second
-		/// ie: SeqNumber(0) - SeqNumber(MAX_SEQ_NUM) == 1
-		/// and SeqNumber(1) - SeqNumber(0) == 1
-		impl Sub<$x> for $x {
-			type Output = $type;
+			impl Add<$type> for $x {
+				type Output = Self;
 
-			fn sub(self, other: Self) -> Self::Output {
-				if self.0 >= other.0 {
-					// no wrap required
-					self.0 - other.0
-				} else {
-					$max_num - (other.0 - self.0)
+				fn add(self, other: $type) -> Self {
+					let added = $type::wrapping_add(self.0, other);
+
+					$x(added % $max_num)
 				}
 			}
-		}
 
-		/// Ordering sequence numbers is difficult, as they are modular
-		/// How it works is if the absolute value of the difference between sequence numbers is greater than
-		/// MAX_DIFF, then wrapping is assumed
-		impl Ord for $x {
-			fn cmp(&self, other: &Self) -> Ordering {
-				let diff = *self - *other;
+			/// Move a sequence number backwards by an offset
+			/// ie: SeqNumber(3) - 2 == 1
+			/// and SeqNumber(0) - 1 == SeqNumber(MAX_SEQ_NUM)
+			impl Sub<$type> for $x {
+				type Output = Self;
 
-				if diff == 0 {
-					return Ordering::Equal;
-				}
-
-				if diff < $max_diff {
-					// this means self was bigger than other
-					Ordering::Greater
-				} else {
-					// this means other was greater
-					Ordering::Less
+				fn sub(self, other: $type) -> Self {
+					if self.0 < other {
+						// wrap
+						$x($max_num - (other - self.0))
+					} else {
+						$x(self.0 - other)
+					}
 				}
 			}
-		}
 
-		impl Rem<$type> for $x {
-			type Output = $type;
+			/// Gets the distance between two sequence numbers
+			/// Always measured with first one first and the second one second
+			/// ie: SeqNumber(0) - SeqNumber(MAX_SEQ_NUM) == 1
+			/// and SeqNumber(1) - SeqNumber(0) == 1
+			impl Sub<$x> for $x {
+				type Output = $type;
 
-			fn rem(self, other: $type) -> Self::Output {
-				self.0 % other
+				fn sub(self, other: Self) -> Self::Output {
+					if self.0 >= other.0 {
+						// no wrap required
+						self.0 - other.0
+					} else {
+						$max_num - (other.0 - self.0)
+					}
+				}
 			}
-		}
 
-		impl PartialOrd for $x {
-			fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-				Some(self.cmp(other))
+			/// Ordering sequence numbers is difficult, as they are modular
+			/// How it works is if the absolute value of the difference between sequence numbers is greater than
+			/// MAX_DIFF, then wrapping is assumed
+			impl Ord for $x {
+				fn cmp(&self, other: &Self) -> Ordering {
+					let diff = *self - *other;
+
+					if diff == 0 {
+						return Ordering::Equal;
+					}
+
+					if diff < $max_diff {
+						// this means self was bigger than other
+						Ordering::Greater
+					} else {
+						// this means other was greater
+						Ordering::Less
+					}
+				}
 			}
-		}
 
-		impl AddAssign<$type> for $x {
-			fn add_assign(&mut self, rhs: $type) {
-				*self = *self + rhs
+			impl Rem<$type> for $x {
+				type Output = $type;
+
+				fn rem(self, other: $type) -> Self::Output {
+					self.0 % other
+				}
 			}
-		}
 
-		impl fmt::Display for $x {
-			fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-				write!(f, "{}", self.0)
+			impl PartialOrd for $x {
+				fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+					Some(self.cmp(other))
+				}
+			}
+
+			impl AddAssign<$type> for $x {
+				fn add_assign(&mut self, rhs: $type) {
+					*self = *self + rhs
+				}
+			}
+
+			impl fmt::Display for $x {
+				fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+					write!(f, "{}", self.0)
+				}
 			}
 		}
 	}
 }
+
 
 #[cfg(test)]
 mod tests {
