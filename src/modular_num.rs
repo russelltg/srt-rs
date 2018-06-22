@@ -29,7 +29,7 @@ macro_rules! modular_num_impls {
 				pub const MAX: $type = 1 << $num;
 				pub const MAX_DIFF: $type = 1 << ($num - 1);
 
-				pub fn new(from: $type) -> $x { $x(from % $x::MAX_DIFF) }
+				pub fn new(from: $type) -> $x { $x(from % $x::MAX) }
 
 				pub fn as_raw(&self) -> $type { self.0 }
 			}
@@ -52,7 +52,7 @@ macro_rules! modular_num_impls {
 
 			/// Move a sequence number backwards by an offset
 			/// ie: SeqNumber(3) - 2 == 1
-			/// and SeqNumber(0) - 1 == SeqNumber(MAX_SEQ_NUM)
+			/// and SeqNumber(0) - 1 == SeqNumber(MAX)
 			impl Sub<$type> for $x {
 				type Output = Self;
 
@@ -68,7 +68,7 @@ macro_rules! modular_num_impls {
 
 			/// Gets the distance between two sequence numbers
 			/// Always measured with first one first and the second one second
-			/// ie: SeqNumber(0) - SeqNumber(MAX_SEQ_NUM) == 1
+			/// ie: SeqNumber(0) - SeqNumber(MAX) == 1
 			/// and SeqNumber(1) - SeqNumber(0) == 1
 			impl Sub<$x> for $x {
 				type Output = $type;
@@ -139,6 +139,19 @@ mod tests {
 	use std::cmp::Ordering;
 
 	modular_num! { SeqNumber(u32, 31) }
+
+	#[test]
+	fn new() {
+		// shouldn't be truncated, first bit is zero
+		assert_eq!(SeqNumber::new(1687761238).as_raw(), 1687761238);
+		assert_eq!(SeqNumber::new(1687761239 | 1 << 31).as_raw(), 1687761239);
+	}
+
+	#[test]
+	fn max() {
+		assert_eq!(SeqNumber::MAX, 1 << 31);
+		assert_eq!(SeqNumber::MAX_DIFF, 1 << 30);
+	}
 
 	#[test]
 	fn mod_num_addition() {
