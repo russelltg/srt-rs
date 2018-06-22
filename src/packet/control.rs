@@ -404,7 +404,9 @@ impl ControlTypes {
             ControlTypes::DropRequest { .. } => unimplemented!(),
             // control data
             ControlTypes::Shutdown | ControlTypes::Ack2(_) | ControlTypes::KeepAlive => {}
-            ControlTypes::Custom { control_info, .. } => into.put(&control_info[..]),
+            ControlTypes::Custom {
+                ref control_info, ..
+            } => into.put(&control_info[..]),
         };
     }
 }

@@ -639,11 +639,11 @@ where
                         self.buffer.len(),
                         self.buffer[0]
                             .as_ref()
-                            .map(|(_, ref p)| p.seq_number().unwrap())
+                            .map(|(_, ref p)| p.seq_number)
                             .unwrap_or(SeqNumber::new(0)),
                         self.buffer[self.buffer.len() - 1]
                             .as_ref()
-                            .map(|(_, ref p)| p.seq_number().unwrap())
+                            .map(|(_, ref p)| p.seq_number)
                             .unwrap_or(SeqNumber::new(0)),
                     );
                 }
@@ -654,28 +654,29 @@ where
     }
 
     // check if a whole message is available in buffer
+    // TODO: this sort of logic should be in it's own struct--to make it easier to test. It's complex.
     fn is_message_available(&self) -> bool {
         // if data packets are ready, send them
-        if let &Some(Some((send_time, ref packet))) = self.buffer.front() {
-            assert_eq!(packet.seq_number().unwrap(), self.last_released + 1);
+        if let Some(&Some((_, ref packet))) = self.buffer.front() {
+            assert_eq!(packet.seq_number, self.last_released + 1);
 
             // make sure to reconstruct messages correctly
-            match packet.packet_loc {
-                PacketLocation::FIRST | PacketLocation::LAST => true,
+            match packet.message_loc {
+                a if a.contains(PacketLocation::FIRST | PacketLocation::LAST) => true,
                 PacketLocation::FIRST => {
-                    let message_number = packet.is_message_number().unwrap();
+                    let message_number = packet.message_number;
 
                     // loop through the buffer, making sure they're available, skipping the first one as it's this one.
-                    for packet_opt in self.buffer[1..] {
-                        if let Some(packet) = packet_opt {
-                            if packet.msg_number != message_number {
+                    for packet_opt in self.buffer.iter().skip(1) {
+                        if let Some((_, packet)) = packet_opt {
+                            if packet.message_number != message_number {
                                 warn!(
                                     "Unexpected change in messenge number, expected {} got {}",
-                                    message_number, packet.msg_number
+                                    message_number, packet.message_number
                                 );
                                 return false; // i guess?
                             }
-                            if packet.packet_loc == PacketLoction::LAST {
+                            if packet.message_loc == PacketLocation::LAST {
                                 return true;
                             }
                         } else {
@@ -690,23 +691,54 @@ where
                     false
                 }
             }
+        } else {
+            false
         }
     }
 
     // reconstruct the next, removing it from the buffer
     // panics if `is_message_availabe()` returns false
-    fn pop_front_msg(&mut self) -> Option<Bytes> {}
+    fn pop_front_msg(&mut self) -> Bytes {
+        let (_, first) = self.buffer.pop_front().unwrap().unwrap();
+
+        // it's a one packet message, just return the payload from it
+        if first
+            .message_loc
+            .contains(PacketLocation::FIRST | PacketLocation::LAST)
+        {
+            return first.payload;
+        }
+
+        // reconstruct it
+        let mut ret = BytesMut::new();
+        loop {
+            let (_, pkt) = self.buffer.pop_front().unwrap().unwrap();
+
+            ret.extend(pkt.payload);
+
+            if pkt.message_loc.contains(PacketLocation::LAST) {
+                break ret.freeze();
+            }
+        }
+    }
 
     // in non-tsbpd mode, see if there are packets to release
-    fn try_release_no_tsbpd(&mut self) -> Option<Bytes> {}
+    fn try_release_no_tsbpd(&mut self) -> Option<Bytes> {
+        if self.is_message_available() {
+            Some(self.pop_front_msg())
+        } else {
+            None
+        }
+    }
 
+    // TODO: rewrite this with `pop_front_msg`
     fn try_release_tsbpd(&mut self, tsbpd: Duration) -> Option<Bytes> {
         let first = self.buffer.pop_front()?;
 
         match first {
             Some((send_time, pack)) => {
                 // TODO: is this right? XXX debug
-                let send_time_ts = pack.timestamp();
+                let send_time_ts = pack.timestamp;
 
                 // if ready to release, do
                 // TODO: deal with messages (yuck)
@@ -716,7 +748,7 @@ where
                     } as i32
                 {
                     self.last_released += 1;
-                    Some(pack.payload().unwrap())
+                    Some(pack.payload)
                 } else {
                     self.buffer.push_front(Some((send_time, pack))); // re-add
                     None
@@ -750,7 +782,7 @@ where
                         .unwrap() // we know there is at least one element
                         .unwrap() // we know it is non-null, cuz the while let terminated
                         .1 // get the packet, not the time
-                        .payload
+                        .payload;
 
                     Some(payload)
                 } else {
@@ -770,8 +802,9 @@ where
         let vec: Vec<_> = lost_seq_nums.collect();
         debug!("Sending NAK for={:?}", vec);
 
-        let pack =
-            self.make_control_packet(ControlTypes::Nak(ss_list(vec.iter().cloned()).collect()));
+        let pack = self.make_control_packet(ControlTypes::Nak(
+            compress_loss_list(vec.iter().cloned()).collect(),
+        ));
 
         self.sock.start_send((pack, self.settings.remote))?;
 
@@ -779,11 +812,11 @@ where
     }
 
     fn make_control_packet(&self, control_type: ControlTypes) -> Packet {
-        Packet::Control {
+        Packet::Control(ControlPacket {
             timestamp: self.get_timestamp(),
             dest_sockid: self.settings.remote_sockid,
             control_type,
-        }
+        })
     }
 
     /// Timestamp in us
@@ -811,7 +844,7 @@ where
                 self.last_released,
                 self.buffer
                     .iter()
-                    .map(|a| a.as_ref().map(|(_, p)| p.seq_number().unwrap()))
+                    .map(|a| a.as_ref().map(|(_, p)| p.seq_number))
                     .collect::<Vec<_>>()
             );
 

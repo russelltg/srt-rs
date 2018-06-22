@@ -10,8 +10,7 @@ pub use self::control::{
 pub use self::data::{DataPacket, PacketLocation};
 
 use {
-    bytes::{Buf, BufMut, Bytes}, failure::Error, std::io::Cursor, std::net::{IpAddr, Ipv4Addr},
-    MsgNumber, SeqNumber, SocketID,
+    bytes::{Buf, BufMut}, failure::Error,
 };
 
 /// Represents A UDT/SRT packet
@@ -29,7 +28,7 @@ impl Packet {
         }
     }
 
-    pub fn parse<T: Buf>(mut buf: T) -> Result<Packet, Error> {
+    pub fn parse<T: Buf>(buf: &mut T) -> Result<Packet, Error> {
         // Buffer must be at least 16 bytes,
         // the length of a header packet
         if buf.remaining() < 16 {
@@ -51,10 +50,10 @@ impl Packet {
 
     pub fn serialize<T: BufMut>(&self, into: &mut T) {
         match *self {
-            Packet::Control(control) => {
+            Packet::Control(ref control) => {
                 control.serialize(into);
             }
-            Packet::Data(data) => {
+            Packet::Data(ref data) => {
                 data.serialize(into);
             }
         }

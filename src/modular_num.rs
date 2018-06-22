@@ -2,26 +2,22 @@
 
 #[macro_export]
 macro_rules! modular_num {
-    (pub $x:ident($type:ident, $num:expr)) => {
-        modular_num_impls!($x, $type, 1 << $num, 1 << ($num - 1));
+	(pub $x:ident($type:ident, $num:expr)) => {
+		modular_num_impls!($x, $type, $num);
 
-        pub use self::mod_num_impl::$x;
-    };
-    ($x:ident($type:ident, $num:expr)) => {
-        #[derive(Eq, PartialEq, Clone, Copy, Debug)]
-        struct $x($type);
+		pub use self::mod_num_impl::$x;
+	};
+	($x:ident($type:ident, $num:expr)) => {
+		modular_num_impls!($x, $type, $num);
 
-        modular_num_impls!($x, $type, 1 << $num, 1 << ($num - 1));
-
-        use self::mod_num_impl::$x;
-    };
+		use self::mod_num_impl::$x;
+	};
 }
 
 macro_rules! modular_num_impls {
-	($x:ident, $type:ident, $max_num:expr, $max_diff:expr) => {
+	($x:ident, $type:ident, $num:expr) => {
 
 		mod mod_num_impl {
-
 
 			use std::{fmt, cmp::Ordering, ops::{Add, Rem, Sub, AddAssign}};
 			use rand::{distributions::{Distribution, Standard}, Rng};
@@ -30,7 +26,10 @@ macro_rules! modular_num_impls {
 			pub struct $x(pub $type);
 
 			impl $x {
-				pub fn new(from: $type) -> $x { $x(from % $max_num) }
+				pub const MAX: $type = 1 << $num;
+				pub const MAX_DIFF: $type = 1 << ($num - 1);
+
+				pub fn new(from: $type) -> $x { $x(from % $x::MAX_DIFF) }
 
 				pub fn as_raw(&self) -> $type { self.0 }
 			}
@@ -47,7 +46,7 @@ macro_rules! modular_num_impls {
 				fn add(self, other: $type) -> Self {
 					let added = $type::wrapping_add(self.0, other);
 
-					$x(added % $max_num)
+					$x(added % $x::MAX)
 				}
 			}
 
@@ -60,7 +59,7 @@ macro_rules! modular_num_impls {
 				fn sub(self, other: $type) -> Self {
 					if self.0 < other {
 						// wrap
-						$x($max_num - (other - self.0))
+						$x($x::MAX - (other - self.0))
 					} else {
 						$x(self.0 - other)
 					}
@@ -79,7 +78,7 @@ macro_rules! modular_num_impls {
 						// no wrap required
 						self.0 - other.0
 					} else {
-						$max_num - (other.0 - self.0)
+						$x::MAX - (other.0 - self.0)
 					}
 				}
 			}
@@ -95,7 +94,7 @@ macro_rules! modular_num_impls {
 						return Ordering::Equal;
 					}
 
-					if diff < $max_diff {
+					if diff < $x::MAX_DIFF {
 						// this means self was bigger than other
 						Ordering::Greater
 					} else {
@@ -137,36 +136,36 @@ macro_rules! modular_num_impls {
 #[cfg(test)]
 mod tests {
 
-    modular_num! { SeqNumber(u32, 31) }
+	use std::cmp::Ordering;
 
-    const MAX_SEQ_NUM: u32 = 1 << 31;
+	modular_num! { SeqNumber(u32, 31) }
 
-    #[test]
-    fn mod_num_addition() {
-        assert_eq!(SeqNumber(14), SeqNumber(5) + 9);
-        assert_eq!(SeqNumber(MAX_SEQ_NUM - 1) + 4, SeqNumber(3));
-    }
+	#[test]
+	fn mod_num_addition() {
+		assert_eq!(SeqNumber(14), SeqNumber(5) + 9);
+		assert_eq!(SeqNumber(SeqNumber::MAX - 1) + 4, SeqNumber(3));
+	}
 
-    #[test]
-    fn mod_num_subtraction() {
-        assert_eq!(
-            SeqNumber(MAX_SEQ_NUM - 10) - (MAX_SEQ_NUM - 50),
-            SeqNumber(40)
-        );
-        assert_eq!(SeqNumber(4) - 10, SeqNumber(MAX_SEQ_NUM - 6));
-        assert_eq!(SeqNumber(5) - SeqNumber(1), 4);
-        assert_eq!(SeqNumber(2) - SeqNumber(MAX_SEQ_NUM - 1), 3);
-        assert_eq!(SeqNumber(5) - SeqNumber(5), 0);
-    }
+	#[test]
+	fn mod_num_subtraction() {
+		assert_eq!(
+			SeqNumber(SeqNumber::MAX - 10) - (SeqNumber::MAX - 50),
+			SeqNumber(40)
+		);
+		assert_eq!(SeqNumber(4) - 10, SeqNumber(SeqNumber::MAX - 6));
+		assert_eq!(SeqNumber(5) - SeqNumber(1), 4);
+		assert_eq!(SeqNumber(2) - SeqNumber(SeqNumber::MAX - 1), 3);
+		assert_eq!(SeqNumber(5) - SeqNumber(5), 0);
+	}
 
-    #[test]
-    fn mod_num_cmp() {
-        assert_eq!(SeqNumber(3), SeqNumber(3));
-        assert!(SeqNumber(3) < SeqNumber(4));
-        assert!(SeqNumber(13) > SeqNumber(5));
+	#[test]
+	fn mod_num_cmp() {
+		assert_eq!(SeqNumber(3), SeqNumber(3));
+		assert!(SeqNumber(3) < SeqNumber(4));
+		assert!(SeqNumber(13) > SeqNumber(5));
 
-        assert_eq!(SeqNumber(812827).cmp(&SeqNumber(812827)), Ordering::Equal);
-        assert_eq!(SeqNumber(812827), SeqNumber(812827));
-    }
+		assert_eq!(SeqNumber(812827).cmp(&SeqNumber(812827)), Ordering::Equal);
+		assert_eq!(SeqNumber(812827), SeqNumber(812827));
+	}
 
 }

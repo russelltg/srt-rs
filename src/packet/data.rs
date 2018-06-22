@@ -54,7 +54,7 @@ pub struct DataPacket {
 bitflags! {
     pub struct PacketLocation: u8 {
         const FIRST    = 0b10000000;
-        const LAST     = 0x01000000;
+        const LAST     = 0b01000000;
     }
 }
 
@@ -97,6 +97,6 @@ impl DataPacket {
         );
         into.put_i32_be(self.timestamp);
         into.put_u32_be(self.dest_sockid.0);
-        into.put(self.payload);
+        into.put(&self.payload);
     }
 }
