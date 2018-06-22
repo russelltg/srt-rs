@@ -1,10 +1,10 @@
 use {
     bytes::{Bytes, BytesMut}, failure::Error, futures::prelude::*,
     futures_timer::{Delay, Interval}, loss_compression::decompress_loss_list,
-    packet::{ControlTypes, Packet, PacketLocation},
+    packet::{ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation},
     srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags}, srt_version,
     std::{collections::VecDeque, io::Cursor, net::SocketAddr, time::Duration}, CCData, CongestCtrl,
-    ConnectionSettings, SeqNumber, Stats,
+    ConnectionSettings, MsgNumber, SeqNumber, Stats,
 };
 
 pub struct Sender<T, CC> {
@@ -31,16 +31,16 @@ pub struct Sender<T, CC> {
     next_seq_number: SeqNumber,
 
     /// The message number for the next message
-    next_message_number: i32,
+    next_message_number: MsgNumber,
 
     // 1) Sender's Loss List: The sender's loss list is used to store the
     //    sequence numbers of the lost packets fed back by the receiver
     //    through NAK packets or inserted in a timeout event. The numbers
     //    are stored in increasing order.
-    loss_list: VecDeque<Packet>,
+    loss_list: VecDeque<DataPacket>,
 
-    /// The buffer to store packets for retransmision, with sorted chronologically
-    buffer: VecDeque<Packet>,
+    /// The buffer to store packets for retransmision, sorted chronologically
+    buffer: VecDeque<DataPacket>,
 
     /// The first sequence number in buffer, so seq number i would be found at
     /// buffer[i - first_seq]
@@ -101,7 +101,7 @@ where
             pending_packets: VecDeque::new(),
             at_msg_beginning: true,
             next_seq_number: settings.init_seq_num,
-            next_message_number: 0,
+            next_message_number: MsgNumber::new(0),
             loss_list: VecDeque::new(),
             buffer: VecDeque::new(),
             first_seq: settings.init_seq_num,
@@ -170,38 +170,45 @@ where
 
     fn handle_packet(&mut self, pack: Packet) -> Result<(), Error> {
         match pack {
-            Packet::Control {
-                control_type,
-                .. // Use dst sockid
-            } => {
-                match control_type {
-                    ControlTypes::Ack(seq_num, data) => {
+            Packet::Control(ctrl) => {
+                match ctrl.control_type {
+                    ControlTypes::Ack {
+                        ack_seq_num,
+                        ack_number,
+                        rtt,
+                        rtt_variance,
+                        packet_recv_rate,
+                        est_link_cap,
+                        ..
+                    } => {
+                        // if this ack number is less than or equal to
+                        // the largest received ack number, than discard it
+                        // this can happen thorough packet reordering OR losing an ACK2 packet
+                        if ack_number <= self.lr_acked_packet {
+                            return Ok(());
+                        }
 
-						// if this ack number is less than or equal to 
-						// the largest received ack number, than discard it
-						// this can happen thorough packet reordering OR losing an ACK2 packet
-						if data.ack_number <= self.lr_acked_packet {
-							return Ok(());
-						}
-
-						// update the packets received count
-						self.recvd_packets += data.ack_number - self.lr_acked_packet;
+                        // update the packets received count
+                        self.recvd_packets += ack_number - self.lr_acked_packet;
 
                         // 1) Update the largest acknowledged sequence number, which is the ACK number
-                        self.lr_acked_packet = data.ack_number;
+                        self.lr_acked_packet = ack_number;
 
                         // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
-						trace!("Sending ACK2 for {}", seq_num);
+                        trace!("Sending ACK2 for {}", ack_seq_num);
                         let now = self.get_timestamp();
-                        self.sock.start_send((Packet::Control {
-                            timestamp: now,
-                            dest_sockid: self.settings.remote_sockid,
-                            control_type: ControlTypes::Ack2(seq_num),
-                        }, self.settings.remote))?;
+                        self.sock.start_send((
+                            Packet::Control(ControlPacket {
+                                timestamp: now,
+                                dest_sockid: self.settings.remote_sockid,
+                                control_type: ControlTypes::Ack2(ack_seq_num),
+                            }),
+                            self.settings.remote,
+                        ))?;
 
                         // 3) Update RTT and RTTVar.
-                        self.rtt = data.rtt.unwrap_or(0);
-                        self.rtt_var = data.rtt_variance.unwrap_or(0);
+                        self.rtt = rtt.unwrap_or(0);
+                        self.rtt_var = rtt_variance.unwrap_or(0);
 
                         // 4) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
                         // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.
@@ -218,16 +225,15 @@ where
                         // 7) Update packet arrival rate: A = (A * 7 + a) / 8, where a is the
                         //    value carried in the ACK.
                         self.pkt_arr_rate =
-                            self.pkt_arr_rate / 8 * 7 + data.packet_recv_rate.unwrap_or(0) / 8;
+                            self.pkt_arr_rate / 8 * 7 + packet_recv_rate.unwrap_or(0) / 8;
 
                         // 8) Update estimated link capacity: B = (B * 7 + b) / 8, where b is
                         //    the value carried in the ACK.
-                        self.est_link_cap =
-                            (self.est_link_cap * 7 + data.est_link_cap.unwrap_or(0)) / 8;
+                        self.est_link_cap = (self.est_link_cap * 7 + est_link_cap.unwrap_or(0)) / 8;
 
                         // 9) Update sender's buffer (by releasing the buffer that has been
                         //    acknowledged).
-                        while data.ack_number > self.first_seq {
+                        while ack_number > self.first_seq {
                             self.buffer.pop_front();
                             self.first_seq += 1;
                         }
@@ -235,19 +241,19 @@ where
                         // 10) Update sender's loss list (by removing all those that has been
                         //     acknowledged).
                         // TODO: this isn't the most effiecnet algorithm, it checks the beginning of the array many times
-                        while let Some(id) =
-                            self.loss_list
-                                .iter()
-                                .position(|x| data.ack_number > x.seq_number().unwrap()) {
-
+                        while let Some(id) = self
+                            .loss_list
+                            .iter()
+                            .position(|x| ack_number > x.seq_number)
+                        {
                             self.loss_list.remove(id);
 
-							// this means a packet was lost then retransmitted
-							self.retrans_packets += 1;
+                            // this means a packet was lost then retransmitted
+                            self.retrans_packets += 1;
                         }
                     }
                     ControlTypes::Ack2(_) => warn!("Sender received ACK2, unusual"),
-                    ControlTypes::DropRequest(_msg_id, _info) => unimplemented!(),
+                    ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(_shake) => unimplemented!(),
                     // TODO: reset EXP-ish
                     ControlTypes::KeepAlive => {}
@@ -256,14 +262,18 @@ where
                         // 2) Update the SND period by rate control (see section 3.6).
                         // 3) Reset the EXP time variable.
 
-                        for lost in decompress_loss_list(info.loss_info.iter().cloned()) {
-							// TODO: this prob doens't need to be a find
-                            let packet = match self.buffer
+                        for lost in decompress_loss_list(info.iter().cloned()) {
+                            // TODO: this prob doens't need to be a find
+                            let packet = match self
+                                .buffer
                                 .iter()
-                                .find(|pack| pack.seq_number().unwrap() == lost)
+                                .find(|pack| pack.seq_number == lost)
                             {
                                 Some(p) => p,
-                                None => {warn!("NAK received for packet {} that's not in the buffer, maybe it's already been ACKed", lost); continue }
+                                None => {
+                                    warn!("NAK received for packet {} that's not in the buffer, maybe it's already been ACKed", lost);
+                                    continue;
+                                }
                             };
 
                             self.loss_list.push_back(packet.clone());
@@ -272,23 +282,31 @@ where
                         // update CC
                         if !self.loss_list.is_empty() {
                             let cc_info = self.make_cc_info();
-                            self.congest_ctrl.on_nak(
-                                self.loss_list.back().unwrap().seq_number().unwrap(),
-                                &cc_info);
+                            self.congest_ctrl
+                                .on_nak(self.loss_list.back().unwrap().seq_number, &cc_info);
                         }
 
-                        trace!("Loss list={:?}", self.loss_list.iter().map(|ll| ll.seq_number().unwrap()).collect::<Vec<_>>());
+                        trace!(
+                            "Loss list={:?}",
+                            self.loss_list
+                                .iter()
+                                .map(|ll| ll.seq_number)
+                                .collect::<Vec<_>>()
+                        );
 
                         // TODO: reset EXP
                     }
                     ControlTypes::Shutdown => unimplemented!(),
-                    ControlTypes::Custom(reserved, ref bytes) => {
-						// decode srt packet
+                    ControlTypes::Custom {
+                        custom_type,
+                        ref control_info,
+                    } => {
+                        // decode srt packet
                         let srt_packet =
-                            SrtControlPacket::parse(reserved, &mut Cursor::new(bytes))?;
+                            SrtControlPacket::parse(custom_type, &mut Cursor::new(control_info))?;
 
                         self.handle_srt_control_packet(srt_packet)?;
-					}
+                    }
                 }
             }
             Packet::Data { .. } => warn!("Sender received data packet"),
@@ -329,11 +347,8 @@ where
     }
 
     /// Gets the next available message number
-    fn get_new_message_number(&mut self) -> i32 {
+    fn get_new_message_number(&mut self) -> MsgNumber {
         self.next_message_number += 1;
-        // TODO: I don't think this is actually right
-        self.next_message_number = self.next_message_number << 1 >> 1; // loop around
-
         self.next_message_number - 1
     }
 
@@ -375,15 +390,19 @@ where
             }
         };
 
-        let pack = Packet::Data {
+        let pack = DataPacket {
             dest_sockid: self.settings.remote_sockid,
             in_order_delivery: false, // TODO: research this
-            message_loc: match (is_msg_begin, is_msg_end) {
-                (true, true) => PacketLocation::Only,
-                (true, false) => PacketLocation::First,
-                (false, true) => PacketLocation::Last,
-                (false, false) => PacketLocation::Middle,
+            message_loc: if is_msg_begin {
+                PacketLocation::FIRST
+            } else {
+                PacketLocation::empty()
+            } | if is_msg_end {
+                PacketLocation::LAST
+            } else {
+                PacketLocation::empty()
             },
+
             // if this marks the beginning of the next message, get a new message number, else don't
             message_number: if is_msg_begin {
                 self.get_new_message_number()
@@ -398,7 +417,7 @@ where
         // add it to the buffer
         self.buffer.push_back(pack.clone());
 
-        Some(pack)
+        Some(Packet::Data(pack))
     }
 
     fn send_srt_handshake(&mut self) -> Result<(), Error> {
@@ -406,7 +425,7 @@ where
 
         // make SRT handshake packet
         let mut bytes = BytesMut::new();
-        let reserved = SrtControlPacket::HandshakeRequest(SrtHandshake {
+        let custom_type = SrtControlPacket::HandshakeRequest(SrtHandshake {
             version: srt_version::CURRENT,
             flags: SrtShakeFlags::TSBPDSND, // TODO: the reference implementation sets a lot more of these, research
             latency: self
@@ -417,11 +436,14 @@ where
 
         let now = self.get_timestamp();
         self.sock.start_send((
-            Packet::Control {
+            Packet::Control(ControlPacket {
                 timestamp: now,
                 dest_sockid: self.settings.remote_sockid,
-                control_type: ControlTypes::Custom(reserved, bytes.freeze()),
-            },
+                control_type: ControlTypes::Custom {
+                    custom_type,
+                    control_info: bytes.freeze(),
+                },
+            }),
             self.settings.remote,
         ))?;
 
@@ -507,11 +529,9 @@ where
 
             // 1) If the sender's loss list is not empty, send all the packets it in
             if let Some(pack) = self.loss_list.pop_front() {
-                debug!(
-                    "Sending packet in loss list, seq={:?}",
-                    pack.seq_number().unwrap()
-                );
-                self.sock.start_send((pack, self.settings.remote))?;
+                debug!("Sending packet in loss list, seq={:?}", pack.seq_number);
+                self.sock
+                    .start_send((Packet::Data(pack), self.settings.remote))?;
             } else {
                 // 2) In messaging mode, if the packets has been the loss list for a
                 //    time more than the application specified TTL (time-to-live), send
@@ -576,11 +596,11 @@ where
             info!("Sending shutdown");
             let ts = self.get_timestamp();
             self.sock.start_send((
-                Packet::Control {
+                Packet::Control(ControlPacket {
                     dest_sockid: self.settings.remote_sockid,
                     timestamp: ts,
                     control_type: ControlTypes::Shutdown,
-                },
+                }),
                 self.settings.remote,
             ))?;
         }

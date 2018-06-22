@@ -9,7 +9,9 @@ use futures_timer::Interval;
 use rand::{thread_rng, Rng};
 
 use connected::Connected;
-use packet::{ConnectionType, ControlTypes, HandshakeControlInfo, Packet, SocketType};
+use packet::{
+    ConnectionType, ControlPacket, ControlTypes, HandshakeControlInfo, Packet, SocketType,
+};
 use ConnectionSettings;
 use SeqNumber;
 use SocketID;
@@ -73,11 +75,11 @@ where
                 continue;
             }
 
-            if let Packet::Control {
+            if let Packet::Control(ControlPacket {
                 timestamp,
                 dest_sockid,
                 control_type: ControlTypes::Handshake(info),
-            } = pack
+            }) = pack
             {
                 // make sure the sockid is right
                 if dest_sockid != self.local_socket_id {
@@ -89,7 +91,7 @@ where
                         info!("Got first handshake packet from {:?}", addr);
 
                         // send back the same SYN cookie
-                        let pack_to_send = Packet::Control {
+                        let pack_to_send = Packet::Control(ControlPacket {
                             dest_sockid: SocketID(0), // zero because still initiating connection
                             timestamp,
                             control_type: {
@@ -99,7 +101,7 @@ where
 
                                 ControlTypes::Handshake(new_info)
                             },
-                        };
+                        });
 
                         self.sock
                             .as_mut()
@@ -152,7 +154,7 @@ where
                 State::Starting => {
                     // send a handshake
                     self.sock.as_mut().unwrap().start_send((
-                        Packet::Control {
+                        Packet::Control(ControlPacket {
                             dest_sockid: SocketID(0),
                             timestamp: 0,
                             control_type: ControlTypes::Handshake(HandshakeControlInfo {
@@ -166,7 +168,7 @@ where
                                 sock_type: SocketType::Datagram,
                                 syn_cookie: 0,
                             }),
-                        },
+                        }),
                         self.remote,
                     ))?;
                     self.sock.as_mut().unwrap().poll_complete()?;

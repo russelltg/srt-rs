@@ -1,6 +1,6 @@
-use std::net::{IpAddr, Ipv4Addr};
-use bytes::{Bytes, Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes};
 use failure::Error;
+use std::net::{IpAddr, Ipv4Addr};
 
 use {SeqNumber, SocketID};
 
@@ -21,15 +21,16 @@ use {SeqNumber, SocketID};
 ///  |                                                               |
 ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /// (from <https://tools.ietf.org/html/draft-gg-udt-03#page-5>)
+#[derive(Debug, Clone, PartialEq)]
 pub struct ControlPacket {
     /// The timestamp, relative to the socket start time
-    timestamp: i32,
+    pub timestamp: i32,
 
     /// The dest socket ID, used for multiplexing
-    dest_sockid: SocketID,
+    pub dest_sockid: SocketID,
 
     /// The extra data
-    control_type: ControlTypes,
+    pub control_type: ControlTypes,
 }
 
 /// The different kind of control packets
@@ -46,7 +47,7 @@ pub enum ControlTypes {
     /// ACK packet, type 0x2
     Ack {
         /// The ack sequence number of this ack, increments for each ack sent.
-		/// Stored in additional info
+        /// Stored in additional info
         ack_seq_num: i32,
 
         /// The packet sequence number that all packets have been recieved until (excluding)
@@ -288,8 +289,8 @@ impl ControlTypes {
                 let packet_recv_rate = opt_read_next();
                 let est_link_cap = opt_read_next();
 
-                Ok(ControlTypes::Ack{
-                    extra_info,
+                Ok(ControlTypes::Ack {
+                    ack_seq_num: extra_info,
                     ack_number,
                     rtt,
                     rtt_variance,
@@ -319,7 +320,10 @@ impl ControlTypes {
             }
             0xFF => {
                 // Custom
-                Ok(ControlTypes::Custom{custom_type: reserved, control_info:buf.collect()})
+                Ok(ControlTypes::Custom {
+                    custom_type: reserved,
+                    control_info: buf.collect(),
+                })
             }
             x => Err(format_err!("Unrecognized control packet type: {:?}", x)),
         }
@@ -329,19 +333,21 @@ impl ControlTypes {
         match *self {
             ControlTypes::Handshake(_) => 0x0,
             ControlTypes::KeepAlive => 0x1,
-            ControlTypes::Ack{..} => 0x2,
+            ControlTypes::Ack { .. } => 0x2,
             ControlTypes::Nak(_) => 0x3,
             ControlTypes::Shutdown => 0x5,
             ControlTypes::Ack2(_) => 0x6,
-            ControlTypes::DropRequest{..} => 0x7,
-            ControlTypes::Custom{..} => 0x7FFF,
+            ControlTypes::DropRequest { .. } => 0x7,
+            ControlTypes::Custom { .. } => 0x7FFF,
         }
     }
 
     fn additional_info(&self) -> i32 {
         match *self {
             // These types have additional info
-            ControlTypes::Ack2(a) | ControlTypes::DropRequest{msg_to_drop:a,..} | ControlTypes::Ack{ack_number:a,..} => a,
+            ControlTypes::Ack2(a)
+            | ControlTypes::DropRequest { msg_to_drop: a, .. }
+            | ControlTypes::Ack { ack_seq_num: a, .. } => a,
             // These do not, just use zero
             _ => 0,
         }
@@ -349,7 +355,7 @@ impl ControlTypes {
 
     fn reserved(&self) -> u16 {
         match *self {
-            ControlTypes::Custom{custom_type,..} => custom_type,
+            ControlTypes::Custom { custom_type, .. } => custom_type,
             _ => 0,
         }
     }
@@ -376,7 +382,15 @@ impl ControlTypes {
                     IpAddr::V6(six) => into.put(&six.octets()[..]),
                 }
             }
-            ControlTypes::Ack{ack_number, rtt, rtt_variance, buffer_available, packet_recv_rate, est_link_cap,..} => {
+            ControlTypes::Ack {
+                ack_number,
+                rtt,
+                rtt_variance,
+                buffer_available,
+                packet_recv_rate,
+                est_link_cap,
+                ..
+            } => {
                 into.put_u32_be(ack_number.as_raw());
                 into.put_i32_be(rtt.unwrap_or(10_000));
                 into.put_i32_be(rtt_variance.unwrap_or(50_000));
@@ -387,10 +401,10 @@ impl ControlTypes {
             ControlTypes::Nak(ref n) => for &loss in n {
                 into.put_u32_be(loss);
             },
-            ControlTypes::DropRequest{..} => unimplemented!(),
+            ControlTypes::DropRequest { .. } => unimplemented!(),
             // control data
             ControlTypes::Shutdown | ControlTypes::Ack2(_) | ControlTypes::KeepAlive => {}
-            ControlTypes::Custom{control_info, ..} => into.put(&control_info[..]),
+            ControlTypes::Custom { control_info, .. } => into.put(&control_info[..]),
         };
     }
 }
@@ -405,5 +419,65 @@ impl ConnectionType {
             -2 => Ok(ConnectionType::RendezvousFinal),
             i => Err(i),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::{ConnectionType, ControlPacket, ControlTypes, HandshakeControlInfo, SocketType};
+    use std::io::Cursor;
+    use {SeqNumber, SocketID};
+
+    #[test]
+    fn handshake_ser_des_test() {
+        let pack = ControlPacket {
+            timestamp: 0,
+            dest_sockid: SocketID(0),
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                udt_version: 4,
+                sock_type: SocketType::Datagram,
+                init_seq_num: SeqNumber::new(1827131),
+                max_packet_size: 1500,
+                max_flow_size: 25600,
+                connection_type: ConnectionType::Regular,
+                socket_id: SocketID(1231),
+                syn_cookie: 0,
+                peer_addr: "127.0.0.1".parse().unwrap(),
+            }),
+        };
+
+        let mut buf = vec![];
+        pack.serialize(&mut buf);
+
+        let des = ControlPacket::parse(Cursor::new(buf)).unwrap();
+
+        assert_eq!(pack, des);
+    }
+
+    #[test]
+    fn ack_ser_des_test() {
+        let pack = ControlPacket {
+            timestamp: 113703,
+            dest_sockid: SocketID(2453706529),
+            control_type: ControlTypes::Ack {
+                ack_seq_num: 1,
+                ack_number: SeqNumber::new(282049186),
+                rtt: Some(10002),
+                rtt_variance: Some(1000),
+                buffer_available: Some(1314),
+                packet_recv_rate: Some(0),
+                est_link_cap: Some(0),
+            },
+        };
+
+        let mut buf = vec![];
+        pack.serialize(&mut buf);
+
+        println!("len={}, {:x?}", buf.len(), &buf);
+
+        let des = ControlPacket::parse(Cursor::new(buf)).unwrap();
+
+        assert_eq!(pack, des);
     }
 }

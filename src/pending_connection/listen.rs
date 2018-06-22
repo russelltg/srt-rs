@@ -7,7 +7,7 @@ use failure::Error;
 use futures::prelude::*;
 
 use connected::Connected;
-use packet::{ConnectionType, ControlTypes, Packet};
+use packet::{ConnectionType, ControlPacket, ControlTypes, Packet};
 use {ConnectionSettings, SocketID};
 
 pub struct Listen<T> {
@@ -74,11 +74,11 @@ where
                 // Haven't received anything yet, waiting for the first handshake
                 ConnectionState::WaitingForHandshake => {
                     // see if it's a handshake request
-                    if let Packet::Control {
+                    if let Packet::Control(ControlPacket {
                         control_type: ControlTypes::Handshake(shake),
                         timestamp,
                         ..
-                    } = packet
+                    }) = packet
                     {
                         info!("Handshake recieved from {:?}", addr);
 
@@ -97,7 +97,7 @@ where
                         };
 
                         // construct a packet to send back
-                        let resp_handshake = Packet::Control {
+                        let resp_handshake = Packet::Control(ControlPacket {
                             timestamp,
                             dest_sockid: shake.socket_id,
                             control_type: ControlTypes::Handshake({
@@ -107,7 +107,7 @@ where
 
                                 tmp
                             }),
-                        };
+                        });
 
                         self.state = ConnectionState::WaitingForCookieResp(cookie);
 
@@ -130,11 +130,11 @@ where
 
                     info!("Second handshake recieved from {:?}", addr);
 
-                    if let Packet::Control {
+                    if let Packet::Control(ControlPacket {
                         control_type: ControlTypes::Handshake(shake),
                         timestamp,
                         ..
-                    } = packet
+                    }) = packet
                     {
                         if shake.connection_type != ConnectionType::RendezvousRegularSecond {
                             // discard
@@ -158,7 +158,7 @@ where
                         // use the remote ones
 
                         // construct a packet to send back
-                        let resp_handshake = Packet::Control {
+                        let resp_handshake = Packet::Control(ControlPacket {
                             timestamp,
                             dest_sockid: shake.socket_id,
                             control_type: ControlTypes::Handshake({
@@ -168,7 +168,7 @@ where
 
                                 tmp
                             }),
-                        };
+                        });
 
                         // send the packet
                         sock.start_send((resp_handshake, addr))?;

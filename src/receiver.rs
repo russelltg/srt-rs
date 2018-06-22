@@ -1,13 +1,18 @@
+use bytes::{Bytes, BytesMut};
+use failure::Error;
+use futures::prelude::*;
+use futures_timer::{Delay, Interval};
+
 use {
-    bytes::{Bytes, BytesMut}, failure::Error, futures::prelude::*,
-    futures_timer::{Delay, Interval}, loss_compression::compress_loss_list,
-    packet::{DataPacket, ControlTypes, Packet, PacketLocation}, seq_number::seq_num_range,
-    srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags}, srt_version,
-    std::{
-        cmp, collections::VecDeque, io::Cursor, iter::Iterator, net::SocketAddr,
-        time::{Duration, Instant},
-    },
-    ConnectionSettings, SeqNumber,
+    loss_compression::compress_loss_list,
+    packet::{ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation},
+    seq_number::seq_num_range, srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags},
+    srt_version, ConnectionSettings, SeqNumber,
+};
+
+use std::{
+    cmp, collections::VecDeque, io::Cursor, iter::Iterator, net::SocketAddr,
+    time::{Duration, Instant},
 };
 
 struct LossListEntry {
@@ -414,7 +419,10 @@ where
                     latency: self.tsbpd.unwrap(),
                 }).serialize(&mut bytes);
 
-                let pack = self.make_control_packet(ControlTypes::Custom{custom_type: reserved, control_info: bytes.freeze()});
+                let pack = self.make_control_packet(ControlTypes::Custom {
+                    custom_type: reserved,
+                    control_info: bytes.freeze(),
+                });
                 self.sock.start_send((pack, self.settings.remote))?;
             }
             SrtControlPacket::HandshakeResponse(_) => {
@@ -433,26 +441,19 @@ where
             return Ok(false);
         }
 
-        // copy it to be used below
-        let packet_cpy = packet.clone();
-
         trace!("Received packet: {:?}", packet);
 
         match packet {
-            Packet::Control {
-                control_type,
-                dest_sockid,
-                ..
-            } => {
+            Packet::Control(ctrl) => {
                 // handle the control packet
 
-                if self.settings.local_sockid != dest_sockid {
+                if self.settings.local_sockid != ctrl.dest_sockid {
                     // packet isn't applicable
                     return Ok(false);
                 }
 
-                match control_type {
-                    ControlTypes::Ack{..} => warn!("Receiver received ACK packet, unusual"),
+                match ctrl.control_type {
+                    ControlTypes::Ack { .. } => warn!("Receiver received ACK packet, unusual"),
                     ControlTypes::Ack2(seq_num) => {
                         // 1) Locate the related ACK in the ACK History Window according to the
                         //    ACK sequence number in this ACK2.
@@ -499,14 +500,14 @@ where
                             );
                         }
                     }
-                    ControlTypes::DropRequest{..} => unimplemented!(),
+                    ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(info) => {
                         // just send it back
                         let sockid = self.settings.local_sockid;
 
                         let ts = self.get_timestamp();
                         self.sock.start_send((
-                            Packet::Control {
+                            Packet::Control(ControlPacket {
                                 timestamp: ts,
                                 dest_sockid: info.socket_id, // this is different, so don't use make_control_packet
                                 control_type: ControlTypes::Handshake({
@@ -514,14 +515,17 @@ where
                                     tmp.socket_id = sockid;
                                     tmp
                                 }),
-                            },
+                            }),
                             *from,
                         ))?;
                     }
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
-                    ControlTypes::Nak{..} => warn!("Receiver received NAK packet, unusual"),
+                    ControlTypes::Nak { .. } => warn!("Receiver received NAK packet, unusual"),
                     ControlTypes::Shutdown => return Ok(true), // end of stream
-                    ControlTypes::Custom{custom_type, control_info} => {
+                    ControlTypes::Custom {
+                        custom_type,
+                        control_info,
+                    } => {
                         // decode srt packet
                         let srt_packet =
                             SrtControlPacket::parse(custom_type, &mut Cursor::new(control_info))?;
@@ -530,8 +534,8 @@ where
                     }
                 }
             }
-            Packet::Data { seq_number, .. } => {
-                debug!("Received data packet seq_num={}", seq_number);
+            Packet::Data(data) => {
+                debug!("Received data packet seq_num={}", data.seq_number);
 
                 let now = self.get_timestamp();
 
@@ -544,30 +548,30 @@ where
 
                 // 4) If the sequence number of the current data packet is 16n + 1,
                 //     where n is an integer, record the time interval between this
-                if seq_number % 16 == 0 {
+                if data.seq_number % 16 == 0 {
                     self.probe_time = Some(now)
-                } else if seq_number % 16 == 1 {
+                } else if data.seq_number % 16 == 1 {
                     // if there is an entry
                     if let Some(pt) = self.probe_time {
                         // calculate and insert
-                        self.packet_pair_window.push((seq_number, now - pt));
+                        self.packet_pair_window.push((data.seq_number, now - pt));
 
                         // reset
                         self.probe_time = None;
                     }
                 }
                 // 5) Record the packet arrival time in PKT History Window.
-                self.packet_history_window.push((seq_number, now));
+                self.packet_history_window.push((data.seq_number, now));
 
                 // 6)
                 // a. If the sequence number of the current data packet is greater
                 //    than LRSN + 1, put all the sequence numbers between (but
                 //    excluding) these two values into the receiver's loss list and
                 //    send them to the sender in an NAK packet.
-                if seq_number > self.lrsn + 1 {
+                if data.seq_number > self.lrsn + 1 {
                     // lrsn is the latest packet received, so nak the one after that
                     let first_to_be_nak = self.lrsn + 1;
-                    for i in seq_num_range(first_to_be_nak, seq_number) {
+                    for i in seq_num_range(first_to_be_nak, data.seq_number) {
                         self.loss_list.push(LossListEntry {
                             seq_num: i,
                             feedback_time: now,
@@ -576,12 +580,13 @@ where
                         })
                     }
 
-                    self.send_nak(seq_num_range(first_to_be_nak, seq_number))?;
+                    self.send_nak(seq_num_range(first_to_be_nak, data.seq_number))?;
 
                 // b. If the sequence number is less than LRSN, remove it from the
                 //    receiver's loss list.
-                } else if seq_number < self.lrsn {
-                    match self.loss_list[..].binary_search_by(|ll| ll.seq_num.cmp(&seq_number)) {
+                } else if data.seq_number < self.lrsn {
+                    match self.loss_list[..].binary_search_by(|ll| ll.seq_num.cmp(&data.seq_number))
+                    {
                         Ok(i) => {
                             self.loss_list.remove(i);
                             ()
@@ -589,7 +594,7 @@ where
                         Err(_) => {
                             warn!(
                                 "Packet received that's not in the loss list: {:?}, loss_list={:?}",
-                                seq_number,
+                                data.seq_number,
                                 self.loss_list
                                     .iter()
                                     .map(|ll| ll.seq_num.as_raw())
@@ -600,11 +605,11 @@ where
                 }
 
                 // record that we got this packet
-                self.lrsn = cmp::max(seq_number, self.lrsn);
+                self.lrsn = cmp::max(data.seq_number, self.lrsn);
 
                 // we've already gotten this packet, drop it
-                if self.last_released >= seq_number {
-                    warn!("Received packet {:?} twice", seq_number);
+                if self.last_released >= data.seq_number {
+                    warn!("Received packet {:?} twice", data.seq_number);
                     return Ok(false);
                 }
 
@@ -613,18 +618,18 @@ where
 
                 // make sure the buffer is big enough
                 // this cast is safe because last_released is garunteed to be >= seq_number
-                let seq_id_in_buffer = self.id_in_buffer(seq_number);
+                let seq_id_in_buffer = self.id_in_buffer(data.seq_number);
                 if seq_id_in_buffer >= self.buffer.len() {
                     self.buffer.resize(seq_id_in_buffer + 1, None);
                 }
 
                 // add it the buffer
                 if self.buffer[seq_id_in_buffer].is_some() {
-                    debug!("Received packet {:?} twice", seq_number);
+                    debug!("Received packet {:?} twice", data.seq_number);
                 }
                 self.buffer[seq_id_in_buffer] = Some((
                     Instant::now() - Duration::new(0, self.rtt as u32 / 2 * 1_000),
-                    packet_cpy,
+                    data,
                 ));
 
                 if self.buffer.len() != 0 {
@@ -652,50 +657,48 @@ where
     fn is_message_available(&self) -> bool {
         // if data packets are ready, send them
         if let &Some(Some((send_time, ref packet))) = self.buffer.front() {
-                assert_eq!(packet.seq_number().unwrap(), self.last_released + 1);
+            assert_eq!(packet.seq_number().unwrap(), self.last_released + 1);
 
-                // make sure to reconstruct messages correctly
-                match packet.packet_loc {
-                    PacketLocation::FIRST | PacketLocation::LAST => {
-						true
-                    }
-                    PacketLocation::FIRST => {
-                        let message_number = packet.is_message_number().unwrap();
+            // make sure to reconstruct messages correctly
+            match packet.packet_loc {
+                PacketLocation::FIRST | PacketLocation::LAST => true,
+                PacketLocation::FIRST => {
+                    let message_number = packet.is_message_number().unwrap();
 
-						// loop through the buffer, making sure they're available, skipping the first one as it's this one.
-						for packet_opt in self.buffer[1..] {
-							if let Some(packet) = packet_opt {
-								if packet.msg_number != message_number {
-									warn!("Unexpected change in messenge number, expected {} got {}", message_number, packet.msg_number);
-									return false; // i guess?
-								}
-								if packet.packet_loc == PacketLoction::LAST {
-									return true;
-								}
-							} else {
-								return false;
-							}
-						}
-						false
+                    // loop through the buffer, making sure they're available, skipping the first one as it's this one.
+                    for packet_opt in self.buffer[1..] {
+                        if let Some(packet) = packet_opt {
+                            if packet.msg_number != message_number {
+                                warn!(
+                                    "Unexpected change in messenge number, expected {} got {}",
+                                    message_number, packet.msg_number
+                                );
+                                return false; // i guess?
+                            }
+                            if packet.packet_loc == PacketLoction::LAST {
+                                return true;
+                            }
+                        } else {
+                            return false;
+                        }
                     }
-                    _ => {
-                        warn!("Unexpected middle of message (firt bit not set), expected first. This probably indicates a bug in the sender.");
-
-						false
-                    }
+                    false
                 }
+                _ => {
+                    warn!("Unexpected middle of message (firt bit not set), expected first. This probably indicates a bug in the sender.");
+
+                    false
+                }
+            }
         }
     }
-	
-	// reconstruct the next, removing it from the buffer 
-	// panics if `is_message_availabe()` returns false
-	fn pop_front_msg(&mut self) -> Option<Bytes> {
-		
-	}
+
+    // reconstruct the next, removing it from the buffer
+    // panics if `is_message_availabe()` returns false
+    fn pop_front_msg(&mut self) -> Option<Bytes> {}
 
     // in non-tsbpd mode, see if there are packets to release
-    fn try_release_no_tsbpd(&mut self) -> Option<Bytes> {
-    }
+    fn try_release_no_tsbpd(&mut self) -> Option<Bytes> {}
 
     fn try_release_tsbpd(&mut self, tsbpd: Duration) -> Option<Bytes> {
         let first = self.buffer.pop_front()?;
@@ -747,8 +750,7 @@ where
                         .unwrap() // we know there is at least one element
                         .unwrap() // we know it is non-null, cuz the while let terminated
                         .1 // get the packet, not the time
-                        .payload()
-                        .unwrap();
+                        .payload
 
                     Some(payload)
                 } else {
