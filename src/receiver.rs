@@ -1,9 +1,8 @@
 use {
     bytes::{Bytes, BytesMut}, failure::Error, futures::prelude::*,
     futures_timer::{Delay, Interval}, loss_compression::compress_loss_list,
-    packet::{AckControlInfo, ControlTypes, NakControlInfo, Packet, PacketLocationOrder},
-    seq_number::seq_num_range, srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags},
-    srt_version,
+    packet::{DataPacket, ControlTypes, Packet, PacketLocation}, seq_number::seq_num_range,
+    srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags}, srt_version,
     std::{
         cmp, collections::VecDeque, io::Cursor, iter::Iterator, net::SocketAddr,
         time::{Duration, Instant},
@@ -107,7 +106,7 @@ pub struct Receiver<T> {
     /// There are no gaps between sequence nubmers
     /// the index of sequence number i is at buffer[i - last_released - 1]
     /// The instant is the estimated send time, calculated as recv_time - rtt / 2
-    buffer: VecDeque<Option<(Instant, Packet)>>,
+    buffer: VecDeque<Option<(Instant, DataPacket)>>,
 
     /// the latest released sequence number
     last_released: SeqNumber,
@@ -274,17 +273,15 @@ where
         // Pack the ACK packet with RTT, RTT Variance, and flow window size (available
         // receiver buffer size).
         debug!("Sending ACK packet for {}", ack_number);
-        let ack = self.make_control_packet(ControlTypes::Ack(
+        let ack = self.make_control_packet(ControlTypes::Ack {
             ack_seq_num,
-            AckControlInfo {
-                ack_number,
-                rtt: Some(self.rtt),
-                rtt_variance: Some(self.rtt_variance),
-                buffer_available: None, // TODO: add this
-                packet_recv_rate: Some(packet_recv_rate),
-                est_link_cap: Some(est_link_cap),
-            },
-        ));
+            ack_number,
+            rtt: Some(self.rtt),
+            rtt_variance: Some(self.rtt_variance),
+            buffer_available: None, // TODO: add this
+            packet_recv_rate: Some(packet_recv_rate),
+            est_link_cap: Some(est_link_cap),
+        });
 
         // add it to the ack history
         let now = self.get_timestamp();
@@ -417,7 +414,7 @@ where
                     latency: self.tsbpd.unwrap(),
                 }).serialize(&mut bytes);
 
-                let pack = self.make_control_packet(ControlTypes::Custom(reserved, bytes.freeze()));
+                let pack = self.make_control_packet(ControlTypes::Custom{custom_type: reserved, control_info: bytes.freeze()});
                 self.sock.start_send((pack, self.settings.remote))?;
             }
             SrtControlPacket::HandshakeResponse(_) => {
@@ -455,7 +452,7 @@ where
                 }
 
                 match control_type {
-                    ControlTypes::Ack(_, _) => warn!("Receiver received ACK packet, unusual"),
+                    ControlTypes::Ack{..} => warn!("Receiver received ACK packet, unusual"),
                     ControlTypes::Ack2(seq_num) => {
                         // 1) Locate the related ACK in the ACK History Window according to the
                         //    ACK sequence number in this ACK2.
@@ -502,7 +499,7 @@ where
                             );
                         }
                     }
-                    ControlTypes::DropRequest(_to_drop, _info) => unimplemented!(),
+                    ControlTypes::DropRequest{..} => unimplemented!(),
                     ControlTypes::Handshake(info) => {
                         // just send it back
                         let sockid = self.settings.local_sockid;
@@ -522,12 +519,12 @@ where
                         ))?;
                     }
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
-                    ControlTypes::Nak(_info) => warn!("Receiver received NAK packet, unusual"),
+                    ControlTypes::Nak{..} => warn!("Receiver received NAK packet, unusual"),
                     ControlTypes::Shutdown => return Ok(true), // end of stream
-                    ControlTypes::Custom(reserved, ref bytes) => {
+                    ControlTypes::Custom{custom_type, control_info} => {
                         // decode srt packet
                         let srt_packet =
-                            SrtControlPacket::parse(reserved, &mut Cursor::new(bytes))?;
+                            SrtControlPacket::parse(custom_type, &mut Cursor::new(control_info))?;
 
                         self.handle_srt_control_packet(srt_packet)?;
                     }
@@ -651,101 +648,53 @@ where
         Ok(false)
     }
 
-    // in non-tsbpd mode, see if there are packets to release
-    fn try_release_no_tsbpd(&mut self) -> Option<Bytes> {
+    // check if a whole message is available in buffer
+    fn is_message_available(&self) -> bool {
         // if data packets are ready, send them
-        if let Some(packet) = self.buffer.pop_front() {
-            if let Some((send_time, packet)) = packet {
+        if let &Some(Some((send_time, ref packet))) = self.buffer.front() {
                 assert_eq!(packet.seq_number().unwrap(), self.last_released + 1);
 
-                let message_loc = packet.packet_location_order().unwrap();
-
                 // make sure to reconstruct messages correctly
-                if message_loc.contains(PacketLocationOrder::FIRST) {
-					if message_loc.contains(PacketLocationOrdder::LAST) {
-						// only packet in message
-						self.last_released += 1;
+                match packet.packet_loc {
+                    PacketLocation::FIRST | PacketLocation::LAST => {
+						true
+                    }
+                    PacketLocation::FIRST => {
+                        let message_number = packet.is_message_number().unwrap();
 
-                        debug!("Releasing {:?}", packet.seq_number().unwrap());
-                        return Some(packet.payload().unwrap());
+						// loop through the buffer, making sure they're available, skipping the first one as it's this one.
+						for packet_opt in self.buffer[1..] {
+							if let Some(packet) = packet_opt {
+								if packet.msg_number != message_number {
+									warn!("Unexpected change in messenge number, expected {} got {}", message_number, packet.msg_number);
+									return false; // i guess?
+								}
+								if packet.packet_loc == PacketLoction::LAST {
+									return true;
+								}
+							} else {
+								return false;
+							}
+						}
+						false
+                    }
+                    _ => {
+                        warn!("Unexpected middle of message (firt bit not set), expected first. This probably indicates a bug in the sender.");
 
-					} else {
-                        let message_number = packet.message_number().unwrap();
-
-                        // see if the entire message is available
-                        let msg_avaialble = self
-                            .buffer
-                            .iter()
-                            .scan((), |_, p| match p {
-                                Some((_, d)) => {
-                                    if d.message_number().unwrap() != message_number {
-                                        warn!(
-                                            "Message number changed while waiting for message end"
-                                        );
-                                        return None;
-                                    }
-                                    match d.packet_location_order().unwrap() {
-                                        PacketLocation::First => {
-                                            warn!("`First` encountered in the middle of a message");
-
-                                            None
-                                        }
-                                        PacketLocation::Middle => Some(PacketLocation::Middle),
-                                        PacketLocation::Only => {
-                                            warn!("`Only` encoutnered in the middle of a message");
-
-                                            None
-                                        }
-                                        PacketLocation::Last => Some(PacketLocation::Last),
-                                    }
-                                }
-                                None => None,
-                            })
-                            .find(|l| *l == PacketLocation::Last)
-                            .is_some();
-
-                        if msg_avaialble {
-                            debug!("Reassembling & releasing broken-up message");
-                            // concatenate the entire message
-                            let mut buffer = BytesMut::from(packet.payload().unwrap());
-
-                            loop {
-                                let pack = self.buffer.pop_front().unwrap().unwrap().1;
-
-                                buffer.extend_from_slice(&pack.payload().unwrap()[..]);
-
-                                if pack.packet_location().unwrap() == PacketLocation::Last {
-                                    // update this so the indexing works right
-                                    self.last_released = pack.seq_number().unwrap();
-
-                                    break;
-                                }
-                            }
-                            return Some(buffer.freeze());
-                        } else {
-                            self.buffer.push_front(Some((send_time, packet)));
-                            debug!(
-                                "Waiting for message end. Buffer={:?}",
-                                self.buffer
-                                    .iter()
-                                    .map(|pack| pack.as_ref().map(|(_, p)| Some((
-                                        p.message_number().unwrap(),
-                                        p.seq_number().unwrap(),
-                                        p.packet_location().unwrap()
-                                    ))))
-                                    .collect::<Vec<_>>()
-                            );
-                        }
-                    } 
-                } else {
-					warn!("Unexpected middle of message (firt bit not set), expected first. This probably indicates a bug in the sender.");
-				}
-            } else {
-                self.buffer.push_front(packet);
-            }
+						false
+                    }
+                }
         }
+    }
+	
+	// reconstruct the next, removing it from the buffer 
+	// panics if `is_message_availabe()` returns false
+	fn pop_front_msg(&mut self) -> Option<Bytes> {
+		
+	}
 
-        None
+    // in non-tsbpd mode, see if there are packets to release
+    fn try_release_no_tsbpd(&mut self) -> Option<Bytes> {
     }
 
     fn try_release_tsbpd(&mut self, tsbpd: Duration) -> Option<Bytes> {
@@ -819,9 +768,8 @@ where
         let vec: Vec<_> = lost_seq_nums.collect();
         debug!("Sending NAK for={:?}", vec);
 
-        let pack = self.make_control_packet(ControlTypes::Nak(NakControlInfo {
-            loss_info: compress_loss_list(vec.iter().cloned()).collect(),
-        }));
+        let pack =
+            self.make_control_packet(ControlTypes::Nak(ss_list(vec.iter().cloned()).collect()));
 
         self.sock.start_send((pack, self.settings.remote))?;
 

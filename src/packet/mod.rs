@@ -1,29 +1,31 @@
 // Packet structures
 // see https://tools.ietf.org/html/draft-gg-udt-03#page-5
 
-mod data;
 mod control;
+mod data;
 
-pub use self::data::{DataPacket, PacketLocationOrder};
-pub use self::control::{ControlPacket, ConnectionType, ControlTypes};
+pub use self::control::{
+    ConnectionType, ControlPacket, ControlTypes, HandshakeControlInfo, SocketType,
+};
+pub use self::data::{DataPacket, PacketLocation};
 
 use {
     bytes::{Buf, BufMut, Bytes}, failure::Error, std::io::Cursor, std::net::{IpAddr, Ipv4Addr},
-    SeqNumber, SocketID, MsgNumber,
+    MsgNumber, SeqNumber, SocketID,
 };
 
 /// Represents A UDT/SRT packet
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
     Data(DataPacket),
-	Control(ControlPacket),
+    Control(ControlPacket),
 }
 impl Packet {
-		
-   // TODO: should this be u32?
+    // TODO: should this be u32?
     pub fn timestamp(&self) -> i32 {
         match *self {
-            Packet::Data (DataPacket{ timestamp, .. }) | Packet::Control(ControlPacket { timestamp, .. }) => timestamp,
+            Packet::Data(DataPacket { timestamp, .. })
+            | Packet::Control(ControlPacket { timestamp, .. }) => timestamp,
         }
     }
 
@@ -34,26 +36,26 @@ impl Packet {
             bail!("Packet not long enough to have a header");
         }
 
-		// peek at the first byte to check if it's data or control
-		let first = buf.bytes()[0];
+        // peek at the first byte to check if it's data or control
+        let first = buf.bytes()[0];
 
         // Check if the first bit is one or zero;
         // if it's one it's a cotnrol packet,
         // if zero it's a data packet
         if (first & 0x80) == 0 {
-			Packet::Data(DataPacket::parse(buf))
+            Packet::Data(DataPacket::parse(buf))
         } else {
-			Packet::Control(ControlPacket::parse(buf))
+            Packet::Control(ControlPacket::parse(buf))
         }
     }
 
     pub fn serialize<T: BufMut>(&self, into: &mut T) {
         match *self {
             Packet::Control(control) => {
-					control.serialize(into);
-                            }
-            Packet::Data (data) => {
-				data.serialize(into);
+                control.serialize(into);
+            }
+            Packet::Data(data) => {
+                data.serialize(into);
             }
         }
     }

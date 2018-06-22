@@ -134,7 +134,6 @@ macro_rules! modular_num_impls {
 	}
 }
 
-
 #[cfg(test)]
 mod tests {
 

@@ -1,4 +1,8 @@
-use {SocketID};
+use std::net::{IpAddr, Ipv4Addr};
+use bytes::{Bytes, Buf, BufMut};
+use failure::Error;
+
+use {SeqNumber, SocketID};
 
 /// A UDP packet carrying control information
 ///  0                   1                   2                   3
@@ -18,16 +22,15 @@ use {SocketID};
 ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /// (from <https://tools.ietf.org/html/draft-gg-udt-03#page-5>)
 pub struct ControlPacket {
-	/// The timestamp, relative to the socket start time
-	timestamp: i32,
+    /// The timestamp, relative to the socket start time
+    timestamp: i32,
 
-	/// The dest socket ID, used for multiplexing
-	dest_sockid: SocketID,
+    /// The dest socket ID, used for multiplexing
+    dest_sockid: SocketID,
 
-	/// The extra data
-	control_type: ControlTypes,
+    /// The extra data
+    control_type: ControlTypes,
 }
-
 
 /// The different kind of control packets
 #[derive(Debug, Clone, PartialEq)]
@@ -41,32 +44,33 @@ pub enum ControlTypes {
     KeepAlive,
 
     /// ACK packet, type 0x2
-    Ack{
-		/// The ack sequence number of this ack, increments for each ack sent.
-		ack_seq_num: i32,
-		
-		 /// The packet sequence number that all packets have been recieved until (excluding)
-    ack_number: SeqNumber,
+    Ack {
+        /// The ack sequence number of this ack, increments for each ack sent.
+		/// Stored in additional info
+        ack_seq_num: i32,
 
-    /// Round trip time
-    rtt: Option<i32>,
+        /// The packet sequence number that all packets have been recieved until (excluding)
+        ack_number: SeqNumber,
 
-    /// RTT variance
-    rtt_variance: Option<i32>,
+        /// Round trip time
+        rtt: Option<i32>,
 
-    /// available buffer
-    buffer_available: Option<i32>,
+        /// RTT variance
+        rtt_variance: Option<i32>,
 
-    /// receive rate, in packets/sec
-    packet_recv_rate: Option<i32>,
+        /// available buffer
+        buffer_available: Option<i32>,
 
-    /// Estimated Link capacity
-    est_link_cap: Option<i32>,
-},
+        /// receive rate, in packets/sec
+        packet_recv_rate: Option<i32>,
+
+        /// Estimated Link capacity
+        est_link_cap: Option<i32>,
+    },
 
     /// NAK packet, type 0x3
     /// Additional Info isn't used
-	/// The information is stored in the loss compression format, specified in the loss_compression module.
+    /// The information is stored in the loss compression format, specified in the loss_compression module.
     Nak(Vec<u32>),
 
     /// Shutdown packet, type 0x5
@@ -78,26 +82,26 @@ pub enum ControlTypes {
 
     /// Drop request, type 0x7
     DropRequest {
-		/// The message to drop
-		/// Stored in the "addditional info" field of the packet.
-		msg_to_drop: i32, 
-		
-		/// The first sequence number in the message to drop
-    	pub first: SeqNumber,
+        /// The message to drop
+        /// Stored in the "addditional info" field of the packet.
+        msg_to_drop: i32,
 
-    	/// The last sequence number in the message to drop
-    	pub last: SeqNumber,
-	},
+        /// The first sequence number in the message to drop
+        first: SeqNumber,
+
+        /// The last sequence number in the message to drop
+        last: SeqNumber,
+    },
 
     /// Custom packets
     /// Mainly used for special SRT handshake packets
     Custom {
-		/// The custom data type, stored in bytes 3-4, the "reserved field"
-		custom_type: u16, 
+        /// The custom data type, stored in bytes 3-4, the "reserved field"
+        custom_type: u16,
 
-		/// The data to store after the packet header
-		control_info: Bytes
-	},
+        /// The data to store after the packet header
+        control_info: Bytes,
+    },
 }
 
 /// The control info for handshake packets
@@ -174,48 +178,41 @@ pub enum ConnectionType {
 }
 
 impl ControlPacket {
-	pub fn parse<T: Buf>(mut buf: T) -> Result<ControlPacket, Error> {
-            // get reserved data, which is the last two bytes of the first four bytes
-            let reserved = Cursor::new(&first4[2..]).get_u16_be();
+    pub fn parse<T: Buf>(mut buf: T) -> Result<ControlPacket, Error> {
+        // get reserved data, which is the last two bytes of the first four bytes
+        let control_type = buf.get_u16_be() << 1 >> 1;
+        let reserved = buf.get_u16_be();
+        let add_info = buf.get_i32_be();
+        let timestamp = buf.get_i32_be();
+        let dest_sockid = buf.get_u32_be();
 
-            let add_info = buf.get_i32_be();
-            let timestamp = buf.get_i32_be();
-            let dest_sockid = buf.get_u32_be();
+        Ok(ControlPacket {
+            timestamp,
+            dest_sockid: SocketID(dest_sockid),
+            // just match against the second byte, as everything is in that
+            control_type: ControlTypes::deserialize(control_type, reserved, add_info, buf)?,
+        })
+    }
 
-            Ok(ControlPacket {
-                timestamp,
-                dest_sockid: SocketID(dest_sockid),
-                // just match against the second byte, as everything is in that
-                control_type: ControlTypes::deserialize(
-                    ((first4[0] << 1 >> 1) as u16) << 8 | first4[1] as u16,
-                    reserved,
-                    add_info,
-                    buf,
-                )?,
-            })
+    pub fn serialize<T: BufMut>(&self, into: &mut T) {
+        // first half of first row, the control type and the 1st bit which is a one
+        into.put_u16_be(self.control_type.id_byte() | (0b1 << 15));
 
-	}
+        // finish that row, which is reserved
+        into.put_u16_be(self.control_type.reserved());
 
-	pub fn serialize<T: BufMut>(&self, into: &mut T) {
-		// first half of first row, the control type and the 1st bit which is a one
-		into.put_u16_be(self.control_type.id_byte() | (0b1 << 15));
+        // the additonal info line
+        into.put_i32_be(self.control_type.additional_info());
 
-		// finish that row, which is reserved
-		into.put_u16_be(self.control_type.reserved());
+        // timestamp
+        into.put_i32_be(self.timestamp);
 
-		// the additonal info line
-		into.put_i32_be(self.control_type.additional_info());
+        // dest sock id
+        into.put_u32_be(self.dest_sockid.0);
 
-		// timestamp
-		into.put_i32_be(self.timestamp);
-
-		// dest sock id
-		into.put_u32_be(self.dest_sockid.0);
-
-		// the rest of the info
-		self.control_type.serialize(into);
-
-	}
+        // the rest of the info
+        self.control_type.serialize(into);
+    }
 }
 
 impl ControlTypes {
@@ -291,17 +288,15 @@ impl ControlTypes {
                 let packet_recv_rate = opt_read_next();
                 let est_link_cap = opt_read_next();
 
-                Ok(ControlTypes::Ack(
+                Ok(ControlTypes::Ack{
                     extra_info,
-                    AckControlInfo {
-                        ack_number,
-                        rtt,
-                        rtt_variance,
-                        buffer_available,
-                        packet_recv_rate,
-                        est_link_cap,
-                    },
-                ))
+                    ack_number,
+                    rtt,
+                    rtt_variance,
+                    buffer_available,
+                    packet_recv_rate,
+                    est_link_cap,
+                })
             }
             0x3 => {
                 // NAK
@@ -311,7 +306,7 @@ impl ControlTypes {
                     loss_info.push(buf.get_u32_be());
                 }
 
-                Ok(ControlTypes::Nak(NakControlInfo { loss_info }))
+                Ok(ControlTypes::Nak(loss_info))
             }
             0x5 => Ok(ControlTypes::Shutdown),
             0x6 => {
@@ -324,7 +319,7 @@ impl ControlTypes {
             }
             0xFF => {
                 // Custom
-                Ok(ControlTypes::Custom(reserved, buf.collect()))
+                Ok(ControlTypes::Custom{custom_type: reserved, control_info:buf.collect()})
             }
             x => Err(format_err!("Unrecognized control packet type: {:?}", x)),
         }
@@ -334,19 +329,19 @@ impl ControlTypes {
         match *self {
             ControlTypes::Handshake(_) => 0x0,
             ControlTypes::KeepAlive => 0x1,
-            ControlTypes::Ack(_, _) => 0x2,
+            ControlTypes::Ack{..} => 0x2,
             ControlTypes::Nak(_) => 0x3,
             ControlTypes::Shutdown => 0x5,
             ControlTypes::Ack2(_) => 0x6,
-            ControlTypes::DropRequest(_, _) => 0x7,
-            ControlTypes::Custom(_, _) => 0x7FFF,
+            ControlTypes::DropRequest{..} => 0x7,
+            ControlTypes::Custom{..} => 0x7FFF,
         }
     }
 
     fn additional_info(&self) -> i32 {
         match *self {
             // These types have additional info
-            ControlTypes::Ack2(i) | ControlTypes::DropRequest(i, _) | ControlTypes::Ack(i, _) => i,
+            ControlTypes::Ack2(a) | ControlTypes::DropRequest{msg_to_drop:a,..} | ControlTypes::Ack{ack_number:a,..} => a,
             // These do not, just use zero
             _ => 0,
         }
@@ -354,7 +349,7 @@ impl ControlTypes {
 
     fn reserved(&self) -> u16 {
         match *self {
-            ControlTypes::Custom(a, _) => a,
+            ControlTypes::Custom{custom_type,..} => custom_type,
             _ => 0,
         }
     }
@@ -381,21 +376,21 @@ impl ControlTypes {
                     IpAddr::V6(six) => into.put(&six.octets()[..]),
                 }
             }
-            ControlTypes::Ack(_, ref c) => {
-                into.put_u32_be(c.ack_number.as_raw());
-                into.put_i32_be(c.rtt.unwrap_or(10_000));
-                into.put_i32_be(c.rtt_variance.unwrap_or(50_000));
-                into.put_i32_be(c.buffer_available.unwrap_or(8175)); // TODO: better defaults
-                into.put_i32_be(c.packet_recv_rate.unwrap_or(10_000));
-                into.put_i32_be(c.est_link_cap.unwrap_or(1_000));
+            ControlTypes::Ack{ack_number, rtt, rtt_variance, buffer_available, packet_recv_rate, est_link_cap,..} => {
+                into.put_u32_be(ack_number.as_raw());
+                into.put_i32_be(rtt.unwrap_or(10_000));
+                into.put_i32_be(rtt_variance.unwrap_or(50_000));
+                into.put_i32_be(buffer_available.unwrap_or(8175)); // TODO: better defaults
+                into.put_i32_be(packet_recv_rate.unwrap_or(10_000));
+                into.put_i32_be(est_link_cap.unwrap_or(1_000));
             }
-            ControlTypes::Nak(ref n) => for &loss in &n.loss_info {
+            ControlTypes::Nak(ref n) => for &loss in n {
                 into.put_u32_be(loss);
             },
-            ControlTypes::DropRequest(_, ref _d) => unimplemented!(),
+            ControlTypes::DropRequest{..} => unimplemented!(),
             // control data
             ControlTypes::Shutdown | ControlTypes::Ack2(_) | ControlTypes::KeepAlive => {}
-            ControlTypes::Custom(_, ref data) => into.put(&data[..]),
+            ControlTypes::Custom{control_info, ..} => into.put(&control_info[..]),
         };
     }
 }
@@ -412,6 +407,3 @@ impl ConnectionType {
         }
     }
 }
-
-
-
