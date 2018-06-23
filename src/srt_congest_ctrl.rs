@@ -8,6 +8,6 @@ impl CongestCtrl for SrtCongestCtrl {
     }
 
     fn window_size(&self) -> u32 {
-        100000
+        10_0000
     }
 }

@@ -242,8 +242,8 @@ where
                 // average of the left values AI', and the packet arrival speed is
                 // 1/AI' (number of packets per second). Otherwise, return 0.
                 if filtered.len() > 8 {
-                    (filtered.iter().fold(0i64, |sum, &val| sum + val as i64)
-                        / filtered.len() as i64) as i32
+                    (filtered.iter().fold(0i64, |sum, &val| sum + i64::from(val))
+                        / (filtered.len() as i64)) as i32
                 } else {
                     0
                 }
@@ -408,7 +408,7 @@ where
                 info!(
                     "Got SRT handshake, using TSBPD={}ms",
                     self.tsbpd.unwrap().as_secs() * 1_000
-                        + self.tsbpd.unwrap().subsec_nanos() as u64 / 1_000
+                        + u64::from(self.tsbpd.unwrap().subsec_millis())
                 );
 
                 // return the response
@@ -632,7 +632,7 @@ where
                     data,
                 ));
 
-                if self.buffer.len() != 0 {
+                if !self.buffer.is_empty() {
                     trace!(
                         "lr={}, buffer.len()={}, buffer[0]={}, buffer[last]={}",
                         self.last_released,
@@ -640,11 +640,11 @@ where
                         self.buffer[0]
                             .as_ref()
                             .map(|(_, ref p)| p.seq_number)
-                            .unwrap_or(SeqNumber::new(0)),
+                            .unwrap_or_else(|| SeqNumber::new(0)),
                         self.buffer[self.buffer.len() - 1]
                             .as_ref()
                             .map(|(_, ref p)| p.seq_number)
-                            .unwrap_or(SeqNumber::new(0)),
+                            .unwrap_or_else(|| SeqNumber::new(0)),
                     );
                 }
             }
@@ -743,9 +743,8 @@ where
                 // if ready to release, do
                 // TODO: deal with messages (yuck)
                 if self.get_timestamp()
-                    >= send_time_ts as i32 + {
-                        tsbpd.as_secs() as u32 * 1_000_000 + tsbpd.subsec_nanos() / 1_000
-                    } as i32
+                    >= send_time_ts as i32
+                        + { tsbpd.as_secs() as u32 * 1_000_000 + tsbpd.subsec_micros() } as i32
                 {
                     self.last_released += 1;
                     Some(pack.payload)
@@ -757,13 +756,7 @@ where
             // if the most recent packet hasn't been received yet, see if we need to discard some packets
             None => {
                 // find if the first actually received packet should be released
-                let time = self
-                    .buffer
-                    .iter()
-                    .find(|ref a| a.is_some())?
-                    .as_ref()?
-                    .0
-                    .clone();
+                let time = self.buffer.iter().find(|ref a| a.is_some())?.as_ref()?.0;
 
                 if Instant::now() >= time + tsbpd {
                     // drop all the missing packets
@@ -849,12 +842,11 @@ where
             );
 
             // try to release packets
-            match match self.tsbpd {
+            if let Some(p) = match self.tsbpd {
                 Some(tsbpd) => self.try_release_tsbpd(tsbpd),
                 None => self.try_release_no_tsbpd(),
             } {
-                Some(p) => return Ok(Async::Ready(Some(p))),
-                None => {}
+                return Ok(Async::Ready(Some(p)));
             }
 
             match self.timeout_timer.poll() {

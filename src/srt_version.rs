@@ -35,8 +35,8 @@ impl SrtVersion {
     }
 
     /// Convert to an u32
-    pub fn to_u32(&self) -> u32 {
-        self.major as u32 * 0x10000 + self.minor as u32 * 0x100 + self.patch as u32
+    pub fn to_u32(self) -> u32 {
+        u32::from(self.major) * 0x10000 + u32::from(self.minor) * 0x100 + u32::from(self.patch)
     }
 }
 
@@ -45,9 +45,9 @@ impl PartialOrd for SrtVersion {
         Some(match self.major.cmp(&other.major) {
             Ordering::Equal => match self.minor.cmp(&other.minor) {
                 Ordering::Equal => self.patch.cmp(&other.patch),
-                o @ _ => o,
+                o => o,
             },
-            o @ _ => o,
+            o => o,
         })
     }
 }

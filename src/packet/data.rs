@@ -53,8 +53,8 @@ pub struct DataPacket {
 /// 0 means it's the middle of a longer message
 bitflags! {
     pub struct PacketLocation: u8 {
-        const FIRST    = 0b10000000;
-        const LAST     = 0b01000000;
+        const FIRST    = 0b1000_0000;
+        const LAST     = 0b0100_0000;
     }
 }
 
@@ -67,7 +67,7 @@ impl DataPacket {
         let message_loc = PacketLocation::from_bits_truncate(buf.bytes()[0]);
 
         // in order delivery is the third bit
-        let in_order_delivery = (buf.bytes()[0] & 0b00100000) != 0;
+        let in_order_delivery = (buf.bytes()[0] & 0b0010_0000) != 0;
 
         let message_number = MsgNumber::new(buf.get_u32_be());
         let timestamp = buf.get_i32_be();
@@ -93,7 +93,8 @@ impl DataPacket {
         // message number is garunteed have it's first three bits as zero
         into.put_u32_be(
             self.message_number.as_raw()
-                | (((self.message_loc.bits() | (self.in_order_delivery as u8) << 5) as u32) << 24),
+                | ((u32::from(self.message_loc.bits() | (self.in_order_delivery as u8) << 5))
+                    << 24),
         );
         into.put_i32_be(self.timestamp);
         into.put_u32_be(self.dest_sockid.0);

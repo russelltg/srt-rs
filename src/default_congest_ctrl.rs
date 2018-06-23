@@ -19,6 +19,17 @@ pub struct DefaultCongestCtrl {
 
 impl DefaultCongestCtrl {
     pub fn new() -> DefaultCongestCtrl {
+        Default::default()
+    }
+}
+
+enum Phase {
+    SlowStart,
+    Operation,
+}
+
+impl Default for DefaultCongestCtrl {
+    fn default() -> Self {
         DefaultCongestCtrl {
             phase: Phase::SlowStart,
             avg_nak_num: 1,
@@ -32,11 +43,6 @@ impl DefaultCongestCtrl {
             send_interval: Duration::from_millis(1),
         }
     }
-}
-
-enum Phase {
-    SlowStart,
-    Operation,
 }
 
 impl CongestCtrl for DefaultCongestCtrl {
@@ -53,9 +59,9 @@ impl CongestCtrl for DefaultCongestCtrl {
         // 2) Set the congestion window size (CWND) to: CWND = A * (RTT + SYN) +
         //     16.
         self.window_size = {
-            let rtt_secs = data.rtt.as_secs() as f64 + data.rtt.subsec_nanos() as f64 / 1e9;
+            let rtt_secs = data.rtt.as_secs() as f64 + f64::from(data.rtt.subsec_nanos()) / 1e9;
 
-            (data.packet_arr_rate as f64 * (rtt_secs + 0.01)) as u32 + 16
+            (f64::from(data.packet_arr_rate) * (rtt_secs + 0.01)) as u32 + 16
         };
         // clamp it between 16 and 1000
         self.window_size = u32::max(self.window_size, 16);
@@ -77,13 +83,13 @@ impl CongestCtrl for DefaultCongestCtrl {
         //     fixed size of UDT packet counted in bytes. Beta is a constant
         //     value of 0.0000015.
         let inc = {
-            let b = data.est_bandwidth as f64;
+            let b = f64::from(data.est_bandwidth);
 
-            let ps = data.max_segment_size as f64;
+            let ps = f64::from(data.max_segment_size);
 
             // 1/send_interval is packets/second
             let c = 1.0 / (self.send_interval.as_secs() as f64
-                + self.send_interval.subsec_nanos() as f64 / 1e9);
+                + f64::from(self.send_interval.subsec_nanos()) / 1e9);
 
             if b <= c {
                 1.0 / ps
@@ -102,7 +108,7 @@ impl CongestCtrl for DefaultCongestCtrl {
         // I think the units for these are microseconds
         self.send_interval = {
             let snd_total_micros = self.send_interval.as_secs() * 1_000_000
-                + self.send_interval.subsec_nanos() as u64 / 1_000;
+                + u64::from(self.send_interval.subsec_nanos()) / 1_000;
 
             let mut new_snd_total_micros = ((snd_total_micros * 10_000) as f64
                 / (snd_total_micros as f64 * inc + 10_000f64))
@@ -135,7 +141,7 @@ impl CongestCtrl for DefaultCongestCtrl {
         match mem::replace(&mut self.phase, Phase::Operation) {
             Phase::SlowStart => {
                 self.send_interval =
-                    Duration::new(0, ((1.0 / data.packet_arr_rate as f64) * 1e9) as u32);
+                    Duration::new(0, ((1.0 / f64::from(data.packet_arr_rate)) * 1e9) as u32);
                 return;
             }
             Phase::Operation => {}
@@ -155,8 +161,8 @@ impl CongestCtrl for DefaultCongestCtrl {
             self.dec_random = {
                 // TODO: what should the stddev be? This seems reasonable
                 let dist = Normal::new(
-                    (1 + self.avg_nak_num) as f64 / 2.0,
-                    ((self.avg_nak_num - 1) as f64 / 3.0).abs(),
+                    f64::from(1 + self.avg_nak_num) / 2.0,
+                    (f64::from(self.avg_nak_num - 1) / 3.0).abs(),
                 );
 
                 dist.sample(&mut rand::thread_rng()) as i32

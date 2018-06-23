@@ -94,13 +94,11 @@ where
                         let pack_to_send = Packet::Control(ControlPacket {
                             dest_sockid: SocketID(0), // zero because still initiating connection
                             timestamp,
-                            control_type: {
-                                let mut new_info = info.clone();
-                                new_info.socket_id = self.local_socket_id;
-                                new_info.connection_type = ConnectionType::RendezvousRegularSecond;
-
-                                ControlTypes::Handshake(new_info)
-                            },
+                            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                                socket_id: self.local_socket_id,
+                                connection_type: ConnectionType::RendezvousRegularSecond,
+                                ..info
+                            }),
                         });
 
                         self.sock
