@@ -5,15 +5,12 @@ use futures_timer::{Delay, Interval};
 
 use {
     loss_compression::compress_loss_list,
-    packet::{ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation},
+    packet::{ControlPacket, ControlTypes, DataPacket, Packet}, recv_buffer::RecvBuffer,
     seq_number::seq_num_range, srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags},
     srt_version, ConnectionSettings, SeqNumber,
 };
 
-use std::{
-    cmp, collections::VecDeque, io::Cursor, iter::Iterator, net::SocketAddr,
-    time::{Duration, Instant},
-};
+use std::{cmp, io::Cursor, iter::Iterator, net::SocketAddr, time::Duration};
 
 struct LossListEntry {
     seq_num: SeqNumber,
@@ -105,16 +102,8 @@ pub struct Receiver<T> {
     /// The ACK sequence number of the largest ACK2 received, and the ack number
     lr_ack_acked: (i32, SeqNumber),
 
-    /// Receive buffer
-    /// Used to store packets that were received out of order
-    /// In ascending sequence numbers
-    /// There are no gaps between sequence nubmers
-    /// the index of sequence number i is at buffer[i - last_released - 1]
-    /// The instant is the estimated send time, calculated as recv_time - rtt / 2
-    buffer: VecDeque<Option<(Instant, DataPacket)>>,
-
-    /// the latest released sequence number
-    last_released: SeqNumber,
+    /// The buffer
+    buffer: RecvBuffer,
 
     /// The TSBPD time
     /// If this is None, TSBPD is disabled
@@ -145,8 +134,7 @@ where
             probe_time: None,
             timeout_timer: Delay::new(Duration::from_secs(1)),
             lr_ack_acked: (0, settings.init_seq_num),
-            buffer: VecDeque::new(),
-            last_released: settings.init_seq_num - 1,
+            buffer: RecvBuffer::new(settings.init_seq_num),
             tsbpd: None,
         }
     }
@@ -307,10 +295,8 @@ where
         // is dynamically updated to 4 * RTT_+ RTTVar + SYN, where RTTVar is the
         // variance of RTT samples.
         let nak_interval_us = 4 * self.rtt as u64 + self.rtt_variance as u64 + 10_000;
-        self.nak_interval.reset(Duration::new(
-            nak_interval_us / 1_000_000,
-            (nak_interval_us % 1_000_000) as u32 * 1_000,
-        ));
+        self.nak_interval
+            .reset(Duration::from_micros(nak_interval_us));
 
         // Search the receiver's loss list, find out all those sequence numbers
         // whose last feedback time is k*RTT before, where k is initialized as 2
@@ -363,13 +349,6 @@ where
         }
 
         Ok(())
-    }
-
-    // gets the id in `buffer` of a given sequence number
-    fn id_in_buffer(&self, seq: SeqNumber) -> usize {
-        assert!(self.last_released < seq);
-
-        (seq - self.last_released - 1) as usize
     }
 
     // handles a SRT control packet
@@ -454,52 +433,7 @@ where
 
                 match ctrl.control_type {
                     ControlTypes::Ack { .. } => warn!("Receiver received ACK packet, unusual"),
-                    ControlTypes::Ack2(seq_num) => {
-                        // 1) Locate the related ACK in the ACK History Window according to the
-                        //    ACK sequence number in this ACK2.
-                        let id_in_wnd = match self
-                            .ack_history_window
-                            .as_slice()
-                            .binary_search_by(|entry| entry.ack_seq_num.cmp(&seq_num))
-                        {
-                            Ok(i) => Some(i),
-                            Err(_) => None,
-                        };
-
-                        if let Some(id) = id_in_wnd {
-                            let AckHistoryEntry {
-                                timestamp: send_timestamp,
-                                ack_number,
-                                ..
-                            } = self.ack_history_window[id];
-
-                            // 2) Update the largest ACK number ever been acknowledged.
-                            self.lr_ack_acked = (seq_num, ack_number);
-
-                            // 3) Calculate new rtt according to the ACK2 arrival time and the ACK
-                            //    departure time, and update the RTT value as: RTT = (RTT * 7 +
-                            //    rtt) / 8
-                            let immediate_rtt = self.get_timestamp() - send_timestamp;
-                            self.rtt = (self.rtt * 7 + immediate_rtt) / 8;
-
-                            // 4) Update RTTVar by: RTTVar = (RTTVar * 3 + abs(RTT - rtt)) / 4.
-                            self.rtt_variance = (self.rtt_variance * 3
-                                + (self.rtt_variance - immediate_rtt).abs())
-                                / 4;
-
-                            // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
-                            let ack_us = 4 * self.rtt as u64 + self.rtt_variance as u64 + 10_000;
-                            self.ack_interval = Interval::new(Duration::new(
-                                ack_us / 1_000_000,
-                                ((ack_us % 1_000_000) * 1_000) as u32,
-                            ));
-                        } else {
-                            warn!(
-                                "ACK sequence number in ACK2 packet not found in ACK history: {}",
-                                seq_num
-                            );
-                        }
-                    }
+                    ControlTypes::Ack2(seq_num) => self.handle_ack2(seq_num)?,
                     ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(info) => {
                         // just send it back
@@ -534,257 +468,141 @@ where
                     }
                 }
             }
-            Packet::Data(data) => {
-                debug!("Received data packet seq_num={}", data.seq_number);
-
-                let now = self.get_timestamp();
-
-                // 1) Reset the ExpCount to 1. If there is no unacknowledged data
-                //     packet, or if this is an ACK or NAK control packet, reset the EXP
-                //     timer.
-                self.exp_count = 1;
-
-                // 2&3 don't apply
-
-                // 4) If the sequence number of the current data packet is 16n + 1,
-                //     where n is an integer, record the time interval between this
-                if data.seq_number % 16 == 0 {
-                    self.probe_time = Some(now)
-                } else if data.seq_number % 16 == 1 {
-                    // if there is an entry
-                    if let Some(pt) = self.probe_time {
-                        // calculate and insert
-                        self.packet_pair_window.push((data.seq_number, now - pt));
-
-                        // reset
-                        self.probe_time = None;
-                    }
-                }
-                // 5) Record the packet arrival time in PKT History Window.
-                self.packet_history_window.push((data.seq_number, now));
-
-                // 6)
-                // a. If the sequence number of the current data packet is greater
-                //    than LRSN + 1, put all the sequence numbers between (but
-                //    excluding) these two values into the receiver's loss list and
-                //    send them to the sender in an NAK packet.
-                if data.seq_number > self.lrsn + 1 {
-                    // lrsn is the latest packet received, so nak the one after that
-                    let first_to_be_nak = self.lrsn + 1;
-                    for i in seq_num_range(first_to_be_nak, data.seq_number) {
-                        self.loss_list.push(LossListEntry {
-                            seq_num: i,
-                            feedback_time: now,
-                            // k is initialized at 2, as stated on page 12 (very end)
-                            k: 2,
-                        })
-                    }
-
-                    self.send_nak(seq_num_range(first_to_be_nak, data.seq_number))?;
-
-                // b. If the sequence number is less than LRSN, remove it from the
-                //    receiver's loss list.
-                } else if data.seq_number < self.lrsn {
-                    match self.loss_list[..].binary_search_by(|ll| ll.seq_num.cmp(&data.seq_number))
-                    {
-                        Ok(i) => {
-                            self.loss_list.remove(i);
-                            ()
-                        }
-                        Err(_) => {
-                            warn!(
-                                "Packet received that's not in the loss list: {:?}, loss_list={:?}",
-                                data.seq_number,
-                                self.loss_list
-                                    .iter()
-                                    .map(|ll| ll.seq_num.as_raw())
-                                    .collect::<Vec<_>>()
-                            );
-                        }
-                    };
-                }
-
-                // record that we got this packet
-                self.lrsn = cmp::max(data.seq_number, self.lrsn);
-
-                // we've already gotten this packet, drop it
-                if self.last_released >= data.seq_number {
-                    warn!("Received packet {:?} twice", data.seq_number);
-                    return Ok(false);
-                }
-
-                // add it to the buffer at the right spot
-                // keep it sorted ascending
-
-                // make sure the buffer is big enough
-                // this cast is safe because last_released is garunteed to be >= seq_number
-                let seq_id_in_buffer = self.id_in_buffer(data.seq_number);
-                if seq_id_in_buffer >= self.buffer.len() {
-                    self.buffer.resize(seq_id_in_buffer + 1, None);
-                }
-
-                // add it the buffer
-                if self.buffer[seq_id_in_buffer].is_some() {
-                    debug!("Received packet {:?} twice", data.seq_number);
-                }
-                self.buffer[seq_id_in_buffer] = Some((
-                    Instant::now() - Duration::new(0, self.rtt as u32 / 2 * 1_000),
-                    data,
-                ));
-
-                if !self.buffer.is_empty() {
-                    trace!(
-                        "lr={}, buffer.len()={}, buffer[0]={}, buffer[last]={}",
-                        self.last_released,
-                        self.buffer.len(),
-                        self.buffer[0]
-                            .as_ref()
-                            .map(|(_, ref p)| p.seq_number)
-                            .unwrap_or_else(|| SeqNumber::new(0)),
-                        self.buffer[self.buffer.len() - 1]
-                            .as_ref()
-                            .map(|(_, ref p)| p.seq_number)
-                            .unwrap_or_else(|| SeqNumber::new(0)),
-                    );
-                }
-            }
+            Packet::Data(data) => self.handle_data_packet(data)?,
         };
 
         Ok(false)
     }
 
-    // check if a whole message is available in buffer
-    // TODO: this sort of logic should be in it's own struct--to make it easier to test. It's complex.
-    fn is_message_available(&self) -> bool {
-        // if data packets are ready, send them
-        if let Some(&Some((_, ref packet))) = self.buffer.front() {
-            assert_eq!(packet.seq_number, self.last_released + 1);
-
-            // make sure to reconstruct messages correctly
-            match packet.message_loc {
-                a if a.contains(PacketLocation::FIRST | PacketLocation::LAST) => true,
-                PacketLocation::FIRST => {
-                    let message_number = packet.message_number;
-
-                    // loop through the buffer, making sure they're available, skipping the first one as it's this one.
-                    for packet_opt in self.buffer.iter().skip(1) {
-                        if let Some((_, packet)) = packet_opt {
-                            if packet.message_number != message_number {
-                                warn!(
-                                    "Unexpected change in messenge number, expected {} got {}",
-                                    message_number, packet.message_number
-                                );
-                                return false; // i guess?
-                            }
-                            if packet.message_loc == PacketLocation::LAST {
-                                return true;
-                            }
-                        } else {
-                            return false;
-                        }
-                    }
-                    false
-                }
-                _ => {
-                    warn!("Unexpected middle of message (firt bit not set), expected first. This probably indicates a bug in the sender.");
-
-                    false
-                }
-            }
-        } else {
-            false
-        }
-    }
-
-    // reconstruct the next, removing it from the buffer
-    // panics if `is_message_availabe()` returns false
-    fn pop_front_msg(&mut self) -> Bytes {
-        let (_, first) = self.buffer.pop_front().unwrap().unwrap();
-
-        // it's a one packet message, just return the payload from it
-        if first
-            .message_loc
-            .contains(PacketLocation::FIRST | PacketLocation::LAST)
+    fn handle_ack2(&mut self, seq_num: i32) -> Result<(), Error> {
+        // 1) Locate the related ACK in the ACK History Window according to the
+        //    ACK sequence number in this ACK2.
+        let id_in_wnd = match self
+            .ack_history_window
+            .as_slice()
+            .binary_search_by(|entry| entry.ack_seq_num.cmp(&seq_num))
         {
-            return first.payload;
-        }
+            Ok(i) => Some(i),
+            Err(_) => None,
+        };
 
-        // reconstruct it
-        let mut ret = BytesMut::new();
-        loop {
-            let (_, pkt) = self.buffer.pop_front().unwrap().unwrap();
+        if let Some(id) = id_in_wnd {
+            let AckHistoryEntry {
+                timestamp: send_timestamp,
+                ack_number,
+                ..
+            } = self.ack_history_window[id];
 
-            ret.extend(pkt.payload);
+            // 2) Update the largest ACK number ever been acknowledged.
+            self.lr_ack_acked = (seq_num, ack_number);
 
-            if pkt.message_loc.contains(PacketLocation::LAST) {
-                break ret.freeze();
-            }
-        }
-    }
+            // 3) Calculate new rtt according to the ACK2 arrival time and the ACK
+            //    departure time, and update the RTT value as: RTT = (RTT * 7 +
+            //    rtt) / 8
+            let immediate_rtt = self.get_timestamp() - send_timestamp;
+            self.rtt = (self.rtt * 7 + immediate_rtt) / 8;
 
-    // in non-tsbpd mode, see if there are packets to release
-    fn try_release_no_tsbpd(&mut self) -> Option<Bytes> {
-        if self.is_message_available() {
-            Some(self.pop_front_msg())
+            // 4) Update RTTVar by: RTTVar = (RTTVar * 3 + abs(RTT - rtt)) / 4.
+            self.rtt_variance =
+                (self.rtt_variance * 3 + (self.rtt_variance - immediate_rtt).abs()) / 4;
+
+            // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
+            let ack_us = 4 * self.rtt as u64 + self.rtt_variance as u64 + 10_000;
+            self.ack_interval = Interval::new(Duration::from_micros(ack_us));
         } else {
-            None
+            warn!(
+                "ACK sequence number in ACK2 packet not found in ACK history: {}",
+                seq_num
+            );
         }
+
+        Ok(())
     }
 
-    // TODO: rewrite this with `pop_front_msg`
-    fn try_release_tsbpd(&mut self, tsbpd: Duration) -> Option<Bytes> {
-        let first = self.buffer.pop_front()?;
+    fn handle_data_packet(&mut self, data: DataPacket) -> Result<(), Error> {
+        let now = self.get_timestamp();
 
-        match first {
-            Some((send_time, pack)) => {
-                // TODO: is this right? XXX debug
-                let send_time_ts = pack.timestamp;
+        // 1) Reset the ExpCount to 1. If there is no unacknowledged data
+        //     packet, or if this is an ACK or NAK control packet, reset the EXP
+        //     timer.
+        self.exp_count = 1;
 
-                // if ready to release, do
-                // TODO: deal with messages (yuck)
-                if self.get_timestamp()
-                    >= send_time_ts as i32
-                        + { tsbpd.as_secs() as u32 * 1_000_000 + tsbpd.subsec_micros() } as i32
-                {
-                    self.last_released += 1;
-                    Some(pack.payload)
-                } else {
-                    self.buffer.push_front(Some((send_time, pack))); // re-add
-                    None
-                }
-            }
-            // if the most recent packet hasn't been received yet, see if we need to discard some packets
-            None => {
-                // find if the first actually received packet should be released
-                let time = self.buffer.iter().find(|ref a| a.is_some())?.as_ref()?.0;
+        // 2&3 don't apply
 
-                if Instant::now() >= time + tsbpd {
-                    // drop all the missing packets
-                    // unwrap is safe b/c we know there is a Some packet, as the ? above didn't return
-                    while let None = self.buffer.front().unwrap() {
-                        self.last_released += 1;
-                        warn!(
-                            "Dropping packet {}, did not arrive in time",
-                            self.last_released
-                        );
-                        self.buffer.pop_front();
-                    }
-                    self.last_released += 1;
-                    let payload = self.buffer
-                        .pop_front()
-                        .unwrap() // we know there is at least one element
-                        .unwrap() // we know it is non-null, cuz the while let terminated
-                        .1 // get the packet, not the time
-                        .payload;
+        // 4) If the sequence number of the current data packet is 16n + 1,
+        //     where n is an integer, record the time interval between this
+        if data.seq_number % 16 == 0 {
+            self.probe_time = Some(now)
+        } else if data.seq_number % 16 == 1 {
+            // if there is an entry
+            if let Some(pt) = self.probe_time {
+                // calculate and insert
+                self.packet_pair_window.push((data.seq_number, now - pt));
 
-                    Some(payload)
-                } else {
-                    // re-add the initial packet
-                    self.buffer.push_front(None);
-                    None
-                }
+                // reset
+                self.probe_time = None;
             }
         }
+        // 5) Record the packet arrival time in PKT History Window.
+        self.packet_history_window.push((data.seq_number, now));
+
+        // 6)
+        // a. If the sequence number of the current data packet is greater
+        //    than LRSN + 1, put all the sequence numbers between (but
+        //    excluding) these two values into the receiver's loss list and
+        //    send them to the sender in an NAK packet.
+        if data.seq_number > self.lrsn + 1 {
+            // lrsn is the latest packet received, so nak the one after that
+            let first_to_be_nak = self.lrsn + 1;
+            for i in seq_num_range(first_to_be_nak, data.seq_number) {
+                self.loss_list.push(LossListEntry {
+                    seq_num: i,
+                    feedback_time: now,
+                    // k is initialized at 2, as stated on page 12 (very end)
+                    k: 2,
+                })
+            }
+
+            self.send_nak(seq_num_range(first_to_be_nak, data.seq_number))?;
+
+        // b. If the sequence number is less than LRSN, remove it from the
+        //    receiver's loss list.
+        } else if data.seq_number < self.lrsn {
+            match self.loss_list[..].binary_search_by(|ll| ll.seq_num.cmp(&data.seq_number)) {
+                Ok(i) => {
+                    self.loss_list.remove(i);
+                    ()
+                }
+                Err(_) => {
+                    warn!(
+                        "Packet received that's not in the loss list: {:?}, loss_list={:?}",
+                        data.seq_number,
+                        self.loss_list
+                            .iter()
+                            .map(|ll| ll.seq_num.as_raw())
+                            .collect::<Vec<_>>()
+                    );
+                }
+            };
+        }
+
+        // record that we got this packet
+        self.lrsn = cmp::max(data.seq_number, self.lrsn);
+
+        // we've already gotten this packet, drop it
+        if self.buffer.next_release() > data.seq_number {
+            warn!("Received packet {:?} twice", data.seq_number);
+            return Ok(());
+        }
+
+        self.buffer.add(data.clone());
+
+        debug!(
+            "Received data packet seq_num={}, loc={:?}, buffer={:?}",
+            data.seq_number, data.message_loc, self.buffer,
+        );
+
+        Ok(())
     }
 
     // send a NAK, and return the future
@@ -832,21 +650,14 @@ where
         self.sock.poll_complete()?;
 
         loop {
-            trace!(
-                "last_rel={} Buffer={:?}",
-                self.last_released,
-                self.buffer
-                    .iter()
-                    .map(|a| a.as_ref().map(|(_, p)| p.seq_number))
-                    .collect::<Vec<_>>()
-            );
-
             // try to release packets
-            if let Some(p) = match self.tsbpd {
-                Some(tsbpd) => self.try_release_tsbpd(tsbpd),
-                None => self.try_release_no_tsbpd(),
-            } {
-                return Ok(Async::Ready(Some(p)));
+            match self.tsbpd {
+                Some(_) => unimplemented!(),
+                None => {
+                    if let Some(p) = self.buffer.next_msg() {
+                        return Ok(Async::Ready(Some(p)));
+                    }
+                }
             }
 
             match self.timeout_timer.poll() {

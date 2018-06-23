@@ -476,8 +476,6 @@ mod test {
         let mut buf = vec![];
         pack.serialize(&mut buf);
 
-        println!("len={}, {:x?}", buf.len(), &buf);
-
         let des = ControlPacket::parse(Cursor::new(buf)).unwrap();
 
         assert_eq!(pack, des);

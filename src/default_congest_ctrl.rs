@@ -118,10 +118,7 @@ impl CongestCtrl for DefaultCongestCtrl {
             new_snd_total_micros = u64::min(1_000_000, new_snd_total_micros);
             new_snd_total_micros = u64::max(1, new_snd_total_micros);
 
-            Duration::new(
-                new_snd_total_micros / 1_000_000,
-                (new_snd_total_micros % 1_000_000) as u32 * 1_000,
-            )
+            Duration::from_micros(new_snd_total_micros)
         };
 
         // We define a congestion period as the period between two NAKs in which
@@ -141,7 +138,7 @@ impl CongestCtrl for DefaultCongestCtrl {
         match mem::replace(&mut self.phase, Phase::Operation) {
             Phase::SlowStart => {
                 self.send_interval =
-                    Duration::new(0, ((1.0 / f64::from(data.packet_arr_rate)) * 1e9) as u32);
+                    Duration::from_micros(((1.0 / f64::from(data.packet_arr_rate)) * 1e6) as u64);
                 return;
             }
             Phase::Operation => {}

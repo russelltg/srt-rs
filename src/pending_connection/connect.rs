@@ -133,7 +133,7 @@ where
                                 socket_start_time: self.socket_start_time,
                                 local_sockid: self.local_socket_id,
                                 remote_sockid: info.socket_id,
-                                tsbpd_latency: Some(Duration::from_millis(120)), // 120 ms by default, TODO: configurable
+                                tsbpd_latency: None, // TODO: configurable
                             },
                         )));
                     }

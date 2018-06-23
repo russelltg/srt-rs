@@ -36,6 +36,7 @@ pub mod stats_printer;
 #[macro_use]
 pub mod modular_num;
 pub mod msg_number;
+pub mod recv_buffer;
 pub mod seq_number;
 
 pub use builder::{ConnInitMethod, SrtSocket, SrtSocketBuilder};
@@ -44,7 +45,7 @@ pub use connected::Connected;
 pub use connection_settings::ConnectionSettings;
 pub use default_congest_ctrl::DefaultCongestCtrl;
 pub use msg_number::MsgNumber;
-pub use packet::Packet;
+pub use packet::{ControlPacket, DataPacket, Packet};
 pub use pending_connection::PendingConnection;
 pub use receiver::Receiver;
 pub use sender::Sender;

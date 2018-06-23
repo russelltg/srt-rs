@@ -7,7 +7,7 @@ extern crate log;
 extern crate tokio_udp;
 
 use futures::prelude::*;
-use srt::{ConnInitMethod, PendingConnection, SrtSocketBuilder};
+use srt::{ConnInitMethod, SrtSocketBuilder};
 
 #[test]
 fn message_splitting() {
@@ -36,32 +36,23 @@ fn message_splitting() {
                 .start_send(long_message)
                 .expect("Failed to start send of long message");
 
-            sender
-                .flush()
-                .map(|mut sender| {
-                    info!("Sender flushed, closing");
-                    sender.close()
-                })
-                .join(
-                    recvr
-                        .into_future()
-                        .and_then(|(data, recvr)| {
-                            info!("Got first data packet, waiting for closure");
+            sender.flush().join(recvr.into_future().map_err(|(e, _)| e))
+        })
+        .and_then(|(mut sender, (data, recvr))| {
+            info!("Sender flushed, closing");
+            sender.close().expect("Failed to close sender");
 
-                            // poll again, which should eventually return None
-                            // this is necessary as the receiver needs to continue to get poll events to ACK.
-                            recvr.into_future().map(|(empty_data, recvr)| {
-                                assert_eq!(data.as_ref().unwrap().len(), 16384);
-                                assert_eq!(&data.unwrap()[..], &[b'8'; 16384][..]);
-                                assert!(empty_data.is_none());
+            assert_eq!(&data.unwrap(), &[b'8'; 16384][..]);
+            info!("Got data packet, waiting for closure");
 
-                                info!("Got end of stream, good");
+            // poll again, which should eventually return None
+            // this is necessary as the receiver needs to continue to get poll events to ACK.
+            recvr.into_future().map_err(|(e, _)| e)
+        })
+        .map(|(empty_data, _)| {
+            assert!(empty_data.is_none());
 
-                                recvr
-                            })
-                        })
-                        .map_err(|(err, _)| err),
-                )
+            info!("Got end of stream, good");
         })
         .wait()
         .unwrap();

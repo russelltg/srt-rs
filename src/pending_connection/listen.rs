@@ -1,6 +1,5 @@
 use std::{
-    collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, net::SocketAddr,
-    time::{Duration, Instant},
+    collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, net::SocketAddr, time::Instant,
 };
 
 use failure::Error;
@@ -184,7 +183,7 @@ where
                             max_packet_size: shake.max_packet_size,
                             local_sockid: self.local_socket_id,
                             socket_start_time: self.socket_start_time,
-                            tsbpd_latency: Some(Duration::from_millis(120)), // 120 ms by default, TODO: configurable
+                            tsbpd_latency: None, // TODO: configurable
                         });
                         // break out to end the borrow on self.sock
                         break;

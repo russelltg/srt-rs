@@ -76,7 +76,7 @@ pub struct Sender<T, CC> {
     /// The interval to report stats with
     stats_interval: Interval,
 
-    /// Interval to send SRT handshake packets with
+    /// Interval to send SRT handshake packets with.
     srt_handshake_interval: Option<Interval>,
 
     /// Tracks if the sender is closed
@@ -161,10 +161,7 @@ where
             max_segment_size: self.settings.max_packet_size,
             latest_seq_num: Some(self.next_seq_number - 1),
             packet_arr_rate: self.pkt_arr_rate,
-            rtt: Duration::new(
-                self.rtt as u64 / 1_000_000,
-                ((self.rtt % 1_000_000) * 1_000) as u32,
-            ),
+            rtt: Duration::from_micros(self.rtt as u64),
         }
     }
 
@@ -491,6 +488,7 @@ where
         if self.srt_handshake_interval.is_some() {
             if let Async::Ready(_) = self.srt_handshake_interval.as_mut().unwrap().poll()? {
                 self.send_srt_handshake()?;
+                self.sock.poll_complete()?;
             }
         }
 
@@ -603,6 +601,9 @@ where
                 }),
                 self.settings.remote,
             ))?;
+
+            // cancel the handshake timer
+            self.srt_handshake_interval = None;
         }
 
         self.closed = true;
