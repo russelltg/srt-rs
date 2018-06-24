@@ -470,6 +470,14 @@ where
     }
 
     fn poll_complete(&mut self) -> Poll<(), Error> {
+        // info!(
+        //     "Polling sender, ll.len()={}, pp.len()={}, lr={}, next={}",
+        //     self.loss_list.len(),
+        //     self.pending_packets.len(),
+        //     self.lr_acked_packet,
+        //     self.next_seq_number
+        // );
+
         // we need to poll_complete this until completion
         // this poll_complete could have come from a wakeup of that, so call it
         if let Async::Ready(_) = self.sock.poll_complete()? {
