@@ -9,7 +9,7 @@ impl Decoder for PacketCodec {
     type Error = Error;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Packet>, Error> {
-        Packet::parse(Cursor::new(buf)).map(Some)
+        Packet::parse(&mut Cursor::new(buf)).map(Some)
     }
 }
 

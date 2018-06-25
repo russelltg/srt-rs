@@ -1,13 +1,14 @@
-extern crate bytes;
 extern crate env_logger;
 extern crate futures;
 extern crate srt;
 #[macro_use]
 extern crate log;
+extern crate bytes;
 extern crate tokio_udp;
 
+use bytes::Bytes;
 use futures::prelude::*;
-use srt::{PendingConnection, SrtSocketBuilder, ConnInitMethod};
+use srt::{ConnInitMethod, SrtSocketBuilder};
 
 #[test]
 fn message_splitting() {
@@ -25,12 +26,14 @@ fn message_splitting() {
 
     sender
         .join(recvr)
-        .map(|(sender, recvr)| (sender.sender(), recvr.receiver()))
-        .and_then(|(mut sender, recvr)| {
+        // conection resolved
+        .and_then(|(sender, recvr)| {
+            let (mut sender, recvr) = (sender.sender(), recvr.receiver());
+
             info!("Connected!");
 
             // send a really really long packet
-            let long_message = bytes::BytesMut::from(&[b'8'; 16384][..]).freeze();
+            let long_message = Bytes::from(&[b'8'; 16384][..]);
 
             sender
                 .start_send(long_message)
@@ -40,28 +43,15 @@ fn message_splitting() {
                 .flush()
                 .map(|mut sender| {
                     info!("Sender flushed, closing");
-                    sender.close()
+                    sender.close().expect("Failed to close sender");
+
+                    sender
                 })
-                .join(
-                    recvr
-                        .into_future()
-                        .and_then(|(data, recvr)| {
-                            info!("Got first data packet, waiting for closure");
-
-                            // poll again, which should eventually return None
-                            // this is necessary as the receiver needs to continue to get poll events to ACK.
-                            recvr.into_future().map(|(empty_data, recvr)| {
-                                assert_eq!(data.as_ref().unwrap().len(), 16384);
-                                assert_eq!(&data.unwrap()[..], &[b'8'; 16384][..]);
-                                assert!(empty_data.is_none());
-
-                                info!("Got end of stream, good");
-
-                                recvr
-                            })
-                        })
-                        .map_err(|(err, _)| err),
-                )
+                .join(recvr.collect())
+        })
+        // connection closed and data received
+        .map(|(_, data_vec)| {
+            assert_eq!(&data_vec, &[Bytes::from(&[b'8'; 16384][..])]);
         })
         .wait()
         .unwrap();

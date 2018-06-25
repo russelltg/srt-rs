@@ -36,22 +36,22 @@ pub struct SrtHandshake {
 bitflags! {
     pub struct SrtShakeFlags: u32 {
         /// Timestamp-based Packet delivery real-time data sender
-        const TSBPDSND = 0x00000001;
+        const TSBPDSND = 0x1;
 
         /// Timestamp-based Packet delivery real-time data receiver
-        const TSBPDRCV = 0x00000002;
+        const TSBPDRCV = 0x2;
 
         /// HaiCrypt AES-128/192/256-CTR
-        const HAICRYPT = 0x00000004;
+        const HAICRYPT = 0x4;
 
         /// Drop real-time data packets too late to be processed in time
-        const TLPKTDROP = 0x00000008;
+        const TLPKTDROP = 0x8;
 
         /// Periodic NAK report
-        const NAKREPORT = 0x00000010;
+        const NAKREPORT = 0x10;
 
         /// One bit in payload packet msgno is "retransmitted" flag
-        const REXMITFLG = 0x00000020;
+        const REXMITFLG = 0x20;
     }
 }
 
@@ -123,7 +123,7 @@ impl SrtHandshake {
         Ok(SrtHandshake {
             version,
             flags,
-            latency: Duration::from_millis(latency as u64),
+            latency: Duration::from_millis(u64::from(latency)),
         })
     }
 
@@ -134,8 +134,7 @@ impl SrtHandshake {
         into.put_u16_be(0);
         // lower 16 is latency
         into.put_u16_be(
-            (self.latency.subsec_nanos() / 1_000_000) as u16
-                + self.latency.as_secs() as u16 * 1_000,
+            (self.latency.subsec_millis()) as u16 + self.latency.as_secs() as u16 * 1_000,
         );
     }
 }

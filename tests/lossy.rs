@@ -10,12 +10,9 @@ extern crate log;
 extern crate failure;
 
 use {
-    bytes::{Bytes, BytesMut}, failure::Error, futures::{prelude::*, stream::iter_ok, sync::mpsc},
+    bytes::Bytes, failure::Error, futures::{prelude::*, stream::iter_ok, sync::mpsc},
     futures_timer::{Delay, Interval}, rand::distributions::{Distribution, Normal},
-    srt::{
-        stats_printer::StatsPrinterSender, ConnectionSettings, Receiver, Sender, SeqNumber,
-        SocketID, SrtCongestCtrl,
-    },
+    srt::{ConnectionSettings, Receiver, Sender, SeqNumber, SocketID, SrtCongestCtrl},
     std::{
         cmp::Ordering, collections::BinaryHeap, fmt::Debug, str, thread, time::{Duration, Instant},
     },
@@ -83,6 +80,7 @@ impl<T: Debug> Sink for LossyConn<T> {
         }
 
         if self.delay_avg == Duration::from_secs(0) {
+            debug!("Sending packet: {:?}", to_send);
             self.sender.start_send(to_send).unwrap();
         } else
         // delay
@@ -115,6 +113,7 @@ impl<T: Debug> Sink for LossyConn<T> {
                 Some(v) => v,
                 None => break,
             };
+            debug!("Sending packet: {:?}", val.data);
             self.sender.start_send(val.data).unwrap(); // TODO: handle full
 
             // reset timer
@@ -176,7 +175,7 @@ fn test_with_loss() {
 
     // a stream of ascending stringified integers
     let counting_stream = iter_ok(INIT_SEQ_NUM..(INIT_SEQ_NUM + ITERS))
-        .map(|i| BytesMut::from(&i.to_string().bytes().collect::<Vec<_>>()[..]).freeze())
+        .map(|i| Bytes::from(i.to_string()))
         .zip(Interval::new(Duration::from_millis(1)))
         .map(|(b, _)| b);
 
@@ -226,6 +225,7 @@ fn test_with_loss() {
 
         for payload in recvr.wait() {
             let payload = payload.unwrap();
+
             assert_eq!(next_data.to_string(), str::from_utf8(&payload[..]).unwrap());
 
             next_data += 1;
@@ -249,7 +249,7 @@ fn tsbpd() {
     // a stream of ascending stringified integers
     // 1 ms between packets
     let counting_stream = iter_ok(INIT_SEQ_NUM..)
-        .map(|i| BytesMut::from(&i.to_string().bytes().collect::<Vec<_>>()[..]).freeze())
+        .map(|i| Bytes::from(i.to_string()))
         .zip(Interval::new(Duration::from_millis(1)))
         .map(|(b, _)| b);
 
@@ -313,8 +313,6 @@ fn tsbpd() {
         let mut last_time = Instant::now();
 
         for by in iter {
-            println!("Next!");
-
             let by = by.unwrap();
             assert_eq!(
                 str::from_utf8(&by[..]).unwrap(),
@@ -330,7 +328,7 @@ fn tsbpd() {
             let ms = (last_time.elapsed().subsec_nanos() as f64
                 + last_time.elapsed().as_secs() as f64 * 1e9) / 1e6;
             assert!(
-                last_time.elapsed() > Duration::new(0, 900_000)
+                last_time.elapsed() > Duration::from_micros(900)
                     && last_time.elapsed() < Duration::from_millis(2),
                 "time elapsed={}ms, expected between 0.9ms and 2ms",
                 ms

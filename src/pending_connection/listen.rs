@@ -1,13 +1,12 @@
 use std::{
-    collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, net::SocketAddr,
-    time::{Duration, Instant},
+    collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, net::SocketAddr, time::Instant,
 };
 
 use failure::Error;
 use futures::prelude::*;
 
 use connected::Connected;
-use packet::{ConnectionType, ControlTypes, Packet};
+use packet::{ConnectionType, ControlPacket, ControlTypes, Packet};
 use {ConnectionSettings, SocketID};
 
 pub struct Listen<T> {
@@ -74,11 +73,11 @@ where
                 // Haven't received anything yet, waiting for the first handshake
                 ConnectionState::WaitingForHandshake => {
                     // see if it's a handshake request
-                    if let Packet::Control {
+                    if let Packet::Control(ControlPacket {
                         control_type: ControlTypes::Handshake(shake),
                         timestamp,
                         ..
-                    } = packet
+                    }) = packet
                     {
                         info!("Handshake recieved from {:?}", addr);
 
@@ -97,7 +96,7 @@ where
                         };
 
                         // construct a packet to send back
-                        let resp_handshake = Packet::Control {
+                        let resp_handshake = Packet::Control(ControlPacket {
                             timestamp,
                             dest_sockid: shake.socket_id,
                             control_type: ControlTypes::Handshake({
@@ -107,7 +106,7 @@ where
 
                                 tmp
                             }),
-                        };
+                        });
 
                         self.state = ConnectionState::WaitingForCookieResp(cookie);
 
@@ -130,11 +129,11 @@ where
 
                     info!("Second handshake recieved from {:?}", addr);
 
-                    if let Packet::Control {
+                    if let Packet::Control(ControlPacket {
                         control_type: ControlTypes::Handshake(shake),
                         timestamp,
                         ..
-                    } = packet
+                    }) = packet
                     {
                         if shake.connection_type != ConnectionType::RendezvousRegularSecond {
                             // discard
@@ -158,7 +157,7 @@ where
                         // use the remote ones
 
                         // construct a packet to send back
-                        let resp_handshake = Packet::Control {
+                        let resp_handshake = Packet::Control(ControlPacket {
                             timestamp,
                             dest_sockid: shake.socket_id,
                             control_type: ControlTypes::Handshake({
@@ -168,7 +167,7 @@ where
 
                                 tmp
                             }),
-                        };
+                        });
 
                         // send the packet
                         sock.start_send((resp_handshake, addr))?;
@@ -184,7 +183,7 @@ where
                             max_packet_size: shake.max_packet_size,
                             local_sockid: self.local_socket_id,
                             socket_start_time: self.socket_start_time,
-                            tsbpd_latency: Some(Duration::from_millis(120)), // 120 ms by default, TODO: configurable
+                            tsbpd_latency: None, // TODO: configurable
                         });
                         // break out to end the borrow on self.sock
                         break;

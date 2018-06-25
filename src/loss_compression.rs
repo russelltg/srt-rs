@@ -43,7 +43,7 @@ where
                     self.next = None;
 
                     // return the one we have
-                    return Some(this.raw());
+                    return Some(this.as_raw());
                 }
             };
 
@@ -65,17 +65,17 @@ where
                     // break out of the loop
                     self.last_in_loop = None;
 
-                    return Some(this.raw());
+                    return Some(this.as_raw());
                 }
             } else if this + 1 == self.next.unwrap() {
                 // create a loop
                 self.last_in_loop = Some(this);
 
                 // set the first bit to 1
-                return Some(this.raw() | 1 << 31);
+                return Some(this.as_raw() | 1 << 31);
             } else {
                 // no looping necessary
-                return Some(this.raw());
+                return Some(this.as_raw());
             }
         }
     }
@@ -162,11 +162,13 @@ mod test {
             ($x:expr, $y:expr) => {{
                 assert_eq!(
                     compress_loss_list($x.iter().cloned().map(SeqNumber::new)).collect::<Vec<_>>(),
-                    $y.iter().cloned().collect::<Vec<_>>()
+                    $y.iter().cloned().collect::<Vec<_>>(),
+                    "Compressed wasn't same as given"
                 );
                 assert_eq!(
                     decompress_loss_list($y.iter().cloned()).collect::<Vec<_>>(),
-                    $x.iter().cloned().map(SeqNumber::new).collect::<Vec<_>>()
+                    $x.iter().cloned().map(SeqNumber::new).collect::<Vec<_>>(),
+                    "Decompressed not same as given"
                 );
             }};
         }
@@ -181,9 +183,6 @@ mod test {
 
         test_comp_decomp!([15, 16], [15 | 1 << 31, 16]);
 
-        test_comp_decomp!(
-            [1687761238, 1687761239],
-            [1687761238 | 1 << 31 /*-459722410*/, 1687761239]
-        );
+        test_comp_decomp!([1687761238, 1687761239], [1687761238 | 1 << 31, 1687761239]);
     }
 }
