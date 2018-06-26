@@ -1,4 +1,5 @@
 extern crate env_logger;
+#[macro_use]
 extern crate futures;
 extern crate srt;
 #[macro_use]
@@ -9,6 +10,25 @@ extern crate tokio_udp;
 use bytes::Bytes;
 use futures::prelude::*;
 use srt::{ConnInitMethod, SrtSocketBuilder};
+
+// Apparently this was an important omission from the futures crate. Unfortunate.
+struct CloseFuture<T>(Option<T>);
+
+impl<T: Sink> Future for CloseFuture<T> {
+    type Item = T;
+    type Error = T::SinkError;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        try_ready!(
+            self.0
+                .as_mut()
+                .expect("Polled CloseFuture after Async::Ready was returned")
+                .close()
+        );
+
+        return Ok(Async::Ready(self.0.take().unwrap()));
+    }
+}
 
 #[test]
 fn message_splitting() {
@@ -41,11 +61,10 @@ fn message_splitting() {
 
             sender
                 .flush()
-                .map(|mut sender| {
+                .and_then(|sender| {
                     info!("Sender flushed, closing");
-                    sender.close().expect("Failed to close sender");
 
-                    sender
+                    CloseFuture(Some(sender))
                 })
                 .join(recvr.collect())
         })

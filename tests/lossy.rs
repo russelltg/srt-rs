@@ -176,7 +176,7 @@ fn test_with_loss() {
     // a stream of ascending stringified integers
     let counting_stream = iter_ok(INIT_SEQ_NUM..(INIT_SEQ_NUM + ITERS))
         .map(|i| Bytes::from(i.to_string()))
-        .zip(Interval::new(Duration::from_millis(1)))
+        .zip(Interval::new(Duration::from_micros(100)))
         .map(|(b, _)| b);
 
     let (send, recv) = LossyConn::new(0.05, Duration::from_secs(0), Duration::from_secs(0));

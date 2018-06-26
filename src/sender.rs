@@ -616,7 +616,7 @@ where
 
         self.closed = true;
 
-        self.sock.poll_complete()
+        self.sock.close()
     }
 }
 
