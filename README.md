@@ -1,6 +1,6 @@
 # srt-rs
 
-[![Build Status](https://travis-ci.org/russelltg/srt-rs.svg?branch=master)](https://travis-ci.org/russelltg/srt-rs)
+[![Build Status](https://travis-ci.org/russelltg/srt-rs.svg?branch=master)](https://travis-ci.org/russelltg/srt-rs) [![Build status](https://ci.appveyor.com/api/projects/status/q0eu7a4mtunff041?svg=true)](https://ci.appveyor.com/project/GuapoTaco/srt-rs)
 
 Pure rust implementation of SRT (Secure Reliable Transport)
 
