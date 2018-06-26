@@ -1,6 +1,11 @@
 language: rust
 sudo: false
 
+addons:
+  apt:
+    packages:
+      - libssl-dev
+
 os:
   - osx
   - linux
@@ -16,3 +21,13 @@ script:
   - cargo build --verbose
   - RUST_LOG=srt=info,lossy=info,message_splitting=info cargo test --verbose
 
+after_success: |
+  if [ "$TRAVIS_RUST_VERSION" == stable ] && [ "$TRAVIS_OS_NAME" == linux ]; then
+    `RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin` 
+    # Uncomment the following line for coveralls.io
+    # cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID
+
+    # Uncomment the following two lines create and upload a report for codecov.io
+    cargo tarpaulin --out Xml
+    bash <(curl -s https://codecov.io/bash)
+  fi
