@@ -72,7 +72,7 @@ impl<T: Debug> Sink for LossyConn<T> {
         // should we drop it?
         {
             if rand::random::<f64>() < self.loss_rate {
-                warn!("Dropping packet: {:?}", to_send);
+                debug!("Dropping packet: {:?}", to_send);
 
                 // drop
                 return Ok(AsyncSink::Ready);
