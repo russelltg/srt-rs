@@ -91,7 +91,7 @@ fn main() {
                 ).build()
                     .unwrap()
                     .map(|c| -> Box<Stream<Item = Bytes, Error = Error>> {
-                        Box::new(c.receiver())
+                        Box::new(c.receiver().map(|(_, b)| b))
                     }),
             ),
             s => panic!("unrecognized scheme: {} designated in input url", s),

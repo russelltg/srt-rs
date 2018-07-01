@@ -10,7 +10,9 @@ use {
     srt_version, ConnectionSettings, SeqNumber,
 };
 
-use std::{cmp, io::Cursor, iter::Iterator, net::SocketAddr, time::Duration};
+use std::{
+    cmp, io::Cursor, iter::Iterator, net::SocketAddr, time::{Duration, Instant},
+};
 
 struct LossListEntry {
     seq_num: SeqNumber,
@@ -641,10 +643,10 @@ where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
 {
-    type Item = Bytes;
+    type Item = (Instant, Bytes);
     type Error = Error;
 
-    fn poll(&mut self) -> Poll<Option<Bytes>, Error> {
+    fn poll(&mut self) -> Poll<Option<(Instant, Bytes)>, Error> {
         self.check_timers()?;
 
         self.sock.poll_complete()?;
@@ -654,8 +656,11 @@ where
             match self.tsbpd {
                 Some(_) => unimplemented!(),
                 None => {
-                    if let Some(p) = self.buffer.next_msg() {
-                        return Ok(Async::Ready(Some(p)));
+                    if let Some((ts, p)) = self.buffer.next_msg() {
+                        return Ok(Async::Ready(Some((
+                            self.settings.socket_start_time + Duration::from_micros(ts as u64),
+                            p,
+                        ))));
                     }
                 }
             }

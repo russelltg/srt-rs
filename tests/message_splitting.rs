@@ -71,7 +71,7 @@ fn message_splitting() {
         })
         // connection closed and data received
         .map(|(_, data_vec)| {
-            assert_eq!(&data_vec, &[Bytes::from(&[b'8'; 16384][..])]);
+            assert_eq!(&data_vec.iter().map(|(_, b)| b).collect::<Vec<_>>(), &[&Bytes::from(&[b'8'; 16384][..])]);
         })
         .wait()
         .unwrap();
