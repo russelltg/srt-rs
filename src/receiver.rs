@@ -189,7 +189,7 @@ where
             if last_ack_number == ack_number &&
                     // and the time interval between this two ACK packets is
                     // less than 2 RTTs,
-                    (self.get_timestamp() - last_timestamp) < (self.rtt * 2)
+                    (self.get_timestamp_now() - last_timestamp) < (self.rtt * 2)
             {
                 // stop (do not send this ACK).
                 return Ok(());
@@ -277,7 +277,7 @@ where
         });
 
         // add it to the ack history
-        let now = self.get_timestamp();
+        let now = self.get_timestamp_now();
         self.ack_history_window.push(AckHistoryEntry {
             ack_number,
             ack_seq_num,
@@ -304,7 +304,7 @@ where
         // (according to section 6.4) and send these numbers back to the sender
         // in an NAK packet.
 
-        let now = self.get_timestamp();
+        let now = self.get_timestamp_now();
 
         // increment k and change feedback time, returning sequence numbers
         let seq_nums = {
@@ -439,7 +439,7 @@ where
                         // just send it back
                         let sockid = self.settings.local_sockid;
 
-                        let ts = self.get_timestamp();
+                        let ts = self.get_timestamp_now();
                         self.sock.start_send((
                             Packet::Control(ControlPacket {
                                 timestamp: ts,
@@ -499,7 +499,7 @@ where
             // 3) Calculate new rtt according to the ACK2 arrival time and the ACK
             //    departure time, and update the RTT value as: RTT = (RTT * 7 +
             //    rtt) / 8
-            let immediate_rtt = self.get_timestamp() - send_timestamp;
+            let immediate_rtt = self.get_timestamp_now() - send_timestamp;
             self.rtt = (self.rtt * 7 + immediate_rtt) / 8;
 
             // 4) Update RTTVar by: RTTVar = (RTTVar * 3 + abs(RTT - rtt)) / 4.
@@ -520,7 +520,7 @@ where
     }
 
     fn handle_data_packet(&mut self, data: DataPacket) -> Result<(), Error> {
-        let now = self.get_timestamp();
+        let now = self.get_timestamp_now();
 
         // 1) Reset the ExpCount to 1. If there is no unacknowledged data
         //     packet, or if this is an ACK or NAK control packet, reset the EXP
@@ -624,15 +624,15 @@ where
 
     fn make_control_packet(&self, control_type: ControlTypes) -> Packet {
         Packet::Control(ControlPacket {
-            timestamp: self.get_timestamp(),
+            timestamp: self.get_timestamp_now(),
             dest_sockid: self.settings.remote_sockid,
             control_type,
         })
     }
 
     /// Timestamp in us
-    fn get_timestamp(&self) -> i32 {
-        self.settings.get_timestamp()
+    fn get_timestamp_now(&self) -> i32 {
+        self.settings.get_timestamp_now()
     }
 }
 

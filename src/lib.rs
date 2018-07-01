@@ -32,7 +32,6 @@ pub mod srt_congest_ctrl;
 pub mod srt_packet;
 pub mod srt_version;
 pub mod stats;
-pub mod stats_printer;
 #[macro_use]
 pub mod modular_num;
 pub mod msg_number;

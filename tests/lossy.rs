@@ -214,7 +214,7 @@ fn test_with_loss() {
 
     let t1 = thread::spawn(|| {
         sender
-            .send_all(counting_stream)
+            .send_all(counting_stream.map(|b| (Instant::now(), b)))
             .map_err(|e: Error| panic!("{:?}", e))
             .wait()
             .unwrap();
@@ -289,7 +289,7 @@ fn tsbpd() {
 
     let t1 = thread::spawn(|| {
         sender
-            .send_all(counting_stream)
+            .send_all(counting_stream.map(|b| (Instant::now(), b)))
             .map_err(|e: Error| panic!("{:?}", e))
             .wait()
             .unwrap();

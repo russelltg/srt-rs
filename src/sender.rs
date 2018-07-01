@@ -1,9 +1,16 @@
+use std::{
+    collections::VecDeque, io::Cursor, net::SocketAddr, time::{Duration, Instant},
+};
+
+use bytes::{Bytes, BytesMut};
+use failure::Error;
+use futures::{Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
+use futures_timer::{Delay, Interval};
+
+use packet::{ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation};
 use {
-    bytes::{Bytes, BytesMut}, failure::Error, futures::prelude::*,
-    futures_timer::{Delay, Interval}, loss_compression::decompress_loss_list,
-    packet::{ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation},
-    srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags}, srt_version,
-    std::{collections::VecDeque, io::Cursor, net::SocketAddr, time::Duration}, CCData, CongestCtrl,
+    loss_compression::decompress_loss_list,
+    srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags}, srt_version, CCData, CongestCtrl,
     ConnectionSettings, MsgNumber, SeqNumber, Stats,
 };
 
@@ -21,7 +28,7 @@ pub struct Sender<T, CC> {
     /// It will be split into multiple packets, and the remaining
     /// bits will be put back into pending packets, setting
     /// at_msg_beginning to false
-    pending_packets: VecDeque<Bytes>,
+    pending_packets: VecDeque<(Instant, Bytes)>,
 
     /// True if pending_packets.first() has the entirety of a message, and not
     /// just the last segment.
@@ -138,7 +145,7 @@ where
 
     pub fn stats(&self) -> Stats {
         Stats {
-            timestamp: self.get_timestamp(),
+            timestamp: self.get_timestamp_now(),
             est_link_cap: self.est_link_cap,
             flow_size: self.congest_ctrl.window_size(),
             lost_packets: self.lost_packets,
@@ -193,7 +200,7 @@ where
 
                         // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
                         trace!("Sending ACK2 for {}", ack_seq_num);
-                        let now = self.get_timestamp();
+                        let now = self.get_timestamp_now();
                         self.sock.start_send((
                             Packet::Control(ControlPacket {
                                 timestamp: now,
@@ -357,13 +364,11 @@ where
         self.next_seq_number - 1
     }
 
+    /// Gets the next packet, removing it from `pending_packets` and also adding an entry at the end of `buffer`
+    /// Returns none if there are no packets availavle
     fn get_next_payload(&mut self) -> Option<Packet> {
-        let (payload, is_msg_end, is_msg_begin) = {
-            let payload = match self.pending_packets.pop_front() {
-                Some(p) => p,
-                // All packets have been flushed
-                None => return None,
-            };
+        let (payload, time, is_msg_end, is_msg_begin) = {
+            let (time, payload) = self.pending_packets.pop_front()?;
 
             // cache this so we don't overwrite it
             let is_msg_begin = self.at_msg_beginning;
@@ -371,19 +376,21 @@ where
             // if we need to break this packet up
             if payload.len() > self.settings.max_packet_size as usize {
                 // re-add the rest of the packet
-                self.pending_packets.push_front(
+                self.pending_packets.push_front((
+                    time,
                     payload.slice(self.settings.max_packet_size as usize, payload.len()),
-                );
+                ));
                 self.at_msg_beginning = false;
 
                 (
                     payload.slice(0, self.settings.max_packet_size as usize),
+                    time,
                     false,
                     is_msg_begin,
                 )
             } else {
                 self.at_msg_beginning = true;
-                (payload, true, is_msg_begin)
+                (payload, time, true, is_msg_begin)
             }
         };
 
@@ -407,7 +414,7 @@ where
                 self.next_message_number - 1
             },
             seq_number: self.get_new_sequence_number(),
-            timestamp: self.get_timestamp(),
+            timestamp: self.get_timestamp(time),
             payload,
         };
 
@@ -431,7 +438,7 @@ where
                 .unwrap_or(Duration::from_millis(120)),
         }).serialize(&mut bytes);
 
-        let now = self.get_timestamp();
+        let now = self.get_timestamp_now();
         self.sock.start_send((
             Packet::Control(ControlPacket {
                 timestamp: now,
@@ -447,8 +454,12 @@ where
         Ok(())
     }
 
-    fn get_timestamp(&self) -> i32 {
-        self.settings.get_timestamp()
+    fn get_timestamp_now(&self) -> i32 {
+        self.settings.get_timestamp_now()
+    }
+
+    fn get_timestamp(&self, at: Instant) -> i32 {
+        self.settings.get_timestamp(at)
     }
 }
 
@@ -458,10 +469,10 @@ where
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
     CC: CongestCtrl,
 {
-    type SinkItem = Bytes;
+    type SinkItem = (Instant, Bytes);
     type SinkError = Error;
 
-    fn start_send(&mut self, item: Bytes) -> StartSend<Bytes, Error> {
+    fn start_send(&mut self, item: (Instant, Bytes)) -> StartSend<(Instant, Bytes), Error> {
         assert!(!self.closed, "`start_send` called after sender close");
 
         self.pending_packets.push_back(item);
@@ -600,7 +611,7 @@ where
         if !self.closed {
             // once it's all flushed, send a single Shutdown packet
             info!("Sending shutdown");
-            let ts = self.get_timestamp();
+            let ts = self.get_timestamp_now();
             self.sock.start_send((
                 Packet::Control(ControlPacket {
                     dest_sockid: self.settings.remote_sockid,
