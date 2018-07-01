@@ -10,6 +10,7 @@ extern crate tokio_udp;
 use bytes::Bytes;
 use futures::prelude::*;
 use srt::{ConnInitMethod, SrtSocketBuilder};
+use std::time::Instant;
 
 // Apparently this was an important omission from the futures crate. Unfortunate.
 struct CloseFuture<T>(Option<T>);
@@ -56,7 +57,7 @@ fn message_splitting() {
             let long_message = Bytes::from(&[b'8'; 16384][..]);
 
             sender
-                .start_send(long_message)
+                .start_send((Instant::now(),long_message))
                 .expect("Failed to start send of long message");
 
             sender
@@ -70,7 +71,7 @@ fn message_splitting() {
         })
         // connection closed and data received
         .map(|(_, data_vec)| {
-            assert_eq!(&data_vec, &[Bytes::from(&[b'8'; 16384][..])]);
+            assert_eq!(&data_vec.iter().map(|(_, b)| b).collect::<Vec<_>>(), &[&Bytes::from(&[b'8'; 16384][..])]);
         })
         .wait()
         .unwrap();

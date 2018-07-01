@@ -214,7 +214,7 @@ fn test_with_loss() {
 
     let t1 = thread::spawn(|| {
         sender
-            .send_all(counting_stream)
+            .send_all(counting_stream.map(|b| (Instant::now(), b)))
             .map_err(|e: Error| panic!("{:?}", e))
             .wait()
             .unwrap();
@@ -224,7 +224,7 @@ fn test_with_loss() {
         let mut next_data = INIT_SEQ_NUM;
 
         for payload in recvr.wait() {
-            let payload = payload.unwrap();
+            let (_, payload) = payload.unwrap();
 
             assert_eq!(next_data.to_string(), str::from_utf8(&payload[..]).unwrap());
 
@@ -289,7 +289,7 @@ fn tsbpd() {
 
     let t1 = thread::spawn(|| {
         sender
-            .send_all(counting_stream)
+            .send_all(counting_stream.map(|b| (Instant::now(), b)))
             .map_err(|e: Error| panic!("{:?}", e))
             .wait()
             .unwrap();
@@ -313,7 +313,7 @@ fn tsbpd() {
         let mut last_time = Instant::now();
 
         for by in iter {
-            let by = by.unwrap();
+            let (_, by) = by.unwrap();
             assert_eq!(
                 str::from_utf8(&by[..]).unwrap(),
                 next_num.to_string(),

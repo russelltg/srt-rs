@@ -70,19 +70,25 @@ impl RecvBuffer {
         None
     }
 
-    /// Check if there is an available message, returning it if found
-    pub fn next_msg(&mut self) -> Option<Bytes> {
+    /// Check if there is an available message, returning, and its origin timestamp it if found
+    pub fn next_msg(&mut self) -> Option<(i32, Bytes)> {
         let count = self.next_msg_ready()?;
 
         self.head += count as u32;
 
+        let origin_ts = self.buffer[0].as_ref().unwrap().timestamp;
+
         // optimize for single packet messages
         if count == 1 {
-            return Some(self.buffer.pop_front().unwrap().unwrap().payload.clone());
+            return Some((
+                origin_ts,
+                self.buffer.pop_front().unwrap().unwrap().payload.clone(),
+            ));
         }
 
         // accumulate the rest
-        Some(
+        Some((
+            origin_ts,
             self.buffer
                 .drain(0..count)
                 .fold(BytesMut::new(), |mut bytes, pack| {
@@ -90,7 +96,7 @@ impl RecvBuffer {
                     bytes
                 })
                 .freeze(),
-        )
+        ))
     }
 }
 
@@ -206,7 +212,7 @@ mod test {
         });
 
         assert_eq!(buf.next_msg_ready(), Some(1));
-        assert_eq!(buf.next_msg(), Some(From::from(&b"hello"[..])));
+        assert_eq!(buf.next_msg(), Some((0, From::from(&b"hello"[..]))));
         assert_eq!(buf.next_release(), SeqNumber(6));
         assert_eq!(buf.buffer.len(), 1);
     }
@@ -234,7 +240,7 @@ mod test {
         });
 
         assert_eq!(buf.next_msg_ready(), Some(3));
-        assert_eq!(buf.next_msg(), Some(From::from(&b"helloyasnas"[..])));
+        assert_eq!(buf.next_msg(), Some((0, From::from(&b"helloyasnas"[..]))));
         assert_eq!(buf.next_release(), SeqNumber(8));
         assert_eq!(buf.buffer.len(), 0);
     }

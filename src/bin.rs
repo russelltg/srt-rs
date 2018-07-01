@@ -12,11 +12,16 @@ extern crate url;
 extern crate clap;
 extern crate failure;
 
-use {
-    bytes::Bytes, failure::Error, futures::{future, prelude::*},
-    srt::{ConnInitMethod, SrtSocketBuilder}, std::net::{IpAddr, Ipv4Addr, SocketAddr},
-    tokio_codec::BytesCodec, tokio_udp::{UdpFramed, UdpSocket}, url::{Host, Url},
+use bytes::Bytes;
+use failure::Error;
+use futures::{future, prelude::*};
+use srt::{ConnInitMethod, SrtSocketBuilder};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr}, time::Instant,
 };
+use tokio_codec::BytesCodec;
+use tokio_udp::{UdpFramed, UdpSocket};
+use url::{Host, Url};
 
 fn main() {
     env_logger::init();
@@ -86,7 +91,7 @@ fn main() {
                 ).build()
                     .unwrap()
                     .map(|c| -> Box<Stream<Item = Bytes, Error = Error>> {
-                        Box::new(c.receiver())
+                        Box::new(c.receiver().map(|(_, b)| b))
                     }),
             ),
             s => panic!("unrecognized scheme: {} designated in input url", s),
@@ -137,7 +142,7 @@ fn main() {
                 ).build()
                     .unwrap()
                     .map(|c| -> Box<Sink<SinkItem = Bytes, SinkError = Error>> {
-                        Box::new(c.sender())
+                        Box::new(c.sender().with(|b| future::ok((Instant::now(), b))))
                     }),
             ),
             s => panic!("unrecognized scheme: {} designated in output url", s),
