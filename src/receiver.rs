@@ -407,6 +407,7 @@ where
             SrtControlPacket::HandshakeResponse(_) => {
                 warn!("Receiver received SRT handshake response, unusual.")
             }
+            _ => unimplemented!(),
         }
 
         Ok(())

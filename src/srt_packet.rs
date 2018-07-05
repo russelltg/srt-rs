@@ -5,6 +5,22 @@ use std::{
 
 use SrtVersion;
 
+/// The handshake responsibilty of a given SRT entity.
+/// Defines roles in the sending/receiving of SRT control packets
+///
+/// This is decided based on who was the connector or listener during
+/// connection initialization.
+/// connector has `Request`, and listener has `Respond`.
+///
+/// In the case of rendezvous, the cookies are compared
+/// and the side with the greater cookie gets `Request` responsibility,
+/// and the smaller cookie gets `Respond` responsibility
+#[derive(Copy, Clone, Debug)]
+pub enum HandshakeResponsibility {
+    Request,
+    Respond,
+}
+
 /// The SRT-specific control packets
 /// These are `Packet::Custom` types
 pub enum SrtControlPacket {
@@ -15,7 +31,14 @@ pub enum SrtControlPacket {
     /// SRT handshake response
     /// ID = 2
     HandshakeResponse(SrtHandshake),
-    // TODO: there are more, SRT_CMD_KMREQ and SRT_CMD_KMRSP
+
+    /// Key manager request
+    /// ID = 3
+    KeyManagerRequest,
+
+    /// Key manager response
+    /// ID = 4
+    KeyManagerResponse,
 }
 
 /// The SRT handshake object
@@ -77,6 +100,8 @@ impl SrtControlPacket {
         match *self {
             SrtControlPacket::HandshakeRequest(_) => 1,
             SrtControlPacket::HandshakeResponse(_) => 2,
+            SrtControlPacket::KeyManagerRequest => 3,
+            SrtControlPacket::KeyManagerResponse => 4,
         }
     }
 
@@ -92,6 +117,8 @@ impl SrtControlPacket {
 
                 2
             }
+            SrtControlPacket::KeyManagerRequest => 3,
+            SrtControlPacket::KeyManagerResponse => 4,
         }
     }
 }

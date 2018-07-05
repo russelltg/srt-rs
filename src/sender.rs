@@ -1,11 +1,15 @@
+use bytes::{Bytes, BytesMut};
+use failure::Error;
+use futures::prelude::*;
+use futures_timer::{Delay, Interval};
 use {
-    bytes::{Bytes, BytesMut}, failure::Error, futures::prelude::*,
-    futures_timer::{Delay, Interval}, loss_compression::decompress_loss_list,
+    loss_compression::decompress_loss_list,
     packet::{ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation},
-    srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags}, srt_version,
-    std::{collections::VecDeque, io::Cursor, net::SocketAddr, time::Duration}, CCData, CongestCtrl,
-    ConnectionSettings, MsgNumber, SeqNumber, Stats,
+    srt_packet::{HandshakeResponsibility, SrtControlPacket, SrtHandshake, SrtShakeFlags},
+    srt_version, CCData, CongestCtrl, ConnectionSettings, MsgNumber, SeqNumber, Stats,
 };
+
+use std::{collections::VecDeque, io::Cursor, net::SocketAddr, time::Duration};
 
 pub struct Sender<T, CC> {
     sock: T,
@@ -313,9 +317,11 @@ where
     }
 
     fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
-        match pack {
-            SrtControlPacket::HandshakeRequest(_) => warn!("Sender received SRT handshake request"),
-            SrtControlPacket::HandshakeResponse(shake) => {
+        match (self.settings.responsibility, pack) {
+            (HandshakeResponsibility::Request, SrtControlPacket::HandshakeRequest(_)) => {
+                warn!("Sender received SRT handshake request")
+            }
+            (HandshakeResponsibility::Request, SrtControlPacket::HandshakeResponse(shake)) => {
                 // make sure the SRT version matches ours
                 if srt_version::CURRENT != shake.version {
                     bail!(
@@ -338,6 +344,7 @@ where
                 // all setup, using TSBPD from the shake
                 info!("Got SRT handshake packet, using tsbpd={:?}", shake.latency);
             }
+            _ => unimplemented!(),
         }
 
         Ok(())
