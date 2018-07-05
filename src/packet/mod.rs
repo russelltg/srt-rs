@@ -4,9 +4,7 @@
 mod control;
 mod data;
 
-pub use self::control::{
-    ConnectionType, ControlPacket, ControlTypes, HandshakeControlInfo, SocketType,
-};
+pub use self::control::{ControlPacket, ControlTypes, HandshakeControlInfo, ShakeType, SocketType};
 pub use self::data::{DataPacket, PacketLocation};
 
 use {

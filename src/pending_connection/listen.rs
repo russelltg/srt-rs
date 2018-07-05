@@ -6,7 +6,7 @@ use failure::Error;
 use futures::prelude::*;
 
 use connected::Connected;
-use packet::{ConnectionType, ControlPacket, ControlTypes, Packet};
+use packet::{ControlPacket, ControlTypes, HandshakeControlInfo, Packet, ShakeType};
 use {ConnectionSettings, SocketID};
 
 pub struct Listen<T> {
@@ -135,7 +135,16 @@ where
                         ..
                     }) = packet
                     {
-                        if shake.connection_type != ConnectionType::RendezvousRegularSecond {
+                        if shake.udt_version != 5 {
+                            warn!(
+                                "Received handshake packet with invalid version {}, SRT is 5",
+                                shake.udt_version
+                            );
+                            // discard
+                            continue;
+                        }
+
+                        if shake.shake_type != ShakeType::Conclusion {
                             // discard
                             continue;
                         }
@@ -160,12 +169,10 @@ where
                         let resp_handshake = Packet::Control(ControlPacket {
                             timestamp,
                             dest_sockid: shake.socket_id,
-                            control_type: ControlTypes::Handshake({
-                                let mut tmp = shake;
-                                tmp.syn_cookie = cookie;
-                                tmp.socket_id = self.local_socket_id;
-
-                                tmp
+                            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                                syn_cookie: cookie,
+                                socket_id: self.local_socket_id,
+                                ..shake
                             }),
                         });
 
