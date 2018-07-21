@@ -1,8 +1,12 @@
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut};
 use failure::Error;
 use std::net::{IpAddr, Ipv4Addr};
 
 use {SeqNumber, SocketID};
+
+mod srt;
+
+pub use self::srt::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
 
 /// A UDP packet carrying control information
 ///  0                   1                   2                   3
@@ -94,21 +98,15 @@ pub enum ControlTypes {
         last: SeqNumber,
     },
 
-    /// Custom packets
-    /// Mainly used for special SRT handshake packets
-    Custom {
-        /// The custom data type, stored in bytes 3-4, the "reserved field"
-        custom_type: u16,
-
-        /// The data to store after the packet header
-        control_info: Bytes,
-    },
+    /// Srt control packets
+    /// These use the UDT extension type 0xFF
+    Srt(SrtControlPacket),
 }
 
 /// The control info for handshake packets
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HandshakeControlInfo {
-    /// The UDT version, currently 4
+    /// The UDT version, currently 4 for UDT, and 5 for SRT.
     pub udt_version: i32,
 
     /// The socket type
@@ -124,7 +122,7 @@ pub struct HandshakeControlInfo {
     pub max_flow_size: u32,
 
     /// Connection type, either rendezvois (0) or regular (1)
-    pub connection_type: ConnectionType,
+    pub shake_type: ShakeType,
 
     /// The socket ID that this request is originating from
     pub socket_id: SocketID,
@@ -162,20 +160,40 @@ impl SocketType {
 }
 
 /// See <https://tools.ietf.org/html/draft-gg-udt-03#page-10>
+///
+/// More applicably,
+///
+/// Note: the client-server connection uses:
+/// --> INDUCTION (empty)
+/// <-- INDUCTION (cookie)
+/// --> CONCLUSION (cookie)
+/// <-- CONCLUSION (ok)
+///
+/// The rendezvous HSv4 (legacy):
+/// --> WAVEAHAND (effective only if peer is also connecting)
+/// <-- CONCLUSION (empty) (consider yourself connected upon reception)
+/// --> AGREEMENT (sent as a response for conclusion, requires no response)
+///
+/// The rendezvous HSv5 (using SRT extensions):
+/// --> WAVEAHAND (with cookie)
+/// --- (selecting INITIATOR/RESPONDER by cookie contest - comparing one another's cookie)
+/// <-- CONCLUSION (without extensions, if RESPONDER, with extensions, if INITIATOR)
+/// --> CONCLUSION (with response extensions, if RESPONDER)
+/// <-- AGREEMENT (sent exclusively by INITIATOR upon reception of CONCLUSIOn with response extensions)
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ConnectionType {
-    /// A regular connection; one listener and one sender, 1
-    Regular = 1,
+pub enum ShakeType {
+    /// First handshake exchange in client-server connection
+    Induction = 1,
 
     /// A rendezvous connection, initial connect request, 0
-    RendezvousFirst = 0,
+    Waveahand = 0,
 
     /// A rendezvous connection, response to initial connect request, -1
     /// Also a regular connection client response to the second handshake
-    RendezvousRegularSecond = -1,
+    Conclusion = -1,
 
     /// Final rendezvous check, -2
-    RendezvousFinal = -2,
+    Agreement = -2,
 }
 
 impl ControlPacket {
@@ -238,7 +256,7 @@ impl ControlTypes {
                 let init_seq_num = SeqNumber::new(buf.get_u32_be());
                 let max_packet_size = buf.get_u32_be();
                 let max_flow_size = buf.get_u32_be();
-                let connection_type = match ConnectionType::from_i32(buf.get_i32_be()) {
+                let shake_type = match ShakeType::from_i32(buf.get_i32_be()) {
                     Ok(ct) => ct,
                     Err(err_ct) => bail!("Invalid connection type {}", err_ct),
                 };
@@ -262,7 +280,7 @@ impl ControlTypes {
                     init_seq_num,
                     max_packet_size,
                     max_flow_size,
-                    connection_type,
+                    shake_type,
                     socket_id,
                     syn_cookie,
                     peer_addr,
@@ -319,11 +337,10 @@ impl ControlTypes {
                 unimplemented!()
             }
             0xFF => {
-                // Custom
-                Ok(ControlTypes::Custom {
-                    custom_type: reserved,
-                    control_info: buf.collect(),
-                })
+                // Srt
+                Ok(ControlTypes::Srt(SrtControlPacket::parse(
+                    reserved, &mut buf,
+                )?))
             }
             x => Err(format_err!("Unrecognized control packet type: {:?}", x)),
         }
@@ -338,7 +355,7 @@ impl ControlTypes {
             ControlTypes::Shutdown => 0x5,
             ControlTypes::Ack2(_) => 0x6,
             ControlTypes::DropRequest { .. } => 0x7,
-            ControlTypes::Custom { .. } => 0x7FFF,
+            ControlTypes::Srt(_) => 0x7FFF,
         }
     }
 
@@ -355,7 +372,7 @@ impl ControlTypes {
 
     fn reserved(&self) -> u16 {
         match *self {
-            ControlTypes::Custom { custom_type, .. } => custom_type,
+            ControlTypes::Srt(srt) => srt.reserved(),
             _ => 0,
         }
     }
@@ -368,7 +385,7 @@ impl ControlTypes {
                 into.put_u32_be(c.init_seq_num.as_raw());
                 into.put_u32_be(c.max_packet_size);
                 into.put_u32_be(c.max_flow_size);
-                into.put_i32_be(c.connection_type as i32);
+                into.put_i32_be(c.shake_type as i32);
                 into.put_u32_be(c.socket_id.0);
                 into.put_i32_be(c.syn_cookie);
 
@@ -404,21 +421,21 @@ impl ControlTypes {
             ControlTypes::DropRequest { .. } => unimplemented!(),
             // control data
             ControlTypes::Shutdown | ControlTypes::Ack2(_) | ControlTypes::KeepAlive => {}
-            ControlTypes::Custom {
-                ref control_info, ..
-            } => into.put(&control_info[..]),
+            ControlTypes::Srt(srt) => {
+                srt.serialize(into);
+            }
         };
     }
 }
 
-impl ConnectionType {
+impl ShakeType {
     /// Turns an i32 into a `ConnectionType`, returning Err(num) if no valid one was passed.
-    pub fn from_i32(num: i32) -> Result<ConnectionType, i32> {
+    pub fn from_i32(num: i32) -> Result<ShakeType, i32> {
         match num {
-            1 => Ok(ConnectionType::Regular),
-            0 => Ok(ConnectionType::RendezvousFirst),
-            -1 => Ok(ConnectionType::RendezvousRegularSecond),
-            -2 => Ok(ConnectionType::RendezvousFinal),
+            1 => Ok(ShakeType::Induction),
+            0 => Ok(ShakeType::Waveahand),
+            -1 => Ok(ShakeType::Conclusion),
+            -2 => Ok(ShakeType::Agreement),
             i => Err(i),
         }
     }
@@ -427,7 +444,7 @@ impl ConnectionType {
 #[cfg(test)]
 mod test {
 
-    use super::{ConnectionType, ControlPacket, ControlTypes, HandshakeControlInfo, SocketType};
+    use super::{ControlPacket, ControlTypes, HandshakeControlInfo, ShakeType, SocketType};
     use std::io::Cursor;
     use {SeqNumber, SocketID};
 
@@ -437,12 +454,12 @@ mod test {
             timestamp: 0,
             dest_sockid: SocketID(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                udt_version: 4,
+                udt_version: 5,
                 sock_type: SocketType::Datagram,
                 init_seq_num: SeqNumber::new(1827131),
                 max_packet_size: 1500,
                 max_flow_size: 25600,
-                connection_type: ConnectionType::Regular,
+                shake_type: ShakeType::Induction,
                 socket_id: SocketID(1231),
                 syn_cookie: 0,
                 peer_addr: "127.0.0.1".parse().unwrap(),

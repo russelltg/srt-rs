@@ -1,18 +1,20 @@
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use failure::Error;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
 
 use {
     loss_compression::compress_loss_list,
-    packet::{ControlPacket, ControlTypes, DataPacket, Packet}, recv_buffer::RecvBuffer,
-    seq_number::seq_num_range, srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags},
+    packet::{
+        ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket, SrtHandshake,
+        SrtShakeFlags,
+    },
+    recv_buffer::RecvBuffer,
+    seq_number::seq_num_range,
     srt_version, ConnectionSettings, SeqNumber,
 };
 
-use std::{
-    cmp, io::Cursor, iter::Iterator, net::SocketAddr, time::{Duration, Instant},
-};
+use std::{cmp, iter::Iterator, net::SocketAddr, time::Duration};
 
 struct LossListEntry {
     seq_num: SeqNumber,
@@ -393,22 +395,19 @@ where
                 );
 
                 // return the response
-                let mut bytes = BytesMut::new();
-                let reserved = SrtControlPacket::HandshakeResponse(SrtHandshake {
-                    version: srt_version::CURRENT,
-                    flags: SrtShakeFlags::TSBPDRCV, // TODO: the reference implementation sets a lot more of these, research
-                    latency: self.tsbpd.unwrap(),
-                }).serialize(&mut bytes);
-
-                let pack = self.make_control_packet(ControlTypes::Custom {
-                    custom_type: reserved,
-                    control_info: bytes.freeze(),
-                });
+                let pack = self.make_control_packet(ControlTypes::Srt(
+                    SrtControlPacket::HandshakeResponse(SrtHandshake {
+                        version: srt_version::CURRENT,
+                        flags: SrtShakeFlags::TSBPDRCV, // TODO: the reference implementation sets a lot more of these, research
+                        latency: self.tsbpd.unwrap(),
+                    }),
+                ));
                 self.sock.start_send((pack, self.settings.remote))?;
             }
             SrtControlPacket::HandshakeResponse(_) => {
                 warn!("Receiver received SRT handshake response, unusual.")
             }
+            _ => unimplemented!(),
         }
 
         Ok(())
@@ -458,14 +457,7 @@ where
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
                     ControlTypes::Nak { .. } => warn!("Receiver received NAK packet, unusual"),
                     ControlTypes::Shutdown => return Ok(true), // end of stream
-                    ControlTypes::Custom {
-                        custom_type,
-                        control_info,
-                    } => {
-                        // decode srt packet
-                        let srt_packet =
-                            SrtControlPacket::parse(custom_type, &mut Cursor::new(control_info))?;
-
+                    ControlTypes::Srt(srt_packet) => {
                         self.handle_srt_control_packet(srt_packet)?;
                     }
                 }

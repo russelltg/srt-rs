@@ -2,8 +2,8 @@ use std::{cmp::Ordering, fmt};
 
 pub const CURRENT: SrtVersion = SrtVersion {
     major: 1,
-    minor: 2,
-    patch: 2,
+    minor: 3,
+    patch: 1,
 };
 
 /// Serialied, it looks like:
@@ -61,5 +61,11 @@ impl Ord for SrtVersion {
 impl fmt::Display for SrtVersion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+impl fmt::Debug for SrtVersion {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self)
     }
 }

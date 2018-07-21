@@ -5,7 +5,8 @@ mod control;
 mod data;
 
 pub use self::control::{
-    ConnectionType, ControlPacket, ControlTypes, HandshakeControlInfo, SocketType,
+    ControlPacket, ControlTypes, HandshakeControlInfo, ShakeType, SocketType, SrtControlPacket,
+    SrtHandshake, SrtShakeFlags,
 };
 pub use self::data::{DataPacket, PacketLocation};
 

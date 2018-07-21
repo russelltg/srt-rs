@@ -1,18 +1,18 @@
-use std::{
-    collections::VecDeque, io::Cursor, net::SocketAddr, time::{Duration, Instant},
-};
-
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use failure::Error;
-use futures::{Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
+use futures::prelude::*;
 use futures_timer::{Delay, Interval};
-
-use packet::{ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation};
 use {
     loss_compression::decompress_loss_list,
-    srt_packet::{SrtControlPacket, SrtHandshake, SrtShakeFlags}, srt_version, CCData, CongestCtrl,
-    ConnectionSettings, MsgNumber, SeqNumber, Stats,
+    packet::{
+        ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation, SrtControlPacket,
+        SrtHandshake, SrtShakeFlags,
+    },
+    srt_version, CCData, CongestCtrl, ConnectionSettings, HandshakeResponsibility, MsgNumber,
+    SeqNumber, Stats,
 };
+
+use std::{collections::VecDeque, net::SocketAddr, time::Duration};
 
 pub struct Sender<T, CC> {
     sock: T,
@@ -301,14 +301,7 @@ where
                         // TODO: reset EXP
                     }
                     ControlTypes::Shutdown => unimplemented!(),
-                    ControlTypes::Custom {
-                        custom_type,
-                        ref control_info,
-                    } => {
-                        // decode srt packet
-                        let srt_packet =
-                            SrtControlPacket::parse(custom_type, &mut Cursor::new(control_info))?;
-
+                    ControlTypes::Srt(srt_packet) => {
                         self.handle_srt_control_packet(srt_packet)?;
                     }
                 }
@@ -320,9 +313,11 @@ where
     }
 
     fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
-        match pack {
-            SrtControlPacket::HandshakeRequest(_) => warn!("Sender received SRT handshake request"),
-            SrtControlPacket::HandshakeResponse(shake) => {
+        match (self.settings.responsibility, pack) {
+            (HandshakeResponsibility::Request, SrtControlPacket::HandshakeRequest(_)) => {
+                warn!("Sender received SRT handshake request")
+            }
+            (HandshakeResponsibility::Request, SrtControlPacket::HandshakeResponse(shake)) => {
                 // make sure the SRT version matches ours
                 if srt_version::CURRENT != shake.version {
                     bail!(
@@ -345,6 +340,7 @@ where
                 // all setup, using TSBPD from the shake
                 info!("Got SRT handshake packet, using tsbpd={:?}", shake.latency);
             }
+            _ => unimplemented!(),
         }
 
         Ok(())
@@ -427,26 +423,19 @@ where
     fn send_srt_handshake(&mut self) -> Result<(), Error> {
         debug!("Sending SRT handshake packet");
 
-        // make SRT handshake packet
-        let mut bytes = BytesMut::new();
-        let custom_type = SrtControlPacket::HandshakeRequest(SrtHandshake {
-            version: srt_version::CURRENT,
-            flags: SrtShakeFlags::TSBPDSND, // TODO: the reference implementation sets a lot more of these, research
-            latency: self
-                .settings
-                .tsbpd_latency
-                .unwrap_or(Duration::from_millis(120)),
-        }).serialize(&mut bytes);
-
-        let now = self.get_timestamp_now();
+        let now = self.get_timestamp();
         self.sock.start_send((
             Packet::Control(ControlPacket {
                 timestamp: now,
                 dest_sockid: self.settings.remote_sockid,
-                control_type: ControlTypes::Custom {
-                    custom_type,
-                    control_info: bytes.freeze(),
-                },
+                control_type: ControlTypes::Srt(SrtControlPacket::HandshakeRequest(SrtHandshake {
+                    version: srt_version::CURRENT,
+                    flags: SrtShakeFlags::TSBPDSND, // TODO: the reference implementation sets a lot more of these, research
+                    latency: self
+                        .settings
+                        .tsbpd_latency
+                        .unwrap_or(Duration::from_millis(120)),
+                })),
             }),
             self.settings.remote,
         ))?;

@@ -6,8 +6,8 @@ use failure::Error;
 use futures::prelude::*;
 
 use connected::Connected;
-use packet::{ConnectionType, ControlPacket, ControlTypes, Packet};
-use {ConnectionSettings, SocketID};
+use packet::{ControlPacket, ControlTypes, HandshakeControlInfo, Packet, ShakeType};
+use {ConnectionSettings, HandshakeResponsibility, SocketID};
 
 pub struct Listen<T> {
     state: ConnectionState,
@@ -135,7 +135,16 @@ where
                         ..
                     }) = packet
                     {
-                        if shake.connection_type != ConnectionType::RendezvousRegularSecond {
+                        if shake.udt_version != 5 {
+                            warn!(
+                                "Received handshake packet with invalid version {}, SRT is 5",
+                                shake.udt_version
+                            );
+                            // discard
+                            continue;
+                        }
+
+                        if shake.shake_type != ShakeType::Conclusion {
                             // discard
                             continue;
                         }
@@ -160,12 +169,10 @@ where
                         let resp_handshake = Packet::Control(ControlPacket {
                             timestamp,
                             dest_sockid: shake.socket_id,
-                            control_type: ControlTypes::Handshake({
-                                let mut tmp = shake;
-                                tmp.syn_cookie = cookie;
-                                tmp.socket_id = self.local_socket_id;
-
-                                tmp
+                            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                                syn_cookie: cookie,
+                                socket_id: self.local_socket_id,
+                                ..shake
                             }),
                         });
 
@@ -184,6 +191,7 @@ where
                             local_sockid: self.local_socket_id,
                             socket_start_time: self.socket_start_time,
                             tsbpd_latency: None, // TODO: configurable
+                            responsibility: HandshakeResponsibility::Respond,
                         });
                         // break out to end the borrow on self.sock
                         break;

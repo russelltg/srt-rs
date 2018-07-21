@@ -9,12 +9,8 @@ use futures_timer::Interval;
 use rand::{thread_rng, Rng};
 
 use connected::Connected;
-use packet::{
-    ConnectionType, ControlPacket, ControlTypes, HandshakeControlInfo, Packet, SocketType,
-};
-use ConnectionSettings;
-use SeqNumber;
-use SocketID;
+use packet::{ControlPacket, ControlTypes, HandshakeControlInfo, Packet, ShakeType, SocketType};
+use {ConnectionSettings, HandshakeResponsibility, SeqNumber, SocketID};
 
 pub struct Connect<T> {
     remote: SocketAddr,
@@ -96,7 +92,7 @@ where
                             timestamp,
                             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                                 socket_id: self.local_socket_id,
-                                connection_type: ConnectionType::RendezvousRegularSecond,
+                                shake_type: ShakeType::Conclusion,
                                 ..info
                             }),
                         });
@@ -111,10 +107,10 @@ where
                         self.state = State::First(pack_to_send);
                     }
                     State::First(_) => {
-                        if info.connection_type != ConnectionType::RendezvousRegularSecond {
+                        if info.shake_type != ShakeType::Conclusion {
                             info!(
-                                "Was waiting for -1 connection type, got {:?}",
-                                info.connection_type
+                                "Was waiting for Conclusion (-1) hanshake type type, got {:?}",
+                                info.shake_type
                             );
                             // discard
                             continue;
@@ -134,6 +130,7 @@ where
                                 local_sockid: self.local_socket_id,
                                 remote_sockid: info.socket_id,
                                 tsbpd_latency: None, // TODO: configurable
+                                responsibility: HandshakeResponsibility::Request,
                             },
                         )));
                     }
@@ -156,12 +153,12 @@ where
                             dest_sockid: SocketID(0),
                             timestamp: 0,
                             control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                                udt_version: 4,
+                                udt_version: 5,
                                 init_seq_num: self.init_seq_num,
                                 max_packet_size: 1500, // TODO: take as a parameter
                                 max_flow_size: 8192,   // TODO: take as a parameter
                                 socket_id: self.local_socket_id,
-                                connection_type: ConnectionType::Regular,
+                                shake_type: ShakeType::Induction,
                                 peer_addr: self.local_addr,
                                 sock_type: SocketType::Datagram,
                                 syn_cookie: 0,

@@ -7,6 +7,7 @@ use SrtVersion;
 
 /// The SRT-specific control packets
 /// These are `Packet::Custom` types
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SrtControlPacket {
     /// SRT handshake request
     /// ID = 1
@@ -15,10 +16,18 @@ pub enum SrtControlPacket {
     /// SRT handshake response
     /// ID = 2
     HandshakeResponse(SrtHandshake),
-    // TODO: there are more, SRT_CMD_KMREQ and SRT_CMD_KMRSP
+
+    /// Key manager request
+    /// ID = 3
+    KeyManagerRequest,
+
+    /// Key manager response
+    /// ID = 4
+    KeyManagerResponse,
 }
 
 /// The SRT handshake object
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct SrtHandshake {
     /// The SRT version
     /// Serialized just as the u32 that SrtVersion serialized to
@@ -77,6 +86,8 @@ impl SrtControlPacket {
         match *self {
             SrtControlPacket::HandshakeRequest(_) => 1,
             SrtControlPacket::HandshakeResponse(_) => 2,
+            SrtControlPacket::KeyManagerRequest => 3,
+            SrtControlPacket::KeyManagerResponse => 4,
         }
     }
 
@@ -92,6 +103,8 @@ impl SrtControlPacket {
 
                 2
             }
+            SrtControlPacket::KeyManagerRequest => 3,
+            SrtControlPacket::KeyManagerResponse => 4,
         }
     }
 }

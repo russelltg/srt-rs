@@ -2,7 +2,7 @@ use std::{
     net::SocketAddr, time::{Duration, Instant},
 };
 
-use {SeqNumber, SocketID};
+use {HandshakeResponsibility, SeqNumber, SocketID};
 
 #[derive(Clone, Copy)]
 pub struct ConnectionSettings {
@@ -27,8 +27,13 @@ pub struct ConnectionSettings {
     /// The maxiumum flow size
     pub max_flow_size: u32,
 
-    /// The TSBPD latency
+    /// The TSBPD latency configured by the user.
+    /// Not necessarily the actual decided on latency, which
+    /// is the max of both side's respective latencies.
     pub tsbpd_latency: Option<Duration>,
+
+    /// The responsibility of this SRT entity
+    pub responsibility: HandshakeResponsibility,
 }
 
 impl ConnectionSettings {
