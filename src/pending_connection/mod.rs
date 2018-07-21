@@ -2,9 +2,7 @@ pub mod connect;
 pub mod listen;
 pub mod rendezvous;
 
-use std::{
-    net::{IpAddr, SocketAddr}, time::Instant,
-};
+use std::net::{IpAddr, SocketAddr};
 
 use failure::Error;
 use futures::prelude::*;
@@ -27,12 +25,8 @@ where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
 {
-    pub fn listen(
-        sock: T,
-        local_socket_id: SocketID,
-        socket_start_time: Instant,
-    ) -> PendingConnection<T> {
-        PendingConnection::Listen(Listen::new(sock, local_socket_id, socket_start_time))
+    pub fn listen(sock: T, local_socket_id: SocketID) -> PendingConnection<T> {
+        PendingConnection::Listen(Listen::new(sock, local_socket_id))
     }
 
     pub fn connect(
@@ -40,15 +34,8 @@ where
         local_addr: IpAddr,
         remote_addr: SocketAddr,
         local_socket_id: SocketID,
-        socket_start_time: Instant,
     ) -> PendingConnection<T> {
-        PendingConnection::Connect(Connect::new(
-            sock,
-            remote_addr,
-            local_socket_id,
-            socket_start_time,
-            local_addr,
-        ))
+        PendingConnection::Connect(Connect::new(sock, remote_addr, local_socket_id, local_addr))
     }
 
     pub fn rendezvous(

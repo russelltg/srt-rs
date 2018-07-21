@@ -3,18 +3,20 @@ use failure::Error;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
 
+use loss_compression::compress_loss_list;
+use packet::{
+    ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket, SrtHandshake, SrtShakeFlags,
+};
 use {
-    loss_compression::compress_loss_list,
-    packet::{
-        ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket, SrtHandshake,
-        SrtShakeFlags,
-    },
-    recv_buffer::RecvBuffer,
-    seq_number::seq_num_range,
-    srt_version, ConnectionSettings, SeqNumber,
+    recv_buffer::RecvBuffer, seq_number::seq_num_range, srt_version, ConnectionSettings, SeqNumber,
 };
 
-use std::{cmp, iter::Iterator, net::SocketAddr, time::Duration};
+use std::{
+    cmp,
+    iter::Iterator,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 struct LossListEntry {
     seq_num: SeqNumber,
@@ -357,8 +359,11 @@ where
 
     // handles a SRT control packet
     fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
-        match pack {
-            SrtControlPacket::HandshakeRequest(shake) => {
+        use self::SrtControlPacket::*;
+        use HandshakeResponsibility::*;
+
+        match (self.settings.responsibility, pack) {
+            (Respond, HandshakeRequest(shake)) => {
                 // make sure the SRT version matches ours
                 if srt_version::CURRENT != shake.version {
                     bail!(
@@ -395,16 +400,16 @@ where
                 );
 
                 // return the response
-                let pack = self.make_control_packet(ControlTypes::Srt(
-                    SrtControlPacket::HandshakeResponse(SrtHandshake {
+                let pack = self.make_control_packet(ControlTypes::Srt(HandshakeResponse(
+                    SrtHandshake {
                         version: srt_version::CURRENT,
                         flags: SrtShakeFlags::TSBPDRCV, // TODO: the reference implementation sets a lot more of these, research
                         latency: self.tsbpd.unwrap(),
-                    }),
-                ));
+                    },
+                )));
                 self.sock.start_send((pack, self.settings.remote))?;
             }
-            SrtControlPacket::HandshakeResponse(_) => {
+            (Respond, HandshakeResponse(_)) => {
                 warn!("Receiver received SRT handshake response, unusual.")
             }
             _ => unimplemented!(),
@@ -591,9 +596,11 @@ where
 
         self.buffer.add(data.clone());
 
-        debug!(
+        trace!(
             "Received data packet seq_num={}, loc={:?}, buffer={:?}",
-            data.seq_number, data.message_loc, self.buffer,
+            data.seq_number,
+            data.message_loc,
+            self.buffer,
         );
 
         Ok(())
@@ -646,7 +653,23 @@ where
         loop {
             // try to release packets
             match self.tsbpd {
-                Some(_) => unimplemented!(),
+                Some(tsbpd) => {
+                    // drop packets
+                    // TODO: do something with this
+                    let _dropped = self
+                        .buffer
+                        .drop_too_late_packets(tsbpd, self.settings.socket_start_time);
+
+                    if let Some((ts, p)) = self
+                        .buffer
+                        .next_msg_tsbpd(tsbpd, self.settings.socket_start_time)
+                    {
+                        return Ok(Async::Ready(Some((
+                            self.settings.socket_start_time + Duration::from_micros(ts as u64),
+                            p,
+                        ))));
+                    }
+                }
                 None => {
                     if let Some((ts, p)) = self.buffer.next_msg() {
                         return Ok(Async::Ready(Some((

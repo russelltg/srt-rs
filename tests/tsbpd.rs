@@ -1,13 +1,13 @@
+extern crate bytes;
 extern crate env_logger;
 extern crate futures;
-extern crate rand;
+extern crate futures_timer;
 extern crate srt;
 #[macro_use]
-extern crate log;
-extern crate bytes;
-extern crate futures_timer;
-#[macro_use]
 extern crate failure;
+#[macro_use]
+extern crate log;
+extern crate rand;
 
 use std::str;
 use std::thread;
@@ -15,7 +15,11 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use failure::Error;
-use futures::{stream::iter_ok, Future, Sink, Stream};
+use futures::{
+    sink::Sink,
+    stream::{iter_ok, Stream},
+    Future,
+};
 use futures_timer::Interval;
 use srt::{
     ConnectionSettings, HandshakeResponsibility, Receiver, Sender, SeqNumber, SocketID,
@@ -26,19 +30,21 @@ mod lossy_conn;
 use lossy_conn::LossyConn;
 
 #[test]
-fn test_with_loss() {
+fn tsbpd() {
     let _ = env_logger::try_init();
 
-    const INIT_SEQ_NUM: u32 = 812731;
-    const ITERS: u32 = 10_000;
+    const INIT_SEQ_NUM: u32 = 12314;
+    const PACKET_COUNT: u32 = 1000;
 
     // a stream of ascending stringified integers
-    let counting_stream = iter_ok(INIT_SEQ_NUM..(INIT_SEQ_NUM + ITERS))
+    // 1 ms between packets
+    let counting_stream = iter_ok(INIT_SEQ_NUM..INIT_SEQ_NUM + PACKET_COUNT)
         .map(|i| Bytes::from(i.to_string()))
-        .zip(Interval::new(Duration::from_micros(100)))
+        .zip(Interval::new(Duration::from_millis(1)))
         .map(|(b, _)| b);
 
-    let (send, recv) = LossyConn::new(0.05, Duration::from_secs(0), Duration::from_secs(0));
+    // 1% packet loss, 1 sec latency with 0.2 s variance
+    let (send, recv) = LossyConn::new(0.01, Duration::from_secs(1), Duration::from_millis(200));
 
     let sender = Sender::new(
         send.map_err(|_| format_err!(""))
@@ -52,7 +58,7 @@ fn test_with_loss() {
             max_packet_size: 1316,
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
-            tsbpd_latency: None,
+            tsbpd_latency: Some(Duration::from_secs(5)), // five seconds TSBPD, should be plenty for no loss
             responsibility: HandshakeResponsibility::Request,
         },
     );
@@ -68,7 +74,7 @@ fn test_with_loss() {
             max_packet_size: 1316,
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(),
-            tsbpd_latency: None,
+            tsbpd_latency: Some(Duration::from_secs(5)),
             responsibility: HandshakeResponsibility::Respond,
         },
     );
@@ -81,18 +87,31 @@ fn test_with_loss() {
             .unwrap();
     });
 
-    let t2 = thread::spawn(|| {
-        let mut next_data = INIT_SEQ_NUM;
+    let t2 = thread::spawn(move || {
+        let mut next_num = INIT_SEQ_NUM;
 
-        for payload in recvr.wait() {
-            let (_, payload) = payload.unwrap();
+        for by in recvr.wait() {
+            let (ts, by) = by.unwrap();
+            assert_eq!(
+                str::from_utf8(&by[..]).unwrap(),
+                next_num.to_string(),
+                "Incorrect data, packets must be out of order"
+            );
 
-            assert_eq!(next_data.to_string(), str::from_utf8(&payload[..]).unwrap());
+            // make sure the diff is ~5000ms
+            let diff = Instant::now() - ts;
+            let diff_ms = (diff.subsec_nanos() as f64 + diff.as_secs() as f64 * 1e9) * 1e-6;
+            assert!(
+                diff_ms > 4700. && diff_ms < 5300.,
+                "Time difference {}ms not within 4.7 sec and 5.3 sec, packet #{}",
+                diff_ms,
+                next_num - INIT_SEQ_NUM
+            );
 
-            next_data += 1;
+            next_num += 1;
         }
 
-        assert_eq!(next_data, INIT_SEQ_NUM + ITERS);
+        assert_eq!(next_num, INIT_SEQ_NUM + PACKET_COUNT);
     });
 
     t1.join().unwrap();

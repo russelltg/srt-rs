@@ -2,17 +2,18 @@ use bytes::Bytes;
 use failure::Error;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
-use {
-    loss_compression::decompress_loss_list,
-    packet::{
-        ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation, SrtControlPacket,
-        SrtHandshake, SrtShakeFlags,
-    },
-    srt_version, CCData, CongestCtrl, ConnectionSettings, HandshakeResponsibility, MsgNumber,
-    SeqNumber, Stats,
+use loss_compression::decompress_loss_list;
+use packet::{
+    ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation, SrtControlPacket,
+    SrtHandshake, SrtShakeFlags,
 };
+use {srt_version, CCData, CongestCtrl, ConnectionSettings, MsgNumber, SeqNumber, Stats};
 
-use std::{collections::VecDeque, net::SocketAddr, time::Duration};
+use std::{
+    collections::VecDeque,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 pub struct Sender<T, CC> {
     sock: T,
@@ -244,16 +245,15 @@ where
 
                         // 10) Update sender's loss list (by removing all those that has been
                         //     acknowledged).
-                        // TODO: this isn't the most effiecnet algorithm, it checks the beginning of the array many times
-                        while let Some(id) = self
-                            .loss_list
-                            .iter()
-                            .position(|x| ack_number > x.seq_number)
-                        {
-                            self.loss_list.remove(id);
-
-                            // this means a packet was lost then retransmitted
-                            self.retrans_packets += 1;
+                        while let Some(x) = self.loss_list.pop_front() {
+                            if ack_number > x.seq_number {
+                                // this means a packet was lost then retransmitted
+                                self.retrans_packets += 1;
+                            } else {
+                                // pop it back on and finish
+                                self.loss_list.push_front(x);
+                                break;
+                            }
                         }
                     }
                     ControlTypes::Ack2(_) => warn!("Sender received ACK2, unusual"),
@@ -267,12 +267,7 @@ where
                         // 3) Reset the EXP time variable.
 
                         for lost in decompress_loss_list(info.iter().cloned()) {
-                            // TODO: this prob doens't need to be a find
-                            let packet = match self
-                                .buffer
-                                .iter()
-                                .find(|pack| pack.seq_number == lost)
-                            {
+                            let packet = match self.buffer.get((lost - self.first_seq) as usize) {
                                 Some(p) => p,
                                 None => {
                                     warn!("NAK received for packet {} that's not in the buffer, maybe it's already been ACKed", lost);
@@ -313,11 +308,14 @@ where
     }
 
     fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
+        use self::SrtControlPacket::*;
+        use HandshakeResponsibility::*;
+
         match (self.settings.responsibility, pack) {
-            (HandshakeResponsibility::Request, SrtControlPacket::HandshakeRequest(_)) => {
-                warn!("Sender received SRT handshake request")
+            (Request, HandshakeRequest(_)) => {
+                warn!("Connector received SRT handshake request. It is the connector's responsibility to handle these.")
             }
-            (HandshakeResponsibility::Request, SrtControlPacket::HandshakeResponse(shake)) => {
+            (Request, HandshakeResponse(shake)) => {
                 // make sure the SRT version matches ours
                 if srt_version::CURRENT != shake.version {
                     bail!(
@@ -423,7 +421,7 @@ where
     fn send_srt_handshake(&mut self) -> Result<(), Error> {
         debug!("Sending SRT handshake packet");
 
-        let now = self.get_timestamp();
+        let now = self.get_timestamp_now();
         self.sock.start_send((
             Packet::Control(ControlPacket {
                 timestamp: now,

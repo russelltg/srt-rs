@@ -1,5 +1,4 @@
 use std::net::SocketAddr;
-use std::time::Instant;
 
 use failure::Error;
 use rand;
@@ -43,14 +42,13 @@ impl SrtSocketBuilder {
 
         Ok(match self.conn_type {
             ConnInitMethod::Listen => {
-                PendingConnection::listen(socket, SrtSocketBuilder::gen_sockid(), Instant::now())
+                PendingConnection::listen(socket, SrtSocketBuilder::gen_sockid())
             }
             ConnInitMethod::Connect(addr) => PendingConnection::connect(
                 socket,
                 self.local_addr.ip(),
                 addr,
                 SrtSocketBuilder::gen_sockid(),
-                Instant::now(),
             ),
             ConnInitMethod::Rendezvous {
                 local_public,

@@ -1,5 +1,8 @@
 use std::{
-    collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, net::SocketAddr, time::Instant,
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    net::SocketAddr,
+    time::Instant,
 };
 
 use failure::Error;
@@ -13,7 +16,6 @@ pub struct Listen<T> {
     state: ConnectionState,
     sock: Option<T>,
     local_socket_id: SocketID,
-    socket_start_time: Instant,
 }
 
 impl<T> Listen<T>
@@ -21,14 +23,13 @@ where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
 {
-    pub fn new(sock: T, local_socket_id: SocketID, socket_start_time: Instant) -> Listen<T> {
+    pub fn new(sock: T, local_socket_id: SocketID) -> Listen<T> {
         info!("Listening...");
 
         Listen {
             sock: Some(sock),
             state: ConnectionState::WaitingForHandshake,
             local_socket_id,
-            socket_start_time,
         }
     }
 }
@@ -81,6 +82,14 @@ where
                     {
                         info!("Handshake recieved from {:?}", addr);
 
+                        // check version
+                        if shake.udt_version != 5 {
+                            bail!(
+                                "Invalid UDT handshake version {}, expected 5",
+                                shake.udt_version
+                            );
+                        }
+
                         // https://tools.ietf.org/html/draft-gg-udt-03#page-9
                         // When the server first receives the connection request from a client,
                         // it generates a cookie value according to the client address and a
@@ -99,12 +108,10 @@ where
                         let resp_handshake = Packet::Control(ControlPacket {
                             timestamp,
                             dest_sockid: shake.socket_id,
-                            control_type: ControlTypes::Handshake({
-                                let mut tmp = shake;
-                                tmp.syn_cookie = cookie;
-                                tmp.socket_id = self.local_socket_id;
-
-                                tmp
+                            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                                syn_cookie: cookie,
+                                socket_id: self.local_socket_id,
+                                ..shake
                             }),
                         });
 
@@ -189,8 +196,8 @@ where
                             max_flow_size: 16000, // TODO: what is this?
                             max_packet_size: shake.max_packet_size,
                             local_sockid: self.local_socket_id,
-                            socket_start_time: self.socket_start_time,
-                            tsbpd_latency: None, // TODO: configurable
+                            socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
+                            tsbpd_latency: None,               // TODO: configurable
                             responsibility: HandshakeResponsibility::Respond,
                         });
                         // break out to end the borrow on self.sock

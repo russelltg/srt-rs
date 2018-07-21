@@ -1,13 +1,13 @@
-extern crate env_logger;
+/// A test testing if a connection is setup with not enough latency, ie rtt > 3ish*latency
+extern crate bytes;
 extern crate futures;
-extern crate rand;
+extern crate futures_timer;
 extern crate srt;
 #[macro_use]
-extern crate log;
-extern crate bytes;
-extern crate futures_timer;
-#[macro_use]
 extern crate failure;
+extern crate rand;
+#[macro_use]
+extern crate log;
 
 use std::str;
 use std::thread;
@@ -26,19 +26,18 @@ mod lossy_conn;
 use lossy_conn::LossyConn;
 
 #[test]
-fn test_with_loss() {
-    let _ = env_logger::try_init();
-
-    const INIT_SEQ_NUM: u32 = 812731;
-    const ITERS: u32 = 10_000;
+fn not_enough_latency() {
+    const INIT_SEQ_NUM: u32 = 12314;
 
     // a stream of ascending stringified integers
-    let counting_stream = iter_ok(INIT_SEQ_NUM..(INIT_SEQ_NUM + ITERS))
+    // 1 ms between packets
+    let counting_stream = iter_ok(INIT_SEQ_NUM..INIT_SEQ_NUM + 10000)
         .map(|i| Bytes::from(i.to_string()))
-        .zip(Interval::new(Duration::from_micros(100)))
+        .zip(Interval::new(Duration::from_millis(1)))
         .map(|(b, _)| b);
 
-    let (send, recv) = LossyConn::new(0.05, Duration::from_secs(0), Duration::from_secs(0));
+    // 4% packet loss, 6 sec latency with 0.2 s variance
+    let (send, recv) = LossyConn::new(0.04, Duration::from_secs(4), Duration::from_millis(200));
 
     let sender = Sender::new(
         send.map_err(|_| format_err!(""))
@@ -52,7 +51,7 @@ fn test_with_loss() {
             max_packet_size: 1316,
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
-            tsbpd_latency: None,
+            tsbpd_latency: Some(Duration::from_secs(5)), // five seconds TSBPD, should be loss
             responsibility: HandshakeResponsibility::Request,
         },
     );
@@ -68,31 +67,49 @@ fn test_with_loss() {
             max_packet_size: 1316,
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(),
-            tsbpd_latency: None,
+            tsbpd_latency: Some(Duration::from_secs(5)),
             responsibility: HandshakeResponsibility::Respond,
         },
     );
 
-    let t1 = thread::spawn(|| {
+    let t1 = thread::spawn(move || {
         sender
             .send_all(counting_stream.map(|b| (Instant::now(), b)))
-            .map_err(|e: Error| panic!("{:?}", e))
+            .map_err(|e: Error| panic!(e))
             .wait()
             .unwrap();
+
+        println!("Sender exiting");
     });
 
-    let t2 = thread::spawn(|| {
-        let mut next_data = INIT_SEQ_NUM;
+    let t2 = thread::spawn(move || {
+        let mut last_seq_num = INIT_SEQ_NUM - 1;
 
-        for payload in recvr.wait() {
-            let (_, payload) = payload.unwrap();
+        for by in recvr.wait() {
+            let (ts, by) = by.unwrap();
 
-            assert_eq!(next_data.to_string(), str::from_utf8(&payload[..]).unwrap());
+            // they don't have to be sequential, but they should be increasing
+            let this_seq_num = str::from_utf8(&by[..]).unwrap().parse().unwrap();
+            assert!(
+                this_seq_num > last_seq_num,
+                "Sequence numbers aren't increasing"
+            );
+            if this_seq_num - last_seq_num > 1 {
+                println!("{} messages dropped", this_seq_num - last_seq_num - 1)
+            }
+            last_seq_num = this_seq_num;
 
-            next_data += 1;
+            // make sure the timings are still decent
+            let diff = Instant::now() - ts;
+            let diff_ms = (diff.subsec_nanos() as f64 + diff.as_secs() as f64 * 1e9) * 1e-6;
+            assert!(
+                diff_ms > 4700. && diff_ms < 5300.,
+                "Time difference {}ms not within 4.7 sec and 5.3 sec",
+                diff_ms,
+            );
         }
 
-        assert_eq!(next_data, INIT_SEQ_NUM + ITERS);
+        println!("Reciever exiting");
     });
 
     t1.join().unwrap();

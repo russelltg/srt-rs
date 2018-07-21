@@ -1,5 +1,6 @@
 use std::{
-    net::{IpAddr, SocketAddr}, time::{Duration, Instant},
+    net::{IpAddr, SocketAddr},
+    time::{Duration, Instant},
 };
 
 use failure::Error;
@@ -16,7 +17,6 @@ pub struct Connect<T> {
     remote: SocketAddr,
     sock: Option<T>,
     local_socket_id: SocketID,
-    socket_start_time: Instant,
     init_seq_num: SeqNumber,
 
     state: State,
@@ -35,7 +35,6 @@ impl<T> Connect<T> {
         sock: T,
         remote: SocketAddr,
         local_socket_id: SocketID,
-        socket_start_time: Instant,
         local_addr: IpAddr,
     ) -> Connect<T> {
         info!("Connecting to {:?}", remote);
@@ -44,7 +43,6 @@ impl<T> Connect<T> {
             remote,
             sock: Some(sock),
             local_socket_id,
-            socket_start_time,
             init_seq_num: thread_rng().gen::<SeqNumber>(),
             send_interval: Interval::new(Duration::from_millis(100)),
             state: State::Starting,
@@ -126,7 +124,7 @@ where
                                 max_flow_size: info.max_flow_size,
                                 max_packet_size: info.max_packet_size,
                                 init_seq_num: info.init_seq_num,
-                                socket_start_time: self.socket_start_time,
+                                socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
                                 local_sockid: self.local_socket_id,
                                 remote_sockid: info.socket_id,
                                 tsbpd_latency: None, // TODO: configurable

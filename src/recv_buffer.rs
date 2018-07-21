@@ -1,5 +1,7 @@
 use bytes::{Bytes, BytesMut};
-use std::{collections::VecDeque, fmt};
+use std::collections::VecDeque;
+use std::fmt;
+use std::time::{Duration, Instant};
 
 use packet::PacketLocation;
 use {DataPacket, SeqNumber};
@@ -33,7 +35,7 @@ impl RecvBuffer {
     /// If `pack.seq_number < self.head`, this is nop (ie it appears before an already released packet)
     pub fn add(&mut self, pack: DataPacket) {
         if pack.seq_number < self.head {
-            return;
+            return; // packet is too late
         }
 
         // resize `buffer` if necessary
@@ -44,6 +46,52 @@ impl RecvBuffer {
 
         // add the new element
         self.buffer[idx] = Some(pack)
+    }
+
+    /// Drops the packets that are deemed to be too late
+    /// IE: there is a packet after it that is ready to be released
+    ///
+    /// Returns the number of packets dropped
+    pub fn drop_too_late_packets(&mut self, latency: Duration, start_time: Instant) -> usize {
+        let first_non_none_idx = self.buffer.iter().position(Option::is_some);
+
+        let first_non_none_idx = match first_non_none_idx {
+            Some(i) => i,
+            None => return 0, // even though some of these may be too late, there are none that can be released so they can't them back.
+        };
+
+        let first_pack_ts_us = self.buffer[first_non_none_idx].as_ref().unwrap().timestamp;
+        // we are too late if that packet is ready
+        let too_late =
+            start_time + Duration::from_micros(first_pack_ts_us as u64) + latency <= Instant::now();
+
+        if too_late {
+            // start dropping packets
+            self.head += first_non_none_idx as u32;
+            self.buffer.drain(0..first_non_none_idx).count()
+        } else {
+            0 // the next available packet isn't ready to be sent yet
+        }
+    }
+
+    /// Check if there is an available message to release with TSBPD
+    /// ie - `start_time + timestamp + tsbpd <= now`
+    ///
+    /// * `latency` - The latency to release with
+    /// * `start_time` - The start time of the socket to add to timestamps
+    /// TODO: this does not account for timestamp wrapping
+    ///
+    /// Returns `None` if there is no message available, or `Some(i)` if there is a packet available, `i` being the number of packets it spans.
+    pub fn next_msg_ready_tsbpd(&self, latency: Duration, start_time: Instant) -> Option<usize> {
+        let msg_size = self.next_msg_ready()?;
+
+        let origin_ts_usec = self.buffer.front().unwrap().as_ref().unwrap().timestamp;
+
+        if start_time + Duration::from_micros(origin_ts_usec as u64) + latency <= Instant::now() {
+            Some(msg_size)
+        } else {
+            None
+        }
     }
 
     /// Check if the next message is available. Returns `None` if there is no message,
@@ -68,6 +116,17 @@ impl RecvBuffer {
         }
 
         None
+    }
+
+    /// A convence function for
+    /// `self.next_msg_ready_tsbpd(...).map(|_| self.next_msg().unwrap()`
+    pub fn next_msg_tsbpd(
+        &mut self,
+        latency: Duration,
+        start_time: Instant,
+    ) -> Option<(i32, Bytes)> {
+        self.next_msg_ready_tsbpd(latency, start_time)
+            .map(|_| self.next_msg().unwrap())
     }
 
     /// Check if there is an available message, returning, and its origin timestamp it if found
