@@ -10,9 +10,7 @@ use rand::{thread_rng, Rng};
 
 use connected::Connected;
 use packet::{ControlPacket, ControlTypes, HandshakeControlInfo, Packet, ShakeType, SocketType};
-use ConnectionSettings;
-use SeqNumber;
-use SocketID;
+use {ConnectionSettings, HandshakeResponsibility, SeqNumber, SocketID};
 
 pub struct Connect<T> {
     remote: SocketAddr,
@@ -132,6 +130,7 @@ where
                                 local_sockid: self.local_socket_id,
                                 remote_sockid: info.socket_id,
                                 tsbpd_latency: None, // TODO: configurable
+                                responsibility: HandshakeResponsibility::Request,
                             },
                         )));
                     }

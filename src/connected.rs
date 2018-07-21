@@ -1,6 +1,6 @@
 use {
     failure::Error, futures::prelude::*, receiver::Receiver, sender::Sender, std::net::SocketAddr,
-    CongestCtrl, ConnectionSettings, DefaultCongestCtrl, Packet,
+    CongestCtrl, ConnectionSettings, Packet, SrtCongestCtrl,
 };
 
 pub struct Connected<T> {
@@ -21,8 +21,8 @@ where
         Receiver::new(self.socket, self.settings)
     }
 
-    pub fn sender(self) -> Sender<T, DefaultCongestCtrl> {
-        self.sender_with_cc(DefaultCongestCtrl::new())
+    pub fn sender(self) -> Sender<T, SrtCongestCtrl> {
+        self.sender_with_cc(SrtCongestCtrl)
     }
     pub fn sender_with_cc<CC: CongestCtrl>(self, cc: CC) -> Sender<T, CC> {
         Sender::new(self.socket, cc, self.settings)

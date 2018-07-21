@@ -7,7 +7,7 @@ use futures::prelude::*;
 
 use connected::Connected;
 use packet::{ControlPacket, ControlTypes, HandshakeControlInfo, Packet, ShakeType};
-use {ConnectionSettings, SocketID};
+use {ConnectionSettings, HandshakeResponsibility, SocketID};
 
 pub struct Listen<T> {
     state: ConnectionState,
@@ -191,6 +191,7 @@ where
                             local_sockid: self.local_socket_id,
                             socket_start_time: self.socket_start_time,
                             tsbpd_latency: None, // TODO: configurable
+                            responsibility: HandshakeResponsibility::Respond,
                         });
                         // break out to end the borrow on self.sock
                         break;

@@ -17,33 +17,32 @@ extern crate bitflags;
 #[macro_use]
 extern crate failure;
 
-pub mod builder;
-pub mod codec;
-pub mod congest_ctrl;
-pub mod connected;
-pub mod connection_settings;
-pub mod default_congest_ctrl;
-pub mod loss_compression;
-pub mod packet;
-pub mod pending_connection;
-pub mod receiver;
-pub mod sender;
-pub mod srt_congest_ctrl;
-pub mod srt_packet;
-pub mod srt_version;
-pub mod stats;
-pub mod stats_printer;
+mod builder;
+mod codec;
+mod congest_ctrl;
+mod connected;
+mod connection_settings;
+mod loss_compression;
+mod packet;
+mod pending_connection;
+mod receiver;
+mod sender;
+mod srt_congest_ctrl;
+mod srt_version;
+mod stats;
 #[macro_use]
-pub mod modular_num;
-pub mod msg_number;
-pub mod recv_buffer;
-pub mod seq_number;
+mod modular_num;
+mod handshake_responsibiliy;
+mod msg_number;
+mod recv_buffer;
+mod seq_number;
 
+// public API
 pub use builder::{ConnInitMethod, SrtSocket, SrtSocketBuilder};
 pub use congest_ctrl::{CCData, CongestCtrl};
 pub use connected::Connected;
 pub use connection_settings::ConnectionSettings;
-pub use default_congest_ctrl::DefaultCongestCtrl;
+pub use handshake_responsibiliy::HandshakeResponsibility;
 pub use msg_number::MsgNumber;
 pub use packet::{ControlPacket, DataPacket, Packet};
 pub use pending_connection::PendingConnection;

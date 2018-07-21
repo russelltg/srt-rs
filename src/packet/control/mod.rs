@@ -1,8 +1,12 @@
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut};
 use failure::Error;
 use std::net::{IpAddr, Ipv4Addr};
 
 use {SeqNumber, SocketID};
+
+mod srt;
+
+pub use self::srt::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
 
 /// A UDP packet carrying control information
 ///  0                   1                   2                   3
@@ -94,15 +98,9 @@ pub enum ControlTypes {
         last: SeqNumber,
     },
 
-    /// Custom packets
-    /// Mainly used for special SRT handshake packets
-    Custom {
-        /// The custom data type, stored in bytes 3-4, the "reserved field"
-        custom_type: u16,
-
-        /// The data to store after the packet header
-        control_info: Bytes,
-    },
+    /// Srt control packets
+    /// These use the UDT extension type 0xFF
+    Srt(SrtControlPacket),
 }
 
 /// The control info for handshake packets
@@ -339,11 +337,10 @@ impl ControlTypes {
                 unimplemented!()
             }
             0xFF => {
-                // Custom
-                Ok(ControlTypes::Custom {
-                    custom_type: reserved,
-                    control_info: buf.collect(),
-                })
+                // Srt
+                Ok(ControlTypes::Srt(SrtControlPacket::parse(
+                    reserved, &mut buf,
+                )?))
             }
             x => Err(format_err!("Unrecognized control packet type: {:?}", x)),
         }
@@ -358,7 +355,7 @@ impl ControlTypes {
             ControlTypes::Shutdown => 0x5,
             ControlTypes::Ack2(_) => 0x6,
             ControlTypes::DropRequest { .. } => 0x7,
-            ControlTypes::Custom { .. } => 0x7FFF,
+            ControlTypes::Srt(_) => 0x7FFF,
         }
     }
 
@@ -375,7 +372,7 @@ impl ControlTypes {
 
     fn reserved(&self) -> u16 {
         match *self {
-            ControlTypes::Custom { custom_type, .. } => custom_type,
+            ControlTypes::Srt(srt) => srt.reserved(),
             _ => 0,
         }
     }
@@ -424,9 +421,9 @@ impl ControlTypes {
             ControlTypes::DropRequest { .. } => unimplemented!(),
             // control data
             ControlTypes::Shutdown | ControlTypes::Ack2(_) | ControlTypes::KeepAlive => {}
-            ControlTypes::Custom {
-                ref control_info, ..
-            } => into.put(&control_info[..]),
+            ControlTypes::Srt(srt) => {
+                srt.serialize(into);
+            }
         };
     }
 }

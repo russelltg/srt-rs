@@ -1,0 +1,1 @@
+struct Timestamp(u32);

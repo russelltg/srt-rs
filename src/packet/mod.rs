@@ -4,7 +4,10 @@
 mod control;
 mod data;
 
-pub use self::control::{ControlPacket, ControlTypes, HandshakeControlInfo, ShakeType, SocketType};
+pub use self::control::{
+    ControlPacket, ControlTypes, HandshakeControlInfo, ShakeType, SocketType, SrtControlPacket,
+    SrtHandshake, SrtShakeFlags,
+};
 pub use self::data::{DataPacket, PacketLocation};
 
 use {

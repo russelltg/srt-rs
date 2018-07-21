@@ -12,7 +12,10 @@ extern crate failure;
 use {
     bytes::Bytes, failure::Error, futures::{prelude::*, stream::iter_ok, sync::mpsc},
     futures_timer::{Delay, Interval}, rand::distributions::{Distribution, Normal},
-    srt::{ConnectionSettings, Receiver, Sender, SeqNumber, SocketID, SrtCongestCtrl},
+    srt::{
+        ConnectionSettings, HandshakeResponsibility, Receiver, Sender, SeqNumber, SocketID,
+        SrtCongestCtrl,
+    },
     std::{
         cmp::Ordering, collections::BinaryHeap, fmt::Debug, str, thread, time::{Duration, Instant},
     },
@@ -194,6 +197,7 @@ fn test_with_loss() {
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
             tsbpd_latency: None,
+            responsibility: HandshakeResponsibility::Request,
         },
     );
 
@@ -209,6 +213,7 @@ fn test_with_loss() {
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(),
             tsbpd_latency: None,
+            responsibility: HandshakeResponsibility::Respond,
         },
     );
 
@@ -269,6 +274,7 @@ fn tsbpd() {
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
             tsbpd_latency: Some(Duration::from_secs(5)), // five seconds TSBPD, should be plenty for no loss
+            responsibility: HandshakeResponsibility::Request,
         },
     );
 
@@ -284,6 +290,7 @@ fn tsbpd() {
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(),
             tsbpd_latency: Some(Duration::from_secs(5)),
+            responsibility: HandshakeResponsibility::Respond,
         },
     );
 
