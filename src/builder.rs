@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use failure::Error;
 use rand;
@@ -14,6 +15,7 @@ pub type SrtSocket = UdpFramed<PacketCodec>;
 pub struct SrtSocketBuilder {
     local_addr: SocketAddr,
     conn_type: ConnInitMethod,
+    latency: Option<Duration>,
 }
 
 pub enum ConnInitMethod {
@@ -32,7 +34,13 @@ impl SrtSocketBuilder {
         SrtSocketBuilder {
             local_addr,
             conn_type,
+            latency: None,
         }
+    }
+
+    pub fn latency(&mut self, latency: Duration) -> &mut Self {
+        self.latency = Some(latency);
+        self
     }
 
     pub fn build(self) -> Result<PendingConnection<SrtSocket>, Error> {
@@ -42,18 +50,19 @@ impl SrtSocketBuilder {
 
         Ok(match self.conn_type {
             ConnInitMethod::Listen => {
-                PendingConnection::listen(socket, SrtSocketBuilder::gen_sockid())
+                PendingConnection::listen(socket, SrtSocketBuilder::gen_sockid(), self.latency)
             }
             ConnInitMethod::Connect(addr) => PendingConnection::connect(
                 socket,
                 self.local_addr.ip(),
                 addr,
                 SrtSocketBuilder::gen_sockid(),
+                self.latency,
             ),
             ConnInitMethod::Rendezvous {
                 local_public,
                 remote_public,
-            } => PendingConnection::rendezvous(socket, local_public, remote_public),
+            } => PendingConnection::rendezvous(socket, local_public, remote_public, self.latency),
         })
     }
 

@@ -23,6 +23,7 @@ pub struct Connect<T> {
 
     send_interval: Interval,
     local_addr: IpAddr,
+    tsbpd_latency: Option<Duration>,
 }
 
 enum State {
@@ -36,6 +37,7 @@ impl<T> Connect<T> {
         remote: SocketAddr,
         local_socket_id: SocketID,
         local_addr: IpAddr,
+        tsbpd_latency: Option<Duration>,
     ) -> Connect<T> {
         info!("Connecting to {:?}", remote);
 
@@ -47,6 +49,7 @@ impl<T> Connect<T> {
             send_interval: Interval::new(Duration::from_millis(100)),
             state: State::Starting,
             local_addr,
+            tsbpd_latency,
         }
     }
 }
@@ -127,7 +130,7 @@ where
                                 socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
                                 local_sockid: self.local_socket_id,
                                 remote_sockid: info.socket_id,
-                                tsbpd_latency: None, // TODO: configurable
+                                tsbpd_latency: self.tsbpd_latency,
                                 responsibility: HandshakeResponsibility::Request,
                             },
                         )));

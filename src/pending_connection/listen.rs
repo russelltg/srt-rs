@@ -1,9 +1,7 @@
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-    net::SocketAddr,
-    time::Instant,
-};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
 use failure::Error;
 use futures::prelude::*;
@@ -16,6 +14,7 @@ pub struct Listen<T> {
     state: ConnectionState,
     sock: Option<T>,
     local_socket_id: SocketID,
+    tsbpd_latency: Option<Duration>,
 }
 
 impl<T> Listen<T>
@@ -23,13 +22,14 @@ where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
 {
-    pub fn new(sock: T, local_socket_id: SocketID) -> Listen<T> {
+    pub fn new(sock: T, local_socket_id: SocketID, tsbpd_latency: Option<Duration>) -> Listen<T> {
         info!("Listening...");
 
         Listen {
             sock: Some(sock),
             state: ConnectionState::WaitingForHandshake,
             local_socket_id,
+            tsbpd_latency,
         }
     }
 }
@@ -197,7 +197,7 @@ where
                             max_packet_size: shake.max_packet_size,
                             local_sockid: self.local_socket_id,
                             socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
-                            tsbpd_latency: None,               // TODO: configurable
+                            tsbpd_latency: self.tsbpd_latency,
                             responsibility: HandshakeResponsibility::Respond,
                         });
                         // break out to end the borrow on self.sock

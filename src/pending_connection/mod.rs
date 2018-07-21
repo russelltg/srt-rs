@@ -3,16 +3,18 @@ pub mod listen;
 pub mod rendezvous;
 
 use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 
 use failure::Error;
 use futures::prelude::*;
 
 use connected::Connected;
 
-pub use self::connect::Connect;
-pub use self::listen::Listen;
-pub use self::rendezvous::Rendezvous;
-pub use {Packet, SocketID};
+use self::connect::Connect;
+use self::listen::Listen;
+use self::rendezvous::Rendezvous;
+
+use {Packet, SocketID};
 
 pub enum PendingConnection<T> {
     Listen(Listen<T>),
@@ -25,8 +27,12 @@ where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
 {
-    pub fn listen(sock: T, local_socket_id: SocketID) -> PendingConnection<T> {
-        PendingConnection::Listen(Listen::new(sock, local_socket_id))
+    pub fn listen(
+        sock: T,
+        local_socket_id: SocketID,
+        tsbpd_latency: Option<Duration>,
+    ) -> PendingConnection<T> {
+        PendingConnection::Listen(Listen::new(sock, local_socket_id, tsbpd_latency))
     }
 
     pub fn connect(
@@ -34,16 +40,29 @@ where
         local_addr: IpAddr,
         remote_addr: SocketAddr,
         local_socket_id: SocketID,
+        tsbpd_latency: Option<Duration>,
     ) -> PendingConnection<T> {
-        PendingConnection::Connect(Connect::new(sock, remote_addr, local_socket_id, local_addr))
+        PendingConnection::Connect(Connect::new(
+            sock,
+            remote_addr,
+            local_socket_id,
+            local_addr,
+            tsbpd_latency,
+        ))
     }
 
     pub fn rendezvous(
         sock: T,
         local_public: SocketAddr,
         remote_public: SocketAddr,
+        tsbpd_latency: Option<Duration>,
     ) -> PendingConnection<T> {
-        PendingConnection::Rendezvous(Rendezvous::new(sock, local_public, remote_public))
+        PendingConnection::Rendezvous(Rendezvous::new(
+            sock,
+            local_public,
+            remote_public,
+            tsbpd_latency,
+        ))
     }
 }
 
