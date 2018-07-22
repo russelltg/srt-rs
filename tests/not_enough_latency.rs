@@ -85,8 +85,6 @@ fn not_enough_latency() {
     let t2 = thread::spawn(move || {
         let mut last_seq_num = INIT_SEQ_NUM - 1;
 
-        let start = Instant::now();
-
         for by in recvr.wait() {
             let (ts, by) = by.unwrap();
 

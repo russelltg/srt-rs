@@ -38,20 +38,26 @@ impl SrtSocketBuilder {
         }
     }
 
-    pub fn local_addr(&mut self, local_addr: IpAddr) {
+    pub fn local_addr(&mut self, local_addr: IpAddr) -> &mut Self {
         self.local_addr.set_ip(local_addr);
+
+        self
     }
 
-    pub fn local_port(&mut self, port: u16) {
-        self.local_addr.set_port(port)
+    pub fn local_port(&mut self, port: u16) -> &mut Self {
+        self.local_addr.set_port(port);
+
+        self
     }
 
-    pub fn latency(&mut self, latency: Duration) {
+    pub fn latency(&mut self, latency: Duration) -> &mut Self {
         println!("Configuring latency");
         self.latency = Some(latency);
+
+        self
     }
 
-    pub fn build(self) -> Result<PendingConnection<SrtSocket>, Error> {
+    pub fn build(&mut self) -> Result<PendingConnection<SrtSocket>, Error> {
         trace!("Listening on {:?}", self.local_addr);
 
         let socket = UdpFramed::new(UdpSocket::bind(&self.local_addr)?, PacketCodec {});
