@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use failure::Error;
@@ -30,17 +30,25 @@ pub enum ConnInitMethod {
 impl SrtSocketBuilder {
     /// Create a SrtSocketBuilder
     /// If you don't want to bind to a port, pass 0.0.0.0:0
-    pub fn new(local_addr: SocketAddr, conn_type: ConnInitMethod) -> Self {
+    pub fn new(conn_type: ConnInitMethod) -> Self {
         SrtSocketBuilder {
-            local_addr,
+            local_addr: "0.0.0.0:0".parse().unwrap(),
             conn_type,
             latency: None,
         }
     }
 
-    pub fn latency(&mut self, latency: Duration) -> &mut Self {
+    pub fn local_addr(&mut self, local_addr: IpAddr) {
+        self.local_addr.set_ip(local_addr);
+    }
+
+    pub fn local_port(&mut self, port: u16) {
+        self.local_addr.set_port(port)
+    }
+
+    pub fn latency(&mut self, latency: Duration) {
+        println!("Configuring latency");
         self.latency = Some(latency);
-        self
     }
 
     pub fn build(self) -> Result<PendingConnection<SrtSocket>, Error> {

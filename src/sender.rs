@@ -100,7 +100,10 @@ where
     CC: CongestCtrl,
 {
     pub fn new(sock: T, congest_ctrl: CC, settings: ConnectionSettings) -> Sender<T, CC> {
-        info!("Sending started to {:?}", settings.remote);
+        info!(
+            "Sending started to {:?}, with latency={:?}",
+            settings.remote, settings.tsbpd_latency
+        );
 
         Sender {
             sock,
@@ -337,6 +340,9 @@ where
 
                 // all setup, using TSBPD from the shake
                 info!("Got SRT handshake packet, using tsbpd={:?}", shake.latency);
+
+                // stop sending handshakes
+                self.srt_handshake_interval = None;
             }
             _ => unimplemented!(),
         }

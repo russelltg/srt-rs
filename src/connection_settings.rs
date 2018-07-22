@@ -1,10 +1,11 @@
 use std::{
-    net::SocketAddr, time::{Duration, Instant},
+    net::SocketAddr,
+    time::{Duration, Instant},
 };
 
 use {HandshakeResponsibility, SeqNumber, SocketID};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ConnectionSettings {
     /// The remote socket to send & receive to
     pub remote: SocketAddr,

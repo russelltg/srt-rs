@@ -199,7 +199,7 @@ pub enum ShakeType {
 impl ControlPacket {
     pub fn parse<T: Buf>(mut buf: T) -> Result<ControlPacket, Error> {
         // get reserved data, which is the last two bytes of the first four bytes
-        let control_type = buf.get_u16_be() << 1 >> 1;
+        let control_type = buf.get_u16_be() << 1 >> 1; // clear first bit
         let reserved = buf.get_u16_be();
         let add_info = buf.get_i32_be();
         let timestamp = buf.get_i32_be();
@@ -268,7 +268,7 @@ impl ControlTypes {
                 buf.copy_to_slice(&mut ip_buf);
 
                 // TODO: this is probably really wrong, so fix it
-                let peer_addr = if ip_buf[4..] == b"\0\0\0\0\0\0\0\0\0\0\0\0"[..] {
+                let peer_addr = if ip_buf[4..] == [0; 12][..] {
                     IpAddr::from(Ipv4Addr::new(ip_buf[0], ip_buf[1], ip_buf[2], ip_buf[3]))
                 } else {
                     IpAddr::from(ip_buf)
@@ -336,7 +336,7 @@ impl ControlTypes {
                 // Drop request
                 unimplemented!()
             }
-            0xFF => {
+            0x7FFF => {
                 // Srt
                 Ok(ControlTypes::Srt(SrtControlPacket::parse(
                     reserved, &mut buf,

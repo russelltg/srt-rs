@@ -36,7 +36,7 @@ fn not_enough_latency() {
         .zip(Interval::new(Duration::from_millis(1)))
         .map(|(b, _)| b);
 
-    // 4% packet loss, 6 sec latency with 0.2 s variance
+    // 4% packet loss, 4 sec latency with 0.2 s variance
     let (send, recv) = LossyConn::new(0.04, Duration::from_secs(4), Duration::from_millis(200));
 
     let sender = Sender::new(
@@ -79,11 +79,13 @@ fn not_enough_latency() {
             .wait()
             .unwrap();
 
-        println!("Sender exiting");
+        info!("Sender exiting");
     });
 
     let t2 = thread::spawn(move || {
         let mut last_seq_num = INIT_SEQ_NUM - 1;
+
+        let start = Instant::now();
 
         for by in recvr.wait() {
             let (ts, by) = by.unwrap();
@@ -95,7 +97,7 @@ fn not_enough_latency() {
                 "Sequence numbers aren't increasing"
             );
             if this_seq_num - last_seq_num > 1 {
-                println!("{} messages dropped", this_seq_num - last_seq_num - 1)
+                debug!("{} messages dropped", this_seq_num - last_seq_num - 1)
             }
             last_seq_num = this_seq_num;
 
@@ -109,7 +111,7 @@ fn not_enough_latency() {
             );
         }
 
-        println!("Reciever exiting");
+        info!("Reciever exiting");
     });
 
     t1.join().unwrap();

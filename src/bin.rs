@@ -1,6 +1,7 @@
 extern crate srt;
 
 extern crate bytes;
+extern crate clap;
 extern crate env_logger;
 extern crate futures;
 extern crate tokio_codec;
@@ -8,22 +9,44 @@ extern crate tokio_io;
 extern crate tokio_udp;
 extern crate url;
 #[macro_use]
-extern crate clap;
-#[macro_use]
 extern crate failure;
 extern crate log;
 
 use bytes::Bytes;
+use clap::{App, Arg};
 use failure::Error;
 use futures::{future, prelude::*};
 use srt::{ConnInitMethod, SrtSocketBuilder};
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use tokio_codec::BytesCodec;
 use tokio_udp::{UdpFramed, UdpSocket};
 use url::{Host, Url};
+
+const AFTER_HELPTEXT: &str = r#"
+Supported protocols:
+
+UDP - send over a UDP port. 
+    example:
+        stransmit-rs
+            udp://:1234          <- bind to interface 0.0.0.0:1234 and listen for data
+            udp://127.0.0.1:2345 <- bind to interface 0.0.0.0:0 (any port) and send to 127.0.0.1:2345
+
+    Settings:
+    * interface=<ip address> the interface to bind to, defaults to all (0.0.0.0)
+
+SRT - send over a SRT connection
+    example:
+        stransmit-rs
+            srt://:1234          <- bind to interface 0.0.0.0:1234 and listen for a connection
+            srt://127.0.0.1:1234 <- bind to interface 0.0.0.0:0 (any port) and try to connect to 127.0.0.1:1234
+
+    Settings:
+    * interface=<ip address> the interface to bind to, defaults to all (0.0.0.0)
+    * latency_ms=<number>    the milliseconds of TSBPD latency to use
+"#;
 
 fn parse_args(args: &str) -> Result<HashMap<&str, &str>, Error> {
     let mut input_args = HashMap::new();
@@ -64,10 +87,14 @@ fn add_srt_args<'a, 'b>(
             "latency_ms" => builder.latency(Duration::from_millis(match v.parse() {
                 Ok(i) => i,
                 Err(e) => bail!(
-                    "Failed to parse latency parameter to input as integer: {:?}",
+                    "Failed to parse latency_ms parameter to input as integer: {:?}",
                     e
                 ),
             })),
+            "interface" => builder.local_addr(match v.parse() {
+                Ok(local) => local,
+                Err(e) => bail!("Failed to parse interface parameter as ip address: {:?}", e),
+            }),
             unrecog => bail!("Unrecgonized parameter '{}' for srt", unrecog),
         };
     }
@@ -78,15 +105,22 @@ fn add_srt_args<'a, 'b>(
 fn main() -> Result<(), Error> {
     env_logger::init();
 
-    let addr_any: IpAddr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
-
-    let matches = clap_app!(stransmit_rs =>
-		(version: "1.0")
-		(author: "Russell Greene")
-		(about: "SRT sender and receiver written in rust")
-		(@arg FROM: +required "Sets the input url")
-		(@arg TO: +required "Sets the output url")
-	).get_matches();
+    let matches = App::new("stransmit_rs")
+        .version("1.0")
+        .author("Russell Greene")
+        .about("SRT sender and receiver written in rust")
+        .arg(
+            Arg::with_name("FROM")
+                .help("Sets the input url")
+                .required(true),
+        )
+        .arg(
+            Arg::with_name("TO")
+                .help("Sets the output url")
+                .required(true),
+        )
+        .after_help(AFTER_HELPTEXT)
+        .get_matches();
 
     let input_url = match Url::parse(matches.value_of("FROM").unwrap()) {
         Err(e) => panic!("Failed to parse input URL: {}", e),
@@ -119,8 +153,6 @@ fn main() -> Result<(), Error> {
             }
         };
 
-        let input_local_addr = SocketAddr::new(addr_any, input_local_port);
-
         if input_url.scheme() == "udp" && input_local_port == 0 {
             panic!("Must not designate a ip to send to receive UDP. Example: udp://:1234, not udp://127.0.0.1:1234");
         }
@@ -131,7 +163,10 @@ fn main() -> Result<(), Error> {
             "udp" => Box::new(
                 future::ok::<Box<Stream<Item = Bytes, Error = Error>>, Error>(Box::new(
                     UdpFramed::new(
-                        UdpSocket::bind(&input_local_addr).unwrap(),
+                        UdpSocket::bind(&SocketAddr::new(
+                            args.get("interface").unwrap_or(&"0.0.0.0").parse()?,
+                            input_local_port,
+                        )).unwrap(),
                         BytesCodec::new(),
                     ).map(|(b, _)| b.freeze())
                         .map_err(From::from),
@@ -139,9 +174,9 @@ fn main() -> Result<(), Error> {
             ),
             "srt" => {
                 let mut builder = SrtSocketBuilder::new(
-                    input_local_addr,
                     input_addr.map_or(ConnInitMethod::Listen, ConnInitMethod::Connect),
                 );
+                builder.local_port(input_local_port);
 
                 add_srt_args(args.iter().map(|(&k, &v)| (k, v)), &mut builder)?;
 
@@ -175,14 +210,11 @@ fn main() -> Result<(), Error> {
                 Some(Host::Ipv6(v6)) => (0, Some(SocketAddr::new(IpAddr::V6(v6), port))),
             }
         };
-
-        let output_local_addr = SocketAddr::new(addr_any, output_local_port);
-
         if output_url.scheme() == "udp" && output_addr.is_none() {
             panic!("Must designate a ip to send to to send UDP. Example: udp://127.0.0.1:1234, not udp://:1234");
         }
 
-        let args = parse_args(input_url.query().unwrap_or_default())?;
+        let args = parse_args(output_url.query().unwrap_or_default())?;
 
         match output_url.scheme() {
             "udp" => Box::new(future::ok::<
@@ -190,15 +222,18 @@ fn main() -> Result<(), Error> {
                 Error,
             >(Box::new(
                 UdpFramed::new(
-                    UdpSocket::bind(&output_local_addr).unwrap(),
+                    UdpSocket::bind(&SocketAddr::new(
+                        args.get("interface").unwrap_or(&"0.0.0.0").parse()?,
+                        0,
+                    )).unwrap(),
                     BytesCodec::new(),
                 ).with(move |b| future::ok((b, output_addr.unwrap()))),
             ))),
             "srt" => {
                 let mut builder = SrtSocketBuilder::new(
-                    output_local_addr,
                     output_addr.map_or(ConnInitMethod::Listen, ConnInitMethod::Connect),
                 );
+                builder.local_port(output_local_port);
 
                 add_srt_args(args.iter().map(|(&k, &v)| (k, v)), &mut builder)?;
                 Box::new(builder.build().unwrap().map(

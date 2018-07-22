@@ -14,6 +14,7 @@ where
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
 {
     pub fn new(socket: T, settings: ConnectionSettings) -> Connected<T> {
+        println!("Connected with settings {:?}", settings);
         Connected { socket, settings }
     }
 

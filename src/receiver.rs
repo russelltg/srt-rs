@@ -573,7 +573,7 @@ where
                     ()
                 }
                 Err(_) => {
-                    warn!(
+                    debug!(
                         "Packet received that's not in the loss list: {:?}, loss_list={:?}",
                         data.seq_number,
                         self.loss_list

@@ -1,6 +1,7 @@
 use bytes::{Buf, BufMut};
 use std::{
-    io::{Error, ErrorKind, Result}, time::Duration,
+    io::{Error, ErrorKind, Result},
+    time::Duration,
 };
 
 use SrtVersion;
@@ -149,5 +150,36 @@ impl SrtHandshake {
         into.put_u16_be(
             (self.latency.subsec_millis()) as u16 + self.latency.as_secs() as u16 * 1_000,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
+    use packet::ControlTypes;
+    use srt_version;
+    use {ControlPacket, Packet, SocketID};
+
+    use std::io::Cursor;
+    use std::time::Duration;
+
+    #[test]
+    fn deser_ser_shake() {
+        let handshake = Packet::Control(ControlPacket {
+            timestamp: 123141,
+            dest_sockid: SocketID(123),
+            control_type: ControlTypes::Srt(SrtControlPacket::HandshakeRequest(SrtHandshake {
+                version: srt_version::CURRENT,
+                flags: SrtShakeFlags::empty(),
+                latency: Duration::from_millis(3000),
+            })),
+        });
+
+        let mut buf = Vec::new();
+        handshake.serialize(&mut buf);
+
+        let deserialized = Packet::parse(&mut Cursor::new(buf)).unwrap();
+
+        assert_eq!(handshake, deserialized);
     }
 }

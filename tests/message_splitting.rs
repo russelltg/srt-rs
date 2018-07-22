@@ -35,13 +35,12 @@ impl<T: Sink> Future for CloseFuture<T> {
 fn message_splitting() {
     env_logger::init();
 
-    let sender = SrtSocketBuilder::new(
-        "127.0.0.1:0".parse().unwrap(),
-        ConnInitMethod::Connect("127.0.0.1:11124".parse().unwrap()),
-    ).build()
+    let sender = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:11124".parse().unwrap()))
+        .build()
         .unwrap();
 
-    let recvr = SrtSocketBuilder::new("127.0.0.1:11124".parse().unwrap(), ConnInitMethod::Listen)
+    let recvr = SrtSocketBuilder::new(ConnInitMethod::Listen)
+        .local_port(11124)
         .build()
         .unwrap();
 
