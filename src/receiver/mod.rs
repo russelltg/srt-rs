@@ -7,9 +7,7 @@ use loss_compression::compress_loss_list;
 use packet::{
     ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket, SrtHandshake, SrtShakeFlags,
 };
-use {
-    recv_buffer::RecvBuffer, seq_number::seq_num_range, srt_version, ConnectionSettings, SeqNumber,
-};
+use {seq_number::seq_num_range, srt_version, ConnectionSettings, SeqNumber};
 
 use std::{
     cmp,
@@ -17,6 +15,9 @@ use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
+
+mod buffer;
+use self::buffer::RecvBuffer;
 
 struct LossListEntry {
     seq_num: SeqNumber,
@@ -151,6 +152,10 @@ where
 
     pub fn remote(&self) -> SocketAddr {
         self.settings.remote
+    }
+
+    pub fn tsbpd(&self) -> Option<Duration> {
+        self.tsbpd
     }
 
     fn reset_timeout(&mut self) {

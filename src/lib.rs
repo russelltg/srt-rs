@@ -34,7 +34,6 @@ mod stats;
 mod modular_num;
 mod handshake_responsibiliy;
 mod msg_number;
-mod recv_buffer;
 mod seq_number;
 
 // public API

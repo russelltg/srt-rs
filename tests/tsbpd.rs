@@ -90,7 +90,21 @@ fn tsbpd() {
     let t2 = thread::spawn(move || {
         let mut next_num = INIT_SEQ_NUM;
 
-        for by in recvr.wait() {
+        let mut recvr = Some(recvr);
+
+        while let Ok((by, recvr_new)) = recvr
+            .take()
+            .unwrap()
+            .into_future()
+            .map_err(|(e, _)| e)
+            .wait()
+        {
+            // wait until the SRT handshake has been exchanged and TSBPD has started
+            if recvr_new.tsbpd().is_none() {
+                next_num += 1;
+                continue;
+            }
+
             let (ts, by) = by.unwrap();
             assert_eq!(
                 str::from_utf8(&by[..]).unwrap(),
@@ -109,6 +123,8 @@ fn tsbpd() {
             );
 
             next_num += 1;
+
+            recvr = Some(recvr_new);
         }
 
         assert_eq!(next_num, INIT_SEQ_NUM + PACKET_COUNT);
