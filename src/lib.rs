@@ -18,7 +18,6 @@ extern crate bitflags;
 extern crate failure;
 
 mod builder;
-mod codec;
 mod congest_ctrl;
 mod connected;
 mod connection_settings;

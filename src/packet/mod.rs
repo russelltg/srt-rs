@@ -1,9 +1,11 @@
 // Packet structures
 // see https://tools.ietf.org/html/draft-gg-udt-03#page-5
 
+mod codec;
 mod control;
 mod data;
 
+pub use self::codec::PacketCodec;
 pub use self::control::{
     ControlPacket, ControlTypes, HandshakeControlInfo, ShakeType, SocketType, SrtControlPacket,
     SrtHandshake, SrtShakeFlags,
@@ -11,7 +13,8 @@ pub use self::control::{
 pub use self::data::{DataPacket, PacketLocation};
 
 use {
-    bytes::{Buf, BufMut}, failure::Error,
+    bytes::{Buf, BufMut},
+    failure::Error,
 };
 
 /// Represents A UDT/SRT packet

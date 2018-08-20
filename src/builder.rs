@@ -5,7 +5,7 @@ use failure::Error;
 use rand;
 use tokio_udp::{UdpFramed, UdpSocket};
 
-use codec::PacketCodec;
+use packet::PacketCodec;
 use pending_connection::PendingConnection;
 use SocketID;
 
