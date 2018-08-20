@@ -5,7 +5,6 @@ extern crate clap;
 extern crate env_logger;
 extern crate futures;
 extern crate tokio_codec;
-extern crate tokio_io;
 extern crate tokio_udp;
 extern crate url;
 #[macro_use]

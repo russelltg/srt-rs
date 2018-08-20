@@ -5,13 +5,8 @@ extern crate futures;
 extern crate log;
 extern crate futures_timer;
 extern crate rand;
-extern crate serde;
-extern crate serde_json;
-extern crate tokio_core;
 extern crate tokio_io;
 extern crate tokio_udp;
-#[macro_use]
-extern crate serde_derive;
 #[macro_use]
 extern crate bitflags;
 #[macro_use]
