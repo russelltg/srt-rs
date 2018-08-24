@@ -112,13 +112,11 @@ fn main() -> Result<(), Error> {
             Arg::with_name("FROM")
                 .help("Sets the input url")
                 .required(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("TO")
                 .help("Sets the output url")
                 .required(true),
-        )
-        .after_help(AFTER_HELPTEXT)
+        ).after_help(AFTER_HELPTEXT)
         .get_matches();
 
     let input_url = match Url::parse(matches.value_of("FROM").unwrap()) {
@@ -168,7 +166,7 @@ fn main() -> Result<(), Error> {
                         )).unwrap(),
                         BytesCodec::new(),
                     ).map(|(b, _)| b.freeze())
-                        .map_err(From::from),
+                    .map_err(From::from),
                 )),
             ),
             "srt" => {

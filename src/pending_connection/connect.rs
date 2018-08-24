@@ -1,7 +1,5 @@
-use std::{
-    net::{IpAddr, SocketAddr},
-    time::{Duration, Instant},
-};
+use std::net::{IpAddr, SocketAddr};
+use std::time::{Duration, Instant};
 
 use failure::Error;
 use futures::prelude::*;

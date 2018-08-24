@@ -405,13 +405,12 @@ where
                 );
 
                 // return the response
-                let pack = self.make_control_packet(ControlTypes::Srt(HandshakeResponse(
-                    SrtHandshake {
+                let pack =
+                    self.make_control_packet(ControlTypes::Srt(HandshakeResponse(SrtHandshake {
                         version: srt_version::CURRENT,
                         flags: SrtShakeFlags::TSBPDRCV, // TODO: the reference implementation sets a lot more of these, research
                         latency: self.tsbpd.unwrap(),
-                    },
-                )));
+                    })));
                 self.sock.start_send((pack, self.settings.remote))?;
             }
             (Respond, HandshakeResponse(_)) => {

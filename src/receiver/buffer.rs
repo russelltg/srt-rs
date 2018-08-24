@@ -153,8 +153,7 @@ impl RecvBuffer {
                 .fold(BytesMut::new(), |mut bytes, pack| {
                     bytes.extend(pack.unwrap().payload);
                     bytes
-                })
-                .freeze(),
+                }).freeze(),
         ))
     }
 }
@@ -168,8 +167,7 @@ impl fmt::Debug for RecvBuffer {
                 .iter()
                 .map(|o| o
                     .as_ref()
-                    .map(|pack| (pack.seq_number.as_raw(), pack.message_loc)))
-                .collect::<Vec<_>>()
+                    .map(|pack| (pack.seq_number.as_raw(), pack.message_loc))).collect::<Vec<_>>()
         )
     }
 }
