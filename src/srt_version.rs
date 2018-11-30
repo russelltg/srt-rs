@@ -1,11 +1,5 @@
 use std::{cmp::Ordering, fmt};
 
-pub const CURRENT: SrtVersion = SrtVersion {
-    major: 1,
-    minor: 3,
-    patch: 1,
-};
-
 /// Serialied, it looks like:
 /// major * 0x10000 + minor * 0x100 + patch
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -16,6 +10,12 @@ pub struct SrtVersion {
 }
 
 impl SrtVersion {
+    pub const CURRENT: SrtVersion = SrtVersion {
+        major: 1,
+        minor: 3,
+        patch: 1,
+    };
+
     /// Create a new SRT version
     pub fn new(major: u8, minor: u8, patch: u8) -> SrtVersion {
         SrtVersion {

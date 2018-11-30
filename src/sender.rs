@@ -7,7 +7,7 @@ use packet::{
     ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation, SrtControlPacket,
     SrtHandshake, SrtShakeFlags,
 };
-use {srt_version, CCData, CongestCtrl, ConnectionSettings, MsgNumber, SeqNumber, Stats};
+use {CCData, CongestCtrl, ConnectionSettings, MsgNumber, SeqNumber, SrtVersion, Stats};
 
 use std::{
     collections::VecDeque,
@@ -320,10 +320,10 @@ where
             }
             (Request, HandshakeResponse(shake)) => {
                 // make sure the SRT version matches ours
-                if srt_version::CURRENT != shake.version {
+                if SrtVersion::CURRENT != shake.version {
                     bail!(
                         "Incomatible version, local is {}, remote is {}",
-                        srt_version::CURRENT,
+                        SrtVersion::CURRENT,
                         shake.version
                     );
                 }

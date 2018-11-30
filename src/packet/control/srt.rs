@@ -155,8 +155,7 @@ impl SrtHandshake {
 mod tests {
     use super::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
     use packet::ControlTypes;
-    use srt_version;
-    use {ControlPacket, Packet, SocketID};
+    use {ControlPacket, Packet, SocketID, SrtVersion};
 
     use std::io::Cursor;
     use std::time::Duration;
@@ -167,7 +166,7 @@ mod tests {
             timestamp: 123141,
             dest_sockid: SocketID(123),
             control_type: ControlTypes::Srt(SrtControlPacket::HandshakeRequest(SrtHandshake {
-                version: srt_version::CURRENT,
+                version: SrtVersion::CURRENT,
                 flags: SrtShakeFlags::empty(),
                 latency: Duration::from_millis(3000),
             })),

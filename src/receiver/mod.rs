@@ -7,7 +7,7 @@ use loss_compression::compress_loss_list;
 use packet::{
     ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket, SrtHandshake, SrtShakeFlags,
 };
-use {seq_number::seq_num_range, srt_version, ConnectionSettings, SeqNumber};
+use {seq_number::seq_num_range, ConnectionSettings, SeqNumber, SrtVersion};
 
 use std::{
     cmp,
@@ -370,10 +370,10 @@ where
         match (self.settings.responsibility, pack) {
             (Respond, HandshakeRequest(shake)) => {
                 // make sure the SRT version matches ours
-                if srt_version::CURRENT != shake.version {
+                if SrtVersion::CURRENT != shake.version {
                     bail!(
                         "Incomatible version, local is {}, remote is {}",
-                        srt_version::CURRENT,
+                        SrtVersion::CURRENT,
                         shake.version
                     );
                 }
@@ -405,12 +405,13 @@ where
                 );
 
                 // return the response
-                let pack =
-                    self.make_control_packet(ControlTypes::Srt(HandshakeResponse(SrtHandshake {
-                        version: srt_version::CURRENT,
+                let pack = self.make_control_packet(ControlTypes::Srt(HandshakeResponse(
+                    SrtHandshake {
+                        version: SrtVersion::CURRENT,
                         flags: SrtShakeFlags::TSBPDRCV, // TODO: the reference implementation sets a lot more of these, research
                         latency: self.tsbpd.unwrap(),
-                    })));
+                    },
+                )));
                 self.sock.start_send((pack, self.settings.remote))?;
             }
             (Respond, HandshakeResponse(_)) => {
