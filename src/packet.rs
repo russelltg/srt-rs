@@ -1,6 +1,9 @@
 // Packet structures
 // see https://tools.ietf.org/html/draft-gg-udt-03#page-5
 
+use bytes::{Buf, BufMut};
+use failure::{bail, Error};
+
 mod codec;
 mod control;
 mod data;
@@ -11,11 +14,6 @@ pub use self::control::{
     SrtControlPacket, SrtHandshake, SrtShakeFlags,
 };
 pub use self::data::{DataPacket, PacketLocation};
-
-use {
-    bytes::{Buf, BufMut},
-    failure::Error,
-};
 
 /// Represents A UDT/SRT packet
 #[derive(Debug, Clone, PartialEq)]

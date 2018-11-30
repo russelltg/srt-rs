@@ -1,6 +1,9 @@
-use bytes::{Buf, BufMut};
-use failure::Error;
 use std::net::{IpAddr, Ipv4Addr};
+
+use bitflags::bitflags;
+use bytes::{Buf, BufMut};
+use failure::{bail, format_err, Error};
+use log::warn;
 
 use crate::{SeqNumber, SocketID};
 
@@ -564,9 +567,11 @@ impl ControlTypes {
                 into.put_i32_be(packet_recv_rate.unwrap_or(10_000));
                 into.put_i32_be(est_link_cap.unwrap_or(1_000));
             }
-            ControlTypes::Nak(ref n) => for &loss in n {
-                into.put_u32_be(loss);
-            },
+            ControlTypes::Nak(ref n) => {
+                for &loss in n {
+                    into.put_u32_be(loss);
+                }
+            }
             ControlTypes::DropRequest { .. } => unimplemented!(),
             // control data
             ControlTypes::Shutdown | ControlTypes::Ack2(_) | ControlTypes::KeepAlive => {}
@@ -597,9 +602,9 @@ mod test {
         ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType,
         SrtControlPacket, SrtHandshake, SrtShakeFlags,
     };
+    use crate::{SeqNumber, SocketID, SrtVersion};
     use std::io::Cursor;
     use std::time::Duration;
-    use crate::{SeqNumber, SocketID, SrtVersion};
 
     #[test]
     fn handshake_ser_des_test() {

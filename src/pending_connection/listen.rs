@@ -3,8 +3,9 @@ use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use failure::Error;
+use failure::{bail, Error};
 use futures::prelude::*;
+use log::{info, warn};
 
 use crate::connected::Connected;
 use crate::packet::{ControlPacket, ControlTypes, HandshakeControlInfo, Packet, ShakeType};

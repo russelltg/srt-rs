@@ -3,7 +3,9 @@ use std::time::{Duration, Instant};
 
 use failure::Error;
 use futures::prelude::*;
+use futures::try_ready;
 use futures_timer::Interval;
+use log::{info, warn};
 
 use rand::{thread_rng, Rng};
 

@@ -1,17 +1,3 @@
-extern crate bytes;
-#[macro_use]
-extern crate futures;
-#[macro_use]
-extern crate log;
-extern crate futures_timer;
-extern crate rand;
-extern crate tokio_io;
-extern crate tokio_udp;
-#[macro_use]
-extern crate bitflags;
-#[macro_use]
-extern crate failure;
-
 mod builder;
 mod congest_ctrl;
 mod connected;

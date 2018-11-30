@@ -1,7 +1,8 @@
 use bytes::Bytes;
-use failure::Error;
+use failure::{bail, Error};
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
+use log::{debug, info, trace, warn};
 
 use crate::loss_compression::compress_loss_list;
 use crate::packet::{
@@ -405,13 +406,12 @@ where
                 );
 
                 // return the response
-                let pack = self.make_control_packet(ControlTypes::Srt(HandshakeResponse(
-                    SrtHandshake {
+                let pack =
+                    self.make_control_packet(ControlTypes::Srt(HandshakeResponse(SrtHandshake {
                         version: SrtVersion::CURRENT,
                         flags: SrtShakeFlags::TSBPDRCV, // TODO: the reference implementation sets a lot more of these, research
                         latency: self.tsbpd.unwrap(),
-                    },
-                )));
+                    })));
                 self.sock.start_send((pack, self.settings.remote))?;
             }
             (Respond, HandshakeResponse(_)) => {

@@ -1,6 +1,8 @@
-use bytes::{Buf, BufMut};
 use std::io::{Error, ErrorKind, Result};
 use std::time::Duration;
+
+use bitflags::bitflags;
+use bytes::{Buf, BufMut};
 
 use crate::SrtVersion;
 

@@ -1,5 +1,7 @@
+use bitflags::bitflags;
 use bytes::{Buf, BufMut, Bytes};
 use failure::Error;
+
 use crate::{MsgNumber, SeqNumber, SocketID};
 
 /// A UDT packet carrying data

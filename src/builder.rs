@@ -2,6 +2,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use failure::Error;
+use log::trace;
 use rand;
 use tokio_udp::{UdpFramed, UdpSocket};
 
