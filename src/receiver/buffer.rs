@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use packet::PacketLocation;
-use {DataPacket, SeqNumber};
+use crate::packet::PacketLocation;
+use crate::{DataPacket, SeqNumber};
 
 pub struct RecvBuffer {
     // stores the incoming packets as they arrive
@@ -177,7 +177,7 @@ mod test {
 
     use super::RecvBuffer;
     use bytes::Bytes;
-    use {packet::PacketLocation, DataPacket, MsgNumber, SeqNumber, SocketID};
+    use crate::{packet::PacketLocation, DataPacket, MsgNumber, SeqNumber, SocketID};
 
     fn basic_pack() -> DataPacket {
         DataPacket {

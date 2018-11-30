@@ -27,7 +27,7 @@ use srt::{
 };
 
 mod lossy_conn;
-use lossy_conn::LossyConn;
+use crate::lossy_conn::LossyConn;
 
 #[test]
 fn tsbpd() {

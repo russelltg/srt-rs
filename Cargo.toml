@@ -7,6 +7,7 @@ license = "Apache-2.0"
 documentation = "https://docs.rs/srt"
 homepage = "https://github.com/russelltg/srt-rs"
 repository = "https://github.com/russelltg/srt-rs"
+edition = "2018"
 
 [dependencies]
 bitflags = "1"

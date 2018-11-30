@@ -7,12 +7,12 @@ use futures_timer::Interval;
 
 use rand::{thread_rng, Rng};
 
-use connected::Connected;
-use packet::{
+use crate::connected::Connected;
+use crate::packet::{
     ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
     SocketType, SrtControlPacket, SrtHandshake, SrtShakeFlags,
 };
-use {ConnectionSettings, HandshakeResponsibility, SeqNumber, SocketID, SrtVersion};
+use crate::{ConnectionSettings, HandshakeResponsibility, SeqNumber, SocketID, SrtVersion};
 
 pub struct Connect<T> {
     remote: SocketAddr,

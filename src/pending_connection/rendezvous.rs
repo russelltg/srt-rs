@@ -4,8 +4,8 @@ use std::time::Duration;
 use failure::Error;
 use futures::prelude::*;
 
-use connected::Connected;
-use Packet;
+use crate::connected::Connected;
+use crate::Packet;
 
 pub struct Rendezvous<T> {
     _local_public: SocketAddr,

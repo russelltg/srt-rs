@@ -2,7 +2,7 @@ use bytes::{Buf, BufMut};
 use std::io::{Error, ErrorKind, Result};
 use std::time::Duration;
 
-use SrtVersion;
+use crate::SrtVersion;
 
 /// The SRT-specific control packets
 /// These are `Packet::Custom` types
@@ -162,8 +162,8 @@ impl SrtHandshake {
 #[cfg(test)]
 mod tests {
     use super::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
-    use packet::ControlTypes;
-    use {ControlPacket, Packet, SocketID, SrtVersion};
+    use crate::packet::ControlTypes;
+    use crate::{ControlPacket, Packet, SocketID, SrtVersion};
 
     use std::io::Cursor;
     use std::time::Duration;

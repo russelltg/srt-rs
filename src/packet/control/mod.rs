@@ -2,7 +2,7 @@ use bytes::{Buf, BufMut};
 use failure::Error;
 use std::net::{IpAddr, Ipv4Addr};
 
-use {SeqNumber, SocketID};
+use crate::{SeqNumber, SocketID};
 
 mod srt;
 
@@ -599,7 +599,7 @@ mod test {
     };
     use std::io::Cursor;
     use std::time::Duration;
-    use {SeqNumber, SocketID, SrtVersion};
+    use crate::{SeqNumber, SocketID, SrtVersion};
 
     #[test]
     fn handshake_ser_des_test() {

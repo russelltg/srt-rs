@@ -8,13 +8,13 @@ use std::time::Duration;
 use failure::Error;
 use futures::prelude::*;
 
-use connected::Connected;
+use crate::connected::Connected;
 
 use self::connect::Connect;
 use self::listen::Listen;
 use self::rendezvous::Rendezvous;
 
-use {Packet, SocketID};
+use crate::{Packet, SocketID};
 
 pub enum PendingConnection<T> {
     Listen(Listen<T>),

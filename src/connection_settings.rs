@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use {HandshakeResponsibility, SeqNumber, SocketID};
+use crate::{HandshakeResponsibility, SeqNumber, SocketID};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ConnectionSettings {

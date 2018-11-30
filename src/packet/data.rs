@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut, Bytes};
 use failure::Error;
-use {MsgNumber, SeqNumber, SocketID};
+use crate::{MsgNumber, SeqNumber, SocketID};
 
 /// A UDT packet carrying data
 ///  0                   1                   2                   3

@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 use failure::Error;
 use futures::prelude::*;
 
-use connected::Connected;
-use packet::{ControlPacket, ControlTypes, HandshakeControlInfo, Packet, ShakeType};
-use {ConnectionSettings, HandshakeResponsibility, SocketID};
+use crate::connected::Connected;
+use crate::packet::{ControlPacket, ControlTypes, HandshakeControlInfo, Packet, ShakeType};
+use crate::{ConnectionSettings, HandshakeResponsibility, SocketID};
 
 pub struct Listen<T> {
     state: ConnectionState,

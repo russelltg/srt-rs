@@ -2,12 +2,12 @@ use bytes::Bytes;
 use failure::Error;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
-use loss_compression::decompress_loss_list;
-use packet::{
+use crate::loss_compression::decompress_loss_list;
+use crate::packet::{
     ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation, SrtControlPacket,
     SrtHandshake, SrtShakeFlags,
 };
-use {CCData, CongestCtrl, ConnectionSettings, MsgNumber, SeqNumber, SrtVersion, Stats};
+use crate::{CCData, CongestCtrl, ConnectionSettings, MsgNumber, SeqNumber, SrtVersion, Stats};
 
 use std::io;
 use std::{
@@ -324,7 +324,7 @@ where
 
     fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
         use self::SrtControlPacket::*;
-        use HandshakeResponsibility::*;
+        use crate::HandshakeResponsibility::*;
 
         match (self.settings.responsibility, pack) {
             (Request, HandshakeRequest(_)) => {

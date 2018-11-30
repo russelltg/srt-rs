@@ -1,7 +1,11 @@
-use {
-    failure::Error, futures::prelude::*, receiver::Receiver, sender::Sender, std::net::SocketAddr,
-    CongestCtrl, ConnectionSettings, Packet, SrtCongestCtrl,
-};
+use std::net::SocketAddr;
+
+use failure::Error;
+use futures::prelude::*;
+
+use crate::receiver::Receiver;
+use crate::sender::Sender;
+use crate::{CongestCtrl, ConnectionSettings, Packet, SrtCongestCtrl};
 
 pub struct Connected<T> {
     socket: T,

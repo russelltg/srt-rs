@@ -3,11 +3,11 @@ use failure::Error;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
 
-use loss_compression::compress_loss_list;
-use packet::{
+use crate::loss_compression::compress_loss_list;
+use crate::packet::{
     ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket, SrtHandshake, SrtShakeFlags,
 };
-use {seq_number::seq_num_range, ConnectionSettings, SeqNumber, SrtVersion};
+use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber, SrtVersion};
 
 use std::{
     cmp,
@@ -365,7 +365,7 @@ where
     // handles a SRT control packet
     fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
         use self::SrtControlPacket::*;
-        use HandshakeResponsibility::*;
+        use crate::HandshakeResponsibility::*;
 
         match (self.settings.responsibility, pack) {
             (Respond, HandshakeRequest(shake)) => {

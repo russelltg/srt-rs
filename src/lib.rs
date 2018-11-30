@@ -31,20 +31,20 @@ mod msg_number;
 mod seq_number;
 
 // public API
-pub use builder::{ConnInitMethod, SrtSocket, SrtSocketBuilder};
-pub use congest_ctrl::{CCData, CongestCtrl};
-pub use connected::Connected;
-pub use connection_settings::ConnectionSettings;
-pub use handshake_responsibiliy::HandshakeResponsibility;
-pub use msg_number::MsgNumber;
-pub use packet::{ControlPacket, DataPacket, Packet};
-pub use pending_connection::PendingConnection;
-pub use receiver::Receiver;
-pub use sender::Sender;
-pub use seq_number::SeqNumber;
-pub use srt_congest_ctrl::SrtCongestCtrl;
-pub use srt_version::SrtVersion;
-pub use stats::Stats;
+pub use crate::builder::{ConnInitMethod, SrtSocket, SrtSocketBuilder};
+pub use crate::congest_ctrl::{CCData, CongestCtrl};
+pub use crate::connected::Connected;
+pub use crate::connection_settings::ConnectionSettings;
+pub use crate::handshake_responsibiliy::HandshakeResponsibility;
+pub use crate::msg_number::MsgNumber;
+pub use crate::packet::{ControlPacket, DataPacket, Packet};
+pub use crate::pending_connection::PendingConnection;
+pub use crate::receiver::Receiver;
+pub use crate::sender::Sender;
+pub use crate::seq_number::SeqNumber;
+pub use crate::srt_congest_ctrl::SrtCongestCtrl;
+pub use crate::srt_version::SrtVersion;
+pub use crate::stats::Stats;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct SocketID(pub u32);

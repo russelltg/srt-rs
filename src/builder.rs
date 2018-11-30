@@ -5,9 +5,9 @@ use failure::Error;
 use rand;
 use tokio_udp::{UdpFramed, UdpSocket};
 
-use packet::PacketCodec;
-use pending_connection::PendingConnection;
-use SocketID;
+use crate::packet::PacketCodec;
+use crate::pending_connection::PendingConnection;
+use crate::SocketID;
 
 pub type SrtSocket = UdpFramed<PacketCodec>;
 
