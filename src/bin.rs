@@ -1,19 +1,6 @@
-extern crate srt;
-
-extern crate bytes;
-extern crate clap;
-extern crate env_logger;
-extern crate futures;
-extern crate tokio_codec;
-extern crate tokio_udp;
-extern crate url;
-#[macro_use]
-extern crate failure;
-extern crate log;
-
 use bytes::Bytes;
 use clap::{App, Arg};
-use failure::Error;
+use failure::{bail, Error};
 use futures::{future, prelude::*};
 use srt::{ConnInitMethod, SrtSocketBuilder};
 use std::collections::HashMap;
@@ -112,11 +99,13 @@ fn main() -> Result<(), Error> {
             Arg::with_name("FROM")
                 .help("Sets the input url")
                 .required(true),
-        ).arg(
+        )
+        .arg(
             Arg::with_name("TO")
                 .help("Sets the output url")
                 .required(true),
-        ).after_help(AFTER_HELPTEXT)
+        )
+        .after_help(AFTER_HELPTEXT)
         .get_matches();
 
     let input_url = match Url::parse(matches.value_of("FROM").unwrap()) {
@@ -163,9 +152,11 @@ fn main() -> Result<(), Error> {
                         UdpSocket::bind(&SocketAddr::new(
                             args.get("interface").unwrap_or(&"0.0.0.0").parse()?,
                             input_local_port,
-                        )).unwrap(),
+                        ))
+                        .unwrap(),
                         BytesCodec::new(),
-                    ).map(|(b, _)| b.freeze())
+                    )
+                    .map(|(b, _)| b.freeze())
                     .map_err(From::from),
                 )),
             ),
@@ -222,9 +213,11 @@ fn main() -> Result<(), Error> {
                     UdpSocket::bind(&SocketAddr::new(
                         args.get("interface").unwrap_or(&"0.0.0.0").parse()?,
                         0,
-                    )).unwrap(),
+                    ))
+                    .unwrap(),
                     BytesCodec::new(),
-                ).with(move |b| future::ok((b, output_addr.unwrap()))),
+                )
+                .with(move |b| future::ok((b, output_addr.unwrap()))),
             ))),
             "srt" => {
                 let mut builder = SrtSocketBuilder::new(
