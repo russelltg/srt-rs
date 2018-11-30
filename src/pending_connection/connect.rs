@@ -8,8 +8,11 @@ use futures_timer::Interval;
 use rand::{thread_rng, Rng};
 
 use connected::Connected;
-use packet::{ControlPacket, ControlTypes, HandshakeControlInfo, Packet, ShakeType, SocketType};
-use {ConnectionSettings, HandshakeResponsibility, SeqNumber, SocketID};
+use packet::{
+    ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
+    SocketType, SrtControlPacket, SrtHandshake, SrtShakeFlags,
+};
+use {ConnectionSettings, HandshakeResponsibility, SeqNumber, SocketID, SrtVersion};
 
 pub struct Connect<T> {
     remote: SocketAddr,
@@ -64,7 +67,17 @@ where
         self.sock.as_mut().unwrap().poll_complete()?;
 
         // handle incoming packets
-        while let Async::Ready(Some((pack, addr))) = self.sock.as_mut().unwrap().poll()? {
+        loop {
+            let (pack, addr) = match self.sock.as_mut().unwrap().poll() {
+                Ok(Async::Ready(Some((pack, addr)))) => (pack, addr),
+                Ok(Async::Ready(None)) => unreachable!(), // the codec always returns error or none
+                Ok(Async::NotReady) => break,
+                Err(e) => {
+                    warn!("Failed to parse packet: {}", e);
+                    continue;
+                }
+            };
+
             // make sure it's the right addr
             if self.remote != addr {
                 continue;
@@ -92,6 +105,19 @@ where
                             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                                 socket_id: self.local_socket_id,
                                 shake_type: ShakeType::Conclusion,
+                                info: HandshakeVSInfo::V5 {
+                                    ext_hs: Some(SrtControlPacket::HandshakeRequest(
+                                        SrtHandshake {
+                                            version: SrtVersion::CURRENT,
+                                            // TODO: this is hyper bad, don't blindly set send flag
+                                            flags: SrtShakeFlags::TSBPDSND, // TODO: the reference implementation sets a lot more of these, research
+                                            // TODO: this is also hyper bad
+                                            latency: Duration::from_millis(1000),
+                                        },
+                                    )),
+                                    ext_km: None,
+                                    ext_config: None,
+                                },
                                 ..info
                             }),
                         });
@@ -152,15 +178,14 @@ where
                             dest_sockid: SocketID(0),
                             timestamp: 0,
                             control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                                udt_version: 5,
                                 init_seq_num: self.init_seq_num,
                                 max_packet_size: 1500, // TODO: take as a parameter
                                 max_flow_size: 8192,   // TODO: take as a parameter
                                 socket_id: self.local_socket_id,
                                 shake_type: ShakeType::Induction,
                                 peer_addr: self.local_addr,
-                                sock_type: SocketType::Datagram,
                                 syn_cookie: 0,
+                                info: HandshakeVSInfo::V4(SocketType::Datagram),
                             }),
                         }),
                         self.remote,

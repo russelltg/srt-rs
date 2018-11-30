@@ -1,3 +1,4 @@
+extern crate env_logger;
 extern crate futures;
 extern crate futures_timer;
 extern crate srt;
@@ -22,9 +23,11 @@ use srt::{ConnInitMethod, SrtSocketBuilder};
 
 #[test]
 fn stransmit_client() {
-    const PACKETS: u32 = 1_0000;
+    let _ = env_logger::try_init();
 
-    // start SRT server
+    const PACKETS: u32 = 1_000;
+
+    // start SRT connector
     let serv_thread = thread::Builder::new()
         .name("conenctor/sender".to_string())
         .spawn(|| {
@@ -41,33 +44,43 @@ fn stransmit_client() {
                 .map(|(b, _)| b);
 
             conn.send_all(counting_stream.map(|b| (Instant::now(), b)))
+                .and_then(|(sink, _)| sink.flush())
                 .wait()
                 .unwrap();
+
+            println!("DOne Sending");
         }).unwrap();
 
     // start udp listener
     let udp_thread = thread::Builder::new()
         .name("udp recvr".to_string())
         .spawn(|| {
-            assert!(
-                Stream::wait(UdpFramed::new(
-                    UdpSocket::bind(&"127.0.0.1:2345".parse().unwrap()).unwrap(),
-                    BytesCodec::new()
-                )).map(|a| a.unwrap())
-                .map(|(a, _)| u32::from_str(str::from_utf8(&a).unwrap()))
-                .map(Result::unwrap)
-                .eq(0..PACKETS)
-            );
+            let mut i = 0;
+            for a in Stream::wait(UdpFramed::new(
+                UdpSocket::bind(&"127.0.0.1:2345".parse().unwrap()).unwrap(),
+                BytesCodec::new(),
+            )) {
+                let (a, _) = a.unwrap();
+                let a = u32::from_str(str::from_utf8(&a).unwrap()).unwrap();
+
+                println!("Recv: {}", a);
+
+                assert_eq!(a, i);
+
+                i += 1;
+            }
+            assert_eq!(i, PACKETS);
         }).unwrap();
 
     // start stransmit process
     let mut child = Command::new("stransmit")
         .arg("srt://:1234")
         .arg("udp://127.0.0.1:2345")
+        .arg("-a:no") // don't auto-reconnect
         .spawn()
         .unwrap();
 
-    udp_thread.join().unwrap();
     serv_thread.join().unwrap();
     child.wait().unwrap();
+    udp_thread.join().unwrap();
 }

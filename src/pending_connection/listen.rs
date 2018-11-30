@@ -82,14 +82,6 @@ where
                     {
                         info!("Handshake recieved from {:?}", addr);
 
-                        // check version
-                        if shake.udt_version != 5 {
-                            bail!(
-                                "Invalid UDT handshake version {}, expected 5",
-                                shake.udt_version
-                            );
-                        }
-
                         // https://tools.ietf.org/html/draft-gg-udt-03#page-9
                         // When the server first receives the connection request from a client,
                         // it generates a cookie value according to the client address and a
@@ -142,15 +134,6 @@ where
                         ..
                     }) = packet
                     {
-                        if shake.udt_version != 5 {
-                            warn!(
-                                "Received handshake packet with invalid version {}, SRT is 5",
-                                shake.udt_version
-                            );
-                            // discard
-                            continue;
-                        }
-
                         if shake.shake_type != ShakeType::Conclusion {
                             // discard
                             continue;

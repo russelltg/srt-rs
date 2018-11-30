@@ -103,15 +103,37 @@ pub enum ControlTypes {
     Srt(SrtControlPacket),
 }
 
+bitflags! {
+    /// Used to describe the extension types in the packet
+    struct ExtFlags: u32 {
+        /// The packet has a handshake extension
+        const HS = 0b1;
+        /// The packet has a kmreq extension
+        const KM = 0b10;
+        /// The packet has a config extension (SID or smoother)
+        const CONFIG = 0b100;
+    }
+}
+
+/// HS-version dependenent data
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HandshakeVSInfo {
+    V4(SocketType),
+    V5 {
+        /// The extension HSReq/HSResp
+        ext_hs: Option<SrtControlPacket>,
+
+        /// The extension KMREQ/KMRESP
+        ext_km: Option<SrtControlPacket>,
+
+        /// The extension config (SID, smoother)
+        ext_config: Option<SrtControlPacket>,
+    },
+}
+
 /// The control info for handshake packets
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HandshakeControlInfo {
-    /// The UDT version, currently 4 for UDT, and 5 for SRT.
-    pub udt_version: i32,
-
-    /// The socket type
-    pub sock_type: SocketType,
-
     /// The initial sequence number, usually randomly initialized
     pub init_seq_num: SeqNumber,
 
@@ -136,6 +158,9 @@ pub struct HandshakeControlInfo {
 
     /// The IP address of the connecting client
     pub peer_addr: IpAddr,
+
+    /// The rest of the data, which is HS version specific
+    pub info: HandshakeVSInfo,
 }
 
 /// The socket type for a handshake.
@@ -146,17 +171,6 @@ pub enum SocketType {
 
     /// A datagram socket, 2 when serialied
     Datagram = 1,
-}
-
-impl SocketType {
-    /// Turns a u32 into a SocketType. If the u32 wasn't valid (only 0 and 1 are valid), than it returns Err(num)
-    pub fn from_u32(num: u32) -> Result<SocketType, u32> {
-        match num {
-            0 => Ok(SocketType::Stream),
-            1 => Ok(SocketType::Datagram),
-            i => Err(i),
-        }
-    }
 }
 
 /// See <https://tools.ietf.org/html/draft-gg-udt-03#page-10>
@@ -194,6 +208,52 @@ pub enum ShakeType {
 
     /// Final rendezvous check, -2
     Agreement = -2,
+}
+
+impl HandshakeVSInfo {
+    /// Get the type (V4) or ext flags (V5)
+    fn type_flags(&self) -> u32 {
+        match self {
+            HandshakeVSInfo::V4(ty) => *ty as u32,
+            HandshakeVSInfo::V5 {
+                ext_hs,
+                ext_km,
+                ext_config,
+            } => {
+                let mut flags = ExtFlags::empty();
+
+                if ext_hs.is_some() {
+                    flags |= ExtFlags::HS;
+                }
+                if ext_km.is_some() {
+                    flags |= ExtFlags::KM;
+                }
+                if ext_config.is_some() {
+                    flags |= ExtFlags::CONFIG;
+                }
+                flags.bits()
+            }
+        }
+    }
+
+    /// Get the UDT version
+    fn version(&self) -> u32 {
+        match self {
+            HandshakeVSInfo::V4(_) => 4,
+            HandshakeVSInfo::V5 { .. } => 5,
+        }
+    }
+}
+
+impl SocketType {
+    /// Turns a u32 into a SocketType. If the u32 wasn't valid (only 0 and 1 are valid), than it returns Err(num)
+    pub fn from_u32(num: u32) -> Result<SocketType, u32> {
+        match num {
+            0 => Ok(SocketType::Stream),
+            1 => Ok(SocketType::Datagram),
+            i => Err(i),
+        }
+    }
 }
 
 impl ControlPacket {
@@ -234,6 +294,11 @@ impl ControlPacket {
     }
 }
 
+// I definitely don't totally understand this yet.
+// Points of interest: handshake.h:wrapFlags
+// core.cpp:8176 (processConnectionRequest -> if INDUCTION)
+const SRT_MAGIC_CODE: u32 = 0x4A17;
+
 impl ControlTypes {
     /// Deserialize a control info
     /// * `packet_type` - The packet ID byte, the second byte in the first row
@@ -249,10 +314,11 @@ impl ControlTypes {
                 // Handshake
 
                 let udt_version = buf.get_i32_be();
-                let sock_type = match SocketType::from_u32(buf.get_u32_be()) {
-                    Ok(st) => st,
-                    Err(err_ty) => bail!("Invalid socket type {}", err_ty),
-                };
+                if udt_version != 4 && udt_version != 5 {
+                    bail!("Incompatable UDT version: {}", udt_version);
+                }
+
+                let mut type_ext = buf.get_u32_be();
                 let init_seq_num = SeqNumber::new(buf.get_u32_be());
                 let max_packet_size = buf.get_u32_be();
                 let max_flow_size = buf.get_u32_be();
@@ -274,9 +340,76 @@ impl ControlTypes {
                     IpAddr::from(ip_buf)
                 };
 
+                let info = match udt_version {
+                    4 => HandshakeVSInfo::V4(match SocketType::from_u32(type_ext) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            bail!("Unrecognized socket type: {}", e);
+                        }
+                    }),
+                    5 => {
+                        // TODO: I still don't understand. This is likely incorrect
+                        if type_ext == SRT_MAGIC_CODE {
+                            type_ext = 0;
+                        }
+                        let extensions = match ExtFlags::from_bits(type_ext) {
+                            Some(i) => i,
+                            None => {
+                                warn!("Unnecessary bits in extensions flags: {:b}", type_ext);
+
+                                ExtFlags::from_bits_truncate(type_ext)
+                            }
+                        };
+                        // parse out extensions
+                        let ext_hs = if extensions.contains(ExtFlags::HS) {
+                            let pack_type = buf.get_u16_be();
+                            let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
+                            match pack_type {
+                                // 1 and 2 are handshake response and requests
+                                1 | 2 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
+                                e => bail!(
+                                    "Expected 1 or 2 (SRT handshake request or response), got {}",
+                                    e
+                                ),
+                            }
+                        } else {
+                            None
+                        };
+                        let ext_km = if extensions.contains(ExtFlags::KM) {
+                            let pack_type = buf.get_u16_be();
+                            let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
+                            match pack_type {
+                                // 3 and 4 are km packets
+                                3 | 4 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
+                                e => bail!(
+                                    "Exepcted 3 or 4 (SRT key manager request or response), got {}",
+                                    e
+                                ),
+                            }
+                        } else {
+                            None
+                        };
+                        let ext_config = if extensions.contains(ExtFlags::CONFIG) {
+                            let pack_type = buf.get_u16_be();
+                            let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
+                            match pack_type {
+                                // 5 is sid 6 is smoother
+                                5 | 6 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
+                                e => bail!("Expected 5 or 6 (SRT SID or smoother), got {}", e),
+                            }
+                        } else {
+                            None
+                        };
+                        HandshakeVSInfo::V5 {
+                            ext_hs,
+                            ext_km,
+                            ext_config,
+                        }
+                    }
+                    _ => unreachable!(), // this is already checked for above
+                };
+
                 Ok(ControlTypes::Handshake(HandshakeControlInfo {
-                    udt_version,
-                    sock_type,
                     init_seq_num,
                     max_packet_size,
                     max_flow_size,
@@ -284,6 +417,7 @@ impl ControlTypes {
                     socket_id,
                     syn_cookie,
                     peer_addr,
+                    info,
                 }))
             }
             0x1 => Ok(ControlTypes::KeepAlive),
@@ -372,7 +506,7 @@ impl ControlTypes {
 
     fn reserved(&self) -> u16 {
         match *self {
-            ControlTypes::Srt(srt) => srt.reserved(),
+            ControlTypes::Srt(srt) => srt.type_id(),
             _ => 0,
         }
     }
@@ -380,8 +514,8 @@ impl ControlTypes {
     fn serialize<T: BufMut>(&self, into: &mut T) {
         match *self {
             ControlTypes::Handshake(ref c) => {
-                into.put_i32_be(c.udt_version);
-                into.put_u32_be(c.sock_type as u32);
+                into.put_u32_be(c.info.version());
+                into.put_u32_be(c.info.type_flags());
                 into.put_u32_be(c.init_seq_num.as_raw());
                 into.put_u32_be(c.max_packet_size);
                 into.put_u32_be(c.max_flow_size);
@@ -394,9 +528,24 @@ impl ControlTypes {
                         into.put(&four.octets()[..]);
 
                         // the data structure reuiqres enough space for an ipv6, so pad the end with 16 - 4 = 12 bytes
-                        into.put(&b"\0\0\0\0\0\0\0\0\0\0\0\0"[..]);
+                        into.put(&[0; 12][..]);
                     }
                     IpAddr::V6(six) => into.put(&six.octets()[..]),
+                }
+
+                // serialzie extensions
+                if let HandshakeVSInfo::V5 {
+                    ext_hs,
+                    ext_km,
+                    ext_config,
+                } = c.info
+                {
+                    for ext in [ext_hs, ext_km, ext_config].iter().filter_map(|&s| s) {
+                        into.put_u16_be(ext.type_id());
+                        // put the size in 32-bit integers
+                        into.put_u16_be(3); // TODO: please no pleeeasseee nooo
+                        ext.serialize(into);
+                    }
                 }
             }
             ControlTypes::Ack {
@@ -444,9 +593,13 @@ impl ShakeType {
 #[cfg(test)]
 mod test {
 
-    use super::{ControlPacket, ControlTypes, HandshakeControlInfo, ShakeType, SocketType};
+    use super::{
+        ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType,
+        SrtControlPacket, SrtHandshake, SrtShakeFlags,
+    };
     use std::io::Cursor;
-    use {SeqNumber, SocketID};
+    use std::time::Duration;
+    use {SeqNumber, SocketID, SrtVersion};
 
     #[test]
     fn handshake_ser_des_test() {
@@ -454,8 +607,6 @@ mod test {
             timestamp: 0,
             dest_sockid: SocketID(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                udt_version: 5,
-                sock_type: SocketType::Datagram,
                 init_seq_num: SeqNumber::new(1827131),
                 max_packet_size: 1500,
                 max_flow_size: 25600,
@@ -463,6 +614,15 @@ mod test {
                 socket_id: SocketID(1231),
                 syn_cookie: 0,
                 peer_addr: "127.0.0.1".parse().unwrap(),
+                info: HandshakeVSInfo::V5 {
+                    ext_hs: Some(SrtControlPacket::HandshakeResponse(SrtHandshake {
+                        version: SrtVersion::CURRENT,
+                        flags: SrtShakeFlags::NAKREPORT | SrtShakeFlags::TSBPDSND,
+                        latency: Duration::from_millis(12345),
+                    })),
+                    ext_km: None,
+                    ext_config: None,
+                },
             }),
         };
 
@@ -492,6 +652,26 @@ mod test {
 
         let mut buf = vec![];
         pack.serialize(&mut buf);
+
+        let des = ControlPacket::parse(Cursor::new(buf)).unwrap();
+
+        assert_eq!(pack, des);
+    }
+
+    #[test]
+    fn ack2_ser_des_test() {
+        let pack = ControlPacket {
+            timestamp: 125812,
+            dest_sockid: SocketID(8313),
+            control_type: ControlTypes::Ack2(831),
+        };
+        assert_eq!(pack.control_type.additional_info(), 831);
+
+        let mut buf = vec![];
+        pack.serialize(&mut buf);
+
+        // dword 2 should have 831 in big endian, so the last two bits of the second dword
+        assert_eq!(((buf[6] as u32) << 8) + buf[7] as u32, 831);
 
         let des = ControlPacket::parse(Cursor::new(buf)).unwrap();
 

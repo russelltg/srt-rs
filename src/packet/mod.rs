@@ -7,8 +7,8 @@ mod data;
 
 pub use self::codec::PacketCodec;
 pub use self::control::{
-    ControlPacket, ControlTypes, HandshakeControlInfo, ShakeType, SocketType, SrtControlPacket,
-    SrtHandshake, SrtShakeFlags,
+    ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SocketType,
+    SrtControlPacket, SrtHandshake, SrtShakeFlags,
 };
 pub use self::data::{DataPacket, PacketLocation};
 

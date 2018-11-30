@@ -23,6 +23,14 @@ pub enum SrtControlPacket {
     /// Key manager response
     /// ID = 4
     KeyManagerResponse,
+
+    /// StreamID(?) // TODO: research
+    /// ID = 5
+    StreamId,
+
+    /// Smoother? // TODO: research
+    /// ID = 6
+    Smoother,
 }
 
 /// The SRT handshake object
@@ -81,29 +89,29 @@ impl SrtControlPacket {
     }
 
     /// Get the value to fill the reserved area with
-    pub fn reserved(&self) -> u16 {
+    pub fn type_id(&self) -> u16 {
+        use self::SrtControlPacket::*;
+
         match *self {
-            SrtControlPacket::HandshakeRequest(_) => 1,
-            SrtControlPacket::HandshakeResponse(_) => 2,
-            SrtControlPacket::KeyManagerRequest => 3,
-            SrtControlPacket::KeyManagerResponse => 4,
+            HandshakeRequest(_) => 1,
+            HandshakeResponse(_) => 2,
+            KeyManagerRequest => 3,
+            KeyManagerResponse => 4,
+            StreamId => 5,
+            Smoother => 6,
         }
     }
+    pub fn serialize<T: BufMut>(&self, into: &mut T) {
+        use self::SrtControlPacket::*;
 
-    pub fn serialize<T: BufMut>(&self, into: &mut T) -> u16 {
         match *self {
-            SrtControlPacket::HandshakeRequest(ref s) => {
+            HandshakeRequest(ref s) => {
                 s.serialize(into);
-
-                1
             }
-            SrtControlPacket::HandshakeResponse(ref s) => {
+            HandshakeResponse(ref s) => {
                 s.serialize(into);
-
-                2
             }
-            SrtControlPacket::KeyManagerRequest => 3,
-            SrtControlPacket::KeyManagerResponse => 4,
+            _ => unimplemented!(),
         }
     }
 }
