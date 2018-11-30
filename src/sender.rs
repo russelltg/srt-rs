@@ -9,6 +9,7 @@ use packet::{
 };
 use {CCData, CongestCtrl, ConnectionSettings, MsgNumber, SeqNumber, SrtVersion, Stats};
 
+use std::io;
 use std::{
     collections::VecDeque,
     net::SocketAddr,
@@ -56,6 +57,9 @@ pub struct Sender<T, CC> {
 
     /// The sequence number of the largest acknowledged packet + 1
     lr_acked_packet: SeqNumber,
+
+    /// The ack sequence number that an ack2 has been sent for
+    lr_acked_ack: i32,
 
     /// Round trip time, in microseconds
     rtt: i32,
@@ -124,6 +128,7 @@ where
             lost_packets: 0,
             retrans_packets: 0,
             recvd_packets: 0,
+            lr_acked_ack: -1,
             snd_timer: Delay::new(Duration::from_millis(1)),
             stats_interval: Interval::new(Duration::from_secs(1)),
             srt_handshake_interval: settings
@@ -176,7 +181,8 @@ where
         }
     }
 
-    fn handle_packet(&mut self, pack: Packet) -> Result<(), Error> {
+    // Returns if shutdown was requested
+    fn handle_packet(&mut self, pack: Packet) -> Result<bool, Error> {
         match pack {
             Packet::Control(ctrl) => {
                 match ctrl.control_type {
@@ -193,8 +199,14 @@ where
                         // the largest received ack number, than discard it
                         // this can happen thorough packet reordering OR losing an ACK2 packet
                         if ack_number <= self.lr_acked_packet {
-                            return Ok(());
+                            return Ok(false);
                         }
+
+                        if ack_seq_num <= self.lr_acked_ack {
+                            warn!("Ack sequence number '{}' less than or equal to the previous one recieved: '{}'", ack_seq_num, self.lr_acked_ack);
+                            return Ok(false);
+                        }
+                        self.lr_acked_ack = ack_seq_num;
 
                         // update the packets received count
                         self.recvd_packets += ack_number - self.lr_acked_packet;
@@ -203,7 +215,7 @@ where
                         self.lr_acked_packet = ack_number;
 
                         // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
-                        trace!("Sending ACK2 for {}", ack_seq_num);
+                        warn!("Sending ACK2 for {}", ack_seq_num);
                         let now = self.get_timestamp_now();
                         self.sock.start_send((
                             Packet::Control(ControlPacket {
@@ -298,7 +310,7 @@ where
 
                         // TODO: reset EXP
                     }
-                    ControlTypes::Shutdown => unimplemented!(),
+                    ControlTypes::Shutdown => return Ok(true),
                     ControlTypes::Srt(srt_packet) => {
                         self.handle_srt_control_packet(srt_packet)?;
                     }
@@ -307,7 +319,7 @@ where
             Packet::Data { .. } => warn!("Sender received data packet"),
         }
 
-        Ok(())
+        Ok(false)
     }
 
     fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
@@ -433,7 +445,7 @@ where
                 timestamp: now,
                 dest_sockid: self.settings.remote_sockid,
                 control_type: ControlTypes::Srt(SrtControlPacket::HandshakeRequest(SrtHandshake {
-                    version: srt_version::CURRENT,
+                    version: SrtVersion::CURRENT,
                     flags: SrtShakeFlags::TSBPDSND, // TODO: the reference implementation sets a lot more of these, research
                     latency: self
                         .settings
@@ -512,7 +524,14 @@ where
                         debug!("Got packet: {:?}", pack);
                         // ignore the packet if it isn't from the right address
                         if addr == self.settings.remote {
-                            self.handle_packet(pack)?;
+                            if self.handle_packet(pack)? {
+                                // if shutdown was requested, die
+                                self.closed = true;
+                                return Err(From::from(io::Error::new(
+                                    io::ErrorKind::ConnectionAborted,
+                                    "Connection received shutdown",
+                                )));
+                            }
                         }
                     }
                     // stream has ended, this is weird
