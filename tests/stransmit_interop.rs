@@ -1,10 +1,3 @@
-extern crate env_logger;
-extern crate futures;
-extern crate futures_timer;
-extern crate srt;
-extern crate tokio_codec;
-extern crate tokio_udp;
-
 use std::process::Command;
 use std::str;
 use std::str::FromStr;
@@ -49,7 +42,8 @@ fn stransmit_client() {
                 .unwrap();
 
             println!("DOne Sending");
-        }).unwrap();
+        })
+        .unwrap();
 
     // start udp listener
     let udp_thread = thread::Builder::new()
@@ -70,7 +64,8 @@ fn stransmit_client() {
                 i += 1;
             }
             assert_eq!(i, PACKETS);
-        }).unwrap();
+        })
+        .unwrap();
 
     // start stransmit process
     let mut child = Command::new("stransmit")

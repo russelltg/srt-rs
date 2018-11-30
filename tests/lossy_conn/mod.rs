@@ -1,17 +1,13 @@
-use {
-    futures::{sync::mpsc, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream},
-    futures_timer::Delay,
-    rand::{
-        self,
-        distributions::{Distribution, Normal},
-    },
-    std::{
-        cmp::Ordering,
-        collections::BinaryHeap,
-        fmt::Debug,
-        time::{Duration, Instant},
-    },
-};
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+use std::fmt::Debug;
+use std::time::{Duration, Instant};
+
+use futures::{sync::mpsc, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
+use futures_timer::Delay;
+use rand;
+use rand::distributions::{Distribution, Normal};
+use log::{debug, trace, info};
 
 pub struct LossyConn<T> {
     sender: mpsc::Sender<T>,

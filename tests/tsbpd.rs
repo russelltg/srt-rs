@@ -1,20 +1,9 @@
-extern crate bytes;
-extern crate env_logger;
-extern crate futures;
-extern crate futures_timer;
-extern crate srt;
-#[macro_use]
-extern crate failure;
-#[macro_use]
-extern crate log;
-extern crate rand;
-
 use std::str;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use failure::Error;
+use failure::{format_err, Error};
 use futures::{
     sink::Sink,
     stream::{iter_ok, Stream},

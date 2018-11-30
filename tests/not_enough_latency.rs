@@ -1,22 +1,14 @@
 /// A test testing if a connection is setup with not enough latency, ie rtt > 3ish*latency
-extern crate bytes;
-extern crate futures;
-extern crate futures_timer;
-extern crate srt;
-#[macro_use]
-extern crate failure;
-extern crate rand;
-#[macro_use]
-extern crate log;
-
 use std::str;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use failure::Error;
+use failure::{format_err, Error};
 use futures::{stream::iter_ok, Future, Sink, Stream};
 use futures_timer::Interval;
+use log::{debug, info};
+
 use srt::{
     ConnectionSettings, HandshakeResponsibility, Receiver, Sender, SeqNumber, SocketID,
     SrtCongestCtrl,
