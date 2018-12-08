@@ -31,13 +31,13 @@ SRT - send over a SRT connection
 
     Settings:
     * interface=<ip address> the interface to bind to, defaults to all (0.0.0.0)
-    * latency_ms=<number>    the milliseconds of TSBPD latency to use
+    * latency_ms=<number>    the milliseconds of TSBPD latency to use. If both sides set this, the higher setting is used
 "#;
 
 fn parse_args(args: &str) -> Result<HashMap<&str, &str>, Error> {
     let mut input_args = HashMap::new();
 
-    if args.len() == 0 {
+    if args.is_empty() {
         return Ok(input_args);
     }
 

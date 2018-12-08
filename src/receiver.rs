@@ -472,7 +472,7 @@ where
                     }
                 }
             }
-            Packet::Data(data) => self.handle_data_packet(data)?,
+            Packet::Data(data) => self.handle_data_packet(&data)?,
         };
 
         Ok(false)
@@ -523,7 +523,7 @@ where
         Ok(())
     }
 
-    fn handle_data_packet(&mut self, data: DataPacket) -> Result<(), Error> {
+    fn handle_data_packet(&mut self, data: &DataPacket) -> Result<(), Error> {
         let now = self.get_timestamp_now();
 
         // 1) Reset the ExpCount to 1. If there is no unacknowledged data
@@ -575,7 +575,6 @@ where
             match self.loss_list[..].binary_search_by(|ll| ll.seq_num.cmp(&data.seq_number)) {
                 Ok(i) => {
                     self.loss_list.remove(i);
-                    ()
                 }
                 Err(_) => {
                     debug!(

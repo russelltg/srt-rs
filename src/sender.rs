@@ -526,15 +526,13 @@ where
                     Some((pack, addr)) => {
                         debug!("Got packet: {:?}", pack);
                         // ignore the packet if it isn't from the right address
-                        if addr == self.settings.remote {
-                            if self.handle_packet(pack)? {
-                                // if shutdown was requested, die
-                                self.closed = true;
-                                return Err(From::from(io::Error::new(
-                                    io::ErrorKind::ConnectionAborted,
-                                    "Connection received shutdown",
-                                )));
-                            }
+                        if addr == self.settings.remote && self.handle_packet(pack)? {
+                            // if shutdown was requested, die
+                            self.closed = true;
+                            return Err(From::from(io::Error::new(
+                                io::ErrorKind::ConnectionAborted,
+                                "Connection received shutdown",
+                            )));
                         }
                     }
                     // stream has ended, this is weird

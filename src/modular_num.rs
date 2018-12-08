@@ -35,6 +35,7 @@ macro_rules! modular_num_impls {
             }
         }
 
+        #[allow(clippy::suspicious_arithmetic_impl)]
         impl ::std::ops::Add<$type> for $x {
             type Output = Self;
 
