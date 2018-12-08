@@ -41,7 +41,7 @@ fn stransmit_client() {
                 .wait()
                 .unwrap();
 
-            println!("DOne Sending");
+            println!("Done Sending");
         })
         .unwrap();
 
@@ -62,6 +62,10 @@ fn stransmit_client() {
                 assert_eq!(a, i);
 
                 i += 1;
+
+                if i == PACKETS {
+                    break;
+                }
             }
             assert_eq!(i, PACKETS);
         })

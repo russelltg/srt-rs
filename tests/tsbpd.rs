@@ -4,12 +4,10 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use failure::{format_err, Error};
-use futures::{
-    sink::Sink,
-    stream::{iter_ok, Stream},
-    Future,
-};
+use futures::stream::{iter_ok, Stream};
+use futures::{Future, Sink};
 use futures_timer::Interval;
+
 use srt::{
     ConnectionSettings, HandshakeResponsibility, Receiver, Sender, SeqNumber, SocketID,
     SrtCongestCtrl,

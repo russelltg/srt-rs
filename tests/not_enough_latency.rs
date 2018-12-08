@@ -19,6 +19,8 @@ use crate::lossy_conn::LossyConn;
 
 #[test]
 fn not_enough_latency() {
+    env_logger::init();
+
     const INIT_SEQ_NUM: u32 = 12314;
 
     // a stream of ascending stringified integers
@@ -80,6 +82,12 @@ fn not_enough_latency() {
         for by in recvr.wait() {
             let (ts, by) = by.unwrap();
 
+            // skip the first 100 packets, to allow for warmup
+            if last_seq_num < INIT_SEQ_NUM + 100 {
+                last_seq_num += 1;
+                continue;
+            }
+
             // they don't have to be sequential, but they should be increasing
             let this_seq_num = str::from_utf8(&by[..]).unwrap().parse().unwrap();
             assert!(
@@ -95,7 +103,7 @@ fn not_enough_latency() {
             let diff = Instant::now() - ts;
             let diff_ms = (diff.subsec_nanos() as f64 + diff.as_secs() as f64 * 1e9) * 1e-6;
             assert!(
-                diff_ms > 4700. && diff_ms < 5300.,
+                diff_ms > 4700. && diff_ms < 6000.,
                 "Time difference {}ms not within 4.7 sec and 5.3 sec",
                 diff_ms,
             );

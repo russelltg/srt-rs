@@ -1,4 +1,5 @@
 use bytes::{Bytes, BytesMut};
+use log::debug;
 use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -87,7 +88,13 @@ impl RecvBuffer {
 
         let origin_ts_usec = self.buffer.front().unwrap().as_ref().unwrap().timestamp;
 
-        if start_time + Duration::from_micros(origin_ts_usec as u64) + latency <= Instant::now() {
+        if (start_time + Duration::from_micros(origin_ts_usec as u64) + latency) <= Instant::now() {
+            debug!(
+                "Packet was deemed reaady for release, Now={:?}, Ts={:?}, Latency={:?}",
+                Instant::now() - start_time,
+                Duration::from_micros(origin_ts_usec as u64),
+                latency
+            );
             Some(msg_size)
         } else {
             None
@@ -118,7 +125,7 @@ impl RecvBuffer {
         None
     }
 
-    /// A convence function for
+    /// A convenience function for
     /// `self.next_msg_ready_tsbpd(...).map(|_| self.next_msg().unwrap()`
     pub fn next_msg_tsbpd(
         &mut self,
@@ -153,7 +160,8 @@ impl RecvBuffer {
                 .fold(BytesMut::new(), |mut bytes, pack| {
                     bytes.extend(pack.unwrap().payload);
                     bytes
-                }).freeze(),
+                })
+                .freeze(),
         ))
     }
 }
@@ -167,7 +175,8 @@ impl fmt::Debug for RecvBuffer {
                 .iter()
                 .map(|o| o
                     .as_ref()
-                    .map(|pack| (pack.seq_number.as_raw(), pack.message_loc))).collect::<Vec<_>>()
+                    .map(|pack| (pack.seq_number.as_raw(), pack.message_loc)))
+                .collect::<Vec<_>>()
         )
     }
 }
@@ -176,8 +185,8 @@ impl fmt::Debug for RecvBuffer {
 mod test {
 
     use super::RecvBuffer;
-    use bytes::Bytes;
     use crate::{packet::PacketLocation, DataPacket, MsgNumber, SeqNumber, SocketID};
+    use bytes::Bytes;
 
     fn basic_pack() -> DataPacket {
         DataPacket {
