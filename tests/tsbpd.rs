@@ -31,7 +31,7 @@ fn tsbpd() {
         .map(|(b, _)| b);
 
     // 1% packet loss, 1 sec latency with 0.2 s variance
-    let (send, recv) = LossyConn::new(0.01, Duration::from_secs(1), Duration::from_millis(200));
+    let (send, recv) = LossyConn::channel(0.01, Duration::from_secs(1), Duration::from_millis(200));
 
     let sender = Sender::new(
         send.map_err(|_| format_err!(""))

@@ -21,7 +21,7 @@ impl<T: Sink> Future for CloseFuture<T> {
             .expect("Polled CloseFuture after Async::Ready was returned")
             .close());
 
-        return Ok(Async::Ready(self.0.take().unwrap()));
+        Ok(Async::Ready(self.0.take().unwrap()))
     }
 }
 

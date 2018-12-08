@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 
 use futures::{sync::mpsc, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
 use futures_timer::Delay;
+use log::{debug, info, trace};
 use rand;
 use rand::distributions::{Distribution, Normal};
-use log::{debug, trace, info};
 
 pub struct LossyConn<T> {
     sender: mpsc::Sender<T>,
@@ -77,9 +77,9 @@ impl<T: Debug> Sink for LossyConn<T> {
         // delay
         {
             let center =
-                self.delay_avg.as_secs() as f64 + self.delay_avg.subsec_nanos() as f64 / 1e9;
-            let stddev =
-                self.delay_stddev.as_secs() as f64 + self.delay_stddev.subsec_nanos() as f64 / 1e9;
+                self.delay_avg.as_secs() as f64 + f64::from(self.delay_avg.subsec_nanos()) / 1e9;
+            let stddev = self.delay_stddev.as_secs() as f64
+                + f64::from(self.delay_stddev.subsec_nanos()) / 1e9;
 
             let between = Normal::new(center, stddev);
             let delay_secs = between.sample(&mut rand::thread_rng());
@@ -124,7 +124,7 @@ impl<T: Debug> Sink for LossyConn<T> {
 }
 
 impl<T> LossyConn<T> {
-    pub fn new(
+    pub fn channel(
         loss_rate: f64,
         delay_avg: Duration,
         delay_stddev: Duration,

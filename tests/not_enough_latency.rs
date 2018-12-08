@@ -31,7 +31,7 @@ fn not_enough_latency() {
         .map(|(b, _)| b);
 
     // 4% packet loss, 4 sec latency with 0.2 s variance
-    let (send, recv) = LossyConn::new(0.04, Duration::from_secs(4), Duration::from_millis(200));
+    let (send, recv) = LossyConn::channel(0.04, Duration::from_secs(4), Duration::from_millis(200));
 
     let sender = Sender::new(
         send.map_err(|_| format_err!(""))
@@ -101,10 +101,10 @@ fn not_enough_latency() {
 
             // make sure the timings are still decent
             let diff = Instant::now() - ts;
-            let diff_ms = (diff.subsec_nanos() as f64 + diff.as_secs() as f64 * 1e9) * 1e-6;
+            let diff_ms = (diff.as_secs() as f64 + f64::from(diff.subsec_nanos()) / 1e9) * 1e3;
             assert!(
-                diff_ms > 4700. && diff_ms < 6000.,
-                "Time difference {}ms not within 4.7 sec and 5.3 sec",
+                diff_ms > 4900. && diff_ms < 6000.,
+                "Time difference {}ms not within 4.7 sec and 6 sec",
                 diff_ms,
             );
         }

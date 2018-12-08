@@ -18,7 +18,7 @@ use crate::lossy_conn::LossyConn;
 fn test_with_loss() {
     let _ = env_logger::try_init();
 
-    const INIT_SEQ_NUM: u32 = 812731;
+    const INIT_SEQ_NUM: u32 = 812_731;
     const ITERS: u32 = 10_000;
 
     // a stream of ascending stringified integers
@@ -27,7 +27,7 @@ fn test_with_loss() {
         .zip(Interval::new(Duration::from_micros(100)))
         .map(|(b, _)| b);
 
-    let (send, recv) = LossyConn::new(0.05, Duration::from_secs(0), Duration::from_secs(0));
+    let (send, recv) = LossyConn::channel(0.05, Duration::from_secs(0), Duration::from_secs(0));
 
     let sender = Sender::new(
         send.map_err(|_| format_err!(""))
