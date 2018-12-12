@@ -3,13 +3,14 @@
 #[macro_export]
 macro_rules! modular_num {
     (pub $x:ident($type:ident, $num:expr)) => {
-        modular_num_impls!((pub), $x, $type, $num);
+        $crate::modular_num_impls!((pub), $x, $type, $num);
     };
     ($x:ident($type:ident, $num:expr)) => {
-        modular_num_impls!((), $x, $type, $num);
+        $crate::modular_num_impls!((), $x, $type, $num);
     };
 }
 
+#[macro_export]
 macro_rules! modular_num_impls {
     (($($publicity:tt)*), $x:ident, $type:ident, $num:expr) => {
 
