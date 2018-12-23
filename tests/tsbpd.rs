@@ -101,7 +101,7 @@ fn tsbpd() {
 
             // make sure the diff is ~5000ms
             let diff = Instant::now() - ts;
-            let diff_ms = (diff.subsec_nanos() as f64 + diff.as_secs() as f64 * 1e9) * 1e-6;
+            let diff_ms = (f64::from(diff.subsec_nanos()) + diff.as_secs() as f64 * 1e9) * 1e-6;
             assert!(
                 diff_ms > 4700. && diff_ms < 5300.,
                 "Time difference {}ms not within 4.7 sec and 5.3 sec, packet #{}",

@@ -139,8 +139,11 @@ mod tests {
     #[test]
     fn new() {
         // shouldn't be truncated, first bit is zero
-        assert_eq!(SeqNumber::new(1687761238).as_raw(), 1687761238);
-        assert_eq!(SeqNumber::new(1687761239 | 1 << 31).as_raw(), 1687761239);
+        assert_eq!(SeqNumber::new(1_687_761_238).as_raw(), 1_687_761_238);
+        assert_eq!(
+            SeqNumber::new(1_687_761_239 | 1 << 31).as_raw(),
+            1_687_761_239
+        );
     }
 
     #[test]
@@ -173,8 +176,8 @@ mod tests {
         assert!(SeqNumber(3) < SeqNumber(4));
         assert!(SeqNumber(13) > SeqNumber(5));
 
-        assert_eq!(SeqNumber(812827).cmp(&SeqNumber(812827)), Ordering::Equal);
-        assert_eq!(SeqNumber(812827), SeqNumber(812827));
+        assert_eq!(SeqNumber(812_827).cmp(&SeqNumber(812_827)), Ordering::Equal);
+        assert_eq!(SeqNumber(812_827), SeqNumber(812_827));
     }
 
 }

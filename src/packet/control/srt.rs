@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn deser_ser_shake() {
         let handshake = Packet::Control(ControlPacket {
-            timestamp: 123141,
+            timestamp: 123_141,
             dest_sockid: SocketID(123),
             control_type: ControlTypes::Srt(SrtControlPacket::HandshakeRequest(SrtHandshake {
                 version: SrtVersion::CURRENT,

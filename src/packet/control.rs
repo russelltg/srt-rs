@@ -612,7 +612,7 @@ mod test {
             timestamp: 0,
             dest_sockid: SocketID(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                init_seq_num: SeqNumber::new(1827131),
+                init_seq_num: SeqNumber::new(1_827_131),
                 max_packet_size: 1500,
                 max_flow_size: 25600,
                 shake_type: ShakeType::Induction,
@@ -642,12 +642,12 @@ mod test {
     #[test]
     fn ack_ser_des_test() {
         let pack = ControlPacket {
-            timestamp: 113703,
-            dest_sockid: SocketID(2453706529),
+            timestamp: 113_703,
+            dest_sockid: SocketID(2_453_706_529),
             control_type: ControlTypes::Ack {
                 ack_seq_num: 1,
-                ack_number: SeqNumber::new(282049186),
-                rtt: Some(10002),
+                ack_number: SeqNumber::new(282_049_186),
+                rtt: Some(10_002),
                 rtt_variance: Some(1000),
                 buffer_available: Some(1314),
                 packet_recv_rate: Some(0),
@@ -666,7 +666,7 @@ mod test {
     #[test]
     fn ack2_ser_des_test() {
         let pack = ControlPacket {
-            timestamp: 125812,
+            timestamp: 125_812,
             dest_sockid: SocketID(8313),
             control_type: ControlTypes::Ack2(831),
         };
@@ -676,7 +676,7 @@ mod test {
         pack.serialize(&mut buf);
 
         // dword 2 should have 831 in big endian, so the last two bits of the second dword
-        assert_eq!(((buf[6] as u32) << 8) + buf[7] as u32, 831);
+        assert_eq!((u32::from(buf[6]) << 8) + u32::from(buf[7]), 831);
 
         let des = ControlPacket::parse(Cursor::new(buf)).unwrap();
 
