@@ -30,7 +30,7 @@ where
     pub fn listen(
         sock: T,
         local_socket_id: SocketID,
-        tsbpd_latency: Option<Duration>,
+        tsbpd_latency: Duration,
     ) -> PendingConnection<T> {
         PendingConnection::Listen(Listen::new(sock, local_socket_id, tsbpd_latency))
     }
@@ -40,7 +40,7 @@ where
         local_addr: IpAddr,
         remote_addr: SocketAddr,
         local_socket_id: SocketID,
-        tsbpd_latency: Option<Duration>,
+        tsbpd_latency: Duration,
     ) -> PendingConnection<T> {
         PendingConnection::Connect(Connect::new(
             sock,
@@ -55,7 +55,7 @@ where
         sock: T,
         local_public: SocketAddr,
         remote_public: SocketAddr,
-        tsbpd_latency: Option<Duration>,
+        tsbpd_latency: Duration,
     ) -> PendingConnection<T> {
         PendingConnection::Rendezvous(Rendezvous::new(
             sock,

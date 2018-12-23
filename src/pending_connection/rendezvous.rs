@@ -11,7 +11,7 @@ pub struct Rendezvous<T> {
     _local_public: SocketAddr,
     _remote_public: SocketAddr,
     _sock: T,
-    _tsbpd_latency: Option<Duration>,
+    _tsbpd_latency: Duration,
 }
 
 impl<T> Rendezvous<T>
@@ -23,7 +23,7 @@ where
         _sock: T,
         _local_public: SocketAddr,
         _remote_public: SocketAddr,
-        _tsbpd_latency: Option<Duration>,
+        _tsbpd_latency: Duration,
     ) -> Rendezvous<T> {
         Rendezvous {
             _sock,

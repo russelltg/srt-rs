@@ -16,7 +16,7 @@ pub type SrtSocket = UdpFramed<PacketCodec>;
 pub struct SrtSocketBuilder {
     local_addr: SocketAddr,
     conn_type: ConnInitMethod,
-    latency: Option<Duration>,
+    latency: Duration,
 }
 
 pub enum ConnInitMethod {
@@ -35,7 +35,7 @@ impl SrtSocketBuilder {
         SrtSocketBuilder {
             local_addr: "0.0.0.0:0".parse().unwrap(),
             conn_type,
-            latency: None,
+            latency: Duration::from_millis(50),
         }
     }
 
@@ -52,8 +52,7 @@ impl SrtSocketBuilder {
     }
 
     pub fn latency(&mut self, latency: Duration) -> &mut Self {
-        println!("Configuring latency");
-        self.latency = Some(latency);
+        self.latency = latency;
 
         self
     }

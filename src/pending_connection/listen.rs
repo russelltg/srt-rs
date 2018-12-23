@@ -15,7 +15,7 @@ pub struct Listen<T> {
     state: ConnectionState,
     sock: Option<T>,
     local_socket_id: SocketID,
-    tsbpd_latency: Option<Duration>,
+    tsbpd_latency: Duration,
 }
 
 impl<T> Listen<T>
@@ -23,7 +23,7 @@ where
     T: Stream<Item = (Packet, SocketAddr), Error = Error>
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
 {
-    pub fn new(sock: T, local_socket_id: SocketID, tsbpd_latency: Option<Duration>) -> Listen<T> {
+    pub fn new(sock: T, local_socket_id: SocketID, tsbpd_latency: Duration) -> Listen<T> {
         info!("Listening...");
 
         Listen {

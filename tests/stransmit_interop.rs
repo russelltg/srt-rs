@@ -26,6 +26,7 @@ fn stransmit_client() {
         .spawn(|| {
             let sock =
                 SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:1234".parse().unwrap()))
+                    .latency(Duration::from_millis(500))
                     .build()
                     .unwrap();
 
@@ -75,7 +76,7 @@ fn stransmit_client() {
     let mut child = Command::new("stransmit")
         .arg("srt://:1234")
         .arg("udp://127.0.0.1:2345")
-        .arg("-a:no") // don't auto-reconnect
+        // .arg("-a:no") // don't auto-reconnect
         .spawn()
         .unwrap();
 

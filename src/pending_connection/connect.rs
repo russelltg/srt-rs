@@ -26,7 +26,7 @@ pub struct Connect<T> {
 
     send_interval: Interval,
     local_addr: IpAddr,
-    tsbpd_latency: Option<Duration>,
+    tsbpd_latency: Duration,
 }
 
 enum State {
@@ -40,7 +40,7 @@ impl<T> Connect<T> {
         remote: SocketAddr,
         local_socket_id: SocketID,
         local_addr: IpAddr,
-        tsbpd_latency: Option<Duration>,
+        tsbpd_latency: Duration,
     ) -> Connect<T> {
         info!("Connecting to {:?}", remote);
 
@@ -68,7 +68,7 @@ where
     fn poll(&mut self) -> Poll<Connected<T>, Error> {
         self.sock.as_mut().unwrap().poll_complete()?;
 
-        // handle incoming packets
+        // handle incoming packetsval: Interval::new(Duration::from_millis(100))
         loop {
             let (pack, addr) = match self.sock.as_mut().unwrap().poll() {
                 Ok(Async::Ready(Some((pack, addr)))) => (pack, addr),
@@ -178,7 +178,7 @@ where
                     self.sock.as_mut().unwrap().start_send((
                         Packet::Control(ControlPacket {
                             dest_sockid: SocketID(0),
-                            timestamp: 0,
+                            timestamp: 0, // TODO: this is not zero in the reference implementation
                             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                                 init_seq_num: self.init_seq_num,
                                 max_packet_size: 1500, // TODO: take as a parameter

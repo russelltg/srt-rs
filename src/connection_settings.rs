@@ -31,7 +31,7 @@ pub struct ConnectionSettings {
     /// The TSBPD latency configured by the user.
     /// Not necessarily the actual decided on latency, which
     /// is the max of both side's respective latencies.
-    pub tsbpd_latency: Option<Duration>,
+    pub tsbpd_latency: Duration,
 
     /// The responsibility of this SRT entity
     pub responsibility: HandshakeResponsibility,

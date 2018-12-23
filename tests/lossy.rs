@@ -41,7 +41,7 @@ fn test_with_loss() {
             max_packet_size: 1316,
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
-            tsbpd_latency: None,
+            tsbpd_latency: Duration::from_millis(100000),
             responsibility: HandshakeResponsibility::Request,
         },
     );
@@ -57,7 +57,7 @@ fn test_with_loss() {
             max_packet_size: 1316,
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(),
-            tsbpd_latency: None,
+            tsbpd_latency: Duration::from_millis(100000),
             responsibility: HandshakeResponsibility::Respond,
         },
     );

@@ -45,7 +45,7 @@ fn not_enough_latency() {
             max_packet_size: 1316,
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
-            tsbpd_latency: Some(Duration::from_secs(5)), // five seconds TSBPD, should be loss
+            tsbpd_latency: Duration::from_secs(5), // five seconds TSBPD, should be loss
             responsibility: HandshakeResponsibility::Request,
         },
     );
@@ -61,7 +61,7 @@ fn not_enough_latency() {
             max_packet_size: 1316,
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(),
-            tsbpd_latency: Some(Duration::from_secs(5)),
+            tsbpd_latency: Duration::from_secs(5),
             responsibility: HandshakeResponsibility::Respond,
         },
     );

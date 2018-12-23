@@ -392,12 +392,7 @@ where
                     );
                 }
 
-                self.tsbpd = Some(Duration::max(
-                    self.settings
-                        .tsbpd_latency
-                        .unwrap_or(Duration::from_millis(0)), // if we never specified TSBPD, just use the sender's
-                    shake.latency,
-                ));
+                self.tsbpd = Some(Duration::max(self.settings.tsbpd_latency, shake.latency));
 
                 info!(
                     "Got SRT handshake, using TSBPD={}ms",

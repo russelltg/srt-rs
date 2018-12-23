@@ -134,9 +134,7 @@ where
             lr_acked_ack: -1,
             snd_timer: Delay::new(Duration::from_millis(1)),
             stats_interval: Interval::new(Duration::from_secs(1)),
-            srt_handshake_interval: settings
-                .tsbpd_latency
-                .map(|_| Interval::new(Duration::from_millis(100))),
+            srt_handshake_interval: Some(Interval::new(Duration::from_millis(100))),
             closed: false,
         }
     }
@@ -450,10 +448,7 @@ where
                 control_type: ControlTypes::Srt(SrtControlPacket::HandshakeRequest(SrtHandshake {
                     version: SrtVersion::CURRENT,
                     flags: SrtShakeFlags::TSBPDSND, // TODO: the reference implementation sets a lot more of these, research
-                    latency: self
-                        .settings
-                        .tsbpd_latency
-                        .unwrap_or(Duration::from_millis(120)),
+                    latency: self.settings.tsbpd_latency,
                 })),
             }),
             self.settings.remote,
