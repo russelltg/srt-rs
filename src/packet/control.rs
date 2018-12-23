@@ -169,11 +169,11 @@ pub struct HandshakeControlInfo {
 /// The socket type for a handshake.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SocketType {
-    /// A stream socket, 0 when serialized
-    Stream = 0,
+    /// A stream socket, 1 when serialized
+    Stream = 1,
 
     /// A datagram socket, 2 when serialied
-    Datagram = 1,
+    Datagram = 2,
 }
 
 /// See <https://tools.ietf.org/html/draft-gg-udt-03#page-10>
@@ -249,11 +249,11 @@ impl HandshakeVSInfo {
 }
 
 impl SocketType {
-    /// Turns a u32 into a SocketType. If the u32 wasn't valid (only 0 and 1 are valid), than it returns Err(num)
+    /// Turns a u32 into a SocketType. If the u32 wasn't valid (only 1 and 2 are valid), than it returns Err(num)
     pub fn from_u32(num: u32) -> Result<SocketType, u32> {
         match num {
-            0 => Ok(SocketType::Stream),
-            1 => Ok(SocketType::Datagram),
+            1 => Ok(SocketType::Stream),
+            2 => Ok(SocketType::Datagram),
             i => Err(i),
         }
     }
