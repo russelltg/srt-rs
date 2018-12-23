@@ -1,15 +1,16 @@
-use bytes::Bytes;
-use clap::{App, Arg};
-use failure::{bail, Error};
-use futures::{future, prelude::*};
-use srt::{ConnInitMethod, SrtSocketBuilder};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
+use clap::{App, Arg};
+use failure::{bail, Error};
+use futures::{future, prelude::*};
 use tokio_codec::BytesCodec;
 use tokio_udp::{UdpFramed, UdpSocket};
 use url::{Host, Url};
+
+use srt::{ConnInitMethod, SrtSocketBuilder};
 
 const AFTER_HELPTEXT: &str = r#"
 Supported protocols:
