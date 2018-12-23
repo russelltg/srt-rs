@@ -156,7 +156,7 @@ impl SrtHandshake {
         into.put_u16_be(0);
         // lower 16 is latency
         into.put_u16_be(
-            (self.latency.subsec_millis()) as u16 + self.latency.as_secs() as u16 * 1_000,
+            self.latency.subsec_millis() as u16 + self.latency.as_secs() as u16 * 1_000,
         );
     }
 }
@@ -188,5 +188,29 @@ mod tests {
         let deserialized = Packet::parse(&mut Cursor::new(buf)).unwrap();
 
         assert_eq!(handshake, deserialized);
+    }
+
+    #[test]
+    fn raw_data() {
+        #[rustfmt::skip]
+        let data = [
+            0x00, 0x01, 0x00, 0x03,
+            0x00, 0x01, 0x03, 0x01,
+            0x00, 0x00, 0x00, 0x2f,
+            0x01, 0xf4, 0x01, 0xf4,
+        ];
+
+        let mut buf = Cursor::new(data);
+
+        let deserialized = SrtHandshake::parse(&mut buf).unwrap();
+
+        assert_eq!(
+            deserialized,
+            SrtHandshake {
+                version: SrtVersion::new(1, 3, 0),
+                flags: SrtShakeFlags::TSBPDSND,
+                latency: Duration::from_millis(200),
+            }
+        );
     }
 }
