@@ -39,7 +39,6 @@ where
 enum ConnectionState {
     WaitingForHandshake,
     WaitingForCookieResp(i32 /*cookie*/),
-    Done(ConnectionSettings),
 }
 
 impl<T> Future for Listen<T>
@@ -173,31 +172,23 @@ where
                         sock.poll_complete()?;
 
                         // finish the connection
-                        self.state = ConnectionState::Done(ConnectionSettings {
-                            init_seq_num: shake.init_seq_num,
-                            remote_sockid: shake.socket_id,
-                            remote: addr,
-                            max_flow_size: 16000, // TODO: what is this?
-                            max_packet_size: shake.max_packet_size,
-                            local_sockid: self.local_socket_id,
-                            socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
-                            tsbpd_latency: self.tsbpd_latency,
-                            responsibility: HandshakeResponsibility::Respond,
-                        });
-                        // break out to end the borrow on self.sock
-                        break;
+                        return Ok(Async::Ready(Connected::new(
+                            self.sock.take().unwrap(),
+                            ConnectionSettings {
+                                init_seq_num: shake.init_seq_num,
+                                remote_sockid: shake.socket_id,
+                                remote: addr,
+                                max_flow_size: 16000, // TODO: what is this?
+                                max_packet_size: shake.max_packet_size,
+                                local_sockid: self.local_socket_id,
+                                socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
+                                tsbpd_latency: self.tsbpd_latency,
+                                responsibility: HandshakeResponsibility::Respond,
+                            },
+                        )));
                     }
                 }
-                // this should never happen
-                ConnectionState::Done(_) => unreachable!(),
             }
-        }
-        match self.state {
-            ConnectionState::Done(settings) => Ok(Async::Ready(Connected::new(
-                self.sock.take().unwrap(),
-                settings,
-            ))),
-            _ => panic!(),
         }
     }
 }
