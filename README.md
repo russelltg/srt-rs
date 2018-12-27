@@ -4,7 +4,7 @@
 
 > NOTE: THIS IS NOT PRODUCTION READY.
 
-Pure rust implementation of SRT (Secure Reliable Transport)
+Pure rust implementation of SRT (Secure Reliable Transport), without unsafe code.
 
 Reference implementation is available at https://github.com/haivision/srt
 
@@ -20,12 +20,23 @@ Reference implementation is available at https://github.com/haivision/srt
 - [ ] Rendezvous connecting
 - [x] Receiving
 - [x] Sending
-- [ ] Special SRT packets
-- [ ] Actual SRT (TSBPD)
-
+- [x] Special SRT packets (partial)
+- [x] Actual SRT (TSBPD)
+- [ ] Timestamp drift recovery
+- [ ] Encryption
 
 # Heap efficiency
 
 Running under massif, the maximum memory usage is around 6KB for transmitting video. for srt-rs.
 
 For the reference implementation, this number grows to 1.2MB, so around a 2X difference. 
+
+# Thread Efficiency
+
+The reference implementation of SRT requires 3 threads per sender and 5 threads per receiver. 
+
+With srt-rs, you can assign as many connections to exactly as many threads as you want (usually as many as you have cores) using
+Rust's futures scheduling.
+
+
+
