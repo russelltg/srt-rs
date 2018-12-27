@@ -108,7 +108,7 @@ pub enum ControlTypes {
 
 bitflags! {
     /// Used to describe the extension types in the packet
-    struct ExtFlags: u32 {
+    struct ExtFlags: u16 {
         /// The packet has a handshake extension
         const HS = 0b1;
         /// The packet has a kmreq extension
@@ -123,6 +123,10 @@ bitflags! {
 pub enum HandshakeVSInfo {
     V4(SocketType),
     V5 {
+        /// the crypto size in bytes, either 0 (no encryption), 16, 24, or 32
+        /// source: https://github.com/Haivision/srt/blob/master/docs/stransmit.md#medium-srt
+        crypto_size: u8,
+
         /// The extension HSReq/HSResp
         ext_hs: Option<SrtControlPacket>,
 
@@ -146,7 +150,7 @@ pub struct HandshakeControlInfo {
     /// Max flow window size, by default 25600
     pub max_flow_size: u32,
 
-    /// Connection type, either rendezvois (0) or regular (1)
+    /// Designates where in the handshake process this packet lies
     pub shake_type: ShakeType,
 
     /// The socket ID that this request is originating from
@@ -215,14 +219,24 @@ pub enum ShakeType {
 
 impl HandshakeVSInfo {
     /// Get the type (V4) or ext flags (V5)
-    fn type_flags(&self) -> u32 {
+    /// the shake_type is required to decide to encode the magic code
+    fn type_flags(&self, shake_type: ShakeType) -> u32 {
         match self {
             HandshakeVSInfo::V4(ty) => *ty as u32,
             HandshakeVSInfo::V5 {
+                crypto_size,
                 ext_hs,
                 ext_km,
                 ext_config,
             } => {
+                if shake_type == ShakeType::Induction
+                    && (ext_hs.is_some() || ext_km.is_some() || ext_config.is_some())
+                {
+                    // induction does not include any extensions, and instead has the
+                    // magic code. this is an incompatialbe place to be.
+                    panic!("Handshake is both induction and has SRT extensions, not valid");
+                }
+
                 let mut flags = ExtFlags::empty();
 
                 if ext_hs.is_some() {
@@ -234,13 +248,21 @@ impl HandshakeVSInfo {
                 if ext_config.is_some() {
                     flags |= ExtFlags::CONFIG;
                 }
-                flags.bits()
+                // take the crypto size, get rid of the frist three (garunteed zero) bits, then shift it into the
+                // most significant 2-byte word
+                (*crypto_size as u32 >> 3 << 16)
+                    // when this is an induction packet, includ the magic code instead of flags
+                    | if shake_type == ShakeType::Induction {
+                        SRT_MAGIC_CODE
+                    } else {
+                        flags.bits()
+                    } as u32
             }
         }
     }
 
     /// Get the UDT version
-    fn version(&self) -> u32 {
+    pub fn version(&self) -> u32 {
         match self {
             HandshakeVSInfo::V4(_) => 4,
             HandshakeVSInfo::V5 { .. } => 5,
@@ -250,7 +272,7 @@ impl HandshakeVSInfo {
 
 impl SocketType {
     /// Turns a u32 into a SocketType. If the u32 wasn't valid (only 1 and 2 are valid), than it returns Err(num)
-    pub fn from_u32(num: u32) -> Result<SocketType, u32> {
+    pub fn from_u16(num: u16) -> Result<SocketType, u16> {
         match num {
             1 => Ok(SocketType::Stream),
             2 => Ok(SocketType::Datagram),
@@ -261,8 +283,9 @@ impl SocketType {
 
 impl ControlPacket {
     pub fn parse<T: Buf>(mut buf: T) -> Result<ControlPacket, Error> {
-        // get reserved data, which is the last two bytes of the first four bytes
         let control_type = buf.get_u16_be() << 1 >> 1; // clear first bit
+
+        // get reserved data, which is the last two bytes of the first four bytes
         let reserved = buf.get_u16_be();
         let add_info = buf.get_i32_be();
         let timestamp = buf.get_i32_be();
@@ -300,7 +323,7 @@ impl ControlPacket {
 // I definitely don't totally understand this yet.
 // Points of interest: handshake.h:wrapFlags
 // core.cpp:8176 (processConnectionRequest -> if INDUCTION)
-const SRT_MAGIC_CODE: u32 = 0x4A17;
+const SRT_MAGIC_CODE: u16 = 0x4A17;
 
 impl ControlTypes {
     /// Deserialize a control info
@@ -321,7 +344,16 @@ impl ControlTypes {
                     bail!("Incompatable UDT version: {}", udt_version);
                 }
 
-                let mut type_ext = buf.get_u32_be();
+                // the second 32 bit word is always socket type under UDT4
+                // under SRT HSv5, it is a bit more complex:
+                //
+                // byte 1-2: the crypto key size, rightshifted by three. For example 0b11 would translate to a crypto size of 24
+                //           source: https://github.com/Haivision/srt/blob/4f7f2beb2e1e306111b9b11402049a90cb6d3787/srtcore/handshake.h#L123-L125
+                let crypto_size = buf.get_u16_be() << 3;
+                // byte 3-4: the SRT_MAGIC_CODE, to make sure a client is HSv5 or the ExtFlags if this is an induction response
+                //           else, this is the extension flags
+                let type_ext_socket_type = buf.get_u16_be();
+
                 let init_seq_num = SeqNumber::new(buf.get_u32_be());
                 let max_packet_size = buf.get_u32_be();
                 let max_flow_size = buf.get_u32_be();
@@ -344,69 +376,96 @@ impl ControlTypes {
                 };
 
                 let info = match udt_version {
-                    4 => HandshakeVSInfo::V4(match SocketType::from_u32(type_ext) {
+                    4 => HandshakeVSInfo::V4(match SocketType::from_u16(type_ext_socket_type) {
                         Ok(t) => t,
                         Err(e) => {
                             bail!("Unrecognized socket type: {}", e);
                         }
                     }),
                     5 => {
-                        // TODO: I still don't understand. This is likely incorrect
-                        if type_ext == SRT_MAGIC_CODE {
-                            type_ext = 0;
-                        }
-                        let extensions = match ExtFlags::from_bits(type_ext) {
-                            Some(i) => i,
-                            None => {
-                                warn!("Unnecessary bits in extensions flags: {:b}", type_ext);
-
-                                ExtFlags::from_bits_truncate(type_ext)
+                        // make sure crypto size is of a valid variant
+                        let crypto_size = match crypto_size {
+                            0 | 16 | 24 | 32 => crypto_size as u8,
+                            c => {
+                                warn!(
+                                    "Unrecognized crypto key length: {}, disabling encryption",
+                                    c
+                                );
+                                0
                             }
                         };
-                        // parse out extensions
-                        let ext_hs = if extensions.contains(ExtFlags::HS) {
-                            let pack_type = buf.get_u16_be();
-                            let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
-                            match pack_type {
-                                // 1 and 2 are handshake response and requests
-                                1 | 2 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
-                                e => bail!(
+
+                        if shake_type == ShakeType::Induction {
+                            if type_ext_socket_type != SRT_MAGIC_CODE {
+                                warn!("HSv5 induction response did not have SRT_MAGIC_CODE, which is suspicious")
+                            }
+
+                            HandshakeVSInfo::V5 {
+                                crypto_size,
+                                ext_hs: None,
+                                ext_km: None,
+                                ext_config: None,
+                            }
+                        } else {
+                            // if this is not induction, this is the extension flags
+                            let extensions = match ExtFlags::from_bits(type_ext_socket_type) {
+                                Some(i) => i,
+                                None => {
+                                    warn!(
+                                        "Unnecessary bits in extensions flags: {:b}",
+                                        type_ext_socket_type
+                                    );
+
+                                    ExtFlags::from_bits_truncate(type_ext_socket_type)
+                                }
+                            };
+
+                            // parse out extensions
+                            let ext_hs = if extensions.contains(ExtFlags::HS) {
+                                let pack_type = buf.get_u16_be();
+                                let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
+                                match pack_type {
+                                    // 1 and 2 are handshake response and requests
+                                    1 | 2 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
+                                    e => bail!(
                                     "Expected 1 or 2 (SRT handshake request or response), got {}",
                                     e
                                 ),
-                            }
-                        } else {
-                            None
-                        };
-                        let ext_km = if extensions.contains(ExtFlags::KM) {
-                            let pack_type = buf.get_u16_be();
-                            let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
-                            match pack_type {
-                                // 3 and 4 are km packets
-                                3 | 4 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
-                                e => bail!(
+                                }
+                            } else {
+                                None
+                            };
+                            let ext_km = if extensions.contains(ExtFlags::KM) {
+                                let pack_type = buf.get_u16_be();
+                                let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
+                                match pack_type {
+                                    // 3 and 4 are km packets
+                                    3 | 4 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
+                                    e => bail!(
                                     "Exepcted 3 or 4 (SRT key manager request or response), got {}",
                                     e
                                 ),
+                                }
+                            } else {
+                                None
+                            };
+                            let ext_config = if extensions.contains(ExtFlags::CONFIG) {
+                                let pack_type = buf.get_u16_be();
+                                let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
+                                match pack_type {
+                                    // 5 is sid 6 is smoother
+                                    5 | 6 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
+                                    e => bail!("Expected 5 or 6 (SRT SID or smoother), got {}", e),
+                                }
+                            } else {
+                                None
+                            };
+                            HandshakeVSInfo::V5 {
+                                crypto_size,
+                                ext_hs,
+                                ext_km,
+                                ext_config,
                             }
-                        } else {
-                            None
-                        };
-                        let ext_config = if extensions.contains(ExtFlags::CONFIG) {
-                            let pack_type = buf.get_u16_be();
-                            let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
-                            match pack_type {
-                                // 5 is sid 6 is smoother
-                                5 | 6 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
-                                e => bail!("Expected 5 or 6 (SRT SID or smoother), got {}", e),
-                            }
-                        } else {
-                            None
-                        };
-                        HandshakeVSInfo::V5 {
-                            ext_hs,
-                            ext_km,
-                            ext_config,
                         }
                     }
                     _ => unreachable!(), // this is already checked for above
@@ -518,7 +577,7 @@ impl ControlTypes {
         match *self {
             ControlTypes::Handshake(ref c) => {
                 into.put_u32_be(c.info.version());
-                into.put_u32_be(c.info.type_flags());
+                into.put_u32_be(c.info.type_flags(c.shake_type));
                 into.put_u32_be(c.init_seq_num.as_raw());
                 into.put_u32_be(c.max_packet_size);
                 into.put_u32_be(c.max_flow_size);
@@ -541,6 +600,7 @@ impl ControlTypes {
                     ext_hs,
                     ext_km,
                     ext_config,
+                    ..
                 } = c.info
                 {
                     for ext in [ext_hs, ext_km, ext_config].iter().filter_map(|&s| s) {
@@ -598,10 +658,7 @@ impl ShakeType {
 #[cfg(test)]
 mod test {
 
-    use super::{
-        ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType,
-        SrtControlPacket, SrtHandshake, SrtShakeFlags,
-    };
+    use super::*;
     use crate::{SeqNumber, SocketID, SrtVersion};
     use std::io::Cursor;
     use std::time::Duration;
@@ -615,11 +672,12 @@ mod test {
                 init_seq_num: SeqNumber::new(1_827_131),
                 max_packet_size: 1500,
                 max_flow_size: 25600,
-                shake_type: ShakeType::Induction,
+                shake_type: ShakeType::Conclusion,
                 socket_id: SocketID(1231),
                 syn_cookie: 0,
                 peer_addr: "127.0.0.1".parse().unwrap(),
                 info: HandshakeVSInfo::V5 {
+                    crypto_size: 0, // TODO: implement
                     ext_hs: Some(SrtControlPacket::HandshakeResponse(SrtHandshake {
                         version: SrtVersion::CURRENT,
                         flags: SrtShakeFlags::NAKREPORT | SrtShakeFlags::TSBPDSND,
@@ -681,5 +739,63 @@ mod test {
         let des = ControlPacket::parse(Cursor::new(buf)).unwrap();
 
         assert_eq!(pack, des);
+    }
+
+    #[test]
+    fn raw_srt_packet_test() {
+        use binary_macros::*;
+        // this was taken from wireshark on a packet from stransmit that crashed
+        // it is a SRT reject message
+        let packet_data = base16!("FFFF000000000000000189702BFFEFF2000103010000001E00000078");
+
+        let packet = ControlPacket::parse(Cursor::new(packet_data)).unwrap();
+
+        assert_eq!(
+            packet,
+            ControlPacket {
+                timestamp: 100_720,
+                dest_sockid: SocketID(738193394),
+                control_type: ControlTypes::Srt(SrtControlPacket::Reject)
+            }
+        )
+    }
+
+    #[test]
+    fn raw_handshake_srt() {
+        use binary_macros::*;
+
+        // this is a example HSv5 conclusion packet from the reference implementation
+        let packet_data = base16!("8000000000000000000F9EC400000000000000050000000144BEA60D000005DC00002000FFFFFFFF3D6936B6E3E405DD0100007F00000000000000000000000000010003000103010000002F00780000");
+        let packet = ControlPacket::parse(Cursor::new(&packet_data[..])).unwrap();
+        assert_eq!(
+            packet,
+            ControlPacket {
+                timestamp: 1023684,
+                dest_sockid: SocketID(0),
+                control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                    init_seq_num: SeqNumber(1153345037),
+                    max_packet_size: 1500,
+                    max_flow_size: 8192,
+                    shake_type: ShakeType::Conclusion,
+                    socket_id: SocketID(1030305462),
+                    syn_cookie: -471595555,
+                    peer_addr: "1.0.0.127".parse().unwrap(),
+                    info: HandshakeVSInfo::V5 {
+                        crypto_size: 0,
+                        ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
+                            version: SrtVersion::new(1, 3, 1),
+                            flags: SrtShakeFlags::TSBPDSND
+                                | SrtShakeFlags::TSBPDRCV
+                                | SrtShakeFlags::HAICRYPT
+                                | SrtShakeFlags::TLPKTDROP
+                                | SrtShakeFlags::REXMITFLG,
+                            latency: Duration::new(0, 0)
+                        })),
+                        ext_km: None,
+                        ext_config: None
+                    }
+                })
+            }
+        )
     }
 }
