@@ -1,14 +1,12 @@
 use bytes::Bytes;
-use failure::{bail, Error};
+use failure::Error;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
 use log::{debug, info, trace, warn};
 
 use crate::loss_compression::compress_loss_list;
-use crate::packet::{
-    ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket, SrtHandshake, SrtShakeFlags,
-};
-use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber, SrtVersion};
+use crate::packet::{ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket};
+use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber};
 
 use std::{
     cmp,
@@ -366,51 +364,10 @@ where
     // handles a SRT control packet
     fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
         use self::SrtControlPacket::*;
-        use crate::HandshakeResponsibility::*;
 
-        match (self.settings.responsibility, pack) {
-            (Respond, HandshakeRequest(shake)) => {
-                // make sure the SRT version matches ours
-                if SrtVersion::CURRENT != shake.version {
-                    bail!(
-                        "Incomatible version, local is {}, remote is {}",
-                        SrtVersion::CURRENT,
-                        shake.version
-                    );
-                }
-
-                // make sure it's a sender, cuz otherwise we have a problem
-                if shake.flags.contains(SrtShakeFlags::TSBPDRCV) {
-                    bail!("Receiver tried to connect with another receiver, aborting.");
-                }
-
-                // make sure the sender flag is set, or else neither sender nor recv are set, which is bad
-                if !shake.flags.contains(SrtShakeFlags::TSBPDSND) {
-                    bail!(
-                        "Got SRT handshake packet with neither receiver or sender set. Flags={:#b}",
-                        shake.flags.bits()
-                    );
-                }
-
-                self.tsbpd = Some(Duration::max(self.settings.tsbpd_latency, shake.latency));
-
-                info!(
-                    "Got SRT handshake, using TSBPD={}ms",
-                    self.tsbpd.unwrap().as_secs() * 1_000
-                        + u64::from(self.tsbpd.unwrap().subsec_millis())
-                );
-
-                // return the response
-                let pack =
-                    self.make_control_packet(ControlTypes::Srt(HandshakeResponse(SrtHandshake {
-                        version: SrtVersion::CURRENT,
-                        flags: SrtShakeFlags::TSBPDRCV, // TODO: the reference implementation sets a lot more of these, research
-                        latency: self.tsbpd.unwrap(),
-                    })));
-                self.sock.start_send((pack, self.settings.remote))?;
-            }
-            (Respond, HandshakeResponse(_)) => {
-                warn!("Receiver received SRT handshake response, unusual.")
+        match pack {
+            HandshakeRequest(_) | HandshakeResponse(_) => {
+                warn!("Received handshake SRT packet, HSv5 expected");
             }
             _ => unimplemented!(),
         }

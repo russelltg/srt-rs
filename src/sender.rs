@@ -8,9 +8,8 @@ use log::{debug, info, trace, warn};
 use crate::loss_compression::decompress_loss_list;
 use crate::packet::{
     ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation, SrtControlPacket,
-    SrtHandshake, SrtShakeFlags,
 };
-use crate::{CCData, CongestCtrl, ConnectionSettings, MsgNumber, SeqNumber, SrtVersion, Stats};
+use crate::{CCData, CongestCtrl, ConnectionSettings, MsgNumber, SeqNumber, Stats};
 
 use std::io;
 use std::{
@@ -91,9 +90,6 @@ pub struct Sender<T, CC> {
     /// The interval to report stats with
     stats_interval: Interval,
 
-    /// Interval to send SRT handshake packets with.
-    srt_handshake_interval: Option<Interval>,
-
     /// Tracks if the sender is closed
     /// This means that `close` has been called and the sender has been flushed,
     /// and it's just waiting for the socket to flush
@@ -134,7 +130,6 @@ where
             lr_acked_ack: -1,
             snd_timer: Delay::new(Duration::from_millis(1)),
             stats_interval: Interval::new(Duration::from_secs(1)),
-            srt_handshake_interval: Some(Interval::new(Duration::from_millis(100))),
             closed: false,
         }
     }
@@ -216,7 +211,7 @@ where
                         self.lr_acked_packet = ack_number;
 
                         // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
-                        warn!("Sending ACK2 for {}", ack_seq_num);
+                        debug!("Sending ACK2 for {}", ack_seq_num);
                         let now = self.get_timestamp_now();
                         self.sock.start_send((
                             Packet::Control(ControlPacket {
@@ -325,37 +320,10 @@ where
 
     fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
         use self::SrtControlPacket::*;
-        use crate::HandshakeResponsibility::*;
 
-        match (self.settings.responsibility, pack) {
-            (Request, HandshakeRequest(_)) => {
-                warn!("Connector received SRT handshake request. It is the connector's responsibility to handle these.")
-            }
-            (Request, HandshakeResponse(shake)) => {
-                // make sure the SRT version matches ours
-                if SrtVersion::CURRENT != shake.version {
-                    bail!(
-                        "Incomatible version, local is {}, remote is {}",
-                        SrtVersion::CURRENT,
-                        shake.version
-                    );
-                }
-
-                // make sure the other side is a receiver
-                if shake.flags.contains(SrtShakeFlags::TSBPDSND) {
-                    bail!("Sender received SRT handshake from another sender");
-                }
-
-                // make sure the recvr flag is set, otherwise nothing is set
-                if !shake.flags.contains(SrtShakeFlags::TSBPDRCV) {
-                    bail!("Sender received SRT handshake with neither sender or receiver bits set");
-                }
-
-                // all setup, using TSBPD from the shake
-                info!("Got SRT handshake packet, using tsbpd={:?}", shake.latency);
-
-                // stop sending handshakes
-                self.srt_handshake_interval = None;
+        match pack {
+            HandshakeRequest(_) | HandshakeResponse(_) => {
+                warn!("Received handshake request or response for an already setup SRT connection")
             }
             _ => unimplemented!(),
         }
@@ -437,26 +405,6 @@ where
         Some(Packet::Data(pack))
     }
 
-    fn send_srt_handshake(&mut self) -> Result<(), Error> {
-        debug!("Sending SRT handshake packet");
-
-        let now = self.get_timestamp_now();
-        self.sock.start_send((
-            Packet::Control(ControlPacket {
-                timestamp: now,
-                dest_sockid: self.settings.remote_sockid,
-                control_type: ControlTypes::Srt(SrtControlPacket::HandshakeRequest(SrtHandshake {
-                    version: SrtVersion::CURRENT,
-                    flags: SrtShakeFlags::TSBPDSND, // TODO: the reference implementation sets a lot more of these, research
-                    latency: self.settings.tsbpd_latency,
-                })),
-            }),
-            self.settings.remote,
-        ))?;
-
-        Ok(())
-    }
-
     fn get_timestamp_now(&self) -> i32 {
         self.settings.get_timestamp_now()
     }
@@ -504,13 +452,6 @@ where
                 // TODO: this is wrong for KeepAlive
                 debug!("Returning ready");
                 return Ok(Async::Ready(()));
-            }
-        }
-
-        if self.srt_handshake_interval.is_some() {
-            if let Async::Ready(_) = self.srt_handshake_interval.as_mut().unwrap().poll()? {
-                self.send_srt_handshake()?;
-                self.sock.poll_complete()?;
             }
         }
 
@@ -628,9 +569,6 @@ where
                 }),
                 self.settings.remote,
             ))?;
-
-            // cancel the handshake timer
-            self.srt_handshake_interval = None;
         }
 
         self.closed = true;
