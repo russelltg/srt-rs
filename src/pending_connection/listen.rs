@@ -10,7 +10,7 @@ use log::{info, warn};
 use crate::connected::Connected;
 use crate::packet::{
     ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
-    SrtControlPacket,
+    SrtControlPacket, SrtHandshake,
 };
 use crate::{ConnectionSettings, SocketID};
 
@@ -166,6 +166,19 @@ where
 
                         info!("Cookie was correct, connection established to {:?}", addr);
 
+                        let (srt_handshake, crypto_size) = if let HandshakeVSInfo::V5 {
+                            ext_hs: Some(SrtControlPacket::HandshakeRequest(hs)),
+                            crypto_size,
+                            ..
+                        } = shake.info
+                        {
+                            (hs, crypto_size)
+                        } else {
+                            bail!("Did not get SRT handshake request in conclusion handshake packet, using latency from this end");
+                        };
+
+                        let latency = Duration::max(srt_handshake.latency, self.tsbpd_latency);
+
                         // select the smaller packet size and max window size
                         // TODO: allow configuration of these parameters, for now just
                         // use the remote ones
@@ -177,6 +190,17 @@ where
                             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                                 syn_cookie: cookie,
                                 socket_id: self.local_socket_id,
+                                info: HandshakeVSInfo::V5 {
+                                    ext_hs: Some(SrtControlPacket::HandshakeResponse(
+                                        SrtHandshake {
+                                            latency,
+                                            ..srt_handshake
+                                        },
+                                    )),
+                                    ext_km: None,
+                                    ext_config: None,
+                                    crypto_size,
+                                },
                                 ..shake
                             }),
                         });
@@ -185,17 +209,6 @@ where
                         sock.start_send((resp_handshake, addr))?;
                         // poll_completed here beacuse we won't get a chance to call it later
                         sock.poll_complete()?;
-
-                        let latency = if let HandshakeVSInfo::V5 {
-                            ext_hs: Some(SrtControlPacket::HandshakeResponse(hs)),
-                            ..
-                        } = shake.info
-                        {
-                            Duration::max(hs.latency, self.tsbpd_latency)
-                        } else {
-                            warn!("Did not get SRT handshake response in final handshake packet, using latency from this end");
-                            self.tsbpd_latency
-                        };
 
                         // finish the connection
                         return Ok(Async::Ready(Connected::new(

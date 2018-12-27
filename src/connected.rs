@@ -22,6 +22,10 @@ where
         Connected { socket, settings }
     }
 
+    pub fn settings(&self) -> &ConnectionSettings {
+        &self.settings
+    }
+
     pub fn receiver(self) -> Receiver<T> {
         Receiver::new(self.socket, self.settings)
     }
