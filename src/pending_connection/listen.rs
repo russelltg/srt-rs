@@ -99,6 +99,8 @@ where
                             hasher.finish() as i32 // this will truncate, which is fine
                         };
 
+                        // we expect HSv5, so upgrade it
+
                         // construct a packet to send back
                         let resp_handshake = Packet::Control(ControlPacket {
                             timestamp,
@@ -106,6 +108,12 @@ where
                             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                                 syn_cookie: cookie,
                                 socket_id: self.local_socket_id,
+                                info: HandshakeVSInfo::V5 {
+                                    crypto_size: 0,
+                                    ext_hs: None,
+                                    ext_km: None,
+                                    ext_config: None,
+                                },
                                 ..shake
                             }),
                         });
@@ -152,6 +160,10 @@ where
                             continue;
                         }
 
+                        if shake.info.version() != 5 {
+                            bail!("Conclusion was HSv4, not HSv5, terminating connection");
+                        }
+
                         info!("Cookie was correct, connection established to {:?}", addr);
 
                         // select the smaller packet size and max window size
@@ -174,6 +186,17 @@ where
                         // poll_completed here beacuse we won't get a chance to call it later
                         sock.poll_complete()?;
 
+                        let latency = if let HandshakeVSInfo::V5 {
+                            ext_hs: Some(SrtControlPacket::HandshakeResponse(hs)),
+                            ..
+                        } = shake.info
+                        {
+                            Duration::max(hs.latency, self.tsbpd_latency)
+                        } else {
+                            warn!("Did not get SRT handshake response in final handshake packet, using latency from this end");
+                            self.tsbpd_latency
+                        };
+
                         // finish the connection
                         return Ok(Async::Ready(Connected::new(
                             self.sock.take().unwrap(),
@@ -185,7 +208,7 @@ where
                                 max_packet_size: shake.max_packet_size,
                                 local_sockid: self.local_socket_id,
                                 socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
-                                tsbpd_latency: self.tsbpd_latency,
+                                tsbpd_latency: latency,
                             },
                         )));
                     }
