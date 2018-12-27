@@ -8,8 +8,11 @@ use futures::prelude::*;
 use log::{info, warn};
 
 use crate::connected::Connected;
-use crate::packet::{ControlPacket, ControlTypes, HandshakeControlInfo, Packet, ShakeType};
-use crate::{ConnectionSettings, HandshakeResponsibility, SocketID};
+use crate::packet::{
+    ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
+    SrtControlPacket,
+};
+use crate::{ConnectionSettings, SocketID};
 
 pub struct Listen<T> {
     state: ConnectionState,
@@ -183,7 +186,6 @@ where
                                 local_sockid: self.local_socket_id,
                                 socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
                                 tsbpd_latency: self.tsbpd_latency,
-                                responsibility: HandshakeResponsibility::Respond,
                             },
                         )));
                     }

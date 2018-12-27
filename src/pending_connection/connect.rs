@@ -14,7 +14,7 @@ use crate::packet::{
     ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
     SocketType, SrtControlPacket, SrtHandshake, SrtShakeFlags,
 };
-use crate::{ConnectionSettings, HandshakeResponsibility, SeqNumber, SocketID, SrtVersion};
+use crate::{ConnectionSettings, SeqNumber, SocketID, SrtVersion};
 
 pub struct Connect<T> {
     remote: SocketAddr,
@@ -157,7 +157,6 @@ where
                                 local_sockid: self.local_socket_id,
                                 remote_sockid: info.socket_id,
                                 tsbpd_latency: self.tsbpd_latency,
-                                responsibility: HandshakeResponsibility::Request,
                             },
                         )));
                     }

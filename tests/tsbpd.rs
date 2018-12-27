@@ -8,10 +8,7 @@ use futures::stream::{iter_ok, Stream};
 use futures::{Future, Sink};
 use futures_timer::Interval;
 
-use srt::{
-    ConnectionSettings, HandshakeResponsibility, Receiver, Sender, SeqNumber, SocketID,
-    SrtCongestCtrl,
-};
+use srt::{ConnectionSettings, Receiver, Sender, SeqNumber, SocketID, SrtCongestCtrl};
 
 mod lossy_conn;
 use crate::lossy_conn::LossyConn;
@@ -46,7 +43,6 @@ fn tsbpd() {
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
             tsbpd_latency: Duration::from_secs(5), // five seconds TSBPD, should be plenty for no loss
-            responsibility: HandshakeResponsibility::Request,
         },
     );
 
@@ -62,7 +58,6 @@ fn tsbpd() {
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(),
             tsbpd_latency: Duration::from_secs(5),
-            responsibility: HandshakeResponsibility::Respond,
         },
     );
 

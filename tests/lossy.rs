@@ -7,7 +7,7 @@ use failure::{format_err, Error};
 use futures::{stream::iter_ok, Future, Sink, Stream};
 use futures_timer::Interval;
 use srt::{
-    ConnectionSettings, HandshakeResponsibility, Receiver, Sender, SeqNumber, SocketID,
+    ConnectionSettings, Receiver, Sender, SeqNumber, SocketID,
     SrtCongestCtrl,
 };
 
@@ -42,7 +42,6 @@ fn test_with_loss() {
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
             tsbpd_latency: Duration::from_secs(100),
-            responsibility: HandshakeResponsibility::Request,
         },
     );
 
@@ -58,7 +57,6 @@ fn test_with_loss() {
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(),
             tsbpd_latency: Duration::from_secs(100),
-            responsibility: HandshakeResponsibility::Respond,
         },
     );
 

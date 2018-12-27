@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{HandshakeResponsibility, SeqNumber, SocketID};
+use crate::{SeqNumber, SocketID};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ConnectionSettings {
@@ -32,9 +32,6 @@ pub struct ConnectionSettings {
     /// Not necessarily the actual decided on latency, which
     /// is the max of both side's respective latencies.
     pub tsbpd_latency: Duration,
-
-    /// The responsibility of this SRT entity
-    pub responsibility: HandshakeResponsibility,
 }
 
 impl ConnectionSettings {
