@@ -49,6 +49,11 @@ pub struct SrtHandshake {
     /// SRT connection init flags
     pub flags: SrtShakeFlags,
 
+    /// The peer's TSBPD latency
+    /// This is serialized as the upper 16 bits of the third 32-bit word
+    /// source: https://github.com/Haivision/srt/blob/4f7f2beb2e1e306111b9b11402049a90cb6d3787/srtcore/core.cpp#L1341-L1353
+    pub peer_latency: Duration,
+
     /// The TSBPD latency
     /// This is serialized as the lower 16 bits of the third 32-bit word
     /// see csrtcc.cpp:132 in the reference implementation
@@ -141,14 +146,13 @@ impl SrtHandshake {
                 ))
             }
         };
-        // the latency is the lower 16 bits, discard the upper 16
-        buf.get_u16_be();
-
+        let peer_latency = buf.get_u16_be();
         let latency = buf.get_u16_be();
 
         Ok(SrtHandshake {
             version,
             flags,
+            peer_latency: Duration::from_millis(u64::from(peer_latency)),
             latency: Duration::from_millis(u64::from(latency)),
         })
     }
@@ -156,8 +160,10 @@ impl SrtHandshake {
     pub fn serialize<T: BufMut>(&self, into: &mut T) {
         into.put_u32_be(self.version.to_u32());
         into.put_u32_be(self.flags.bits());
-        // upper 16 bits are all zero
-        into.put_u16_be(0);
+        // upper 16 bits are peer latency
+        into.put_u16_be(
+            self.peer_latency.subsec_millis() as u16 + self.peer_latency.as_secs() as u16 * 1_000,
+        );
         // lower 16 is latency
         into.put_u16_be(
             self.latency.subsec_millis() as u16 + self.latency.as_secs() as u16 * 1_000,
@@ -182,6 +188,7 @@ mod tests {
             control_type: ControlTypes::Srt(SrtControlPacket::HandshakeRequest(SrtHandshake {
                 version: SrtVersion::CURRENT,
                 flags: SrtShakeFlags::empty(),
+                peer_latency: Duration::from_millis(4000),
                 latency: Duration::from_millis(3000),
             })),
         });

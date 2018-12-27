@@ -681,6 +681,7 @@ mod test {
                     ext_hs: Some(SrtControlPacket::HandshakeResponse(SrtHandshake {
                         version: SrtVersion::CURRENT,
                         flags: SrtShakeFlags::NAKREPORT | SrtShakeFlags::TSBPDSND,
+                        peer_latency: Duration::from_millis(3000),
                         latency: Duration::from_millis(12345),
                     })),
                     ext_km: None,
@@ -789,6 +790,7 @@ mod test {
                                 | SrtShakeFlags::HAICRYPT
                                 | SrtShakeFlags::TLPKTDROP
                                 | SrtShakeFlags::REXMITFLG,
+                            peer_latency: Duration::from_millis(120),
                             latency: Duration::new(0, 0)
                         })),
                         ext_km: None,
@@ -796,6 +798,12 @@ mod test {
                     }
                 })
             }
-        )
+        );
+
+        // reserialize it
+        let mut buf = vec![];
+        packet.serialize(&mut buf);
+
+        assert_eq!(&buf[..], &packet_data[..]);
     }
 }
