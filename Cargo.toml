@@ -24,6 +24,9 @@ tokio-io = "0.1"
 tokio-udp = "0.1"
 url = { version = "1", optional = true }
 
+[dev-dependencies]
+binary_macros = "0.6"
+
 [lib]
 name = "srt"
 path = "src/lib.rs"
