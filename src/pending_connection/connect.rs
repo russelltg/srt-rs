@@ -1,7 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
-use failure::Error;
+use failure::{bail, Error};
 use futures::prelude::*;
 use futures::try_ready;
 use futures_timer::Interval;
@@ -100,6 +100,10 @@ where
                     State::Starting => {
                         info!("Got first handshake packet from {:?}", addr);
 
+                        if info.info.version() != 5 {
+                            bail!("Handshake was HSv4, expected HSv5");
+                        }
+
                         // send back the same SYN cookie
                         let pack_to_send = Packet::Control(ControlPacket {
                             dest_sockid: SocketID(0), // zero because still initiating connection
@@ -108,13 +112,15 @@ where
                                 socket_id: self.local_socket_id,
                                 shake_type: ShakeType::Conclusion,
                                 info: HandshakeVSInfo::V5 {
+                                    crypto_size: 0, // TODO: implement
                                     ext_hs: Some(SrtControlPacket::HandshakeRequest(
                                         SrtHandshake {
                                             version: SrtVersion::CURRENT,
                                             // TODO: this is hyper bad, don't blindly set send flag
-                                            flags: SrtShakeFlags::TSBPDSND, // TODO: the reference implementation sets a lot more of these, research
-                                            // TODO: this is also hyper bad
-                                            latency: Duration::from_millis(1000),
+                                            // if you don't pass TSBPDRCV, it doens't set the latency correctly for some reason. Requires more research
+                                            flags: SrtShakeFlags::TSBPDSND
+                                                | SrtShakeFlags::TSBPDRCV, // TODO: the reference implementation sets a lot more of these, research
+                                            latency: self.tsbpd_latency,
                                         },
                                     )),
                                     ext_km: None,
@@ -143,7 +149,18 @@ where
                             continue;
                         }
 
-                        info!("Got second handshake, connection established to {:?}", addr);
+                        let latency = if let HandshakeVSInfo::V5 {
+                            ext_hs: Some(SrtControlPacket::HandshakeResponse(hs)),
+                            ..
+                        } = info.info
+                        {
+                            hs.latency
+                        } else {
+                            warn!("Did not get SRT handshake response in final handshake packet, using latency from this end");
+                            self.tsbpd_latency
+                        };
+
+                        info!("Got second handshake, connection established to {:?} with latency {}ms", addr, latency.as_secs() * 1000 + u64::from(latency.subsec_nanos()) / 1_000_000);
 
                         // this packet has the final settings in it, and after this the connection is done
                         return Ok(Async::Ready(Connected::new(
@@ -156,7 +173,7 @@ where
                                 socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
                                 local_sockid: self.local_socket_id,
                                 remote_sockid: info.socket_id,
-                                tsbpd_latency: self.tsbpd_latency,
+                                tsbpd_latency: latency,
                             },
                         )));
                     }
