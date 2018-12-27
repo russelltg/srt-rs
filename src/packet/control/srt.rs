@@ -10,6 +10,10 @@ use crate::SrtVersion;
 /// These are `Packet::Custom` types
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SrtControlPacket {
+    /// SRT handshake reject
+    /// ID = 0
+    Reject,
+
     /// SRT handshake request
     /// ID = 1
     HandshakeRequest(SrtHandshake),
@@ -75,13 +79,12 @@ bitflags! {
 
 impl SrtControlPacket {
     pub fn parse<T: Buf>(packet_type: u16, buf: &mut T) -> Result<SrtControlPacket> {
+        use self::SrtControlPacket::*;
+
         match packet_type {
-            1 => Ok(SrtControlPacket::HandshakeRequest(SrtHandshake::parse(
-                buf,
-            )?)),
-            2 => Ok(SrtControlPacket::HandshakeResponse(SrtHandshake::parse(
-                buf,
-            )?)),
+            0 => Ok(Reject),
+            1 => Ok(HandshakeRequest(SrtHandshake::parse(buf)?)),
+            2 => Ok(HandshakeResponse(SrtHandshake::parse(buf)?)),
             3 | 4 => unimplemented!(),
             _ => Err(Error::new(
                 ErrorKind::InvalidData,
@@ -94,7 +97,8 @@ impl SrtControlPacket {
     pub fn type_id(&self) -> u16 {
         use self::SrtControlPacket::*;
 
-        match *self {
+        match self {
+            Reject => 0,
             HandshakeRequest(_) => 1,
             HandshakeResponse(_) => 2,
             KeyManagerRequest => 3,
@@ -188,29 +192,5 @@ mod tests {
         let deserialized = Packet::parse(&mut Cursor::new(buf)).unwrap();
 
         assert_eq!(handshake, deserialized);
-    }
-
-    #[test]
-    fn raw_data() {
-        #[rustfmt::skip]
-        let data = [
-            0x00, 0x01, 0x00, 0x03,
-            0x00, 0x01, 0x03, 0x01,
-            0x00, 0x00, 0x00, 0x2f,
-            0x01, 0xf4, 0x01, 0xf4,
-        ];
-
-        let mut buf = Cursor::new(data);
-
-        let deserialized = SrtHandshake::parse(&mut buf).unwrap();
-
-        assert_eq!(
-            deserialized,
-            SrtHandshake {
-                version: SrtVersion::new(1, 3, 0),
-                flags: SrtShakeFlags::TSBPDSND,
-                latency: Duration::from_millis(200),
-            }
-        );
     }
 }
