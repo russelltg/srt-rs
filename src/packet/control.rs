@@ -250,13 +250,13 @@ impl HandshakeVSInfo {
                 }
                 // take the crypto size, get rid of the frist three (garunteed zero) bits, then shift it into the
                 // most significant 2-byte word
-                (*crypto_size as u32 >> 3 << 16)
+                (u32::from(*crypto_size) >> 3 << 16)
                     // when this is an induction packet, includ the magic code instead of flags
                     | if shake_type == ShakeType::Induction {
-                        SRT_MAGIC_CODE
+                        u32::from(SRT_MAGIC_CODE)
                     } else {
-                        flags.bits()
-                    } as u32
+                        u32::from(flags.bits())
+                    }
             }
         }
     }
