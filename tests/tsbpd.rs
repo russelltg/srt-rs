@@ -81,12 +81,6 @@ fn tsbpd() {
             .map_err(|(e, _)| e)
             .wait()
         {
-            // wait until the SRT handshake has been exchanged and TSBPD has started
-            if recvr_new.tsbpd().is_none() {
-                next_num += 1;
-                continue;
-            }
-
             let (ts, by) = by.unwrap();
             assert_eq!(
                 str::from_utf8(&by[..]).unwrap(),

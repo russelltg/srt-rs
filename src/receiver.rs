@@ -110,10 +110,6 @@ pub struct Receiver<T> {
 
     /// The buffer
     buffer: RecvBuffer,
-
-    /// The TSBPD time
-    /// If this is None, TSBPD is disabled
-    tsbpd: Option<Duration>,
 }
 
 impl<T> Receiver<T>
@@ -141,7 +137,6 @@ where
             timeout_timer: Delay::new(Duration::from_secs(1)),
             lr_ack_acked: (0, settings.init_seq_num),
             buffer: RecvBuffer::new(settings.init_seq_num),
-            tsbpd: None,
         }
     }
 
@@ -151,10 +146,6 @@ where
 
     pub fn remote(&self) -> SocketAddr {
         self.settings.remote
-    }
-
-    pub fn tsbpd(&self) -> Option<Duration> {
-        self.tsbpd
     }
 
     fn reset_timeout(&mut self) {
@@ -608,32 +599,22 @@ where
 
         loop {
             // try to release packets
-            match self.tsbpd {
-                Some(tsbpd) => {
-                    // drop packets
-                    // TODO: do something with this
-                    let _dropped = self
-                        .buffer
-                        .drop_too_late_packets(tsbpd, self.settings.socket_start_time);
+            
+            let tsbpd = self.settings.tsbpd_latency;
+            // drop packets
+            // TODO: do something with this
+            let _dropped = self
+                .buffer
+                .drop_too_late_packets(tsbpd, self.settings.socket_start_time);
 
-                    if let Some((ts, p)) = self
-                        .buffer
-                        .next_msg_tsbpd(tsbpd, self.settings.socket_start_time)
-                    {
-                        return Ok(Async::Ready(Some((
-                            self.settings.socket_start_time + Duration::from_micros(ts as u64),
-                            p,
-                        ))));
-                    }
-                }
-                None => {
-                    if let Some((ts, p)) = self.buffer.next_msg() {
-                        return Ok(Async::Ready(Some((
-                            self.settings.socket_start_time + Duration::from_micros(ts as u64),
-                            p,
-                        ))));
-                    }
-                }
+            if let Some((ts, p)) = self
+                .buffer
+                .next_msg_tsbpd(tsbpd, self.settings.socket_start_time)
+            {
+                return Ok(Async::Ready(Some((
+                    self.settings.socket_start_time + Duration::from_micros(ts as u64),
+                    p,
+                ))));
             }
 
             match self.timeout_timer.poll() {
