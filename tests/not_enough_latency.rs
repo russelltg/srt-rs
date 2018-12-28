@@ -19,10 +19,11 @@ fn not_enough_latency() {
     env_logger::init();
 
     const INIT_SEQ_NUM: u32 = 12314;
+    const PACKETS: u32 = 1_000;
 
     // a stream of ascending stringified integers
     // 1 ms between packets
-    let counting_stream = iter_ok(INIT_SEQ_NUM..INIT_SEQ_NUM + 10000)
+    let counting_stream = iter_ok(INIT_SEQ_NUM..INIT_SEQ_NUM + PACKETS)
         .map(|i| Bytes::from(i.to_string()))
         .zip(Interval::new(Duration::from_millis(1)))
         .map(|(b, _)| b);
@@ -101,7 +102,7 @@ fn not_enough_latency() {
         }
 
         // make sure we got 3/4 of the packets
-        assert!(total > 10_000 * 3 / 4);
+        assert!(total > PACKETS * 3 / 4);
 
         info!("Reciever exiting");
     });
