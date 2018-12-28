@@ -546,7 +546,7 @@ where
 
         // we've already gotten this packet, drop it
         if self.buffer.next_release() > data.seq_number {
-            warn!("Received packet {:?} twice", data.seq_number);
+            debug!("Received packet {:?} twice", data.seq_number);
             return Ok(());
         }
 

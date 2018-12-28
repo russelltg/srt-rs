@@ -1,5 +1,5 @@
 use bytes::{Bytes, BytesMut};
-use log::{debug, warn};
+use log::debug;
 use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -71,7 +71,7 @@ impl RecvBuffer {
             <= Instant::now();
 
         if too_late {
-            warn!(
+            debug!(
                 "Dropping packets {}..{}, {} ms too late",
                 self.head,
                 self.head + first_non_none_idx as u32,

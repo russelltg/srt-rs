@@ -1,8 +1,8 @@
+use crate::Packet;
 use bytes::BytesMut;
 use failure::Error;
 use std::io::Cursor;
 use tokio_io::codec::{Decoder, Encoder};
-use crate::Packet;
 
 pub struct PacketCodec {}
 
