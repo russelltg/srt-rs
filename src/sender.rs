@@ -281,7 +281,7 @@ where
                             let packet = match self.buffer.get((lost - self.first_seq) as usize) {
                                 Some(p) => p,
                                 None => {
-                                    warn!("NAK received for packet {} that's not in the buffer, maybe it's already been ACKed", lost);
+                                    debug!("NAK received for packet {} that's not in the buffer, maybe it's already been ACKed", lost);
                                     continue;
                                 }
                             };
