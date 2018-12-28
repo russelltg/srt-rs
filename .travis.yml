@@ -40,7 +40,7 @@ script:
   - cd ../..
   # build & run tests
   - cargo clean
-  - cargo fmt --check
+  - cargo fmt --all -- --check
   - cargo build --verbose
   - RUST_LOG=srt=info,lossy=info,message_splitting=info RUST_BACKTRACE=full cargo test --verbose
 
