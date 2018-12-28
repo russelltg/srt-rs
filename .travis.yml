@@ -37,6 +37,7 @@ script:
   - export PATH=~/.local/bin:$PATH
   - cd ../..
   # build & run tests
+  - cargo clean
   - cargo build --verbose
   - RUST_LOG=srt=info,lossy=info,message_splitting=info RUST_BACKTRACE=full cargo test --verbose
 
