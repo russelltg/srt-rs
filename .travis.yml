@@ -19,7 +19,7 @@ cache: cargo
 
 script:
   - cargo build --verbose
-  - RUST_LOG=srt=info,lossy=info,message_splitting=info cargo test --verbose
+  - RUST_LOG=srt=info,lossy=info,message_splitting=info RUST_BACKTRACE=full cargo test --verbose
 
 after_success: |
   if [ "$TRAVIS_RUST_VERSION" == stable ] && [ "$TRAVIS_OS_NAME" == linux ]; then
