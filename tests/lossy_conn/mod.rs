@@ -1,8 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::fmt::Debug;
-use std::fs::File;
-use std::io::Write;
 use std::time::{Duration, Instant};
 
 use failure::{bail, Error};
@@ -10,7 +8,7 @@ use failure::{bail, Error};
 use futures::{sync::mpsc, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
 use futures_timer::Delay;
 
-use log::{debug, info, trace};
+use log::{debug, info};
 
 use rand;
 use rand::distributions::{Distribution, Normal};
@@ -80,7 +78,6 @@ impl<T: Debug + Sync + Send + 'static> Sink for LossyConn<T> {
         }
 
         if self.delay_avg == Duration::from_secs(0) {
-            trace!("Sending packet: {:?}", to_send);
             self.sender.start_send(to_send)?;
         } else
         // delay
@@ -113,7 +110,6 @@ impl<T: Debug + Sync + Send + 'static> Sink for LossyConn<T> {
                 Some(v) => v,
                 None => break,
             };
-            debug!("Sending packet: {:?}", val.data);
             if let Err(err) = self.sender.try_send(val.data) {
                 if err.is_disconnected() {
                     return Ok(Async::Ready(()));

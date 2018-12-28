@@ -4,7 +4,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use failure::{format_err, Error};
+use failure::Error;
 use futures::{stream::iter_ok, Future, Sink, Stream};
 use futures_timer::Interval;
 use log::{debug, info};

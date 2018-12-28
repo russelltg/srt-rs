@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use failure::{bail, Error};
+use failure::Error;
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
 use log::{debug, info, trace, warn};
