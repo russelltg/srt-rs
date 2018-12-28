@@ -21,10 +21,11 @@ cache: cargo
 script:
   # install srt
   - git clone https://github.com/haivision/srt
-  - mkdir srt/build && cd build
+  - mkdir srt/build && cd srt/build
   - cmake .. -DCMAKE_INSTALL_PREFIX=~/.local/
   - cmake --build . --target install
   - export PATH=~/.local/bin:$PATH
+  - cd ../..
   # build & run tests
   - cargo build --verbose
   - RUST_LOG=srt=info,lossy=info,message_splitting=info RUST_BACKTRACE=full cargo test --verbose
