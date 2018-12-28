@@ -1,5 +1,5 @@
 use bytes::{Bytes, BytesMut};
-use log::debug;
+use log::{debug, warn};
 use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -63,10 +63,27 @@ impl RecvBuffer {
 
         let first_pack_ts_us = self.buffer[first_non_none_idx].as_ref().unwrap().timestamp;
         // we are too late if that packet is ready
-        let too_late =
-            start_time + Duration::from_micros(first_pack_ts_us as u64) + latency <= Instant::now();
+        // give a 2 ms buffer range, be ok with releasing them 2ms late
+        let too_late = start_time
+            + Duration::from_micros(first_pack_ts_us as u64)
+            + latency
+            + Duration::from_millis(2)
+            <= Instant::now();
 
         if too_late {
+            warn!(
+                "Dropping packets {}..{}, {} ms too late",
+                self.head,
+                self.head + first_non_none_idx as u32,
+                {
+                    let dur_too_late = Instant::now()
+                        - start_time
+                        - Duration::from_micros(first_pack_ts_us as u64)
+                        - latency;
+                    dur_too_late.as_secs() * 1_000
+                        + u64::from(dur_too_late.subsec_nanos()) / 1_000_000
+                }
+            );
             // start dropping packets
             self.head += first_non_none_idx as u32;
             self.buffer.drain(0..first_non_none_idx).count()
@@ -123,6 +140,22 @@ impl RecvBuffer {
         }
 
         None
+    }
+
+    pub fn next_message_release_time(
+        &self,
+        start_time: Instant,
+        latency: Duration,
+    ) -> Option<Instant> {
+        let _msg_size = self.next_msg_ready()?;
+
+        Some(
+            start_time
+                + Duration::from_micros(
+                    self.buffer.front().unwrap().as_ref().unwrap().timestamp as u64,
+                )
+                + latency,
+        )
     }
 
     /// A convenience function for

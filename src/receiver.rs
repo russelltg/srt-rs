@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use failure::Error;
+use failure::{bail, Error};
 use futures::prelude::*;
 use futures_timer::{Delay, Interval};
 use log::{debug, info, trace, warn};
@@ -8,12 +8,10 @@ use crate::loss_compression::compress_loss_list;
 use crate::packet::{ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket};
 use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber};
 
-use std::{
-    cmp,
-    iter::Iterator,
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+use std::cmp;
+use std::iter::Iterator;
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
 mod buffer;
 use self::buffer::RecvBuffer;
@@ -110,6 +108,13 @@ pub struct Receiver<T> {
 
     /// The buffer
     buffer: RecvBuffer,
+
+    /// Shutdown flag. This is set so when the buffer is flushed, it returns Async::Ready(None)
+    shutdown_flag: bool,
+
+    /// Release delay
+    /// wakes the thread when there is a new packet to be released
+    release_delay: Delay,
 }
 
 impl<T> Receiver<T>
@@ -130,13 +135,15 @@ where
             packet_pair_window: Vec::new(),
             ack_interval: Interval::new(Duration::from_millis(10)),
             nak_interval: Delay::new(Duration::from_millis(10)),
-            lrsn: settings.init_seq_num - 1,
+            lrsn: settings.init_seq_num, // at start, we have received everything until the first packet, exclusive (aka nothing)
             next_ack: 1,
             exp_count: 1,
             probe_time: None,
             timeout_timer: Delay::new(Duration::from_secs(1)),
             lr_ack_acked: (0, settings.init_seq_num),
             buffer: RecvBuffer::new(settings.init_seq_num),
+            shutdown_flag: false,
+            release_delay: Delay::new(Duration::from_secs(0)), // start with an empty delay
         }
     }
 
@@ -157,8 +164,8 @@ where
         let ack_number = match self.loss_list.first() {
             // There is an element in the loss list
             Some(i) => i.seq_num,
-            // No elements, use lrsn + 1, as it's exclusive
-            None => self.lrsn + 1,
+            // No elements, use lrsn, as it's already exclusive
+            None => self.lrsn,
         };
 
         // 2) If (a) the ACK number equals to the largest ACK number ever
@@ -266,7 +273,7 @@ where
 
         // Pack the ACK packet with RTT, RTT Variance, and flow window size (available
         // receiver buffer size).
-        debug!("Sending ACK packet for {}", ack_number);
+        debug!("Sending ACK packet for packets <{}", ack_number);
         let ack = self.make_control_packet(ControlTypes::Ack {
             ack_seq_num,
             ack_number,
@@ -348,6 +355,9 @@ where
         if let Async::Ready(_) = self.nak_interval.poll()? {
             self.on_nak_event()?;
         }
+
+        // no need to do anything specific
+        let _ = self.release_delay.poll()?;
 
         Ok(())
     }
@@ -495,13 +505,12 @@ where
 
         // 6)
         // a. If the sequence number of the current data packet is greater
-        //    than LRSN + 1, put all the sequence numbers between (but
+        //    than LRSN, put all the sequence numbers between (but
         //    excluding) these two values into the receiver's loss list and
         //    send them to the sender in an NAK packet.
-        if data.seq_number > self.lrsn + 1 {
+        if data.seq_number > self.lrsn {
             // lrsn is the latest packet received, so nak the one after that
-            let first_to_be_nak = self.lrsn + 1;
-            for i in seq_num_range(first_to_be_nak, data.seq_number) {
+            for i in seq_num_range(self.lrsn, data.seq_number) {
                 self.loss_list.push(LossListEntry {
                     seq_num: i,
                     feedback_time: now,
@@ -510,7 +519,7 @@ where
                 })
             }
 
-            self.send_nak(seq_num_range(first_to_be_nak, data.seq_number))?;
+            self.send_nak(seq_num_range(self.lrsn, data.seq_number))?;
 
         // b. If the sequence number is less than LRSN, remove it from the
         //    receiver's loss list.
@@ -533,7 +542,7 @@ where
         }
 
         // record that we got this packet
-        self.lrsn = cmp::max(data.seq_number, self.lrsn);
+        self.lrsn = cmp::max(data.seq_number + 1, self.lrsn);
 
         // we've already gotten this packet, drop it
         if self.buffer.next_release() > data.seq_number {
@@ -599,13 +608,8 @@ where
 
         loop {
             // try to release packets
-            
+
             let tsbpd = self.settings.tsbpd_latency;
-            // drop packets
-            // TODO: do something with this
-            let _dropped = self
-                .buffer
-                .drop_too_late_packets(tsbpd, self.settings.socket_start_time);
 
             if let Some((ts, p)) = self
                 .buffer
@@ -617,6 +621,12 @@ where
                 ))));
             }
 
+            // drop packets
+            // TODO: do something with this
+            let _dropped = self
+                .buffer
+                .drop_too_late_packets(tsbpd, self.settings.socket_start_time);
+
             match self.timeout_timer.poll() {
                 Err(e) => panic!(e), // why would this ever happen
                 Ok(Async::Ready(_)) => {
@@ -624,6 +634,19 @@ where
                     self.reset_timeout();
                 }
                 Ok(Async::NotReady) => {}
+            }
+
+            // if there is a packet ready, set the timeout timer for it
+            if let Some(release_time) = self
+                .buffer
+                .next_message_release_time(self.settings.socket_start_time, tsbpd)
+            {
+                self.release_delay.reset_at(release_time);
+            }
+
+            // if there isn't a complete message at the beginning of the buffer and we are supposed to be shutting down, shut down
+            if self.shutdown_flag && self.buffer.next_msg_ready().is_none() {
+                return Ok(Async::Ready(None));
             }
 
             let (packet, addr) = match self.sock.poll() {
@@ -635,9 +658,9 @@ where
                 Ok(Async::Ready(Some(p))) => p,
                 Ok(Async::Ready(None)) => {
                     // end of stream, shutdown
+                    self.shutdown_flag = true;
 
-                    info!("Received shutdown, closing receiver");
-                    return Ok(Async::Ready(None));
+                    continue;
                 }
                 // TODO: exp_count
                 Ok(Async::NotReady) => return Ok(Async::NotReady),
@@ -648,13 +671,14 @@ where
             self.exp_count = 1;
             self.reset_timeout();
 
-            let res = self.handle_packet(packet, &addr)?;
+            let shutdown_requested = self.handle_packet(packet, &addr)?;
 
             // TODO: should this be here for optimal performance?
             self.sock.poll_complete()?;
 
-            if res {
-                return Ok(Async::Ready(None));
+            // here, don't exit totally yet. make sure that the buffer has released all of the packets
+            if shutdown_requested {
+                self.shutdown_flag = true;
             }
         }
     }
