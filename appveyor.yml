@@ -40,6 +40,7 @@ install:
   - ps: cmake .. -DCMAKE_INSTALL_PREFIX="C:/srt" -G"Visual Studio 14 2015 Win64"
   - ps: cmake --build . --target install
   - ps: $Env:path += ";C:/srt/bin"
+  - ps: cd C:/projects/srt-rs
 
   # build & install
   - appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
