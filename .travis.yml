@@ -26,6 +26,8 @@ rust:
 cache: cargo
 
 script: 
+  # rust components
+  - rustup component add rustfmt
   # osx dependencies
   - "if [ ${TRAVIS_OS_NAME} = 'osx' ]; then brew update; fi"
   - "if [ ${TRAVIS_OS_NAME} = 'osx' ]; then brew install openssl; fi"
@@ -38,6 +40,7 @@ script:
   - cd ../..
   # build & run tests
   - cargo clean
+  - cargo fmt --check
   - cargo build --verbose
   - RUST_LOG=srt=info,lossy=info,message_splitting=info RUST_BACKTRACE=full cargo test --verbose
 
