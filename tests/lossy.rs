@@ -30,8 +30,7 @@ fn test_with_loss() {
     let (send, recv) = LossyConn::channel(0.05, Duration::from_secs(0), Duration::from_secs(0));
 
     let sender = Sender::new(
-        send.map_err(|_| format_err!(""))
-            .sink_map_err(|_| format_err!("")),
+        send,
         SrtCongestCtrl,
         ConnectionSettings {
             init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
@@ -46,8 +45,7 @@ fn test_with_loss() {
     );
 
     let recvr = Receiver::new(
-        recv.map_err(|_| format_err!(""))
-            .sink_map_err(|_| format_err!("")),
+        recv,
         ConnectionSettings {
             init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
             socket_start_time: Instant::now(),

@@ -31,8 +31,7 @@ fn tsbpd() {
     let (send, recv) = LossyConn::channel(0.01, Duration::from_secs(1), Duration::from_millis(200));
 
     let sender = Sender::new(
-        send.map_err(|_| format_err!(""))
-            .sink_map_err(|_| format_err!("")),
+        send,
         SrtCongestCtrl,
         ConnectionSettings {
             init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
@@ -47,8 +46,7 @@ fn tsbpd() {
     );
 
     let recvr = Receiver::new(
-        recv.map_err(|_| format_err!(""))
-            .sink_map_err(|_| format_err!("")),
+        recv,
         ConnectionSettings {
             init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
             socket_start_time: Instant::now(),

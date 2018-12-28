@@ -31,8 +31,7 @@ fn not_enough_latency() {
     let (send, recv) = LossyConn::channel(0.04, Duration::from_secs(4), Duration::from_millis(200));
 
     let sender = Sender::new(
-        send.map_err(|_| format_err!(""))
-            .sink_map_err(|_| format_err!("")),
+        send,
         SrtCongestCtrl,
         ConnectionSettings {
             init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
@@ -47,8 +46,7 @@ fn not_enough_latency() {
     );
 
     let recvr = Receiver::new(
-        recv.map_err(|_| format_err!(""))
-            .sink_map_err(|_| format_err!("")),
+        recv,
         ConnectionSettings {
             init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
             socket_start_time: Instant::now(),

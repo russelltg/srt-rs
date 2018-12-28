@@ -1,11 +1,17 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::fmt::Debug;
+use std::fs::File;
+use std::io::Write;
 use std::time::{Duration, Instant};
+
+use failure::{bail, Error};
 
 use futures::{sync::mpsc, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
 use futures_timer::Delay;
+
 use log::{debug, info, trace};
+
 use rand;
 use rand::distributions::{Distribution, Normal};
 
@@ -48,18 +54,21 @@ impl<T> Eq for TTime<T> {}
 
 impl<T> Stream for LossyConn<T> {
     type Item = T;
-    type Error = ();
+    type Error = Error;
 
-    fn poll(&mut self) -> Poll<Option<T>, ()> {
-        self.receiver.poll()
+    fn poll(&mut self) -> Poll<Option<T>, Error> {
+        match self.receiver.poll() {
+            Ok(e) => Ok(e),
+            Err(_) => unreachable!(),
+        }
     }
 }
 
-impl<T: Debug> Sink for LossyConn<T> {
+impl<T: Debug + Sync + Send + 'static> Sink for LossyConn<T> {
     type SinkItem = T;
-    type SinkError = ();
+    type SinkError = Error;
 
-    fn start_send(&mut self, to_send: T) -> StartSend<T, ()> {
+    fn start_send(&mut self, to_send: T) -> StartSend<T, Error> {
         // should we drop it?
         {
             if rand::random::<f64>() < self.loss_rate {
@@ -72,7 +81,7 @@ impl<T: Debug> Sink for LossyConn<T> {
 
         if self.delay_avg == Duration::from_secs(0) {
             trace!("Sending packet: {:?}", to_send);
-            self.sender.start_send(to_send).unwrap();
+            self.sender.start_send(to_send)?;
         } else
         // delay
         {
@@ -82,7 +91,7 @@ impl<T: Debug> Sink for LossyConn<T> {
                 + f64::from(self.delay_stddev.subsec_nanos()) / 1e9;
 
             let between = Normal::new(center, stddev);
-            let delay_secs = between.sample(&mut rand::thread_rng());
+            let delay_secs = f64::abs(between.sample(&mut rand::thread_rng()));
 
             let delay = Duration::new(delay_secs.floor() as u64, ((delay_secs % 1.0) * 1e9) as u32);
 
@@ -98,14 +107,19 @@ impl<T: Debug> Sink for LossyConn<T> {
         Ok(AsyncSink::Ready)
     }
 
-    fn poll_complete(&mut self) -> Poll<(), ()> {
-        while let Async::Ready(_) = self.delay.poll().unwrap() {
+    fn poll_complete(&mut self) -> Poll<(), Error> {
+        while let Async::Ready(_) = self.delay.poll()? {
             let val = match self.delay_buffer.pop() {
                 Some(v) => v,
                 None => break,
             };
             debug!("Sending packet: {:?}", val.data);
-            self.sender.start_send(val.data).unwrap(); // TODO: handle full
+            if let Err(err) = self.sender.try_send(val.data) {
+                if err.is_disconnected() {
+                    return Ok(Async::Ready(()));
+                }
+                bail!("{}", err);
+            }
 
             // reset timer
             if let Some(i) = self.delay_buffer.peek() {
@@ -113,13 +127,13 @@ impl<T: Debug> Sink for LossyConn<T> {
             }
         }
 
-        Ok(self.sender.poll_complete().unwrap()) // TODO: not this
+        Ok(self.sender.poll_complete()?) // TODO: not this
     }
 
-    fn close(&mut self) -> Poll<(), ()> {
+    fn close(&mut self) -> Poll<(), Error> {
         info!("Closing sink...");
 
-        Ok(self.sender.close().unwrap()) // TODO: here too
+        Ok(self.sender.close()?) // TODO: here too
     }
 }
 
