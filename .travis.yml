@@ -6,6 +6,13 @@ addons:
     packages:
       - libssl-dev
       - cmake
+      - libcurl4-openssl-dev
+      - libelf-dev
+      - libdw-dev
+      - cmake
+      - gcc
+      - binutils-dev
+      - libiberty-dev
 
 os:
   - osx
@@ -30,13 +37,19 @@ script:
   - cargo build --verbose
   - RUST_LOG=srt=info,lossy=info,message_splitting=info RUST_BACKTRACE=full cargo test --verbose
 
-after_success: |
-  if [ "$TRAVIS_RUST_VERSION" == stable ] && [ "$TRAVIS_OS_NAME" == linux ]; then
-    `RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin` 
-    # Uncomment the following line for coveralls.io
-    # cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID
-
-    # Uncomment the following two lines create and upload a report for codecov.io
-    cargo tarpaulin --out Xml
-    bash <(curl -s https://codecov.io/bash)
-  fi
+after_success: |  
+  wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz &&
+  tar xzf master.tar.gz &&
+  cd kcov-master &&
+  mkdir build &&
+  cd build &&
+  cmake .. -DCMAKE_INSTALL_PREFIX=~/.local &&
+  make &&
+  make install &&
+  cd ../.. &&
+  rm -rf kcov-master master.tar.gz &&
+  for file in target/debug/{latency_exchange,lossy,message_splitting,not_enough_latency,single_packet_tsbpd,srt,stransmit_interop}-*[^\.d]
+    do mkdir -p "target/cov/$(basename $file)"; kcov --exclude-pattern=/.cargo,/usr/lib --verify "target/cov/$(basename $file)" "$file"
+  done &&
+  bash <(curl -s https://codecov.io/bash) &&
+  echo "Uploaded code coverage"
