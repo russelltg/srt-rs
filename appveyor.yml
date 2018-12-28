@@ -34,7 +34,7 @@ install:
   - ps: cp C:/pthread-src/*.h C:/pthread-win32/include
   - ps: cp C:/pthread-src/bin/x64_MSVC2015.Release/pthread_lib.lib C:/pthread-win32/lib
   - git clone https://github.com/haivision/srt C:/srt-src
-  - ps: mkdir C;/srt-src/build
+  - ps: mkdir C:/srt-src/build
   - ps: cd C:/srt-src/build
   - ps: mkdir C:/srt
   - ps: cmake .. -DCMAKE_INSTALL_PREFIX="C:/srt" -G"Visual Studio 14 2015 Win64"
