@@ -72,14 +72,12 @@ fn not_enough_latency() {
     let t2 = thread::spawn(move || {
         let mut last_seq_num = INIT_SEQ_NUM - 1;
 
+        let mut total = 0;
+
         for by in recvr.wait() {
             let (ts, by) = by.unwrap();
 
-            // skip the first 100 packets, to allow for warmup
-            if last_seq_num < INIT_SEQ_NUM + 100 {
-                last_seq_num += 1;
-                continue;
-            }
+            total += 1;
 
             // they don't have to be sequential, but they should be increasing
             let this_seq_num = str::from_utf8(&by[..]).unwrap().parse().unwrap();
@@ -101,6 +99,9 @@ fn not_enough_latency() {
                 diff_ms,
             );
         }
+
+        // make sure we got 3/4 of the packets
+        assert!(total > 10_000 * 3 / 4);
 
         info!("Reciever exiting");
     });
