@@ -21,10 +21,9 @@ pub struct SrtSocketBuilder {
 pub enum ConnInitMethod {
     Listen,
     Connect(SocketAddr),
-    Rendezvous {
-        local_public: SocketAddr,
-        remote_public: SocketAddr,
-    },
+
+    /// The public IP of the remote rendezvous client
+    Rendezvous(SocketAddr),
 }
 
 impl SrtSocketBuilder {
@@ -72,10 +71,13 @@ impl SrtSocketBuilder {
                 rand::random(),
                 self.latency,
             ),
-            ConnInitMethod::Rendezvous {
-                local_public,
+            ConnInitMethod::Rendezvous(remote_public) => PendingConnection::rendezvous(
+                socket,
+                rand::random(),
+                self.local_addr.ip(),
                 remote_public,
-            } => PendingConnection::rendezvous(socket, local_public, remote_public, self.latency),
+                self.latency,
+            ),
         })
     }
 }

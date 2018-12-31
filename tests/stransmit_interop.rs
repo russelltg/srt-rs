@@ -1,4 +1,5 @@
 use std::io;
+use std::net::{SocketAddr, SocketAddrV4};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -21,6 +22,36 @@ fn counting_stream(packets: u32, delay: Duration) -> impl Stream<Item = Bytes, E
         .map(|i| From::from(i.to_string()))
         .zip(Interval::new(delay))
         .map(|(b, _)| b)
+}
+
+fn udp_recvr(packets: u32, port: u16) -> io::Result<thread::JoinHandle<()>> {
+    // start udp listener
+    thread::Builder::new()
+        .name("udp recvr".to_string())
+        .spawn(move || {
+            let mut i = 0;
+            for a in Stream::wait(UdpFramed::new(
+                UdpSocket::bind(&SocketAddr::V4(SocketAddrV4::new(
+                    "127.0.0.1".parse().unwrap(),
+                    port,
+                )))
+                .unwrap(),
+                BytesCodec::new(),
+            )) {
+                let (a, _) = a.unwrap();
+
+                assert_eq!(&a, &i.to_string());
+
+                i += 1;
+
+                // stransmit does not totally care if it sends 100% of it's packets
+                // (which is prob fair), just make sure that we got at least 2/3s of it
+                if i >= packets * 2 / 3 {
+                    break;
+                }
+            }
+            assert!(i >= packets * 2 / 3);
+        })
 }
 
 #[test]
@@ -124,30 +155,7 @@ fn stransmit_server() {
         })
         .unwrap();
 
-    // start udp listener
-    let udp_thread = thread::Builder::new()
-        .name("udp recvr".to_string())
-        .spawn(|| {
-            let mut i = 0;
-            for a in Stream::wait(UdpFramed::new(
-                UdpSocket::bind(&"127.0.0.1:2001".parse().unwrap()).unwrap(),
-                BytesCodec::new(),
-            )) {
-                let (a, _) = a.unwrap();
-
-                assert_eq!(&a, &i.to_string());
-
-                i += 1;
-
-                // stransmit does not totally care if it sends 100% of it's packets
-                // (which is prob fair), just make sure that we got at least 2/3s of it
-                if i >= PACKETS * 2 / 3 {
-                    break;
-                }
-            }
-            assert!(i >= PACKETS * 2 / 3);
-        })
-        .unwrap();
+    let udp_thread = udp_recvr(PACKETS * 2 / 3, 2001).unwrap();
 
     // start stransmit process
     let mut child = Command::new("stransmit")
@@ -161,3 +169,33 @@ fn stransmit_server() {
     child.wait().unwrap();
     udp_thread.join().unwrap();
 }
+
+// #[test]
+// fn stransmit_rendezvous() {
+//     let _ = env_logger::try_init();
+
+//     const PACKETS: u32 = 1_000;
+
+//     let sender_thread = thread::spawn(move || {
+//         let sock = SrtSocketBuilder::new(ConnInitMethod::Rendezvous(
+//             "127.0.0.1:2004".parse().unwrap(),
+//         ))
+//         .local_port(2005)
+//         .build()
+//         .unwrap();
+
+//         let conn = sock.wait().unwrap().sender();
+
+//         conn.send_all(
+//             counting_stream(PACKETS, Duration::from_millis(1)).map(|b| (Instant::now(), b)),
+//         )
+//         .wait()
+//         .unwrap();
+//     });
+
+//     let udp_recvr = udp_recvr(PACKETS * 2 / 3, 2006).unwrap();
+
+//     let stransmit = Command::new("stransmit")
+//         .arg("srt://127.0.0.1:1234?mode=rendezvous")
+//         .arg();
+// }

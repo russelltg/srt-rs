@@ -53,13 +53,15 @@ where
 
     pub fn rendezvous(
         sock: T,
-        local_public: SocketAddr,
+        local_socket_id: SocketID,
+        local_addr: IpAddr,
         remote_public: SocketAddr,
         tsbpd_latency: Duration,
     ) -> PendingConnection<T> {
         PendingConnection::Rendezvous(Rendezvous::new(
             sock,
-            local_public,
+            local_socket_id,
+            local_addr,
             remote_public,
             tsbpd_latency,
         ))
