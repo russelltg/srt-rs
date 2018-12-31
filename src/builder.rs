@@ -37,6 +37,10 @@ impl SrtSocketBuilder {
         }
     }
 
+    pub fn conn_type(&self) -> &ConnInitMethod {
+        &self.conn_type
+    }
+
     pub fn local_addr(&mut self, local_addr: IpAddr) -> &mut Self {
         self.local_addr.set_ip(local_addr);
 

@@ -1,0 +1,3 @@
+Invalid settings detected: Must designate a ip to send to to send UDP. Example: udp://127.0.0.1:1234, not udp://:1234
+
+See stransmit-rs --help for more info
