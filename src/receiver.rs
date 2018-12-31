@@ -123,6 +123,13 @@ where
         + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
 {
     pub fn new(sock: T, settings: ConnectionSettings) -> Receiver<T> {
+        let init_seq_num = settings.init_seq_num;
+
+        info!(
+            "Receiving started from {:?}, with latency={:?}",
+            settings.remote, settings.tsbpd_latency
+        );
+
         Receiver {
             settings,
             sock,
@@ -135,13 +142,13 @@ where
             packet_pair_window: Vec::new(),
             ack_interval: Interval::new(Duration::from_millis(10)),
             nak_interval: Delay::new(Duration::from_millis(10)),
-            lrsn: settings.init_seq_num, // at start, we have received everything until the first packet, exclusive (aka nothing)
+            lrsn: init_seq_num, // at start, we have received everything until the first packet, exclusive (aka nothing)
             next_ack: 1,
             exp_count: 1,
             probe_time: None,
             timeout_timer: Delay::new(Duration::from_secs(1)),
-            lr_ack_acked: (0, settings.init_seq_num),
-            buffer: RecvBuffer::new(settings.init_seq_num),
+            lr_ack_acked: (0, init_seq_num),
+            buffer: RecvBuffer::new(init_seq_num),
             shutdown_flag: false,
             release_delay: Delay::new(Duration::from_secs(0)), // start with an empty delay
         }
@@ -386,7 +393,7 @@ where
 
         trace!("Received packet: {:?}", packet);
 
-        match packet {
+        match &packet {
             Packet::Control(ctrl) => {
                 // handle the control packet
 
@@ -399,23 +406,13 @@ where
                     ControlTypes::Ack { .. } => warn!("Receiver received ACK packet, unusual"),
                     ControlTypes::Ack2(seq_num) => self.handle_ack2(seq_num)?,
                     ControlTypes::DropRequest { .. } => unimplemented!(),
-                    ControlTypes::Handshake(info) => {
-                        // just send it back
-                        let sockid = self.settings.local_sockid;
-
-                        let ts = self.get_timestamp_now();
-                        self.sock.start_send((
-                            Packet::Control(ControlPacket {
-                                timestamp: ts,
-                                dest_sockid: info.socket_id, // this is different, so don't use make_control_packet
-                                control_type: ControlTypes::Handshake({
-                                    let mut tmp = info;
-                                    tmp.socket_id = sockid;
-                                    tmp
-                                }),
-                            }),
-                            *from,
-                        ))?;
+                    ControlTypes::Handshake(_) => {
+                        match (*self.settings.handshake_returner)(&packet) {
+                            Some(pack) => {
+                                self.sock.start_send((pack, self.settings.remote))?;
+                            }
+                            None => {}
+                        }
                     }
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
                     ControlTypes::Nak { .. } => warn!("Receiver received NAK packet, unusual"),

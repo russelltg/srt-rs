@@ -39,6 +39,7 @@ fn lossy() {
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
             tsbpd_latency: Duration::from_secs(8),
+            handshake_returner: Box::new(|_| None),
         },
     );
 
@@ -53,6 +54,7 @@ fn lossy() {
             max_flow_size: 50_000,
             remote: "0.0.0.0:0".parse().unwrap(),
             tsbpd_latency: Duration::from_secs(8),
+            handshake_returner: Box::new(|_| None),
         },
     );
 

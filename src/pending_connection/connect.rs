@@ -70,7 +70,7 @@ where
         loop {
             let (pack, addr) = match self.sock.as_mut().unwrap().poll() {
                 Ok(Async::Ready(Some((pack, addr)))) => (pack, addr),
-                Ok(Async::Ready(None)) => unreachable!(), // the codec always returns error or none
+                Ok(Async::Ready(None)) => bail!("Underlying stream ended unexpectedly"),
                 Ok(Async::NotReady) => break,
                 Err(e) => {
                     warn!("Failed to parse packet: {}", e);
@@ -173,6 +173,8 @@ where
                                 local_sockid: self.local_socket_id,
                                 remote_sockid: info.socket_id,
                                 tsbpd_latency: latency,
+                                // TODO: is this right? Needs testing.
+                                handshake_returner: Box::new(move |_| None),
                             },
                         )));
                     }

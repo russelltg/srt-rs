@@ -206,7 +206,7 @@ where
                         });
 
                         // send the packet
-                        sock.start_send((resp_handshake, addr))?;
+                        sock.start_send((resp_handshake.clone(), addr))?;
                         // poll_completed here beacuse we won't get a chance to call it later
                         sock.poll_complete()?;
 
@@ -222,6 +222,7 @@ where
                                 local_sockid: self.local_socket_id,
                                 socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
                                 tsbpd_latency: latency,
+                                handshake_returner: Box::new(move |_| Some(resp_handshake.clone())),
                             },
                         )));
                     }

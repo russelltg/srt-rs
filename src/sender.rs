@@ -108,18 +108,20 @@ where
             settings.remote, settings.tsbpd_latency
         );
 
+        let init_seq_num = settings.init_seq_num;
+
         Sender {
             sock,
             congest_ctrl,
             settings,
             pending_packets: VecDeque::new(),
             at_msg_beginning: true,
-            next_seq_number: settings.init_seq_num,
+            next_seq_number: init_seq_num,
             next_message_number: MsgNumber::new(0),
             loss_list: VecDeque::new(),
             buffer: VecDeque::new(),
-            first_seq: settings.init_seq_num,
-            lr_acked_packet: settings.init_seq_num,
+            first_seq: init_seq_num,
+            lr_acked_packet: init_seq_num,
             rtt: 10_000,
             rtt_var: 0,
             pkt_arr_rate: 0,
@@ -179,9 +181,9 @@ where
 
     // Returns if shutdown was requested
     fn handle_packet(&mut self, pack: Packet) -> Result<bool, Error> {
-        match pack {
+        match &pack {
             Packet::Control(ctrl) => {
-                match ctrl.control_type {
+                match &ctrl.control_type {
                     ControlTypes::Ack {
                         ack_seq_num,
                         ack_number,
@@ -194,30 +196,30 @@ where
                         // if this ack number is less than or equal to
                         // the largest received ack number, than discard it
                         // this can happen thorough packet reordering OR losing an ACK2 packet
-                        if ack_number <= self.lr_acked_packet {
+                        if *ack_number <= self.lr_acked_packet {
                             return Ok(false);
                         }
 
-                        if ack_seq_num <= self.lr_acked_ack {
+                        if *ack_seq_num <= self.lr_acked_ack {
                             warn!("Ack sequence number '{}' less than or equal to the previous one recieved: '{}'", ack_seq_num, self.lr_acked_ack);
                             return Ok(false);
                         }
-                        self.lr_acked_ack = ack_seq_num;
+                        self.lr_acked_ack = *ack_seq_num;
 
                         // update the packets received count
-                        self.recvd_packets += ack_number - self.lr_acked_packet;
+                        self.recvd_packets += *ack_number - self.lr_acked_packet;
 
                         // 1) Update the largest acknowledged sequence number, which is the ACK number
-                        self.lr_acked_packet = ack_number;
+                        self.lr_acked_packet = *ack_number;
 
                         // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
-                        debug!("Sending ACK2 for {}", ack_seq_num);
+                        debug!("Sending ACK2 for {}", *ack_seq_num);
                         let now = self.get_timestamp_now();
                         self.sock.start_send((
                             Packet::Control(ControlPacket {
                                 timestamp: now,
                                 dest_sockid: self.settings.remote_sockid,
-                                control_type: ControlTypes::Ack2(ack_seq_num),
+                                control_type: ControlTypes::Ack2(*ack_seq_num),
                             }),
                             self.settings.remote,
                         ))?;
@@ -249,7 +251,7 @@ where
 
                         // 9) Update sender's buffer (by releasing the buffer that has been
                         //    acknowledged).
-                        while ack_number > self.first_seq {
+                        while *ack_number > self.first_seq {
                             self.buffer.pop_front();
                             self.first_seq += 1;
                         }
@@ -257,7 +259,7 @@ where
                         // 10) Update sender's loss list (by removing all those that has been
                         //     acknowledged).
                         while let Some(x) = self.loss_list.pop_front() {
-                            if ack_number > x.seq_number {
+                            if *ack_number > x.seq_number {
                                 // this means a packet was lost then retransmitted
                                 self.retrans_packets += 1;
                             } else {
@@ -269,7 +271,14 @@ where
                     }
                     ControlTypes::Ack2(_) => warn!("Sender received ACK2, unusual"),
                     ControlTypes::DropRequest { .. } => unimplemented!(),
-                    ControlTypes::Handshake(_shake) => unimplemented!(),
+                    ControlTypes::Handshake(_shake) => {
+                        match (*self.settings.handshake_returner)(&pack) {
+                            Some(pack) => {
+                                self.sock.start_send((pack, self.settings.remote))?;
+                            }
+                            None => {}
+                        }
+                    }
                     // TODO: reset EXP-ish
                     ControlTypes::KeepAlive => {}
                     ControlTypes::Nak(info) => {
@@ -308,7 +317,7 @@ where
                     }
                     ControlTypes::Shutdown => return Ok(true),
                     ControlTypes::Srt(srt_packet) => {
-                        self.handle_srt_control_packet(srt_packet)?;
+                        self.handle_srt_control_packet(*srt_packet)?;
                     }
                 }
             }
