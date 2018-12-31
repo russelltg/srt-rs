@@ -7,8 +7,6 @@ use futures::try_ready;
 use futures_timer::Interval;
 use log::{info, warn};
 
-use rand::{thread_rng, Rng};
-
 use crate::connected::Connected;
 use crate::packet::{
     ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
@@ -48,7 +46,7 @@ impl<T> Connect<T> {
             remote,
             sock: Some(sock),
             local_socket_id,
-            init_seq_num: thread_rng().gen::<SeqNumber>(),
+            init_seq_num: rand::random(),
             send_interval: Interval::new(Duration::from_millis(100)),
             state: State::Starting,
             local_addr,

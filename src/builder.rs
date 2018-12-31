@@ -8,7 +8,6 @@ use tokio_udp::{UdpFramed, UdpSocket};
 
 use crate::packet::PacketCodec;
 use crate::pending_connection::PendingConnection;
-use crate::SocketID;
 
 pub type SrtSocket = UdpFramed<PacketCodec>;
 
@@ -64,13 +63,13 @@ impl SrtSocketBuilder {
 
         Ok(match self.conn_type {
             ConnInitMethod::Listen => {
-                PendingConnection::listen(socket, SrtSocketBuilder::gen_sockid(), self.latency)
+                PendingConnection::listen(socket, rand::random(), self.latency)
             }
             ConnInitMethod::Connect(addr) => PendingConnection::connect(
                 socket,
                 self.local_addr.ip(),
                 addr,
-                SrtSocketBuilder::gen_sockid(),
+                rand::random(),
                 self.latency,
             ),
             ConnInitMethod::Rendezvous {
@@ -78,9 +77,5 @@ impl SrtSocketBuilder {
                 remote_public,
             } => PendingConnection::rendezvous(socket, local_public, remote_public, self.latency),
         })
-    }
-
-    pub fn gen_sockid() -> SocketID {
-        SocketID(rand::random())
     }
 }
