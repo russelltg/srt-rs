@@ -128,7 +128,10 @@ fn ui_test(flags: &[&str], stderr: &str) {
             let mut string = String::new();
             child.stderr.unwrap().read_to_string(&mut string).unwrap();
             if &string != stderr {
-                panic!("Expected stderr did not match actual. Actual:\n{}\n\nExpected:\n{}\n", string, stderr);
+                panic!(
+                    "Expected stderr did not match actual. Actual:\n{}\n\nExpected:\n{}\n",
+                    string, stderr
+                );
             }
 
             return;
