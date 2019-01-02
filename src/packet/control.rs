@@ -755,7 +755,7 @@ mod test {
             packet,
             ControlPacket {
                 timestamp: 100_720,
-                dest_sockid: SocketID(738193394),
+                dest_sockid: SocketID(738_193_394),
                 control_type: ControlTypes::Srt(SrtControlPacket::Reject)
             }
         )
@@ -771,15 +771,15 @@ mod test {
         assert_eq!(
             packet,
             ControlPacket {
-                timestamp: 1023684,
+                timestamp: 1_023_684,
                 dest_sockid: SocketID(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                    init_seq_num: SeqNumber(1153345037),
+                    init_seq_num: SeqNumber(1_153_345_037),
                     max_packet_size: 1500,
                     max_flow_size: 8192,
                     shake_type: ShakeType::Conclusion,
-                    socket_id: SocketID(1030305462),
-                    syn_cookie: -471595555,
+                    socket_id: SocketID(1_030_305_462),
+                    syn_cookie: -471_595_555,
                     peer_addr: "1.0.0.127".parse().unwrap(),
                     info: HandshakeVSInfo::V5 {
                         crypto_size: 0,
