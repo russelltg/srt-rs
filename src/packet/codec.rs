@@ -4,7 +4,7 @@ use failure::Error;
 use std::io::Cursor;
 use tokio_io::codec::{Decoder, Encoder};
 
-pub struct PacketCodec {}
+pub struct PacketCodec;
 
 impl Decoder for PacketCodec {
     type Item = Packet;
