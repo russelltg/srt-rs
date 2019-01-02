@@ -1,6 +1,10 @@
-pub mod connect;
-pub mod listen;
-pub mod rendezvous;
+mod connect;
+mod listen;
+mod rendezvous;
+
+pub use self::connect::Connect;
+pub use self::listen::Listen;
+pub use self::rendezvous::Rendezvous;
 
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
@@ -9,10 +13,6 @@ use failure::Error;
 use futures::prelude::*;
 
 use crate::connected::Connected;
-
-use self::connect::Connect;
-use self::listen::Listen;
-use self::rendezvous::Rendezvous;
 
 use crate::{Packet, SocketID};
 

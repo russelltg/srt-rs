@@ -15,6 +15,8 @@ pub use self::control::{
 };
 pub use self::data::{DataPacket, PacketLocation};
 
+use crate::SocketID;
+
 /// Represents A UDT/SRT packet
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
@@ -27,6 +29,13 @@ impl Packet {
         match *self {
             Packet::Data(DataPacket { timestamp, .. })
             | Packet::Control(ControlPacket { timestamp, .. }) => timestamp,
+        }
+    }
+
+    pub fn dest_sockid(&self) -> SocketID {
+        match *self {
+            Packet::Data(DataPacket { dest_sockid, .. })
+            | Packet::Control(ControlPacket { dest_sockid, .. }) => dest_sockid,
         }
     }
 
