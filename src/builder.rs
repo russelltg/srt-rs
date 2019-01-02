@@ -1,13 +1,14 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
-use failure::Error;
+use failure::{bail, Error};
 use log::trace;
 use rand;
 use tokio_udp::{UdpFramed, UdpSocket};
 
 use crate::packet::PacketCodec;
 use crate::pending_connection::PendingConnection;
+use crate::MultiplexServer;
 
 pub type SrtSocket = UdpFramed<PacketCodec>;
 
@@ -59,7 +60,7 @@ impl SrtSocketBuilder {
         self
     }
 
-    pub fn build(&mut self) -> Result<PendingConnection<SrtSocket>, Error> {
+    pub fn build(self) -> Result<PendingConnection<SrtSocket>, Error> {
         trace!("Listening on {:?}", self.local_addr);
 
         let socket = UdpFramed::new(UdpSocket::bind(&self.local_addr)?, PacketCodec {});
@@ -83,5 +84,12 @@ impl SrtSocketBuilder {
                 self.latency,
             ),
         })
+    }
+
+    pub fn build_multiplexed(self) -> Result<MultiplexServer, Error> {
+        match self.conn_type {
+            ConnInitMethod::Listen => MultiplexServer::bind(&self.local_addr),
+            _ => bail!("Cannot bind multiplexed with any connection mode other than listen"),
+        }
     }
 }

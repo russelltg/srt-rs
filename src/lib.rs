@@ -16,7 +16,7 @@ mod stats;
 mod modular_num;
 mod channel;
 mod msg_number;
-mod multiplexer;
+mod multiplex;
 mod seq_number;
 mod socket_id;
 
@@ -26,7 +26,7 @@ pub use crate::congest_ctrl::{CCData, CongestCtrl};
 pub use crate::connected::Connected;
 pub use crate::connection_settings::ConnectionSettings;
 pub use crate::msg_number::MsgNumber;
-pub use crate::multiplexer::MultiplexerServer;
+pub use crate::multiplex::MultiplexServer;
 pub use crate::packet::{ControlPacket, DataPacket, Packet, PacketCodec};
 pub use crate::pending_connection::PendingConnection;
 pub use crate::receiver::Receiver;

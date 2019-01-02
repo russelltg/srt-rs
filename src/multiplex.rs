@@ -20,16 +20,16 @@ use crate::{Connected, Packet, PacketCodec, SocketID};
 
 type PackChan = Channel<(Packet, SocketAddr)>;
 
-pub struct MultiplexerServer {
+pub struct MultiplexServer {
     sock: UdpFramed<PacketCodec>,
     // (channel to talk to listener on, listener, socketid that is connecting here)
     initiators: Vec<(PackChan, Listen<PackChan>, SocketID)>,
     connections: Vec<(PackChan, SocketID)>,
 }
 
-impl MultiplexerServer {
+impl MultiplexServer {
     pub fn bind(addr: &SocketAddr) -> Result<Self, Error> {
-        Ok(MultiplexerServer {
+        Ok(MultiplexServer {
             sock: UdpFramed::new(UdpSocket::bind(addr)?, PacketCodec),
             initiators: vec![],
             connections: vec![],
@@ -37,7 +37,7 @@ impl MultiplexerServer {
     }
 }
 
-impl Stream for MultiplexerServer {
+impl Stream for MultiplexServer {
     type Item = Connected<PackChan>;
     type Error = Error;
 
