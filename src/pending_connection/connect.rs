@@ -109,13 +109,20 @@ where
                     State::Starting(_) => {
                         info!("Got first handshake packet from {:?}", addr);
 
+                        if info.shake_type != ShakeType::Induction {
+                            info!(
+                                "Was waiting for Induction (1) packet, got {:?} ({})",
+                                info.shake_type, info.shake_type as u32
+                            )
+                        }
+
                         if info.info.version() != 5 {
                             bail!("Handshake was HSv4, expected HSv5");
                         }
 
                         // send back the same SYN cookie
                         let pack_to_send = Packet::Control(ControlPacket {
-                            dest_sockid: SocketID(0), // zero because still initiating connection
+                            dest_sockid: info.socket_id,
                             timestamp,
                             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                                 socket_id: self.local_socket_id,
@@ -198,7 +205,7 @@ where
         loop {
             try_ready!(self.send_interval.poll());
 
-            info!("Sending handshake packet to: {:?}", self.remote);
+            info!("Sending handshake packet to: {}", self.remote);
 
             match self.state {
                 State::Starting(ref pack) => {

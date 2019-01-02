@@ -36,6 +36,10 @@ where
             tsbpd_latency,
         }
     }
+
+    pub fn sockid(&self) -> SocketID {
+        self.local_socket_id
+    }
 }
 
 // The state of the connection initiation
@@ -147,6 +151,10 @@ where
                     {
                         if shake.shake_type != ShakeType::Conclusion {
                             // discard
+                            info!(
+                                "Expected Conclusion (-1) packet, got {:?} ({}). Discarding handshake.",
+                                shake.shake_type, shake.shake_type as i32
+                            );
                             continue;
                         }
 
