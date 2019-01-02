@@ -384,7 +384,7 @@ where
     }
 
     // handles an incomming a packet, returning if it was a shutdown packet and the socket should close
-    fn handle_packet(&mut self, packet: Packet, from: &SocketAddr) -> Result<bool, Error> {
+    fn handle_packet(&mut self, packet: &Packet, from: &SocketAddr) -> Result<bool, Error> {
         // We don't care about packets from elsewhere
         if *from != self.settings.remote {
             info!("Packet received from unknown address: {:?}", from);
@@ -393,7 +393,7 @@ where
 
         trace!("Received packet: {:?}", packet);
 
-        match &packet {
+        match packet {
             Packet::Control(ctrl) => {
                 // handle the control packet
 
@@ -407,11 +407,8 @@ where
                     ControlTypes::Ack2(seq_num) => self.handle_ack2(seq_num)?,
                     ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(_) => {
-                        match (*self.settings.handshake_returner)(&packet) {
-                            Some(pack) => {
-                                self.sock.start_send((pack, self.settings.remote))?;
-                            }
-                            None => {}
+                        if let Some(pack) = (*self.settings.handshake_returner)(&packet) {
+                            self.sock.start_send((pack, self.settings.remote))?;
                         }
                     }
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
@@ -668,7 +665,7 @@ where
             self.exp_count = 1;
             self.reset_timeout();
 
-            let shutdown_requested = self.handle_packet(packet, &addr)?;
+            let shutdown_requested = self.handle_packet(&packet, &addr)?;
 
             // TODO: should this be here for optimal performance?
             self.sock.poll_complete()?;

@@ -12,23 +12,21 @@ use crate::packet::{
     ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
     SocketType, SrtControlPacket, SrtHandshake, SrtShakeFlags,
 };
-use crate::{ConnectionSettings, SeqNumber, SocketID, SrtVersion};
+use crate::{ConnectionSettings, SocketID, SrtVersion};
 
 pub struct Connect<T> {
     remote: SocketAddr,
     sock: Option<T>,
     local_socket_id: SocketID,
-    init_seq_num: SeqNumber,
 
     state: State,
 
     send_interval: Interval,
-    local_addr: IpAddr,
     tsbpd_latency: Duration,
 }
 
 enum State {
-    Starting,
+    Starting(Packet),
     First(Packet),
 }
 
@@ -42,14 +40,27 @@ impl<T> Connect<T> {
     ) -> Connect<T> {
         info!("Connecting to {:?}", remote);
 
+        let init_seq_num = rand::random();
+
         Connect {
             remote,
             sock: Some(sock),
             local_socket_id,
-            init_seq_num: rand::random(),
             send_interval: Interval::new(Duration::from_millis(100)),
-            state: State::Starting,
-            local_addr,
+            state: State::Starting(Packet::Control(ControlPacket {
+                dest_sockid: SocketID(0),
+                timestamp: 0, // TODO: this is not zero in the reference implementation
+                control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                    init_seq_num,
+                    max_packet_size: 1500, // TODO: take as a parameter
+                    max_flow_size: 8192,   // TODO: take as a parameter
+                    socket_id: local_socket_id,
+                    shake_type: ShakeType::Induction,
+                    peer_addr: local_addr,
+                    syn_cookie: 0,
+                    info: HandshakeVSInfo::V4(SocketType::Datagram),
+                }),
+            })),
             tsbpd_latency,
         }
     }
@@ -95,7 +106,7 @@ where
                 }
 
                 match self.state {
-                    State::Starting => {
+                    State::Starting(_) => {
                         info!("Got first handshake packet from {:?}", addr);
 
                         if info.info.version() != 5 {
@@ -190,25 +201,12 @@ where
             info!("Sending handshake packet to: {:?}", self.remote);
 
             match self.state {
-                State::Starting => {
+                State::Starting(ref pack) => {
                     // send a handshake
-                    self.sock.as_mut().unwrap().start_send((
-                        Packet::Control(ControlPacket {
-                            dest_sockid: SocketID(0),
-                            timestamp: 0, // TODO: this is not zero in the reference implementation
-                            control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                                init_seq_num: self.init_seq_num,
-                                max_packet_size: 1500, // TODO: take as a parameter
-                                max_flow_size: 8192,   // TODO: take as a parameter
-                                socket_id: self.local_socket_id,
-                                shake_type: ShakeType::Induction,
-                                peer_addr: self.local_addr,
-                                syn_cookie: 0,
-                                info: HandshakeVSInfo::V4(SocketType::Datagram),
-                            }),
-                        }),
-                        self.remote,
-                    ))?;
+                    self.sock
+                        .as_mut()
+                        .unwrap()
+                        .start_send((pack.clone(), self.remote))?;
                     self.sock.as_mut().unwrap().poll_complete()?;
                 }
                 State::First(ref pack) => {

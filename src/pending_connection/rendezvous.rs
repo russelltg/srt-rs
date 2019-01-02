@@ -179,7 +179,7 @@ where
             }
         };
 
-        return Ok(Async::Ready(Connected::new(
+        Ok(Async::Ready(Connected::new(
             self.sock.take().unwrap(),
             ConnectionSettings {
                 remote: self.remote_public,
@@ -205,6 +205,6 @@ where
                     }
                 }),
             },
-        )));
+        )))
     }
 }

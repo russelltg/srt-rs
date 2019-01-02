@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::net::{IpAddr, SocketAddr};
 use std::ops::Deref;
 use std::process::exit;
@@ -98,9 +97,9 @@ SRT - send over a SRT connection
                               rendezvous and connect connection modes
 "#;
 
-fn add_srt_args<'a, 'b, C>(
+fn add_srt_args<C>(
     args: impl Iterator<Item = (C, C)>,
-    builder: &'b mut SrtSocketBuilder,
+    builder: &mut SrtSocketBuilder,
 ) -> Result<(), Error>
 where
     C: Deref<Target = str>,
@@ -167,9 +166,9 @@ fn local_port_addr(url: &Url, kind: &str) -> Result<(u16, Option<SocketAddr>), E
 
 fn get_conn_init_method(
     addr: Option<SocketAddr>,
-    rendezvous_v: Option<Cow<'_, str>>,
+    rendezvous_v: Option<&str>,
 ) -> Result<ConnInitMethod, Error> {
-    Ok(match (addr, rendezvous_v.as_ref().map(Deref::deref)) {
+    Ok(match (addr, rendezvous_v) {
         // address but not rendezvous -> connect
         (Some(addr), None) => ConnInitMethod::Connect(addr),
         // no address or rendezvous -> listen
@@ -299,13 +298,11 @@ fn run() -> Result<(), Error> {
             "srt" => {
                 let mut builder = SrtSocketBuilder::new(get_conn_init_method(
                     input_addr,
-                    input_url.query_pairs().find_map(|(a, b)| {
-                        if a == "rendezvous" {
-                            Some(b)
-                        } else {
-                            None
-                        }
-                    }),
+                    input_url
+                        .query_pairs()
+                        .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None })
+                        .as_ref()
+                        .map(|a| &**a),
                 )?);
                 builder.local_port(input_local_port);
 
@@ -346,13 +343,11 @@ fn run() -> Result<(), Error> {
             "srt" => {
                 let mut builder = SrtSocketBuilder::new(get_conn_init_method(
                     output_addr,
-                    output_url.query_pairs().find_map(|(a, b)| {
-                        if a == "rendezvous" {
-                            Some(b)
-                        } else {
-                            None
-                        }
-                    }),
+                    output_url
+                        .query_pairs()
+                        .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None })
+                        .as_ref()
+                        .map(|a| &**a),
                 )?);
                 builder.local_port(output_local_port);
 

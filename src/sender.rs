@@ -180,8 +180,8 @@ where
     }
 
     // Returns if shutdown was requested
-    fn handle_packet(&mut self, pack: Packet) -> Result<bool, Error> {
-        match &pack {
+    fn handle_packet(&mut self, pack: &Packet) -> Result<bool, Error> {
+        match pack {
             Packet::Control(ctrl) => {
                 match &ctrl.control_type {
                     ControlTypes::Ack {
@@ -272,11 +272,8 @@ where
                     ControlTypes::Ack2(_) => warn!("Sender received ACK2, unusual"),
                     ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(_shake) => {
-                        match (*self.settings.handshake_returner)(&pack) {
-                            Some(pack) => {
-                                self.sock.start_send((pack, self.settings.remote))?;
-                            }
-                            None => {}
+                        if let Some(pack) = (*self.settings.handshake_returner)(&pack) {
+                            self.sock.start_send((pack, self.settings.remote))?;
                         }
                     }
                     // TODO: reset EXP-ish
@@ -471,7 +468,7 @@ where
                     Some((pack, addr)) => {
                         debug!("Got packet: {:?}", pack);
                         // ignore the packet if it isn't from the right address
-                        if addr == self.settings.remote && self.handle_packet(pack)? {
+                        if addr == self.settings.remote && self.handle_packet(&pack)? {
                             // if shutdown was requested, die
                             self.closed = true;
                             return Err(From::from(io::Error::new(
