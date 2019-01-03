@@ -317,11 +317,7 @@ fn run() -> Result<(), Error> {
                 add_srt_args(input_url.query_pairs(), &mut builder)?;
 
                 // make sure multiplex was not specified
-                if input_url
-                    .query_pairs()
-                    .find(|(k, _)| *k == "multiplex")
-                    .is_some()
-                {
+                if input_url.query_pairs().any(|(k, _)| &*k == "multiplex") {
                     bail!("multiplex is not a valid option for input urls");
                 }
 
