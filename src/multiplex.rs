@@ -1,3 +1,7 @@
+mod streamer_server;
+
+pub use self::streamer_server::StreamerServer;
+
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -25,14 +29,16 @@ pub struct MultiplexServer {
     // (channel to talk to listener on, listener, socketid that is connecting here)
     initiators: Vec<(PackChan, Listen<PackChan>, SocketID)>,
     connections: Vec<(PackChan, SocketID)>,
+    latency: Duration,
 }
 
 impl MultiplexServer {
-    pub fn bind(addr: &SocketAddr) -> Result<Self, Error> {
+    pub fn bind(addr: &SocketAddr, latency: Duration) -> Result<Self, Error> {
         Ok(MultiplexServer {
             sock: UdpFramed::new(UdpSocket::bind(addr)?, PacketCodec),
             initiators: vec![],
             connections: vec![],
+            latency,
         })
     }
 }
@@ -142,7 +148,7 @@ impl Stream for MultiplexServer {
 
                     let (mut chan_a, chan_b) = PackChan::channel(1000); // TODO: what should this size be?
 
-                    let listener = Listen::new(chan_b, rand::random(), Duration::from_millis(60));
+                    let listener = Listen::new(chan_b, rand::random(), self.latency);
 
                     chan_a.start_send((pack, addr))?;
                     chan_a.poll_complete()?;

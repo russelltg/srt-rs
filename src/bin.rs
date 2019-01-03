@@ -11,7 +11,7 @@ use tokio_codec::BytesCodec;
 use tokio_udp::{UdpFramed, UdpSocket};
 use url::{Host, Url};
 
-use srt::{ConnInitMethod, SrtSocketBuilder};
+use srt::{ConnInitMethod, SrtSocketBuilder, StreamerServer};
 
 const AFTER_HELPTEXT: &str = r#"
 Supported protocols:
@@ -95,6 +95,9 @@ SRT - send over a SRT connection
     * rendezvous              use the rendezvous connection method
     * local_port=<number>     the local port to bind to. Only applicable for 
                               rendezvous and connect connection modes
+    * multiplex               allow multiple connections on the single port, only
+                              applicable for listen connection mode, in the sender
+                              position
 "#;
 
 fn add_srt_args<C>(
@@ -128,6 +131,7 @@ where
             },
             // this has already been handled, ignore
             "rendezvous" => builder,
+            "multiplex" => builder,
             unrecog => bail!("Unrecgonized parameter '{}' for srt", unrecog),
         };
     }
@@ -274,7 +278,10 @@ fn run() -> Result<(), Error> {
     // Resolve the receiver side
     // this will be a future that resolves to a stream of bytes
     // (all boxed to allow for different protocols)
-    let from: Box<Future<Item = Box<Stream<Item = Bytes, Error = Error>>, Error = Error>> = {
+    let from: Box<
+        dyn Future<Item = Box<dyn Stream<Item = Bytes, Error = Error> + Send>, Error = Error>
+            + Send,
+    > = {
         let (input_local_port, input_addr) = local_port_addr(&input_url, "input")?;
 
         if input_url.scheme() == "udp" && input_local_port == 0 {
@@ -282,19 +289,20 @@ fn run() -> Result<(), Error> {
         }
 
         match input_url.scheme() {
-            "udp" => Box::new(
-                future::ok::<Box<Stream<Item = Bytes, Error = Error>>, Error>(Box::new(
-                    UdpFramed::new(
-                        UdpSocket::bind(&parse_udp_options(
-                            input_url.query_pairs(),
-                            UdpKind::Listen(input_local_port),
-                        )?)?,
-                        BytesCodec::new(),
-                    )
-                    .map(|(b, _)| b.freeze())
-                    .map_err(From::from),
-                )),
-            ),
+            "udp" => Box::new(future::ok::<
+                Box<dyn Stream<Item = Bytes, Error = Error> + Send>,
+                Error,
+            >(Box::new(
+                UdpFramed::new(
+                    UdpSocket::bind(&parse_udp_options(
+                        input_url.query_pairs(),
+                        UdpKind::Listen(input_local_port),
+                    )?)?,
+                    BytesCodec::new(),
+                )
+                .map(|(b, _)| b.freeze())
+                .map_err(From::from),
+            ))),
             "srt" => {
                 let mut builder = SrtSocketBuilder::new(get_conn_init_method(
                     input_addr,
@@ -308,13 +316,20 @@ fn run() -> Result<(), Error> {
 
                 add_srt_args(input_url.query_pairs(), &mut builder)?;
 
-                Box::new(
-                    builder
-                        .build()?
-                        .map(|c| -> Box<Stream<Item = Bytes, Error = Error>> {
-                            Box::new(c.receiver().map(|(_, b)| b))
-                        }),
-                )
+                // make sure multiplex was not specified
+                if input_url
+                    .query_pairs()
+                    .find(|(k, _)| *k == "multiplex")
+                    .is_some()
+                {
+                    bail!("multiplex is not a valid option for input urls");
+                }
+
+                Box::new(builder.build()?.map(
+                    |c| -> Box<dyn Stream<Item = Bytes, Error = Error> + Send> {
+                        Box::new(c.receiver().map(|(_, b)| b))
+                    },
+                ))
             }
             s => bail!("unrecognized scheme: {} designated in input url", s),
         }
@@ -322,7 +337,10 @@ fn run() -> Result<(), Error> {
 
     // Resolve the sender side
     // similar to the receiver side, except a sink instead of a stream
-    let to: Box<Future<Item = Box<Sink<SinkItem = Bytes, SinkError = Error>>, Error = Error>> = {
+    let to: Box<
+        dyn Future<Item = Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send>, Error = Error>
+            + Send,
+    > = {
         let (output_local_port, output_addr) = local_port_addr(&output_url, "output")?;
 
         if output_url.scheme() == "udp" && output_addr.is_none() {
@@ -331,7 +349,7 @@ fn run() -> Result<(), Error> {
 
         match output_url.scheme() {
             "udp" => Box::new(future::ok::<
-                Box<Sink<SinkItem = Bytes, SinkError = Error>>,
+                Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send>,
                 Error,
             >(Box::new(
                 UdpFramed::new(
@@ -351,20 +369,52 @@ fn run() -> Result<(), Error> {
                 )?);
                 builder.local_port(output_local_port);
 
+                let is_multiplex = match (
+                    output_url
+                        .query_pairs()
+                        .find(|(k, _)| k == "multiplex")
+                        .as_ref()
+                        .map(|(_, v)| &**v),
+                    builder.conn_type(),
+                ) {
+                    // OK
+                    (Some(""), ConnInitMethod::Listen) => true,
+                    (None, _) => false,
+
+                    // not OK
+                    (Some(""), _) => {
+                        bail!("The multiplex option is only supported for listen connections")
+                    }
+                    (Some(a), _) => bail!("Unexpected value for multiplex: {}", a),
+                };
+
                 add_srt_args(output_url.query_pairs(), &mut builder)?;
-                Box::new(builder.build()?.map(
-                    |c| -> Box<Sink<SinkItem = Bytes, SinkError = Error>> {
-                        Box::new(c.sender().with(|b| future::ok((Instant::now(), b))))
-                    },
-                ))
+
+                if is_multiplex {
+                    let boxed: Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send> = Box::new(
+                        StreamerServer::new(builder.build_multiplexed()?)
+                            .with(|b| future::ok((Instant::now(), b))),
+                    );
+
+                    Box::new(future::ok(boxed))
+                } else {
+                    Box::new(builder.build()?.map(
+                        |c| -> Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send> {
+                            Box::new(c.sender().with(|b| future::ok((Instant::now(), b))))
+                        },
+                    ))
+                }
             }
             s => bail!("unrecognized scheme: {} designated in output url", s),
         }
     };
 
-    from.join(to)
-        .and_then(|(from, to)| from.forward(to))
-        .wait()?;
+    tokio::run(
+        from.join(to)
+            .and_then(|(from, to)| from.forward(to))
+            .map(|_| ())
+            .map_err(|_| ()),
+    );
 
     Ok(())
 }

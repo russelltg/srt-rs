@@ -142,92 +142,107 @@ fn ui_test(flags: &[&str], stderr: &str) {
     panic!("Stransmit process that was supposed to fail with args\n\t{}\ndid not exit, it may have succeeded in setup.", flags.join(" "));
 }
 
-#[test]
-fn stransmit_rs_basic() {
-    test_send(
-        2000,
-        &["udp://:2000", "srt://127.0.0.1:2001"],
-        &["srt://:2001", "udp://127.0.0.1:2002"],
-        2002,
-    );
-}
+mod stransmit_rs_snd_rcv {
+    use super::test_send;
 
-#[test]
-fn stransmit_rs_sender_as_listener() {
-    test_send(
-        2003,
-        &["udp://:2003", "srt://:2004"],
-        &["srt://127.0.0.1:2004", "udp://127.0.0.1:2005"],
-        2005,
-    );
-}
+    #[test]
+    fn basic() {
+        test_send(
+            2000,
+            &["udp://:2000", "srt://127.0.0.1:2001"],
+            &["srt://:2001", "udp://127.0.0.1:2002"],
+            2002,
+        );
+    }
 
-#[test]
-fn stransmit_rs_sender_as_listener_srt_local_port() {
-    test_send(
-        2006,
-        &["udp://:2006", "srt://:2007"],
-        &[
-            "srt://127.0.0.1:2007?local_port=2008",
-            "udp://127.0.0.1:2009",
-        ],
-        2009,
-    );
-}
+    #[test]
+    fn sender_as_listener() {
+        test_send(
+            2003,
+            &["udp://:2003", "srt://:2004"],
+            &["srt://127.0.0.1:2004", "udp://127.0.0.1:2005"],
+            2005,
+        );
+    }
 
-#[test]
-fn stransmit_rs_rendezvous() {
-    test_send(
-        2010,
-        &[
-            "udp://:2010",
-            "srt://127.0.0.1:2012?rendezvous&local_port=2011",
-        ],
-        &[
-            "srt://127.0.0.1:2011?rendezvous&local_port=2012",
-            "udp://127.0.0.1:2013",
-        ],
-        2013,
-    );
-}
+    #[test]
+    fn sender_as_listener_srt_local_port() {
+        test_send(
+            2006,
+            &["udp://:2006", "srt://:2007"],
+            &[
+                "srt://127.0.0.1:2007?local_port=2008",
+                "udp://127.0.0.1:2009",
+            ],
+            2009,
+        );
+    }
 
-#[test]
-fn stransmit_rs_rendezvous_udp_local_port() {
-    test_send(
-        2014,
-        &[
-            "udp://:2014",
-            "srt://127.0.0.1:2016?rendezvous&local_port=2015",
-        ],
-        &[
-            "srt://127.0.0.1:2015?rendezvous&local_port=2016",
-            "udp://127.0.0.1:2018?local_port=2017",
-        ],
-        2018,
-    );
-}
+    #[test]
+    fn rendezvous() {
+        test_send(
+            2010,
+            &[
+                "udp://:2010",
+                "srt://127.0.0.1:2012?rendezvous&local_port=2011",
+            ],
+            &[
+                "srt://127.0.0.1:2011?rendezvous&local_port=2012",
+                "udp://127.0.0.1:2013",
+            ],
+            2013,
+        );
+    }
 
-#[test]
-fn stransmit_rs_latency() {
-    test_send(
-        2019,
-        &["udp://:2019", "srt://:2020?latency_ms=500"],
-        &[
-            "srt://127.0.0.1:2020?latency_ms=300",
-            "udp://127.0.0.1:2021",
-        ],
-        2021,
-    );
-}
+    #[test]
+    fn stransmit_rs_rendezvous_udp_local_port() {
+        test_send(
+            2014,
+            &[
+                "udp://:2014",
+                "srt://127.0.0.1:2016?rendezvous&local_port=2015",
+            ],
+            &[
+                "srt://127.0.0.1:2015?rendezvous&local_port=2016",
+                "udp://127.0.0.1:2018?local_port=2017",
+            ],
+            2018,
+        );
+    }
 
-#[test]
-fn stransmit_rs_udp_to_udp() {
-    test_send(
-        2022,
-        &["udp://:2022", "udp://127.0.0.1:2023"],
-        &["udp://:2023", "udp://127.0.0.1:2024"],
-        2024,
-    );
+    #[test]
+    fn latency() {
+        test_send(
+            2019,
+            &["udp://:2019", "srt://:2020?latency_ms=500"],
+            &[
+                "srt://127.0.0.1:2020?latency_ms=300",
+                "udp://127.0.0.1:2021",
+            ],
+            2021,
+        );
+    }
+
+    #[test]
+    fn udp_to_udp() {
+        test_send(
+            2022,
+            &["udp://:2022", "udp://127.0.0.1:2023"],
+            &["udp://:2023", "udp://127.0.0.1:2024"],
+            2024,
+        );
+    }
+
+    #[test]
+    fn multicast() {
+        test_send(
+            2025,
+            &["udp://:2025", "srt://:2026?multiplex"],
+            &["srt://127.0.0.1:2026", "udp://127.0.0.1:2027"],
+            2027,
+        );
+    }
+
 }
 
 macro_rules! ui_tests {
@@ -251,6 +266,9 @@ mod stransmit_rs_ui {
         udp_recv_as_second,
         rendezvous_no_host,
         local_port_udp_recv,
-        local_port_srt_listen
+        local_port_srt_listen,
+        multiplex_connect,
+        multiplex_recv,
+        multiplex_parameter
     );
 }

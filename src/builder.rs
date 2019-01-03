@@ -60,7 +60,7 @@ impl SrtSocketBuilder {
         self
     }
 
-    pub fn build(self) -> Result<PendingConnection<SrtSocket>, Error> {
+    pub fn build(&mut self) -> Result<PendingConnection<SrtSocket>, Error> {
         trace!("Listening on {:?}", self.local_addr);
 
         let socket = UdpFramed::new(UdpSocket::bind(&self.local_addr)?, PacketCodec {});
@@ -86,9 +86,9 @@ impl SrtSocketBuilder {
         })
     }
 
-    pub fn build_multiplexed(self) -> Result<MultiplexServer, Error> {
+    pub fn build_multiplexed(&mut self) -> Result<MultiplexServer, Error> {
         match self.conn_type {
-            ConnInitMethod::Listen => MultiplexServer::bind(&self.local_addr),
+            ConnInitMethod::Listen => MultiplexServer::bind(&self.local_addr, self.latency),
             _ => bail!("Cannot bind multiplexed with any connection mode other than listen"),
         }
     }

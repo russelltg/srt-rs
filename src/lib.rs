@@ -26,7 +26,7 @@ pub use crate::congest_ctrl::{CCData, CongestCtrl};
 pub use crate::connected::Connected;
 pub use crate::connection_settings::ConnectionSettings;
 pub use crate::msg_number::MsgNumber;
-pub use crate::multiplex::MultiplexServer;
+pub use crate::multiplex::{MultiplexServer, StreamerServer};
 pub use crate::packet::{ControlPacket, DataPacket, Packet, PacketCodec};
 pub use crate::pending_connection::PendingConnection;
 pub use crate::receiver::Receiver;

@@ -1,7 +1,7 @@
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use srt::{ConnInitMethod, MultiplexerServer, SrtSocketBuilder};
+use srt::{ConnInitMethod, MultiplexServer, SrtSocketBuilder};
 
 use futures::stream::{iter_ok, Stream};
 use futures::Future;
@@ -17,8 +17,13 @@ fn multiplexer() {
     let multiplexer_thread = thread::Builder::new()
         .name("Overall multiplexer".to_string())
         .spawn(|| {
-            let mut server =
-                Some(MultiplexerServer::bind(&"127.0.0.1:2000".parse().unwrap()).unwrap());
+            let mut server = Some(
+                MultiplexServer::bind(
+                    &"127.0.0.1:2000".parse().unwrap(),
+                    Duration::from_millis(20),
+                )
+                .unwrap(),
+            );
 
             let mut handles = vec![];
 
