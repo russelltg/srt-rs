@@ -122,10 +122,9 @@ where
 
                         // send back the same SYN cookie
                         let pack_to_send = Packet::Control(ControlPacket {
-                            dest_sockid: info.socket_id,
+                            dest_sockid: SocketID(0),
                             timestamp,
                             control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                                socket_id: self.local_socket_id,
                                 shake_type: ShakeType::Conclusion,
                                 info: HandshakeVSInfo::V5 {
                                     crypto_size: 0, // TODO: implement

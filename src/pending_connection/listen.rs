@@ -111,7 +111,7 @@ where
                             dest_sockid: shake.socket_id,
                             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                                 syn_cookie: cookie,
-                                socket_id: self.local_socket_id,
+                                socket_id: shake.socket_id,
                                 info: HandshakeVSInfo::V5 {
                                     crypto_size: 0,
                                     ext_hs: None,
