@@ -39,3 +39,4 @@ path = "src/bin.rs"
 
 [features]
 stransmit-rs = ["env_logger", "url", "tokio-codec"]
+default = ["stransmit-rs"]
