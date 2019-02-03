@@ -370,7 +370,7 @@ where
     }
 
     // handles a SRT control packet
-    fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
+    fn handle_srt_control_packet(&mut self, pack: &SrtControlPacket) -> Result<(), Error> {
         use self::SrtControlPacket::*;
 
         match pack {
@@ -383,12 +383,22 @@ where
         Ok(())
     }
 
-    // handles an incomming a packet, returning if it was a shutdown packet and the socket should close
-    fn handle_packet(&mut self, packet: &Packet, from: &SocketAddr) -> Result<bool, Error> {
+    // handles an incomming a packet
+    fn handle_packet(&mut self, packet: &Packet, from: &SocketAddr) -> Result<(), Error> {
         // We don't care about packets from elsewhere
         if *from != self.settings.remote {
             info!("Packet received from unknown address: {:?}", from);
-            return Ok(false);
+            return Ok(());
+        }
+
+        if self.settings.local_sockid != packet.dest_sockid() {
+            // packet isn't applicable
+            info!(
+                "Packet send to socket id ({}) that does not match local ({})",
+                packet.dest_sockid().0,
+                self.settings.local_sockid.0
+            );
+            return Ok(());
         }
 
         trace!("Received packet: {:?}", packet);
@@ -397,14 +407,9 @@ where
             Packet::Control(ctrl) => {
                 // handle the control packet
 
-                if self.settings.local_sockid != ctrl.dest_sockid {
-                    // packet isn't applicable
-                    return Ok(false);
-                }
-
-                match ctrl.control_type {
+                match &ctrl.control_type {
                     ControlTypes::Ack { .. } => warn!("Receiver received ACK packet, unusual"),
-                    ControlTypes::Ack2(seq_num) => self.handle_ack2(seq_num)?,
+                    ControlTypes::Ack2(seq_num) => self.handle_ack2(*seq_num)?,
                     ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(_) => {
                         if let Some(pack) = (*self.settings.handshake_returner)(&packet) {
@@ -413,7 +418,10 @@ where
                     }
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
                     ControlTypes::Nak { .. } => warn!("Receiver received NAK packet, unusual"),
-                    ControlTypes::Shutdown => return Ok(true), // end of stream
+                    ControlTypes::Shutdown => {
+                        info!("Shutdown packet received, flushing receiver...");
+                        self.shutdown_flag = true;
+                    } // end of stream
                     ControlTypes::Srt(srt_packet) => {
                         self.handle_srt_control_packet(srt_packet)?;
                     }
@@ -422,7 +430,7 @@ where
             Packet::Data(data) => self.handle_data_packet(&data)?,
         };
 
-        Ok(false)
+        Ok(())
     }
 
     fn handle_ack2(&mut self, seq_num: i32) -> Result<(), Error> {
@@ -640,6 +648,7 @@ where
 
             // if there isn't a complete message at the beginning of the buffer and we are supposed to be shutting down, shut down
             if self.shutdown_flag && self.buffer.next_msg_ready().is_none() {
+                info!("Shutdown received and all packets released, finishing up");
                 return Ok(Async::Ready(None));
             }
 
@@ -665,15 +674,10 @@ where
             self.exp_count = 1;
             self.reset_timeout();
 
-            let shutdown_requested = self.handle_packet(&packet, &addr)?;
+            self.handle_packet(&packet, &addr)?;
 
             // TODO: should this be here for optimal performance?
             self.sock.poll_complete()?;
-
-            // here, don't exit totally yet. make sure that the buffer has released all of the packets
-            if shutdown_requested {
-                self.shutdown_flag = true;
-            }
         }
     }
 }

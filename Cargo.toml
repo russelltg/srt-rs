@@ -24,6 +24,7 @@ tokio-io = "0.1"
 tokio-udp = "0.1"
 tokio = "0.1"
 url = { version = "1", optional = true }
+openssl = "0.10"
 
 [dev-dependencies]
 binary_macros = "0.6"
@@ -38,4 +39,3 @@ path = "src/bin.rs"
 
 [features]
 stransmit-rs = ["env_logger", "url", "tokio-codec"]
-default = ["stransmit-rs"]

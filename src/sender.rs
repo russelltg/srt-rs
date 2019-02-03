@@ -314,7 +314,7 @@ where
                     }
                     ControlTypes::Shutdown => return Ok(true),
                     ControlTypes::Srt(srt_packet) => {
-                        self.handle_srt_control_packet(*srt_packet)?;
+                        self.handle_srt_control_packet(srt_packet)?;
                     }
                 }
             }
@@ -324,7 +324,7 @@ where
         Ok(false)
     }
 
-    fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
+    fn handle_srt_control_packet(&mut self, pack: &SrtControlPacket) -> Result<(), Error> {
         use self::SrtControlPacket::*;
 
         match pack {

@@ -1,24 +1,24 @@
 #![deny(clippy::all)]
 
 mod builder;
+mod channel;
 mod congest_ctrl;
 mod connected;
 mod connection_settings;
+mod crypto;
 mod loss_compression;
+mod modular_num;
+mod msg_number;
+mod multiplex;
 mod packet;
 mod pending_connection;
 mod receiver;
 mod sender;
+mod seq_number;
+mod socket_id;
 mod srt_congest_ctrl;
 mod srt_version;
 mod stats;
-#[macro_use]
-mod modular_num;
-mod channel;
-mod msg_number;
-mod multiplex;
-mod seq_number;
-mod socket_id;
 
 // public API
 pub use crate::builder::{ConnInitMethod, SrtSocket, SrtSocketBuilder};

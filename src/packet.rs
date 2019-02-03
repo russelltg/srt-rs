@@ -10,14 +10,15 @@ mod data;
 
 pub use self::codec::PacketCodec;
 pub use self::control::{
-    ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SocketType,
-    SrtControlPacket, SrtHandshake, SrtShakeFlags,
+    CipherType, ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType,
+    SocketType, SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags,
 };
 pub use self::data::{DataPacket, PacketLocation};
 
 use crate::SocketID;
 
 /// Represents A UDT/SRT packet
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
     Data(DataPacket),

@@ -9,7 +9,7 @@ use crate::{SeqNumber, SocketID};
 
 mod srt;
 
-pub use self::srt::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
+pub use self::srt::{CipherType, SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags};
 
 /// A UDP packet carrying control information
 ///  0                   1                   2                   3
@@ -42,6 +42,7 @@ pub struct ControlPacket {
 
 /// The different kind of control packets
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum ControlTypes {
     /// The control packet for initiating connections, type 0x0
     /// Does not use Additional Info
@@ -119,7 +120,8 @@ bitflags! {
 }
 
 /// HS-version dependenent data
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum HandshakeVSInfo {
     V4(SocketType),
     V5 {
@@ -139,7 +141,7 @@ pub enum HandshakeVSInfo {
 }
 
 /// The control info for handshake packets
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HandshakeControlInfo {
     /// The initial sequence number, usually randomly initialized
     pub init_seq_num: SeqNumber,
@@ -370,7 +372,7 @@ impl ControlTypes {
 
                 // TODO: this is probably really wrong, so fix it
                 let peer_addr = if ip_buf[4..] == [0; 12][..] {
-                    IpAddr::from(Ipv4Addr::new(ip_buf[0], ip_buf[1], ip_buf[2], ip_buf[3]))
+                    IpAddr::from(Ipv4Addr::new(ip_buf[3], ip_buf[2], ip_buf[1], ip_buf[0]))
                 } else {
                     IpAddr::from(ip_buf)
                 };
@@ -556,25 +558,25 @@ impl ControlTypes {
     }
 
     fn additional_info(&self) -> i32 {
-        match *self {
+        match self {
             // These types have additional info
             ControlTypes::Ack2(a)
             | ControlTypes::DropRequest { msg_to_drop: a, .. }
-            | ControlTypes::Ack { ack_seq_num: a, .. } => a,
+            | ControlTypes::Ack { ack_seq_num: a, .. } => *a,
             // These do not, just use zero
             _ => 0,
         }
     }
 
     fn reserved(&self) -> u16 {
-        match *self {
+        match self {
             ControlTypes::Srt(srt) => srt.type_id(),
             _ => 0,
         }
     }
 
     fn serialize<T: BufMut>(&self, into: &mut T) {
-        match *self {
+        match self {
             ControlTypes::Handshake(ref c) => {
                 into.put_u32_be(c.info.version());
                 into.put_u32_be(c.info.type_flags(c.shake_type));
@@ -587,26 +589,36 @@ impl ControlTypes {
 
                 match c.peer_addr {
                     IpAddr::V4(four) => {
-                        into.put(&four.octets()[..]);
+                        let mut v = Vec::from(&four.octets()[..]);
+                        v.reverse(); // reverse bytes
+                        into.put(&v);
 
                         // the data structure reuiqres enough space for an ipv6, so pad the end with 16 - 4 = 12 bytes
                         into.put(&[0; 12][..]);
                     }
-                    IpAddr::V6(six) => into.put(&six.octets()[..]),
+                    IpAddr::V6(six) => {
+                        let mut v = Vec::from(&six.octets()[..]);
+                        v.reverse();
+
+                        into.put(&v);
+                    }
                 }
 
                 // serialzie extensions
                 if let HandshakeVSInfo::V5 {
-                    ext_hs,
-                    ext_km,
-                    ext_config,
+                    ref ext_hs,
+                    ref ext_km,
+                    ref ext_config,
                     ..
                 } = c.info
                 {
-                    for ext in [ext_hs, ext_km, ext_config].iter().filter_map(|&s| s) {
+                    for ext in [ext_hs, ext_km, ext_config]
+                        .iter()
+                        .filter_map(|&s| s.as_ref())
+                    {
                         into.put_u16_be(ext.type_id());
                         // put the size in 32-bit integers
-                        into.put_u16_be(3); // TODO: please no pleeeasseee nooo
+                        into.put_u16_be(ext.size_words());
                         ext.serialize(into);
                     }
                 }
@@ -780,7 +792,7 @@ mod test {
                     shake_type: ShakeType::Conclusion,
                     socket_id: SocketID(1_030_305_462),
                     syn_cookie: -471_595_555,
-                    peer_addr: "1.0.0.127".parse().unwrap(),
+                    peer_addr: "127.0.0.1".parse().unwrap(),
                     info: HandshakeVSInfo::V5 {
                         crypto_size: 0,
                         ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
@@ -805,5 +817,72 @@ mod test {
         packet.serialize(&mut buf);
 
         assert_eq!(&buf[..], &packet_data[..]);
+    }
+
+    #[test]
+    fn raw_handshake_crypto() {
+        use binary_macros::*;
+
+        // this is an example HSv5 conclusion packet from the reference implementation that has crypto data embedded.
+        let packet_data = base16!("800000000000000000175E8A0000000000000005000000036FEFB8D8000005DC00002000FFFFFFFF35E790ED5D16CCEA0100007F00000000000000000000000000010003000103010000002F01F401F40003000E122029010000000002000200000004049D75B0AC924C6E4C9EC40FEB4FE973DB1D215D426C18A2871EBF77E2646D9BAB15DBD7689AEF60EC");
+        let packet = ControlPacket::parse(Cursor::new(&packet_data[..])).unwrap();
+
+        assert_eq!(
+            packet,
+            ControlPacket {
+                timestamp: 1_531_530,
+                dest_sockid: SocketID(0),
+                control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                    init_seq_num: SeqNumber(1_877_981_400),
+                    max_packet_size: 1_500,
+                    max_flow_size: 8_192,
+                    shake_type: ShakeType::Conclusion,
+                    socket_id: SocketID(904_368_365),
+                    syn_cookie: 1_561_775_338,
+                    peer_addr: "127.0.0.1".parse().unwrap(),
+                    info: HandshakeVSInfo::V5 {
+                        crypto_size: 0,
+                        ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
+                            version: SrtVersion::new(1, 3, 1),
+                            flags: SrtShakeFlags::TSBPDSND
+                                | SrtShakeFlags::TSBPDRCV
+                                | SrtShakeFlags::HAICRYPT
+                                | SrtShakeFlags::TLPKTDROP
+                                | SrtShakeFlags::REXMITFLG,
+                            peer_latency: Duration::from_millis(500),
+                            latency: Duration::from_millis(500)
+                        })),
+                        ext_km: Some(SrtControlPacket::KeyManagerRequest(SrtKeyMessage {
+                            pt: 2,
+                            sign: 8_233,
+                            keki: 0,
+                            cipher: CipherType::CTR,
+                            auth: 0,
+                            se: 2,
+                            salt: Vec::from(&base16!("9D75B0AC924C6E4C9EC40FEB4FE973DB")[..]),
+                            even_key: Some(Vec::from(
+                                &base16!("1D215D426C18A2871EBF77E2646D9BAB")[..]
+                            )),
+                            odd_key: None,
+                            wrap_data: *base16!("15DBD7689AEF60EC")
+                        })),
+                        ext_config: None
+                    }
+                })
+            }
+        );
+
+        let mut buf = vec![];
+        packet.serialize(&mut buf);
+
+        assert_eq!(&buf[..], &packet_data[..])
+    }
+
+    #[test]
+    fn raw_handshake_crypto_pt2() {
+        use binary_macros::*;
+
+        let packet_data = base16!("8000000000000000000000000C110D94000000050000000374B7526E000005DC00002000FFFFFFFF18C1CED1F3819B720100007F00000000000000000000000000020003000103010000003F03E803E80004000E12202901000000000200020000000404D3B3D84BE1188A4EBDA4DA16EA65D522D82DE544E1BE06B6ED8128BF15AA4E18EC50EAA95546B101");
+        let packet = ControlPacket::parse(Cursor::new(&packet_data[..])).unwrap();
     }
 }

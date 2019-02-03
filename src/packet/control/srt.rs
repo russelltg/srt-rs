@@ -8,7 +8,7 @@ use crate::SrtVersion;
 
 /// The SRT-specific control packets
 /// These are `Packet::Custom` types
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SrtControlPacket {
     /// SRT handshake reject
     /// ID = 0
@@ -24,11 +24,11 @@ pub enum SrtControlPacket {
 
     /// Key manager request
     /// ID = 3
-    KeyManagerRequest,
+    KeyManagerRequest(SrtKeyMessage),
 
     /// Key manager response
     /// ID = 4
-    KeyManagerResponse,
+    KeyManagerResponse(SrtKeyMessage),
 
     /// StreamID(?) // TODO: research
     /// ID = 5
@@ -37,6 +37,54 @@ pub enum SrtControlPacket {
     /// Smoother? // TODO: research
     /// ID = 6
     Smoother,
+}
+
+/// from https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_msg.h#L76-L96
+///
+/// HaiCrypt KMmsg (Keying Material):
+///
+///        0                   1                   2                   3
+///        0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+///       +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+/// +0x00 |0|Vers |   PT  |             Sign              |    resv   |KF |
+///       +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+/// +0x04 |                              KEKI                             |
+///       +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+/// +0x08 |    Cipher     |      Auth     |      SE       |     Resv1     |
+///       +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+/// +0x0C |             Resv2             |     Slen/4    |     Klen/4    |
+///       +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+/// +0x10 |                              Salt                             |
+///       |                              ...                              |
+///       +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+///       |                              Wrap                             |
+///       |                              ...                              |
+///       +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+///
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct SrtKeyMessage {
+    pub pt: u8,
+    pub sign: u16,
+    pub keki: u32,
+    pub cipher: CipherType,
+    pub auth: u8,
+    pub se: u8,
+    pub salt: Vec<u8>,
+    pub even_key: Option<Vec<u8>>,
+    pub odd_key: Option<Vec<u8>>,
+
+    /// The data for unwrapping the key. TODO: research more
+    /// RFC 3394
+    pub wrap_data: [u8; 8],
+}
+
+/// from https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_msg.h#L121-L124
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum CipherType {
+    None = 0,
+    ECB = 1,
+    CTR = 2,
+    CBC = 3,
 }
 
 /// The SRT handshake object
@@ -90,7 +138,8 @@ impl SrtControlPacket {
             0 => Ok(Reject),
             1 => Ok(HandshakeRequest(SrtHandshake::parse(buf)?)),
             2 => Ok(HandshakeResponse(SrtHandshake::parse(buf)?)),
-            3 | 4 => unimplemented!(),
+            3 => Ok(KeyManagerRequest(SrtKeyMessage::parse(buf)?)),
+            4 => Ok(KeyManagerResponse(SrtKeyMessage::parse(buf)?)),
             _ => Err(Error::new(
                 ErrorKind::InvalidData,
                 format!("Unrecognized custom packet type {}", packet_type),
@@ -106,8 +155,8 @@ impl SrtControlPacket {
             Reject => 0,
             HandshakeRequest(_) => 1,
             HandshakeResponse(_) => 2,
-            KeyManagerRequest => 3,
-            KeyManagerResponse => 4,
+            KeyManagerRequest(_) => 3,
+            KeyManagerResponse(_) => 4,
             StreamId => 5,
             Smoother => 6,
         }
@@ -116,11 +165,28 @@ impl SrtControlPacket {
         use self::SrtControlPacket::*;
 
         match *self {
-            HandshakeRequest(ref s) => {
+            HandshakeRequest(ref s) | HandshakeResponse(ref s) => {
                 s.serialize(into);
             }
-            HandshakeResponse(ref s) => {
-                s.serialize(into);
+            KeyManagerRequest(ref k) | KeyManagerResponse(ref k) => {
+                k.serialize(into);
+            }
+            _ => unimplemented!(),
+        }
+    }
+    // size in 32-bit words
+    pub fn size_words(&self) -> u16 {
+        use self::SrtControlPacket::*;
+
+        match self {
+            // 3 32-bit words, version, flags, latency
+            HandshakeRequest(_) | HandshakeResponse(_) => 3,
+            // 4 32-bit words + salt + key + wrap [2]
+            KeyManagerRequest(ref k) | KeyManagerResponse(ref k) => {
+                4 + k.salt.len() as u16 / 4
+                    + k.odd_key.as_ref().map(Vec::len).unwrap_or(0) as u16 / 4
+                    + k.even_key.as_ref().map(Vec::len).unwrap_or(0) as u16 / 4
+                    + 2
             }
             _ => unimplemented!(),
         }
@@ -143,7 +209,7 @@ impl SrtHandshake {
                 return Err(Error::new(
                     ErrorKind::InvalidData,
                     "Invalid combination of SRT flags",
-                ))
+                ));
             }
         };
         let peer_latency = buf.get_u16_be();
@@ -168,6 +234,207 @@ impl SrtHandshake {
         into.put_u16_be(
             self.latency.subsec_millis() as u16 + self.latency.as_secs() as u16 * 1_000,
         );
+    }
+}
+
+impl SrtKeyMessage {
+    pub fn parse<T: Buf>(buf: &mut T) -> Result<SrtKeyMessage> {
+        // first 32-bit word:
+        //
+        //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        // +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+        // |0|Vers |   PT  |             Sign              |    resv   |KF |
+
+        let vers_pt = buf.get_u8();
+
+        // make sure the first bit is zero
+        if (vers_pt & 0b1000_0000) != 0 {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "First bit of SRT key message must be zero",
+            ));
+        }
+
+        // upper 4 bits are version
+        let version = vers_pt >> 4;
+
+        if version != 1 {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("Invalid SRT key message version: {} must be 1.", version),
+            ));
+        }
+
+        // lower 4 bits are pt
+        let pt = vers_pt & 0b0000_1111;
+
+        // next 16 bis are sign
+        let sign = buf.get_u16_be();
+
+        // next 6 bits is reserved, then two bits of KF
+        let key_flags = buf.get_u8() & 0b0000_0011;
+
+        // second 32-bit word: keki
+        let keki = buf.get_u32_be();
+
+        // third 32-bit word:
+        //
+        //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        // +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+        // |    Cipher     |      Auth     |      SE       |     Resv1     |
+
+        let cipher = CipherType::from_u8(buf.get_u8())?;
+        let auth = buf.get_u8();
+        let se = buf.get_u8();
+        let _resv1 = buf.get_u8();
+
+        // fourth 32-bit word:
+        //
+        //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        // +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+        // |             Resv2             |     Slen/4    |     Klen/4    |
+
+        let _resv2 = buf.get_u16_be();
+        let salt_len = usize::from(buf.get_u8()) * 4;
+        let key_len = usize::from(buf.get_u8()) * 4;
+
+        // acceptable key lengths are 16, 24, and 32
+        match key_len {
+            // OK
+            16 | 24 | 32 => {}
+            // not
+            e => {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    format!("Invalid key length: {}. Expected 16, 24, or 32", e),
+                ));
+            }
+        }
+
+        // the reference implmentation converts the whole thing to network order (bit endian) (in 32-bit words)
+        // so we need to make sure to do the same. Source:
+        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/srtcore/crypto.cpp#L115
+
+        // after this, is the salt
+        let mut salt = vec![];
+        for _ in 0..salt_len / 4 {
+            salt.extend_from_slice(&buf.get_u32_be().to_be_bytes()[..]);
+        }
+
+        // then key[s]
+        let even_key = if key_flags & 0b1 == 0b1 {
+            let mut even_key = vec![];
+
+            for _ in 0..key_len / 4 {
+                even_key.extend_from_slice(&buf.get_u32_be().to_be_bytes()[..]);
+            }
+            Some(even_key)
+        } else {
+            None
+        };
+
+        let odd_key = if key_flags & 0b10 == 0b10 {
+            let mut odd_key = vec![];
+
+            for _ in 0..key_len / 4 {
+                odd_key.extend_from_slice(&buf.get_u32_be().to_be_bytes()[..]);
+            }
+            Some(odd_key)
+        } else {
+            None
+        };
+
+        // finally, is the wrap data. it's 8 bytes. make sure to swap bytes correctly
+        let mut wrap_data = [0; 8];
+
+        wrap_data[..4].clone_from_slice(&buf.get_u32_be().to_be_bytes()[..]);
+        wrap_data[4..].clone_from_slice(&buf.get_u32_be().to_be_bytes()[..]);
+
+        Ok(SrtKeyMessage {
+            pt,
+            sign,
+            keki,
+            cipher,
+            auth,
+            se,
+            salt,
+            even_key,
+            odd_key,
+            wrap_data,
+        })
+    }
+
+    fn serialize<T: BufMut>(&self, into: &mut T) {
+        // first 32-bit word:
+        //
+        //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        // +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+        // |0|Vers |   PT  |             Sign              |    resv   |KF |
+
+        // version is 1
+        into.put_u8(1 << 4 | self.pt);
+
+        into.put_u16_be(self.sign);
+
+        // rightmost bit of KF is even, other is odd
+        into.put_u8(match (&self.odd_key, &self.even_key) {
+            (Some(_), Some(_)) => 0b11,
+            (Some(_), None) => 0b10,
+            (None, Some(_)) => 0b01,
+            (None, None) => panic!("Invalid key message: either even or odd key MUST be set"),
+        });
+
+        // second 32-bit word: keki
+        into.put_u32_be(self.keki);
+
+        // third 32-bit word:
+        //
+        //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        // +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+        // |    Cipher     |      Auth     |      SE       |     Resv1     |
+        into.put_u8(self.cipher as u8);
+        into.put_u8(self.auth);
+        into.put_u8(self.se);
+        into.put_u8(0); // resv1
+
+        // fourth 32-bit word:
+        //
+        //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        // +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+        // |             Resv2             |     Slen/4    |     Klen/4    |
+        into.put_u16_be(0); // resv2
+        into.put_u8((self.salt.len() / 4) as u8);
+
+        // this unwrap is okay because we already panic above if both are None
+        let key_len = [&self.odd_key, &self.even_key]
+            .iter()
+            .filter_map(|&a| a.as_ref())
+            .next()
+            .unwrap()
+            .len();
+        into.put_u8((key_len / 4) as u8);
+
+        // put the salt then key[s]
+        into.put(&self.salt[..]);
+
+        // the reference implmentation converts the whole thing to network order (big endian) (in 32-bit words)
+        // so we need to make sure to do the same. Source:
+        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/srtcore/crypto.cpp#L115
+
+        if let Some(ref even) = self.even_key {
+            for num in even[..].chunks(4) {
+                into.put_u32_be(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
+            }
+        }
+        if let Some(ref odd) = self.odd_key {
+            for num in odd[..].chunks(4) {
+                into.put_u32_be(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
+            }
+        }
+        // put the wrap
+        for num in self.wrap_data[..].chunks(4) {
+            into.put_u32_be(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
+        }
     }
 }
 
@@ -199,5 +466,23 @@ mod tests {
         let deserialized = Packet::parse(&mut Cursor::new(buf)).unwrap();
 
         assert_eq!(handshake, deserialized);
+    }
+}
+
+impl CipherType {
+    fn from_u8(from: u8) -> Result<CipherType> {
+        match from {
+            0 => Ok(CipherType::None),
+            1 => Ok(CipherType::ECB),
+            2 => Ok(CipherType::CTR),
+            3 => Ok(CipherType::CBC),
+            e => Err(Error::new(
+                ErrorKind::InvalidData,
+                format!(
+                    "Unexpected cipher type in key message: {}. Must be 0, 1, 2, or 3",
+                    e
+                ),
+            )),
+        }
     }
 }

@@ -159,7 +159,7 @@ where
                             shake_type: ShakeType::Agreement,
                             socket_id: self.local_socket_id,
                             peer_addr: self.local_addr,
-                            ..info
+                            ..info.clone()
                         }),
                     });
 

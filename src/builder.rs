@@ -17,6 +17,7 @@ pub struct SrtSocketBuilder {
     local_addr: SocketAddr,
     conn_type: ConnInitMethod,
     latency: Duration,
+    crypto: Option<(u8, String)>,
 }
 
 pub enum ConnInitMethod {
@@ -35,6 +36,7 @@ impl SrtSocketBuilder {
             local_addr: "0.0.0.0:0".parse().unwrap(),
             conn_type,
             latency: Duration::from_millis(50),
+            crypto: None,
         }
     }
 
@@ -60,10 +62,28 @@ impl SrtSocketBuilder {
         self
     }
 
+    pub fn crypto(&mut self, size: u8, passphrase: String) -> &mut Self {
+        self.crypto = Some((size, passphrase));
+
+        self
+    }
+
     pub fn build(&mut self) -> Result<PendingConnection<SrtSocket>, Error> {
         trace!("Listening on {:?}", self.local_addr);
 
         let socket = UdpFramed::new(UdpSocket::bind(&self.local_addr)?, PacketCodec {});
+
+        // validate crypto
+        match self.crypto {
+            // OK
+            None | Some((16, _)) | Some((24, _)) | Some((32, _)) => {
+                // TODO: Size validation
+            }
+            // not
+            Some((size, _)) => {
+                bail!("Invalid crypto size: {}. Expected 16, 24, or 32", size);
+            }
+        }
 
         Ok(match self.conn_type {
             ConnInitMethod::Listen => {
@@ -75,6 +95,7 @@ impl SrtSocketBuilder {
                 addr,
                 rand::random(),
                 self.latency,
+                self.crypto.clone(),
             ),
             ConnInitMethod::Rendezvous(remote_public) => PendingConnection::rendezvous(
                 socket,

@@ -8,9 +8,10 @@ use futures_timer::Interval;
 use log::{info, warn};
 
 use crate::connected::Connected;
+use crate::crypto::CryptoManager;
 use crate::packet::{
-    ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
-    SocketType, SrtControlPacket, SrtHandshake, SrtShakeFlags,
+    CipherType, ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet,
+    ShakeType, SocketType, SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags,
 };
 use crate::{ConnectionSettings, SocketID, SrtVersion};
 
@@ -23,6 +24,8 @@ pub struct Connect<T> {
 
     send_interval: Interval,
     tsbpd_latency: Duration,
+
+    crypto: Option<CryptoManager>,
 }
 
 enum State {
@@ -37,6 +40,7 @@ impl<T> Connect<T> {
         local_socket_id: SocketID,
         local_addr: IpAddr,
         tsbpd_latency: Duration,
+        crypto: Option<(u8, String)>,
     ) -> Connect<T> {
         info!("Connecting to {:?}", remote);
 
@@ -62,6 +66,7 @@ impl<T> Connect<T> {
                 }),
             })),
             tsbpd_latency,
+            crypto: crypto.map(|(sz, pw)| CryptoManager::new(sz, pw)),
         }
     }
 }
@@ -139,7 +144,20 @@ where
                                             latency: self.tsbpd_latency,
                                         },
                                     )),
-                                    ext_km: None,
+                                    ext_km: self.crypto.as_mut().map(|manager| {
+                                        SrtControlPacket::KeyManagerRequest(SrtKeyMessage {
+                                            pt: 2,       // TODO: what is this
+                                            sign: 8_233, // TODO: again
+                                            keki: 0,
+                                            cipher: CipherType::CTR,
+                                            auth: 0,
+                                            se: 2,
+                                            salt: Vec::from(manager.salt()),
+                                            even_key: Some(Vec::from(manager.wrap_key().unwrap())),
+                                            odd_key: None,
+                                            wrap_data: [0; 8],
+                                        })
+                                    }),
                                     ext_config: None,
                                 },
                                 ..info

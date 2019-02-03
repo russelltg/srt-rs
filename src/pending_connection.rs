@@ -41,6 +41,7 @@ where
         remote_addr: SocketAddr,
         local_socket_id: SocketID,
         tsbpd_latency: Duration,
+        crypto: Option<(u8, String)>,
     ) -> PendingConnection<T> {
         PendingConnection::Connect(Connect::new(
             sock,
@@ -48,6 +49,7 @@ where
             local_socket_id,
             local_addr,
             tsbpd_latency,
+            crypto,
         ))
     }
 
