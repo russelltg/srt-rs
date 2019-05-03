@@ -153,7 +153,7 @@ where
                                             auth: 0,
                                             se: 2,
                                             salt: Vec::from(manager.salt()),
-                                            even_key: Some(Vec::from(manager.wrap_key().unwrap())),
+                                            even_key: Some(manager.wrap_key().unwrap()),
                                             odd_key: None,
                                             wrap_data: [0; 8],
                                         })

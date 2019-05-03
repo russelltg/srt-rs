@@ -154,7 +154,7 @@ impl<T: AsyncRead> Stream for StreamWriteRead<T> {
         let mut a = BytesMut::from(vec![0; 4096]);
         mem::swap(&mut self.buffer, &mut a);
 
-        return Ok(Async::Ready(Some(a.split_to(num_read).clone().freeze())));
+        Ok(Async::Ready(Some(a.split_to(num_read).clone().freeze())))
     }
 }
 

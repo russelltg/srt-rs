@@ -1,4 +1,5 @@
 #![deny(clippy::all)]
+#![forbid(unsafe)]
 
 mod builder;
 mod channel;
