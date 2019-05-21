@@ -1,5 +1,5 @@
 #![deny(clippy::all)]
-#![forbid(unsafe)]
+#![forbid(unsafe_code)]
 
 mod builder;
 mod channel;
