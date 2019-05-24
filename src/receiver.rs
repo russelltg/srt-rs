@@ -618,7 +618,7 @@ where
                 .next_msg_tsbpd(tsbpd, self.settings.socket_start_time)
             {
                 return Ok(Async::Ready(Some((
-                    self.settings.socket_start_time + Duration::from_micros(ts as u64),
+                    self.settings.socket_start_time + Duration::from_micros(ts),
                     p,
                 ))));
             }

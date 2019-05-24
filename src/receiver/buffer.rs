@@ -7,6 +7,9 @@ use std::time::{Duration, Instant};
 use crate::packet::PacketLocation;
 use crate::{DataPacket, SeqNumber};
 
+static TSBPD_WRAP_PERIOD: u32 = 30_000_000; // 30 seconds (in usec)
+static MAX_TIMESTAMP: u32 = std::u32::MAX;  // Full 32 bit (01h11m35s)
+
 pub struct RecvBuffer {
     // stores the incoming packets as they arrive
     // `buffer[0]` will hold sequence number `head`
@@ -14,6 +17,12 @@ pub struct RecvBuffer {
 
     // The next to be released sequence number
     head: SeqNumber,
+
+    // Whether to check packet time stamp wrap around
+    time_wrap_check: bool,
+
+    // base time added to packet timestamp for timestamp wrapping
+    time_base: u64,
 }
 
 impl RecvBuffer {
@@ -24,6 +33,8 @@ impl RecvBuffer {
         RecvBuffer {
             buffer: VecDeque::new(),
             head,
+            time_wrap_check: false,
+            time_base: 0,
         }
     }
 
@@ -49,6 +60,33 @@ impl RecvBuffer {
         self.buffer[idx] = Some(pack)
     }
 
+    fn get_time_base(&mut self, timestamp: u32) -> u64 {
+        let mut carryover: u64 = 0;
+
+        if self.time_wrap_check {
+            if timestamp < TSBPD_WRAP_PERIOD {
+                carryover = MAX_TIMESTAMP as u64 + 1;
+            } else if timestamp >= TSBPD_WRAP_PERIOD && timestamp <= (TSBPD_WRAP_PERIOD * 2) {
+                self.time_wrap_check = false;
+                self.time_base = MAX_TIMESTAMP as u64 + 1;
+                debug!("time wrap period ends");
+            }
+        } else if timestamp > (MAX_TIMESTAMP - TSBPD_WRAP_PERIOD) {
+            self.time_wrap_check = true;
+            debug!("time wrap period begins");
+        }
+
+        self.time_base + carryover
+    }
+
+    fn get_pkt_origin_time(&mut self, timestamp: i32) -> u64 {
+        self.get_time_base(timestamp as u32) + timestamp as u32 as u64
+    }
+
+    fn get_pkt_tsbpd_time(&mut self, timestamp: i32, latency: Duration) -> Duration {
+        Duration::from_micros(self.get_pkt_origin_time(timestamp)) + latency
+    }
+
     /// Drops the packets that are deemed to be too late
     /// IE: there is a packet after it that is ready to be released
     ///
@@ -61,25 +99,17 @@ impl RecvBuffer {
             None => return 0, // even though some of these may be too late, there are none that can be released so they can't them back.
         };
 
-        let first_pack_ts_us = self.buffer[first_non_none_idx].as_ref().unwrap().timestamp;
+        let first_pack_tsbpd_time = self.get_pkt_tsbpd_time(self.buffer[first_non_none_idx].as_ref().unwrap().timestamp,
+                                                            latency);
         // we are too late if that packet is ready
         // give a 2 ms buffer range, be ok with releasing them 2ms late
-        let too_late = start_time
-            + Duration::from_micros(first_pack_ts_us as u64)
-            + latency
-            + Duration::from_millis(2)
-            <= Instant::now();
-
-        if too_late {
+        if (start_time + first_pack_tsbpd_time + Duration::from_millis(2)) <= Instant::now() {
             debug!(
                 "Dropping packets {}..{}, {} ms too late",
                 self.head,
                 self.head + first_non_none_idx as u32,
                 {
-                    let dur_too_late = Instant::now()
-                        - start_time
-                        - Duration::from_micros(first_pack_ts_us as u64)
-                        - latency;
+                    let dur_too_late = Instant::now() - start_time - first_pack_tsbpd_time;
                     dur_too_late.as_secs() * 1_000
                         + u64::from(dur_too_late.subsec_nanos()) / 1_000_000
                 }
@@ -97,19 +127,19 @@ impl RecvBuffer {
     ///
     /// * `latency` - The latency to release with
     /// * `start_time` - The start time of the socket to add to timestamps
-    /// TODO: this does not account for timestamp wrapping
     ///
     /// Returns `None` if there is no message available, or `Some(i)` if there is a packet available, `i` being the number of packets it spans.
-    pub fn next_msg_ready_tsbpd(&self, latency: Duration, start_time: Instant) -> Option<usize> {
+    pub fn next_msg_ready_tsbpd(&mut self, latency: Duration, start_time: Instant) -> Option<usize> {
         let msg_size = self.next_msg_ready()?;
 
-        let origin_ts_usec = self.buffer.front().unwrap().as_ref().unwrap().timestamp;
+        let pkt_ts = self.buffer.front().unwrap().as_ref().unwrap().timestamp;
+        let pkt_tsbpd_time = self.get_pkt_tsbpd_time(pkt_ts, latency);
 
-        if (start_time + Duration::from_micros(origin_ts_usec as u64) + latency) <= Instant::now() {
+        if (start_time + pkt_tsbpd_time) <= Instant::now() {
             debug!(
                 "Packet was deemed reaady for release, Now={:?}, Ts={:?}, Latency={:?}",
                 Instant::now() - start_time,
-                Duration::from_micros(origin_ts_usec as u64),
+                Duration::from_micros(self.get_pkt_origin_time(pkt_ts)),
                 latency
             );
             Some(msg_size)
@@ -143,7 +173,7 @@ impl RecvBuffer {
     }
 
     pub fn next_message_release_time(
-        &self,
+        &mut self,
         start_time: Instant,
         latency: Duration,
     ) -> Option<Instant> {
@@ -151,10 +181,8 @@ impl RecvBuffer {
 
         Some(
             start_time
-                + Duration::from_micros(
-                    self.buffer.front().unwrap().as_ref().unwrap().timestamp as u64,
-                )
-                + latency,
+                + self.get_pkt_tsbpd_time(self.buffer.front().unwrap().as_ref().unwrap().timestamp,
+                                          latency)
         )
     }
 
@@ -164,18 +192,18 @@ impl RecvBuffer {
         &mut self,
         latency: Duration,
         start_time: Instant,
-    ) -> Option<(i32, Bytes)> {
+    ) -> Option<(u64, Bytes)> {
         self.next_msg_ready_tsbpd(latency, start_time)
             .map(|_| self.next_msg().unwrap())
     }
 
     /// Check if there is an available message, returning, and its origin timestamp it if found
-    pub fn next_msg(&mut self) -> Option<(i32, Bytes)> {
+    pub fn next_msg(&mut self) -> Option<(u64, Bytes)> {
         let count = self.next_msg_ready()?;
 
         self.head += count as u32;
 
-        let origin_ts = self.buffer[0].as_ref().unwrap().timestamp;
+        let origin_ts = self.get_pkt_origin_time(self.buffer[0].as_ref().unwrap().timestamp);
 
         // optimize for single packet messages
         if count == 1 {
@@ -218,6 +246,7 @@ impl fmt::Debug for RecvBuffer {
 mod test {
 
     use super::RecvBuffer;
+    use super::TSBPD_WRAP_PERIOD;
     use crate::{packet::PacketLocation, DataPacket, MsgNumber, SeqNumber, SocketID};
     use bytes::Bytes;
 
@@ -342,6 +371,27 @@ mod test {
         assert_eq!(buf.next_msg(), Some((0, From::from(&b"helloyasnas"[..]))));
         assert_eq!(buf.next_release(), SeqNumber(8));
         assert_eq!(buf.buffer.len(), 0);
+    }
+
+    #[test]
+    fn tsbpd_wrap() {
+        let mut buf = RecvBuffer::new(SeqNumber::new(5));
+        assert_eq!(buf.get_pkt_origin_time(0x7FFFFFFF), 0x7FFFFFFF);
+        assert_eq!(buf.get_pkt_origin_time(0x80000000_u32 as i32), 0x80000000);
+
+        assert_eq!(buf.get_pkt_origin_time((0xFFFFFFFF_u32 - TSBPD_WRAP_PERIOD) as i32),
+                   0xFFFFFFFF - TSBPD_WRAP_PERIOD as u64);
+        assert_eq!(buf.get_pkt_origin_time(0xFFFFFFFE_u32 as i32), 0xFFFFFFFE);
+        assert_eq!(buf.get_pkt_origin_time(0xFFFFFFFF_u32 as i32), 0xFFFFFFFF);
+        assert_eq!(buf.get_pkt_origin_time(0), 0x100000000);
+        assert_eq!(buf.get_pkt_origin_time(1), 0x100000001);
+        assert_eq!(buf.get_pkt_origin_time(TSBPD_WRAP_PERIOD as i32),
+                   0x100000000 + TSBPD_WRAP_PERIOD as u64);
+        assert_eq!(buf.get_pkt_origin_time((TSBPD_WRAP_PERIOD * 2) as i32),
+                   0x100000000 + (TSBPD_WRAP_PERIOD * 2) as u64);
+
+        assert_eq!(buf.get_pkt_origin_time((TSBPD_WRAP_PERIOD * 2 + 10) as i32),
+                   0x100000000 + (TSBPD_WRAP_PERIOD * 2 + 10) as u64);
     }
 
 }
