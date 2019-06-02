@@ -48,12 +48,12 @@ pub struct DataPacket {
     pub payload: Bytes,
 }
 
-/// Signifies the packet location in a message for a data packet
-/// The bitflag just represents the first byte in the second line
-/// FIRST | LAST means it's the only one
-/// FIRST means it's the beginning of a longer message
-/// 0 means it's the middle of a longer message
 bitflags! {
+    /// Signifies the packet location in a message for a data packet
+    /// The bitflag just represents the first byte in the second line
+    /// FIRST | LAST means it's the only one
+    /// FIRST means it's the beginning of a longer message
+    /// 0 means it's the middle of a longer message
     pub struct PacketLocation: u8 {
         const FIRST    = 0b1000_0000;
         const LAST     = 0b0100_0000;

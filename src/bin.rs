@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use bytes::{Bytes, BytesMut};
 use clap::{App, Arg};
 use failure::{bail, Error};
-use futures::{future, prelude::*, try_ready};
+use futures::{future, prelude::*, try_ready, Poll, StartSend};
 use tokio_codec::BytesCodec;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_udp::{UdpFramed, UdpSocket};
@@ -117,6 +117,37 @@ FILE - save or send a file
             # ^- send data over SRT on port 2000
 
 "#;
+
+struct MultiSink<I> {
+    sinks: Vec<Box<dyn Sink<SinkItem = I, SinkError = Error> + Send>>,
+}
+
+impl<I: Clone> Sink for MultiSink<I> {
+    type SinkItem = I;
+    type SinkError = Error;
+
+    fn start_send(&mut self, item: I) -> StartSend<I, Error> {
+        for s in &mut self.sinks {
+            // just discard the result, don't send that packet
+            let _ = s.start_send(item.clone())?;
+        }
+        Ok(AsyncSink::Ready)
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), Error> {
+        for s in &mut self.sinks {
+            try_ready!(s.poll_complete());
+        }
+        Ok(Async::Ready(()))
+    }
+
+    fn close(&mut self) -> Poll<(), Error> {
+        for s in &mut self.sinks {
+            try_ready!(s.poll_complete());
+        }
+        Ok(Async::Ready(()))
+    }
+}
 
 // INPUT and OUTPUT can be either a Url of a File
 enum DataType<'a> {
@@ -306,59 +337,19 @@ where
     Ok(addr)
 }
 
-fn main() {
-    if let Err(e) = run() {
-        eprintln!(
-            "Invalid settings detected: {}\n\nSee stransmit-rs --help for more info",
-            e
-        );
-        exit(1);
-    }
-}
-
-fn run() -> Result<(), Error> {
-    env_logger::init();
-
-    let matches = App::new("stransmit_rs")
-        .version("1.0")
-        .author("Russell Greene")
-        .about("SRT sender and receiver written in rust")
-        .arg(
-            Arg::with_name("FROM")
-                .help("Sets the input url")
-                .required(true),
-        )
-        .arg(
-            Arg::with_name("TO")
-                .help("Sets the output url")
-                .required(true),
-        )
-        .after_help(AFTER_HELPTEXT)
-        .get_matches();
-
-    // these are required parameters, so unwrapping them is safe
-    let from_str = matches.value_of("FROM").unwrap();
-    let input_url = match Url::parse(from_str) {
-        Err(_) => DataType::File(Path::new(from_str)),
-        Ok(url) => DataType::Url(url),
-    };
-    let to_str = matches.value_of("TO").unwrap();
-    let output_url = match Url::parse(to_str) {
-        Err(_) => DataType::File(Path::new(to_str)),
-        Ok(url) => DataType::Url(url),
-    };
-
-    // Resolve the receiver side
-    // this will be a future that resolves to a stream of bytes
-    // (all boxed to allow for different protocols)
-    let from: Box<
+fn resolve_input<'a>(
+    input_url: DataType<'a>,
+) -> Result<
+    Box<
         dyn Future<Item = Box<dyn Stream<Item = Bytes, Error = Error> + Send>, Error = Error>
             + Send,
-    > = {
-        match input_url {
-            DataType::Url(input_url) => {
-                let (input_local_port, input_addr) = local_port_addr(&input_url, "input")?;
-                match input_url.scheme() {
+    >,
+    Error,
+> {
+    Ok(match input_url {
+        DataType::Url(input_url) => {
+            let (input_local_port, input_addr) = local_port_addr(&input_url, "input")?;
+            match input_url.scheme() {
                     "udp" if input_local_port == 0 => 
                         bail!("Must not designate a ip to receive UDP. Example: udp://:1234, not udp://127.0.0.1:1234. If you with to bind to a specific adapter, use the adapter setting instead."),
                     "udp" => {
@@ -403,41 +394,44 @@ fn run() -> Result<(), Error> {
                     }
                     s => bail!("unrecognized scheme: {} designated in input url", s),
                 }
-            }
-            DataType::File(file) => {
-                if file == Path::new("-") {
-                    Box::new(future::ok::<
-                        Box<dyn Stream<Item = Bytes, Error = Error> + Send>,
-                        Error,
-                    >(Box::new(StreamWriteRead::new(
-                        tokio_fs::stdin(),
-                    ))))
-                } else {
-                    let file_fut = tokio_fs::File::open(file.to_owned());
+        }
+        DataType::File(file) => {
+            if file == Path::new("-") {
+                Box::new(future::ok::<
+                    Box<dyn Stream<Item = Bytes, Error = Error> + Send>,
+                    Error,
+                >(Box::new(StreamWriteRead::new(
+                    tokio_fs::stdin(),
+                ))))
+            } else {
+                let file_fut = tokio_fs::File::open(file.to_owned());
 
-                    Box::new(
-                        file_fut
-                            .map(|f| -> Box<dyn Stream<Item = Bytes, Error = Error> + Send> {
-                                Box::new(StreamWriteRead::new(f))
-                            })
-                            .map_err(Error::from),
-                    )
-                }
+                Box::new(
+                    file_fut
+                        .map(|f| -> Box<dyn Stream<Item = Bytes, Error = Error> + Send> {
+                            Box::new(StreamWriteRead::new(f))
+                        })
+                        .map_err(Error::from),
+                )
             }
         }
-    };
+    })
+}
 
-    // Resolve the sender side
-    // similar to the receiver side, except a sink instead of a stream
-    let to: Box<
+fn resolve_output<'a>(
+    output_url: DataType<'a>,
+) -> Result<
+    Box<
         dyn Future<Item = Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send>, Error = Error>
             + Send,
-    > = {
-        match output_url {
-            DataType::Url(output_url) => {
-                let (output_local_port, output_addr) = local_port_addr(&output_url, "output")?;
+    >,
+    Error,
+> {
+    Ok(match output_url {
+        DataType::Url(output_url) => {
+            let (output_local_port, output_addr) = local_port_addr(&output_url, "output")?;
 
-                match output_url.scheme() {
+            match output_url.scheme() {
                     "udp" if output_addr.is_none() => 
                         bail!("Must designate a ip to send to to send UDP. Example: udp://127.0.0.1:1234, not udp://:1234"),
                     "udp" => Box::new(future::ok::<
@@ -503,34 +497,88 @@ fn run() -> Result<(), Error> {
                     }
                     s => bail!("unrecognized scheme: {} designated in output url", s),
                 }
-            }
-            DataType::File(file) => {
-                if file == Path::new("-") {
-                    Box::new(future::ok::<
-                        Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send>,
-                        Error,
-                    >(Box::new(StreamWriteRead::new(
-                        tokio_fs::stdout(),
-                    ))))
-                } else {
-                    let file_fut = tokio_fs::File::create(file.to_owned());
-                    Box::new(
-                        file_fut
-                            .map(
-                                |f| -> Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send> {
-                                    Box::new(StreamWriteRead::new(f))
-                                },
-                            )
-                            .map_err(Error::from),
-                    )
-                }
+        }
+        DataType::File(file) => {
+            if file == Path::new("-") {
+                Box::new(future::ok::<
+                    Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send>,
+                    Error,
+                >(Box::new(StreamWriteRead::new(
+                    tokio_fs::stdout(),
+                ))))
+            } else {
+                let file_fut = tokio_fs::File::create(file.to_owned());
+                Box::new(
+                    file_fut
+                        .map(
+                            |f| -> Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send> {
+                                Box::new(StreamWriteRead::new(f))
+                            },
+                        )
+                        .map_err(Error::from),
+                )
             }
         }
+    })
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!(
+            "Invalid settings detected: {}\n\nSee stransmit-rs --help for more info",
+            e
+        );
+        exit(1);
+    }
+}
+
+fn run() -> Result<(), Error> {
+    env_logger::init();
+
+    let matches = App::new("stransmit_rs")
+        .version("1.0")
+        .author("Russell Greene")
+        .about("SRT sender and receiver written in rust")
+        .arg(
+            Arg::with_name("FROM")
+                .help("Sets the input url")
+                .required(true),
+        )
+        .arg(
+            Arg::with_name("TO")
+                .help("Sets the output url")
+                .required(true)
+                .multiple(true),
+        )
+        .after_help(AFTER_HELPTEXT)
+        .get_matches();
+
+    // these are required parameters, so unwrapping them is safe
+    let from_str = matches.value_of("FROM").unwrap();
+    let input_url = match Url::parse(from_str) {
+        Err(_) => DataType::File(Path::new(from_str)),
+        Ok(url) => DataType::Url(url),
     };
+    let to_strs = matches.values_of("TO").unwrap();
+    let output_urls_iter = to_strs.map(|to_str| match Url::parse(to_str) {
+        Err(_) => DataType::File(Path::new(to_str)),
+        Ok(url) => DataType::Url(url),
+    });
+
+    // Resolve the receiver side
+    // this will be a future that resolves to a stream of bytes
+    // (all boxed to allow for different protocols)
+    let from = resolve_input(input_url)?;
+
+    // Resolve the sender side
+    // similar to the receiver side, except a sink instead of a stream
+    let to_iter = output_urls_iter
+        .map(resolve_output)
+        .collect::<Result<Vec<_>, _>>()?;
 
     tokio::run(
-        from.join(to)
-            .and_then(|(from, to)| from.forward(to))
+        from.join(future::join_all(to_iter.into_iter()))
+            .and_then(|(from, to_vec)| from.forward(MultiSink { sinks: to_vec }))
             .map(|_| ())
             .map_err(|e| panic!("{:?}", e)),
     );
