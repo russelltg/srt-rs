@@ -20,7 +20,7 @@ struct LossListEntry {
     seq_num: SeqNumber,
 
     // last time it was feed into NAK
-    feedback_time: i32,
+    feedback_time: u64,
 
     // the number of times this entry has been fed back into NAK
     k: i32,
@@ -34,7 +34,7 @@ struct AckHistoryEntry {
     ack_seq_num: i32,
 
     /// timestamp that it was sent at
-    timestamp: i32,
+    timestamp: u64,
 }
 
 pub struct Receiver<T> {
@@ -73,7 +73,7 @@ pub struct Receiver<T> {
     /// of each data packet.
     ///
     /// First is sequence number, second is timestamp
-    packet_history_window: Vec<(SeqNumber, i32)>,
+    packet_history_window: Vec<(SeqNumber, u64)>,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Packet Pair Window: A circular array that records the time
@@ -99,7 +99,7 @@ pub struct Receiver<T> {
 
     /// The timestamp of the probe time
     /// Used to see duration between packets
-    probe_time: Option<i32>,
+    probe_time: Option<u64>,
 
     timeout_timer: Delay,
 
@@ -204,7 +204,7 @@ where
             if last_ack_number == ack_number &&
                     // and the time interval between this two ACK packets is
                     // less than 2 RTTs,
-                    (self.get_timestamp_now() - last_timestamp) < (self.rtt * 2)
+                    ((self.get_timestamp_now() - last_timestamp) as i32) < (self.rtt * 2)
             {
                 // stop (do not send this ACK).
                 return Ok(());
@@ -235,7 +235,7 @@ where
 
                 // In these 16 values, remove those either greater than AI*8 or
                 // less than AI/8.
-                let filtered: Vec<i32> = last_16
+                let filtered: Vec<u64> = last_16
                     .iter()
                     .filter(|&&n| n / 8 < ai && n > ai / 8)
                     .cloned()
@@ -245,8 +245,8 @@ where
                 // average of the left values AI', and the packet arrival speed is
                 // 1/AI' (number of packets per second). Otherwise, return 0.
                 if filtered.len() > 8 {
-                    (filtered.iter().fold(0i64, |sum, &val| sum + i64::from(val))
-                        / (filtered.len() as i64)) as i32
+                    (filtered.iter().fold(0u64, |sum, &val| sum + val)
+                        / (filtered.len() as u64)) as i32
                 } else {
                     0
                 }
@@ -329,7 +329,7 @@ where
             for pak in self
                 .loss_list
                 .iter_mut()
-                .filter(|lle| lle.feedback_time < now - lle.k * rtt)
+                .filter(|lle| (now - lle.feedback_time) as i32 > lle.k * rtt)
             {
                 pak.k += 1;
                 pak.feedback_time = now;
@@ -458,7 +458,7 @@ where
             // 3) Calculate new rtt according to the ACK2 arrival time and the ACK
             //    departure time, and update the RTT value as: RTT = (RTT * 7 +
             //    rtt) / 8
-            let immediate_rtt = self.get_timestamp_now() - send_timestamp;
+            let immediate_rtt = (self.get_timestamp_now() - send_timestamp) as i32;
             self.rtt = (self.rtt * 7 + immediate_rtt) / 8;
 
             // 4) Update RTTVar by: RTTVar = (RTTVar * 3 + abs(RTT - rtt)) / 4.
@@ -496,7 +496,7 @@ where
             // if there is an entry
             if let Some(pt) = self.probe_time {
                 // calculate and insert
-                self.packet_pair_window.push((data.seq_number, now - pt));
+                self.packet_pair_window.push((data.seq_number, (now - pt) as i32));
 
                 // reset
                 self.probe_time = None;
@@ -583,14 +583,14 @@ where
 
     fn make_control_packet(&self, control_type: ControlTypes) -> Packet {
         Packet::Control(ControlPacket {
-            timestamp: self.get_timestamp_now(),
+            timestamp: self.get_timestamp_now() as i32,
             dest_sockid: self.settings.remote_sockid,
             control_type,
         })
     }
 
     /// Timestamp in us
-    fn get_timestamp_now(&self) -> i32 {
+    fn get_timestamp_now(&self) -> u64 {
         self.settings.get_timestamp_now()
     }
 }

@@ -217,7 +217,7 @@ where
                         let now = self.get_timestamp_now();
                         self.sock.start_send((
                             Packet::Control(ControlPacket {
-                                timestamp: now,
+                                timestamp: now as i32,
                                 dest_sockid: self.settings.remote_sockid,
                                 control_type: ControlTypes::Ack2(*ack_seq_num),
                             }),
@@ -401,7 +401,7 @@ where
                 self.next_message_number - 1
             },
             seq_number: self.get_new_sequence_number(),
-            timestamp: self.get_timestamp(time),
+            timestamp: self.get_timestamp(time) as i32,
             payload,
         };
 
@@ -411,11 +411,11 @@ where
         Some(Packet::Data(pack))
     }
 
-    fn get_timestamp_now(&self) -> i32 {
+    fn get_timestamp_now(&self) -> u64 {
         self.settings.get_timestamp_now()
     }
 
-    fn get_timestamp(&self, at: Instant) -> i32 {
+    fn get_timestamp(&self, at: Instant) -> u64 {
         self.settings.get_timestamp(at)
     }
 }
@@ -570,7 +570,7 @@ where
             self.sock.start_send((
                 Packet::Control(ControlPacket {
                     dest_sockid: self.settings.remote_sockid,
-                    timestamp: ts,
+                    timestamp: ts as i32,
                     control_type: ControlTypes::Shutdown,
                 }),
                 self.settings.remote,

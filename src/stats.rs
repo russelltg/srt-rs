@@ -2,7 +2,7 @@
 #[derive(Debug, Copy, Clone)]
 pub struct Stats {
     /// Timestamp that the stats was captured, in us from socket start
-    pub timestamp: i32,
+    pub timestamp: u64,
 
     /// Round trip time, in us
     pub rtt: i32,

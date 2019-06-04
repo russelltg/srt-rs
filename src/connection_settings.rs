@@ -41,14 +41,14 @@ pub struct ConnectionSettings {
 
 impl ConnectionSettings {
     /// Timestamp in us
-    pub fn get_timestamp(&self, at: Instant) -> i32 {
+    pub fn get_timestamp(&self, at: Instant) -> u64 {
         let elapsed = at - self.socket_start_time;
 
-        (elapsed.as_secs() * 1_000_000 + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
+        elapsed.as_secs() * 1_000_000 + (u64::from(elapsed.subsec_nanos()) / 1_000)
     }
 
     /// Timestamp in us
-    pub fn get_timestamp_now(&self) -> i32 {
+    pub fn get_timestamp_now(&self) -> u64 {
         self.get_timestamp(Instant::now())
     }
 }
