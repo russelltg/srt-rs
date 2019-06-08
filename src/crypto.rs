@@ -1,7 +1,7 @@
 use openssl::hash::MessageDigest;
 use openssl::pkcs5::pbkdf2_hmac;
 use openssl::rand::rand_bytes;
-use openssl::symm::{self, Cipher};
+use openssl::aes::{AesKey, self};
 
 use failure::{bail, Error};
 
@@ -77,10 +77,10 @@ impl CryptoManager {
         self.generate_kek()?;
 
         self.key.resize(input.len() - 8, 0);
-        if aes_unwrap_key(&self.kek[..], None, &mut self.key, input) {
-            Ok(())
-        } else {
-            bail!("Failed to unwrap key")
+        
+        match aes::unwrap_key(&AesKey::new_decrypt(&self.kek[..]).unwrap(), None, &mut self.key, input) {
+            Err(_) => bail!("Failed to unwrap key"),
+            Ok(_) => Ok(())
         }
     }
 
@@ -90,95 +90,15 @@ impl CryptoManager {
         let mut ret = Vec::new();
         ret.resize(self.key.len() + 8, 0);
 
-        if aes_wrap_key(&self.kek[..], None, &mut ret[..], &self.key[..]) {
-            Ok(ret)
-        } else {
-            bail!("Failed to wrap key")
+        match aes::wrap_key(&AesKey::new_encrypt(&self.kek[..]).unwrap(), None, &mut ret[..], &self.key[..]) {
+            Err(_) => bail!("Failed to wrap key"),
+            Ok(_) => Ok(ret)
         }
     }
 
     pub fn key(&self) -> &[u8] {
         &self.key
     }
-}
-const DEFAULT_IV: [u8; 8] = [0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6];
-
-// AES_wrap_key -- adaptred froom hs_openssl_aes.c
-fn aes_wrap_key(key: &[u8], iv: Option<&[u8]>, out: &mut [u8], input: &[u8]) -> bool {
-    if (input.len() & 0x7 != 0) || (input.len() < 8) {
-        return false;
-    }
-    out[8..].copy_from_slice(input);
-
-    // use default if not specified
-    let iv = iv.unwrap_or(&DEFAULT_IV);
-
-    let mut b = [0; 16];
-    b[..8].copy_from_slice(iv);
-
-    let mut t: u32 = 1;
-
-    for _ in 0..6 {
-        for r in out[8..].chunks_mut(8) {
-            b[8..].copy_from_slice(&r[..]);
-
-            let mut src = [0; 24].to_vec();
-            src[..16].copy_from_slice(&b[..]);
-            let dest = symm::encrypt(Cipher::aes_128_ecb(), key, None, &src[..]).unwrap();
-            b.copy_from_slice(&dest[..16]); // TODO: why 16 here?
-
-            b[7] ^= t as u8;
-            if t > 0xff {
-                b[6] ^= (t >> 8) as u8;
-                b[5] ^= (t >> 16) as u8;
-                b[4] ^= (t >> 24) as u8;
-            }
-            r.copy_from_slice(&b[8..16]);
-
-            t += 1;
-        }
-    }
-    out[..8].copy_from_slice(&b[..8]);
-    true
-}
-
-fn aes_unwrap_key(key: &[u8], iv: Option<&[u8]>, out: &mut [u8], input: &[u8]) -> bool {
-    let inlen = input.len() as u32 - 8;
-
-    if inlen & 0x7 != 0 {
-        return false;
-    }
-    if inlen < 8 {
-        return false;
-    }
-    let mut b = [0; 16];
-    let iv = iv.unwrap_or(&DEFAULT_IV);
-    // A = B;
-    let mut t: u32 = 6 * (inlen >> 3);
-    b[..8].copy_from_slice(&input[..8]);
-    out.copy_from_slice(&input[8..]);
-    for _ in 0..6 {
-        // R = out + inlen - 8;
-        // for (i = 0; i < inlen; i += 8, t--, R -= 8)
-        for r in out.chunks_mut(8).rev() {
-            b[7] ^= (t & 0xff) as u8;
-            if t > 0xff {
-                b[6] ^= ((t >> 8) & 0xff) as u8;
-                b[5] ^= ((t >> 16) & 0xff) as u8;
-                b[4] ^= ((t >> 24) & 0xff) as u8;
-            }
-            b[8..].copy_from_slice(r);
-
-            let dest = symm::decrypt(Cipher::aes_128_ecb(), key, None, &b[..]).unwrap();
-            b.copy_from_slice(&dest[..16]);
-
-            r.copy_from_slice(&b[8..]);
-
-            t -= 1;
-        }
-    }
-    // TODO: cleanse?
-    b == iv
 }
 
 #[cfg(test)]
