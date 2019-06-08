@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use failure::{bail, Error};
 use futures::prelude::*;
 use futures::try_ready;
-use futures_timer::Interval;
 use log::{info, warn};
+use tokio_timer::Interval;
 
 use crate::connected::Connected;
 use crate::crypto::CryptoManager;
@@ -50,7 +50,7 @@ impl<T> Connect<T> {
             remote,
             sock: Some(sock),
             local_socket_id,
-            send_interval: Interval::new(Duration::from_millis(100)),
+            send_interval: Interval::new_interval(Duration::from_millis(100)),
             state: State::Starting(Packet::Control(ControlPacket {
                 dest_sockid: SocketID(0),
                 timestamp: 0, // TODO: this is not zero in the reference implementation

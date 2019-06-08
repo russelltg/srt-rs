@@ -4,7 +4,7 @@ version = "0.2.1"
 authors = ["Russell Greene <russellgreene8@gmail.com>"]
 description = "SRT implementation in Rust"
 license = "Apache-2.0"
-documentation = "https://docs.rs/srt"
+documentation = "https://docs.rs/srt-rs"
 homepage = "https://github.com/russelltg/srt-rs"
 repository = "https://github.com/russelltg/srt-rs"
 edition = "2018"
@@ -16,7 +16,6 @@ clap = { version = "2", default-features = false }
 env_logger = { version = "0.6", default-features = false, optional = true }
 failure = { version = "0.1", default-features = false, features=["std"] }
 futures = "0.1"
-futures-timer = "0.1"
 log = { version = "0.4", default-features = false }
 rand = "0.6"
 tokio-codec = { version = "0.1", optional = true }
@@ -24,6 +23,7 @@ tokio-io = "0.1"
 tokio-udp = "0.1"
 tokio-fs = "0.1"
 tokio = "0.1"
+tokio-timer = "0.2"
 url = { version = "1", optional = true }
 openssl = "0.10"
 

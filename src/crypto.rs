@@ -1,7 +1,7 @@
+use openssl::aes::{self, AesKey};
 use openssl::hash::MessageDigest;
 use openssl::pkcs5::pbkdf2_hmac;
 use openssl::rand::rand_bytes;
-use openssl::aes::{AesKey, self};
 
 use failure::{bail, Error};
 
@@ -77,10 +77,15 @@ impl CryptoManager {
         self.generate_kek()?;
 
         self.key.resize(input.len() - 8, 0);
-        
-        match aes::unwrap_key(&AesKey::new_decrypt(&self.kek[..]).unwrap(), None, &mut self.key, input) {
+
+        match aes::unwrap_key(
+            &AesKey::new_decrypt(&self.kek[..]).unwrap(),
+            None,
+            &mut self.key,
+            input,
+        ) {
             Err(_) => bail!("Failed to unwrap key"),
-            Ok(_) => Ok(())
+            Ok(_) => Ok(()),
         }
     }
 
@@ -90,9 +95,14 @@ impl CryptoManager {
         let mut ret = Vec::new();
         ret.resize(self.key.len() + 8, 0);
 
-        match aes::wrap_key(&AesKey::new_encrypt(&self.kek[..]).unwrap(), None, &mut ret[..], &self.key[..]) {
+        match aes::wrap_key(
+            &AesKey::new_encrypt(&self.kek[..]).unwrap(),
+            None,
+            &mut ret[..],
+            &self.key[..],
+        ) {
             Err(_) => bail!("Failed to wrap key"),
-            Ok(_) => Ok(ret)
+            Ok(_) => Ok(ret),
         }
     }
 

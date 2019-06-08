@@ -2,8 +2,8 @@ use bytes::Bytes;
 use failure::{bail, Error};
 use futures::prelude::*;
 use futures::try_ready;
-use futures_timer::{Delay, Interval};
 use log::{debug, info, trace, warn};
+use tokio_timer::{Delay, Interval};
 
 use crate::loss_compression::decompress_loss_list;
 use crate::packet::{
@@ -130,8 +130,8 @@ where
             retrans_packets: 0,
             recvd_packets: 0,
             lr_acked_ack: -1,
-            snd_timer: Delay::new(Duration::from_millis(1)),
-            stats_interval: Interval::new(Duration::from_secs(1)),
+            snd_timer: Delay::new(Instant::now() + Duration::from_millis(1)),
+            stats_interval: Interval::new_interval(Duration::from_secs(1)),
             closed: false,
         }
     }
@@ -139,7 +139,7 @@ where
     /// Set the interval to get statistics on
     /// Defaults to one second
     pub fn set_stats_interval(&mut self, interval: Duration) {
-        self.stats_interval = Interval::new(interval);
+        self.stats_interval = Interval::new_interval(interval);
     }
 
     pub fn settings(&self) -> &ConnectionSettings {
@@ -497,7 +497,8 @@ where
             }
 
             // reset the timer
-            self.snd_timer.reset(self.congest_ctrl.send_interval());
+            self.snd_timer
+                .reset(Instant::now() + self.congest_ctrl.send_interval());
 
             // 1) If the sender's loss list is not empty, send all the packets it in
             if let Some(pack) = self.loss_list.pop_front() {

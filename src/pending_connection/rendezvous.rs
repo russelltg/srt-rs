@@ -7,7 +7,7 @@ use futures::prelude::*;
 
 use log::warn;
 
-use futures_timer::Interval;
+use tokio_timer::Interval;
 
 use crate::connected::Connected;
 use crate::packet::{
@@ -45,7 +45,7 @@ where
             local_addr,
             remote_public,
             tsbpd_latency,
-            packet_send_interval: Interval::new(Duration::from_millis(100)), // 10/sec
+            packet_send_interval: Interval::new_interval(Duration::from_millis(100)), // 10/sec
             init_seq_num: rand::random(),
         }
     }
