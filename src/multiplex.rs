@@ -15,7 +15,7 @@ use log::{info, warn};
 
 use failure::{bail, Error};
 
-use tokio_udp::{UdpFramed, UdpSocket};
+use tokio::net::{UdpFramed, UdpSocket};
 
 use crate::channel::Channel;
 use crate::packet::{ControlPacket, ControlTypes};

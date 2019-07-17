@@ -7,7 +7,7 @@ use futures::prelude::*;
 
 use log::warn;
 
-use tokio_timer::Interval;
+use tokio::timer::Interval;
 
 use crate::connected::Connected;
 use crate::packet::{

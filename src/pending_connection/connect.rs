@@ -5,7 +5,7 @@ use failure::{bail, Error};
 use futures::prelude::*;
 use futures::try_ready;
 use log::{info, warn};
-use tokio_timer::Interval;
+use tokio::timer::Interval;
 
 use crate::connected::Connected;
 use crate::crypto::CryptoManager;

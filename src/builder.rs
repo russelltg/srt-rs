@@ -4,7 +4,7 @@ use std::time::Duration;
 use failure::{bail, Error};
 use log::trace;
 use rand;
-use tokio_udp::{UdpFramed, UdpSocket};
+use tokio::net::{UdpFramed, UdpSocket};
 
 use crate::packet::PacketCodec;
 use crate::pending_connection::PendingConnection;
