@@ -9,9 +9,9 @@ use bytes::{Bytes, BytesMut};
 use clap::{App, Arg};
 use failure::{bail, Error};
 use futures::{future, prelude::*, try_ready, Poll, StartSend};
-use tokio_codec::BytesCodec;
-use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_udp::{UdpFramed, UdpSocket};
+use tokio::codec::BytesCodec;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::{UdpFramed, UdpSocket};
 use url::{Host, Url};
 
 use srt::{ConnInitMethod, SrtSocketBuilder, StreamerServer};
@@ -401,10 +401,10 @@ fn resolve_input<'a>(
                     Box<dyn Stream<Item = Bytes, Error = Error> + Send>,
                     Error,
                 >(Box::new(StreamWriteRead::new(
-                    tokio_fs::stdin(),
+                    tokio::io::stdin(),
                 ))))
             } else {
-                let file_fut = tokio_fs::File::open(file.to_owned());
+                let file_fut = tokio::fs::File::open(file.to_owned());
 
                 Box::new(
                     file_fut
@@ -504,10 +504,10 @@ fn resolve_output<'a>(
                     Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send>,
                     Error,
                 >(Box::new(StreamWriteRead::new(
-                    tokio_fs::stdout(),
+                    tokio::io::stdout(),
                 ))))
             } else {
-                let file_fut = tokio_fs::File::create(file.to_owned());
+                let file_fut = tokio::fs::File::create(file.to_owned());
                 Box::new(
                     file_fut
                         .map(

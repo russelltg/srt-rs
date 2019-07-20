@@ -18,8 +18,7 @@ failure = { version = "0.1", default-features = false, features=["std"] }
 futures = "0.1"
 log = { version = "0.4", default-features = false }
 rand = "0.6"
-tokio = {version = "0.2", features = ["tokio-futures"], path="../tokio/tokio"}
-tokio-futures = {path="../tokio/tokio-futures"}
+tokio = "0.1"
 url = { version = "1", optional = true }
 openssl = {path = "../rust-openssl/openssl"}
 

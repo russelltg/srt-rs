@@ -1,12 +1,6 @@
 #![deny(clippy::all)]
 #![forbid(unsafe_code)]
 
-#![feature(async_await)]
-
-extern crate tokio_futures;
-
-pub use tokio_futures::stream::StreamExt;
-
 mod builder;
 mod channel;
 mod congest_ctrl;

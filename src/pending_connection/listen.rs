@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 use failure::{bail, Error};
 use futures::prelude::*;
 use log::{info, warn};
-use tokio_futures::stream::StreamExt;
 
 use crate::connected::Connected;
 use crate::packet::{
@@ -14,25 +13,6 @@ use crate::packet::{
     SrtControlPacket, SrtHandshake,
 };
 use crate::{ConnectionSettings, SocketID};
-
-
-pub async fn listen<T>(sock: T, local_socket_id: SocketID, tsbpd_latency: Duration) -> Result<Connected<T>, Error> 
-where 
-    T: Stream<Item = (Packet, SocketAddr), Error = Error>
-        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error> {
-    loop {
-        let (sock, addr) = match sock.next().await {
-            Ok(None) => bail!("unexpcted end of stream"),
-            Err(e) => {
-                warn!("Failed to parse packet: {:?}", e);
-                continue // try again
-            },
-            Ok(p) => p
-        };
-
-
-    }
-}
 
 pub struct Listen<T> {
     state: ConnectionState,
