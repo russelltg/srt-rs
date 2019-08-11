@@ -759,10 +759,10 @@ mod test {
 
     #[test]
     fn raw_srt_packet_test() {
-        use binary_macros::*;
         // this was taken from wireshark on a packet from stransmit that crashed
         // it is a SRT reject message
-        let packet_data = base16!("FFFF000000000000000189702BFFEFF2000103010000001E00000078");
+        let packet_data =
+            hex::decode("FFFF000000000000000189702BFFEFF2000103010000001E00000078").unwrap();
 
         let packet = ControlPacket::parse(Cursor::new(packet_data)).unwrap();
 
@@ -778,10 +778,8 @@ mod test {
 
     #[test]
     fn raw_handshake_srt() {
-        use binary_macros::*;
-
         // this is a example HSv5 conclusion packet from the reference implementation
-        let packet_data = base16!("8000000000000000000F9EC400000000000000050000000144BEA60D000005DC00002000FFFFFFFF3D6936B6E3E405DD0100007F00000000000000000000000000010003000103010000002F00780000");
+        let packet_data = hex::decode("8000000000000000000F9EC400000000000000050000000144BEA60D000005DC00002000FFFFFFFF3D6936B6E3E405DD0100007F00000000000000000000000000010003000103010000002F00780000").unwrap();
         let packet = ControlPacket::parse(Cursor::new(&packet_data[..])).unwrap();
         assert_eq!(
             packet,
@@ -824,10 +822,8 @@ mod test {
 
     #[test]
     fn raw_handshake_crypto() {
-        use binary_macros::*;
-
         // this is an example HSv5 conclusion packet from the reference implementation that has crypto data embedded.
-        let packet_data = base16!("800000000000000000175E8A0000000000000005000000036FEFB8D8000005DC00002000FFFFFFFF35E790ED5D16CCEA0100007F00000000000000000000000000010003000103010000002F01F401F40003000E122029010000000002000200000004049D75B0AC924C6E4C9EC40FEB4FE973DB1D215D426C18A2871EBF77E2646D9BAB15DBD7689AEF60EC");
+        let packet_data = hex::decode("800000000000000000175E8A0000000000000005000000036FEFB8D8000005DC00002000FFFFFFFF35E790ED5D16CCEA0100007F00000000000000000000000000010003000103010000002F01F401F40003000E122029010000000002000200000004049D75B0AC924C6E4C9EC40FEB4FE973DB1D215D426C18A2871EBF77E2646D9BAB15DBD7689AEF60EC").unwrap();
         let packet = ControlPacket::parse(Cursor::new(&packet_data[..])).unwrap();
 
         assert_eq!(
@@ -862,12 +858,12 @@ mod test {
                             cipher: CipherType::CTR,
                             auth: 0,
                             se: 2,
-                            salt: Vec::from(&base16!("9D75B0AC924C6E4C9EC40FEB4FE973DB")[..]),
-                            even_key: Some(Vec::from(
-                                &base16!("1D215D426C18A2871EBF77E2646D9BAB")[..]
-                            )),
+                            salt: hex::decode("9D75B0AC924C6E4C9EC40FEB4FE973DB").unwrap(),
+                            even_key: Some(
+                                hex::decode("1D215D426C18A2871EBF77E2646D9BAB").unwrap()
+                            ),
                             odd_key: None,
-                            wrap_data: *base16!("15DBD7689AEF60EC")
+                            wrap_data: *b"\x15\xDB\xD7\x68\x9A\xEF\x60\xEC",
                         })),
                         ext_config: None
                     }
@@ -883,9 +879,7 @@ mod test {
 
     #[test]
     fn raw_handshake_crypto_pt2() {
-        use binary_macros::*;
-
-        let packet_data = base16!("8000000000000000000000000C110D94000000050000000374B7526E000005DC00002000FFFFFFFF18C1CED1F3819B720100007F00000000000000000000000000020003000103010000003F03E803E80004000E12202901000000000200020000000404D3B3D84BE1188A4EBDA4DA16EA65D522D82DE544E1BE06B6ED8128BF15AA4E18EC50EAA95546B101");
+        let packet_data = hex::decode("8000000000000000000000000C110D94000000050000000374B7526E000005DC00002000FFFFFFFF18C1CED1F3819B720100007F00000000000000000000000000020003000103010000003F03E803E80004000E12202901000000000200020000000404D3B3D84BE1188A4EBDA4DA16EA65D522D82DE544E1BE06B6ED8128BF15AA4E18EC50EAA95546B101").unwrap();
         let packet = ControlPacket::parse(Cursor::new(&packet_data[..])).unwrap();
     }
 }

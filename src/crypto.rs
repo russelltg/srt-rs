@@ -118,17 +118,16 @@ mod test {
 
     #[test]
     fn kek_generate() {
-        use binary_macros::*;
-
         // this is an example taken from the reference impl
         let password = "password123";
-        let salt = base16!("7D59759C2B1A3F0B06C7028790C81C7D");
-        let kek = base16!("08F2758F41E4244D00057C9CEBEB95FC");
+        let kek = hex::decode("08F2758F41E4244D00057C9CEBEB95FC").unwrap();
+        let mut salt = [0; 16];
+        salt.copy_from_slice(&hex::decode("7D59759C2B1A3F0B06C7028790C81C7D").unwrap());
 
-        let mut manager = CryptoManager::new_with_salt(16, password.into(), salt, vec![]);
+        let mut manager = CryptoManager::new_with_salt(16, password.into(), &salt, vec![]);
         let buf = manager.generate_kek().unwrap();
 
-        assert_eq!(buf, *kek);
+        assert_eq!(buf, &kek[..]);
     }
 
     #[test]

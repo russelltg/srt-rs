@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use failure::{bail, Error};
 
-use futures::{sync::mpsc, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
-use futures_timer::Delay;
+use futures::channel::mpsc;
+use futures::{Future, Poll, Sink, Stream};
 
 use log::{debug, info};
 
@@ -51,10 +51,9 @@ impl<T> PartialEq for TTime<T> {
 impl<T> Eq for TTime<T> {}
 
 impl<T> Stream for LossyConn<T> {
-    type Item = T;
-    type Error = Error;
+    type Item = Result<T, Error>;
 
-    fn poll(&mut self) -> Poll<Option<T>, Error> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<T>> {
         match self.receiver.poll() {
             Ok(e) => Ok(e),
             Err(_) => unreachable!(),

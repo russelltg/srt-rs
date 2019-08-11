@@ -30,7 +30,8 @@ default-features = false
 features = ["net", "codec", "timer"]
 
 [dev-dependencies]
-binary_macros = "0.6"
+hex = "0.3.1"
+# binary_macros = "0.6"
 
 [lib]
 name = "srt"

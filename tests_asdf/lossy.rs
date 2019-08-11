@@ -3,8 +3,9 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use failure::Error;
-use futures::{stream::iter_ok, Future, Sink, Stream};
+use futures::{Sink, Stream};
 use futures_timer::Interval;
+
 use srt::{ConnectionSettings, Receiver, Sender, SeqNumber, SocketID, SrtCongestCtrl};
 
 mod lossy_conn;
