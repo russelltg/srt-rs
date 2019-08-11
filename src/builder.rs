@@ -2,15 +2,16 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use failure::{bail, Error};
-use log::trace;
 use rand;
 use tokio::net::{UdpFramed, UdpSocket};
 
-use crate::packet::PacketCodec;
-use crate::pending_connection::PendingConnection;
-use crate::MultiplexServer;
+use crate::pending_connection;
+use crate::Connected;
+use crate::PacketCodec;
 
-pub type SrtSocket = UdpFramed<PacketCodec>;
+// use crate::MultiplexServer;
+
+type SrtSocket = UdpFramed<PacketCodec>;
 
 /// Struct to build sockets
 pub struct SrtSocketBuilder {
@@ -68,9 +69,7 @@ impl SrtSocketBuilder {
         self
     }
 
-    pub fn build(&mut self) -> Result<PendingConnection<SrtSocket>, Error> {
-        trace!("Listening on {:?}", self.local_addr);
-
+    pub async fn establish_connection(self) -> Result<Connected<SrtSocket>, Error> {
         let socket = UdpFramed::new(UdpSocket::bind(&self.local_addr)?, PacketCodec {});
 
         // validate crypto
@@ -87,30 +86,36 @@ impl SrtSocketBuilder {
 
         Ok(match self.conn_type {
             ConnInitMethod::Listen => {
-                PendingConnection::listen(socket, rand::random(), self.latency)
+                pending_connection::listen(socket, rand::random(), self.latency).await?
             }
-            ConnInitMethod::Connect(addr) => PendingConnection::connect(
-                socket,
-                self.local_addr.ip(),
-                addr,
-                rand::random(),
-                self.latency,
-                self.crypto.clone(),
-            ),
-            ConnInitMethod::Rendezvous(remote_public) => PendingConnection::rendezvous(
-                socket,
-                rand::random(),
-                self.local_addr.ip(),
-                remote_public,
-                self.latency,
-            ),
+            ConnInitMethod::Connect(addr) => {
+                pending_connection::connect(
+                    socket,
+                    addr,
+                    rand::random(),
+                    self.local_addr.ip(),
+                    self.latency,
+                    self.crypto.clone(),
+                )
+                .await?
+            }
+            ConnInitMethod::Rendezvous(remote_public) => {
+                pending_connection::rendezvous(
+                    socket,
+                    rand::random(),
+                    self.local_addr.ip(),
+                    remote_public,
+                    self.latency,
+                )
+                .await?
+            }
         })
     }
 
-    pub fn build_multiplexed(&mut self) -> Result<MultiplexServer, Error> {
-        match self.conn_type {
-            ConnInitMethod::Listen => MultiplexServer::bind(&self.local_addr, self.latency),
-            _ => bail!("Cannot bind multiplexed with any connection mode other than listen"),
-        }
-    }
+    // pub fn build_multiplexed(&mut self) -> Result<MultiplexServer, Error> {
+    //     match self.conn_type {
+    //         ConnInitMethod::Listen => MultiplexServer::bind(&self.local_addr, self.latency),
+    //         _ => bail!("Cannot bind multiplexed with any connection mode other than listen"),
+    //     }
+    // }
 }

@@ -179,5 +179,4 @@ mod tests {
         assert_eq!(SeqNumber(812_827).cmp(&SeqNumber(812_827)), Ordering::Equal);
         assert_eq!(SeqNumber(812_827), SeqNumber(812_827));
     }
-
 }

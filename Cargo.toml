@@ -15,12 +15,19 @@ bytes = "0.4"
 clap = { version = "2", default-features = false }
 env_logger = { version = "0.6", default-features = false, optional = true }
 failure = { version = "0.1", default-features = false, features=["std"] }
-futures = "0.1"
+futures-preview = { version = "0.3.0-alpha.18", features = ["async-await", "nightly"] }
+pin-utils = "0.1.0-alpha.4"
 log = { version = "0.4", default-features = false }
-rand = "0.6"
-tokio = "0.1"
-url = { version = "1", optional = true }
-openssl = {path = "../rust-openssl/openssl"}
+rand = "0.7"
+url = { version = "2", optional = true }
+openssl = "0.10.24"
+
+[dependencies.tokio]
+path = "../tokio/tokio"
+# git="https://github.com/tokio-rs/tokio"
+# rev = "930cce86771d318c640a16483b8b27d48844a8d7"
+default-features = false
+features = ["net", "codec", "timer"]
 
 [dev-dependencies]
 binary_macros = "0.6"
@@ -29,9 +36,9 @@ binary_macros = "0.6"
 name = "srt"
 path = "src/lib.rs"
 
-[[bin]]
-name = "stransmit-rs"
-path = "src/bin.rs"
+# [[bin]]
+# name = "stransmit-rs"
+# path = "src/bin.rs"
 
 [features]
 stransmit-rs = ["env_logger", "url"]
