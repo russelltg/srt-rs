@@ -134,7 +134,7 @@ where
     loop {
         match select_discard(send_interval.next(), get_packet(&mut sock)).await {
             Selected::Left(_interval_reached) => sock.send((pack.clone(), remote)).await?,
-            Selected::Right(Ok((ref packet, from))) if from == remote => {
+            Selected::Right(Ok((packet, from))) => {
                 if let Packet::Control(ControlPacket {
                     dest_sockid,
                     control_type:
@@ -147,9 +147,12 @@ where
                     ..
                 }) = packet
                 {
+                    if from != remote {
+                        warn!("Got packet from {}, expected {}", from, remote)
+                    }
                     if dest_sockid != local_sockid {
                         warn!(
-                            "Unexpected destination socket id, expected {}, got {}",
+                            "Unexpected destination socket id, expected {:?}, got {:?}",
                             local_sockid, dest_sockid
                         );
                         continue;
@@ -177,7 +180,7 @@ where
                             max_packet_size: info.max_packet_size,
                             init_seq_num: info.init_seq_num,
                             socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
-                            local_sockid: local_sockid,
+                            local_sockid,
                             remote_sockid: info.socket_id,
                             tsbpd_latency: latency,
                             // TODO: is this right? Needs testing.
@@ -185,9 +188,6 @@ where
                         },
                     ));
                 }
-            }
-            Selected::Right(Ok((_, from))) => {
-                warn!("Got packet from {}, expected {}", from, remote)
             }
             Selected::Right(Err(e)) => bail!(e),
         }
