@@ -880,6 +880,6 @@ mod test {
     #[test]
     fn raw_handshake_crypto_pt2() {
         let packet_data = hex::decode("8000000000000000000000000C110D94000000050000000374B7526E000005DC00002000FFFFFFFF18C1CED1F3819B720100007F00000000000000000000000000020003000103010000003F03E803E80004000E12202901000000000200020000000404D3B3D84BE1188A4EBDA4DA16EA65D522D82DE544E1BE06B6ED8128BF15AA4E18EC50EAA95546B101").unwrap();
-        let packet = ControlPacket::parse(Cursor::new(&packet_data[..])).unwrap();
+        let _packet = ControlPacket::parse(Cursor::new(&packet_data[..])).unwrap();
     }
 }

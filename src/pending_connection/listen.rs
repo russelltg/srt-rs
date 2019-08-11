@@ -31,7 +31,7 @@ where
     loop {
         let (cookie, from) = get_handshake(&mut sock).await?;
 
-        let (latency, timestamp, shake, resp_handshake) =
+        let (latency, _timestamp, shake, resp_handshake) =
             get_conclusion(&mut sock, cookie, local_socket_id, tsbpd_latency, &from).await?;
         // select the smaller packet size and max window size
         // TODO: allow configuration of these parameters, for now just
@@ -65,7 +65,7 @@ async fn get_handshake<
     loop {
         let (packet, from) = get_packet(sock).await?;
 
-        let cookie = if let Packet::Control(ControlPacket {
+        let _cookie = if let Packet::Control(ControlPacket {
             control_type: ControlTypes::Handshake(shake),
             timestamp,
             ..

@@ -143,7 +143,7 @@ mod test {
             &b"\xe9\xa0\xa4\x30\x2f\x59\xd0\x63\xc8\x83\x32\xbe\x35\x88\x82\x08"[..]
         );
 
-        let prev_key = Vec::from(manager.key());
+        let _prev_key = Vec::from(manager.key());
 
         let wrapped = manager.wrap_key().unwrap();
         assert_eq!(

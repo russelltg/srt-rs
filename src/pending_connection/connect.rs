@@ -2,14 +2,14 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use failure::{bail, Error};
-use futures::future::Either;
+
 use futures::prelude::*;
-use futures::select;
+
 use log::{info, warn};
 use tokio::timer::Interval;
 
 use crate::connected::Connected;
-use crate::crypto::CryptoManager;
+
 use crate::packet::{
     CipherType, ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet,
     ShakeType, SocketType, SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags,
@@ -23,7 +23,7 @@ pub async fn connect<T>(
     local_sockid: SocketID,
     local_addr: IpAddr,
     tsbpd_latency: Duration,
-    crypto: Option<(u8, String)>,
+    _crypto: Option<(u8, String)>,
 ) -> Result<Connected<T>, Error>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
@@ -136,7 +136,6 @@ where
             Selected::Left(_interval_reached) => sock.send((pack.clone(), remote)).await?,
             Selected::Right(Ok((ref packet, from))) if from == remote => {
                 if let Packet::Control(ControlPacket {
-                    timestamp,
                     dest_sockid,
                     control_type:
                         ControlTypes::Handshake(
@@ -145,8 +144,16 @@ where
                                 ..
                             },
                         ),
+                    ..
                 }) = packet
                 {
+                    if dest_sockid != local_sockid {
+                        warn!(
+                            "Unexpected destination socket id, expected {}, got {}",
+                            local_sockid, dest_sockid
+                        );
+                        continue;
+                    }
                     let latency = if let HandshakeVSInfo::V5 {
                         ext_hs: Some(SrtControlPacket::HandshakeResponse(hs)),
                         ..

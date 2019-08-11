@@ -1,26 +1,24 @@
-use std::cmp;
+
 use std::net::{IpAddr, SocketAddr};
-use std::time::{Duration, Instant};
+use std::time::{Duration};
 
-use failure::{bail, Error};
-use futures::prelude::*;
+use failure::{Error};
 
-use log::warn;
 
-use tokio::timer::Interval;
+
+
+
 
 use crate::connected::Connected;
-use crate::packet::{
-    ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SocketType,
-};
-use crate::{ConnectionSettings, Packet, SeqNumber, SocketID};
+
+use crate::{SocketID};
 
 pub async fn rendezvous<T>(
-    mut sock: T,
-    local_socket_id: SocketID,
-    local_addr: IpAddr,
-    remote_public: SocketAddr,
-    tsbpd_latency: Duration,
+    _sock: T,
+    _local_socket_id: SocketID,
+    _local_addr: IpAddr,
+    _remote_public: SocketAddr,
+    _tsbpd_latency: Duration,
 ) -> Result<Connected<T>, Error> {
     unimplemented!()
 }
