@@ -1,5 +1,3 @@
-#![feature(async_closure)]
-
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::ops::Deref;
@@ -163,15 +161,17 @@ enum DataType<'a> {
 }
 
 fn read_to_stream(read: impl AsyncRead + Unpin) -> impl Stream<Item = Result<Bytes, Error>> {
-    stream::unfold(read, async move |mut source| {
-        let mut buf = [0; 4096];
-        let bytes_read = match source.read(&mut buf[..]).await {
-            Ok(0) => return None,
-            Ok(bytes_read) => bytes_read,
-            Err(e) => return Some((Err(Error::from(e)), source)),
-        };
+    stream::unfold(read, |mut source| {
+        async move {
+            let mut buf = [0; 4096];
+            let bytes_read = match source.read(&mut buf[..]).await {
+                Ok(0) => return None,
+                Ok(bytes_read) => bytes_read,
+                Err(e) => return Some((Err(Error::from(e)), source)),
+            };
 
-        Some((Ok(Bytes::from(&buf[0..bytes_read])), source))
+            Some((Ok(Bytes::from(&buf[0..bytes_read])), source))
+        }
     })
 }
 
