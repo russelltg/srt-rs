@@ -1,22 +1,23 @@
 use bytes::Bytes;
-use failure::{bail, Error};
+use failure::{format_err, Error};
 use futures::prelude::*;
-use futures::try_ready;
+use futures::ready;
 use log::{debug, info, trace, warn};
-use tokio::timer::{Delay, Interval};
+use tokio::timer::{delay, Delay, Interval};
 
 use crate::loss_compression::decompress_loss_list;
 use crate::packet::{
     ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation, SrtControlPacket,
 };
+use crate::sink_send_wrapper::SinkSendWrapper;
 use crate::{CCData, CongestCtrl, ConnectionSettings, MsgNumber, SeqNumber, Stats};
 
+use std::collections::VecDeque;
 use std::io;
-use std::{
-    collections::VecDeque,
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 
 pub struct Sender<T, CC> {
     sock: T,
@@ -90,6 +91,9 @@ pub struct Sender<T, CC> {
     /// The interval to report stats with
     stats_interval: Interval,
 
+    /// A buffer of packets to send to the underlying sink
+    send_wrapper: SinkSendWrapper<(Packet, SocketAddr)>,
+
     /// Tracks if the sender is closed
     /// This means that `close` has been called and the sender has been flushed,
     /// and it's just waiting for the socket to flush
@@ -98,9 +102,10 @@ pub struct Sender<T, CC> {
 
 impl<T, CC> Sender<T, CC>
 where
-    T: Stream<Item = (Packet, SocketAddr), Error = Error>
-        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
-    CC: CongestCtrl,
+    T: Stream<Item = Result<(Packet, SocketAddr), Error>>
+        + Sink<(Packet, SocketAddr), Error = Error>
+        + Unpin,
+    CC: CongestCtrl + Unpin,
 {
     pub fn new(sock: T, congest_ctrl: CC, settings: ConnectionSettings) -> Sender<T, CC> {
         info!(
@@ -117,7 +122,7 @@ where
             pending_packets: VecDeque::new(),
             at_msg_beginning: true,
             next_seq_number: init_seq_num,
-            next_message_number: MsgNumber::new(0),
+            next_message_number: MsgNumber::new_truncate(0),
             loss_list: VecDeque::new(),
             buffer: VecDeque::new(),
             first_seq: init_seq_num,
@@ -130,8 +135,9 @@ where
             retrans_packets: 0,
             recvd_packets: 0,
             lr_acked_ack: -1,
-            snd_timer: Delay::new(Instant::now() + Duration::from_millis(1)),
+            snd_timer: delay(Instant::now() + Duration::from_millis(1)),
             stats_interval: Interval::new_interval(Duration::from_secs(1)),
+            send_wrapper: SinkSendWrapper::new(),
             closed: false,
         }
     }
@@ -179,8 +185,17 @@ where
         }
     }
 
+    fn sock(&mut self) -> Pin<&mut T> {
+        Pin::new(&mut self.sock)
+    }
+
+    fn send_to_remote(&mut self, cx: &mut Context, p: Packet) -> Result<(), Error> {
+        self.send_wrapper
+            .send(&mut self.sock, (p, self.settings.remote), cx)
+    }
+
     // Returns if shutdown was requested
-    fn handle_packet(&mut self, pack: &Packet) -> Result<bool, Error> {
+    fn handle_packet(&mut self, cx: &mut Context, pack: &Packet) -> Result<bool, Error> {
         match pack {
             Packet::Control(ctrl) => {
                 match &ctrl.control_type {
@@ -215,14 +230,14 @@ where
                         // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
                         debug!("Sending ACK2 for {}", *ack_seq_num);
                         let now = self.get_timestamp_now();
-                        self.sock.start_send((
+                        self.send_to_remote(
+                            cx,
                             Packet::Control(ControlPacket {
                                 timestamp: now,
                                 dest_sockid: self.settings.remote_sockid,
                                 control_type: ControlTypes::Ack2(*ack_seq_num),
                             }),
-                            self.settings.remote,
-                        ))?;
+                        )?;
 
                         // 3) Update RTT and RTTVar.
                         self.rtt = rtt.unwrap_or(0);
@@ -273,7 +288,7 @@ where
                     ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(_shake) => {
                         if let Some(pack) = (*self.settings.handshake_returner)(&pack) {
-                            self.sock.start_send((pack, self.settings.remote))?;
+                            self.send_to_remote(cx, pack)?;
                         }
                     }
                     // TODO: reset EXP-ish
@@ -420,24 +435,31 @@ where
     }
 }
 
-impl<T, CC> Sink for Sender<T, CC>
+impl<T, CC> Sink<(Instant, Bytes)> for Sender<T, CC>
 where
-    T: Stream<Item = (Packet, SocketAddr), Error = Error>
-        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
-    CC: CongestCtrl,
+    T: Stream<Item = Result<(Packet, SocketAddr), Error>>
+        + Sink<(Packet, SocketAddr), Error = Error>
+        + Unpin,
+    CC: CongestCtrl + Unpin,
 {
-    type SinkItem = (Instant, Bytes);
-    type SinkError = Error;
+    type Error = Error;
 
-    fn start_send(&mut self, item: (Instant, Bytes)) -> StartSend<(Instant, Bytes), Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Error> {
         assert!(!self.closed, "`start_send` called after sender close");
 
         self.pending_packets.push_back(item);
 
-        Ok(AsyncSink::Ready)
+        Ok(())
     }
 
-    fn poll_complete(&mut self) -> Poll<(), Error> {
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
+        let pin = self.get_mut();
+
+        pin.send_wrapper.poll_send(&mut pin.sock, cx)?;
         // info!(
         //     "Polling sender, ll.len()={}, pp.len()={}, lr={}, next={}",
         //     self.loss_list.len(),
@@ -448,63 +470,65 @@ where
 
         // we need to poll_complete this until completion
         // this poll_complete could have come from a wakeup of that, so call it
-        if let Async::Ready(_) = self.sock.poll_complete()? {
+        if let Poll::Ready(_) = pin.sock().poll_flush(cx)? {
             // if everything is flushed, return Ok
-            if self.loss_list.is_empty()
-                && self.pending_packets.is_empty()
-                && self.lr_acked_packet == self.next_seq_number
-                && self.buffer.is_empty()
+            if pin.loss_list.is_empty()
+                && pin.pending_packets.is_empty()
+                && pin.lr_acked_packet == pin.next_seq_number
+                && pin.buffer.is_empty()
             {
                 // TODO: this is wrong for KeepAlive
                 debug!("Returning ready");
-                return Ok(Async::Ready(()));
+                return Poll::Ready(Ok(()));
             }
         }
 
         loop {
             // do we have any packets to handle?
-            while let Async::Ready(a) = self.sock.poll()? {
+            while let Poll::Ready(a) = pin.sock().poll_next(cx) {
                 match a {
-                    Some((pack, addr)) => {
+                    Some(Ok((pack, addr))) => {
                         debug!("Got packet: {:?}", pack);
                         // ignore the packet if it isn't from the right address
-                        if addr == self.settings.remote && self.handle_packet(&pack)? {
+                        if addr == pin.settings.remote && pin.handle_packet(cx, &pack)? {
                             // if shutdown was requested, die
-                            self.closed = true;
-                            return Err(From::from(io::Error::new(
+                            pin.closed = true;
+                            return Poll::Ready(Err(From::from(io::Error::new(
                                 io::ErrorKind::ConnectionAborted,
                                 "Connection received shutdown",
-                            )));
+                            ))));
                         }
                     }
-                    // stream has ended, this is weird
+                    Some(Err(e)) => warn!("Failed to decode packet: {:?}", e),
+                    // stream has ended, means shutdown
                     None => {
-                        bail!("Unexpected EOF of underlying stream");
+                        return Poll::Ready(Err(format_err!(
+                            "Unexpected EOF of underlying stream"
+                        )));
                     }
                 }
             }
             // if we're here, we are guaranteed to have a NotReady, so returning NotReady is OK
 
             // wait for the SND timer to timeout
-            try_ready!(self.snd_timer.poll());
+            ready!(Pin::new(&mut pin.snd_timer).poll(cx));
 
             // 6) Wait (SND - t) time, where SND is the inter-packet interval
             //     updated by congestion control and t is the total time used by step
             //     1 to step 5. Go to 1).
             {
-                let cc_info = self.make_cc_info();
-                self.congest_ctrl.on_packet_sent(&cc_info);
+                let cc_info = pin.make_cc_info();
+                pin.congest_ctrl.on_packet_sent(&cc_info);
             }
 
             // reset the timer
-            self.snd_timer
-                .reset(Instant::now() + self.congest_ctrl.send_interval());
+            let new_snd_time = Instant::now() + pin.congest_ctrl.send_interval();
+            pin.snd_timer.reset(new_snd_time);
 
             // 1) If the sender's loss list is not empty, send all the packets it in
-            if let Some(pack) = self.loss_list.pop_front() {
+            if let Some(pack) = pin.loss_list.pop_front() {
                 debug!("Sending packet in loss list, seq={:?}", pack.seq_number);
-                self.sock
-                    .start_send((Packet::Data(pack), self.settings.remote))?;
+                pin.send_to_remote(cx, Packet::Data(pack))?;
             } else {
                 // 2) In messaging mode, if the packets has been the loss list for a
                 //    time more than the application specified TTL (time-to-live), send
@@ -519,84 +543,84 @@ where
                 //    flow/congestion window size, wait until an ACK comes. Go to
                 //    1).
                 // TODO: account for looping here
-                if self.lr_acked_packet < self.next_seq_number - self.congest_ctrl.window_size() {
+                if pin.lr_acked_packet < pin.next_seq_number - pin.congest_ctrl.window_size() {
                     // flow window exceeded, wait for ACK
                     trace!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}", 
-                        self.lr_acked_packet,
-                        self.next_seq_number,
-                        self.congest_ctrl.window_size(),
-                        self.next_seq_number - self.congest_ctrl.window_size());
+                        pin.lr_acked_packet,
+                        pin.next_seq_number,
+                        pin.congest_ctrl.window_size(),
+                        pin.next_seq_number - pin.congest_ctrl.window_size());
 
                     continue;
                 }
 
                 // b. Pack a new data packet and send it out.
                 {
-                    let payload = match self.get_next_payload() {
+                    let payload = match pin.get_next_payload() {
                         Some(p) => p,
                         // All packets have been flushed
                         None => continue,
                     };
                     debug!(
                         "Sending packet: {}; pending.len={}; SND={:?}",
-                        self.next_seq_number - 1,
-                        self.pending_packets.len(),
-                        self.congest_ctrl.send_interval(),
+                        pin.next_seq_number - 1,
+                        pin.pending_packets.len(),
+                        pin.congest_ctrl.send_interval(),
                     );
-                    self.sock.start_send((payload, self.settings.remote))?;
+                    pin.send_to_remote(cx, payload)?;
                 }
 
                 // 5) If the sequence number of the current packet is 16n, where n is an
                 //     integer, go to 2) (which is send another packet).
-                if (self.next_seq_number - 1) % 16 == 0 {
-                    let payload = match self.get_next_payload() {
+                if (pin.next_seq_number - 1) % 16 == 0 {
+                    let payload = match pin.get_next_payload() {
                         Some(p) => p,
                         // All packets have been flushed
                         None => continue,
                     };
-                    self.sock.start_send((payload, self.settings.remote))?;
+                    pin.send_to_remote(cx, payload)?;
                 }
             }
-            self.sock.poll_complete()?;
+            let _ = pin.sock().poll_flush(cx)?;
         }
     }
 
-    fn close(&mut self) -> Poll<(), Error> {
-        try_ready!(self.poll_complete());
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
+        ready!(self.as_mut().poll_flush(cx))?;
 
-        if !self.closed {
+        let pin = self.get_mut();
+
+        if !pin.closed {
             // once it's all flushed, send a single Shutdown packet
             info!("Sending shutdown");
-            let ts = self.get_timestamp_now();
-            self.sock.start_send((
-                Packet::Control(ControlPacket {
-                    dest_sockid: self.settings.remote_sockid,
-                    timestamp: ts,
-                    control_type: ControlTypes::Shutdown,
-                }),
-                self.settings.remote,
-            ))?;
+            let ts = pin.get_timestamp_now();
+            let shutdown_pack = Packet::Control(ControlPacket {
+                dest_sockid: pin.settings.remote_sockid,
+                timestamp: ts,
+                control_type: ControlTypes::Shutdown,
+            });
+            pin.send_to_remote(cx, shutdown_pack)?;
         }
 
-        self.closed = true;
+        pin.closed = true;
 
-        self.sock.close()
+        pin.sock().poll_close(cx)
     }
 }
 
 // Stats streaming
 impl<T, CC> Stream for Sender<T, CC>
 where
-    T: Stream<Item = (Packet, SocketAddr), Error = Error>
-        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
-    CC: CongestCtrl,
+    T: Stream<Item = Result<(Packet, SocketAddr), Error>>
+        + Sink<(Packet, SocketAddr), Error = Error>
+        + Unpin,
+    CC: CongestCtrl + Unpin,
 {
-    type Item = Stats;
-    type Error = Error;
+    type Item = Result<Stats, Error>;
 
-    fn poll(&mut self) -> Poll<Option<Stats>, Error> {
-        try_ready!(self.stats_interval.poll());
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        ready!(self.stats_interval.poll_next(cx));
 
-        Ok(Async::Ready(Some(self.stats())))
+        Poll::Ready(Some(Ok(self.stats())))
     }
 }

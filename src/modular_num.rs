@@ -1,4 +1,14 @@
 /// Defines a macro to define a modular number that uses a predefined number of bits
+use std::fmt::{self, Display, Formatter};
+
+#[derive(Debug)]
+pub struct OutOfRangeError(pub &'static str);
+
+impl Display for OutOfRangeError {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        write!(f, "Number out of range for `{}`", self.0)
+    }
+}
 
 #[macro_export]
 macro_rules! modular_num {
@@ -21,8 +31,15 @@ macro_rules! modular_num_impls {
             pub const MAX: $type = 1 << $num;
             pub const MAX_DIFF: $type = 1 << ($num - 1);
 
-            pub fn new(from: $type) -> $x {
+            pub fn new_truncate(from: $type) -> $x {
                 $x(from % $x::MAX)
+            }
+            pub fn new(from: $type) -> Result<$x, $crate::modular_num::OutOfRangeError> {
+                if from > $x::MAX {
+                    Err($crate::modular_num::OutOfRangeError(stringify!($x)))
+                } else {
+                    Ok($x(from))
+                }
             }
 
             pub fn as_raw(&self) -> $type {
@@ -30,9 +47,17 @@ macro_rules! modular_num_impls {
             }
         }
 
+        impl ::std::convert::TryFrom<$type> for $x {
+            type Error = $crate::modular_num::OutOfRangeError;
+
+            fn try_from(from: $type) -> Result<Self, Self::Error> {
+                $x::new(from)
+            }
+        }
+
         impl ::rand::distributions::Distribution<$x> for ::rand::distributions::Standard {
             fn sample<T: ::rand::Rng + ?Sized>(&self, rng: &mut T) -> $x {
-                $x::new(rng.gen::<$type>())
+                $x::new_truncate(rng.gen::<$type>())
             }
         }
 
@@ -139,11 +164,11 @@ mod tests {
     #[test]
     fn new() {
         // shouldn't be truncated, first bit is zero
-        assert_eq!(SeqNumber::new(1_687_761_238).as_raw(), 1_687_761_238);
         assert_eq!(
-            SeqNumber::new(1_687_761_239 | 1 << 31).as_raw(),
-            1_687_761_239
+            SeqNumber::new(1_687_761_238).unwrap().as_raw(),
+            1_687_761_238
         );
+        assert!(SeqNumber::new(1_687_761_239 | 1 << 31).is_err());
     }
 
     #[test]

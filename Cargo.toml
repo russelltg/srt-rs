@@ -1,5 +1,5 @@
 [package]
-name = "srt-transport"
+name = "secure-reliable-transport"
 version = "0.2.1"
 authors = ["Russell Greene <russellgreene8@gmail.com>"]
 description = "SRT implementation in Rust"
@@ -8,14 +8,15 @@ documentation = "https://docs.rs/srt-rs"
 homepage = "https://github.com/russelltg/srt-rs"
 repository = "https://github.com/russelltg/srt-rs"
 edition = "2018"
+publish = false
 
 [dependencies]
 bitflags = "1"
 bytes = "0.4"
 clap = { version = "2", default-features = false }
-env_logger = { version = "0.6", default-features = false, optional = true }
+env_logger = { version = "0.7", default-features = false, optional = true }
 failure = { version = "0.1", default-features = false, features=["std"] }
-futures-preview = { version = "0.3.0-alpha.18", features = ["async-await", "nightly"] }
+futures-preview = { version = "0.3.0-alpha.19", features = ["async-await"]  }
 pin-utils = "0.1.0-alpha.4"
 log = { version = "0.4", default-features = false }
 rand = "0.7"
@@ -23,23 +24,23 @@ url = { version = "2", optional = true }
 openssl = "0.10.24"
 
 [dependencies.tokio]
-path = "../tokio/tokio"
-# git="https://github.com/tokio-rs/tokio"
-# rev = "930cce86771d318c640a16483b8b27d48844a8d7"
+version = "0.2.0-alpha.6"
 default-features = false
-features = ["net", "codec", "timer"]
+features = ["net", "codec", "timer", "rt-full", "fs"]
 
 [dev-dependencies]
-hex = "0.3.1"
-# binary_macros = "0.6"
+hex = "0.4"
+rand_distr = "0.2"
+env_logger = { version = "0.7", default-features = false }
 
 [lib]
 name = "srt"
 path = "src/lib.rs"
 
-# [[bin]]
-# name = "stransmit-rs"
-# path = "src/bin.rs"
+[[bin]]
+name = "stransmit-rs"
+required-features = ["stransmit-rs"]
+path = "src/bin/stransmit-rs.rs"
 
 [features]
 stransmit-rs = ["env_logger", "url"]

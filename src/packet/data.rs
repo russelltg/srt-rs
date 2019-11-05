@@ -5,6 +5,8 @@ use failure::Error;
 use crate::{MsgNumber, SeqNumber, SocketID};
 
 /// A UDT packet carrying data
+///
+/// ```ignore,
 ///  0                   1                   2                   3
 ///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -15,7 +17,8 @@ use crate::{MsgNumber, SeqNumber, SocketID};
 ///  |                          Time Stamp                           |
 ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ///  |                    Destination Socket ID                      |
-///    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+/// ```
 /// (from <https://tools.ietf.org/html/draft-gg-udt-03>)
 #[derive(Debug, Clone, PartialEq)]
 pub struct DataPacket {
@@ -63,7 +66,7 @@ bitflags! {
 impl DataPacket {
     pub fn parse<T: Buf>(mut buf: T) -> Result<DataPacket, Error> {
         // get the sequence number, which is the last 31 bits of the header
-        let seq_number = SeqNumber::new(buf.get_u32_be());
+        let seq_number = SeqNumber::new_truncate(buf.get_u32_be());
 
         // the first two bits of the second line (second_line >> 24) is the location
         let message_loc = PacketLocation::from_bits_truncate(buf.bytes()[0]);
@@ -71,7 +74,7 @@ impl DataPacket {
         // in order delivery is the third bit
         let in_order_delivery = (buf.bytes()[0] & 0b0010_0000) != 0;
 
-        let message_number = MsgNumber::new(buf.get_u32_be());
+        let message_number = MsgNumber::new_truncate(buf.get_u32_be());
         let timestamp = buf.get_i32_be();
         let dest_sockid = SocketID(buf.get_u32_be());
 

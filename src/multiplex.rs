@@ -2,107 +2,159 @@ mod streamer_server;
 
 pub use self::streamer_server::StreamerServer;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
-use futures::future::Future;
+use futures::future::BoxFuture;
+use futures::ready;
 use futures::sink::Sink;
 use futures::stream::Stream;
-use futures::try_ready;
-use futures::{Async, Poll};
 
 use log::{info, warn};
 
-use failure::{bail, Error};
+use failure::{format_err, Error};
 
 use tokio::net::{UdpFramed, UdpSocket};
 
 use crate::channel::Channel;
 use crate::packet::{ControlPacket, ControlTypes};
-use crate::pending_connection::Listen;
-use crate::{Connected, Packet, PacketCodec, SocketID};
+use crate::{pending_connection, ConnectionSettings, Packet, PacketCodec, SocketID};
 
 type PackChan = Channel<(Packet, SocketAddr)>;
 
 pub struct MultiplexServer {
     sock: UdpFramed<PacketCodec>,
-    // (channel to talk to listener on, listener, socketid that is connecting here)
-    initiators: Vec<(PackChan, Listen<PackChan>, SocketID)>,
-    connections: Vec<(PackChan, SocketID)>,
+
+    // the socketid here is the remote socketid of the connecting party
+    initiators: HashMap<SocketID, InitMd>,
+
+    // the socketid here is the local socketid
+    connections: HashMap<SocketID, PackChan>,
+
     latency: Duration,
 }
 
+struct InitMd {
+    chan: PackChan,
+    future: BoxFuture<'static, Result<(ConnectionSettings, PackChan), Error>>,
+}
+
 impl MultiplexServer {
-    pub fn bind(addr: &SocketAddr, latency: Duration) -> Result<Self, Error> {
+    pub async fn bind(addr: &SocketAddr, latency: Duration) -> Result<Self, Error> {
         Ok(MultiplexServer {
-            sock: UdpFramed::new(UdpSocket::bind(addr)?, PacketCodec),
-            initiators: vec![],
-            connections: vec![],
+            sock: UdpFramed::new(UdpSocket::bind(addr).await?, PacketCodec),
+            initiators: HashMap::new(),
+            connections: HashMap::new(),
             latency,
         })
+    }
+
+    fn sock(&mut self) -> Pin<&mut UdpFramed<PacketCodec>> {
+        Pin::new(&mut self.sock)
+    }
+
+    fn check_for_complete_connections(
+        &mut self,
+        cx: &mut Context,
+    ) -> Result<Option<(ConnectionSettings, PackChan)>, Error> {
+        // see if any are ready
+        let keys = self.initiators.keys().copied().collect::<Vec<_>>(); // TODO: is there a better way to do this?
+        for sockid in keys {
+            let md = self.initiators.get_mut(&sockid).unwrap();
+            // poll before checking the channel, listener is allowed to start_send and return in the same poll
+            let listener_poll = md.future.as_mut().poll(cx);
+
+            // poll the channel, send any packets it has
+            let mut pin_chan = Pin::new(&mut md.chan);
+            while let Poll::Ready(Some(Ok((pack, addr)))) = pin_chan.as_mut().poll_next(cx) {
+                // TODO: this probably isn't technically correct, as we need to make sure there's space first. Ideally, this would .await, but that ain't a thing.
+                Pin::new(&mut self.sock).start_send((pack, addr))?;
+                // ok to discard; will be called every poll
+                let _ = Pin::new(&mut self.sock).poll_flush(cx)?;
+            }
+
+            if let Poll::Ready(conn) = listener_poll {
+                let conn = conn?;
+                // let _ = chan.poll_next(cx)?;
+
+                let md = self.initiators.remove(&sockid).unwrap();
+                self.connections.insert(conn.0.local_sockid, md.chan);
+
+                info!("Multiplexed connection to {} ready", conn.0.remote);
+                return Ok(Some(conn));
+            }
+        }
+
+        Ok(None)
     }
 }
 
 impl Stream for MultiplexServer {
-    type Item = Connected<PackChan>;
-    type Error = Error;
+    type Item = Result<(ConnectionSettings, PackChan), Error>;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let pin = self.get_mut();
         'whole_poll: loop {
-            self.sock.poll_complete()?;
-            for chan in self
+            // ok to discard, as we don't really care if it's finished or not
+            let _ = pin.sock().poll_flush(cx)?;
+
+            // poll send sides of channels
+            for chan in pin
                 .initiators
-                .iter_mut()
-                .map(|(c, _, _)| c)
-                .chain(self.connections.iter_mut().map(|(c, _)| c))
+                .values_mut()
+                .map(|md| &mut md.chan)
+                .chain(pin.connections.values_mut())
             {
-                chan.poll_complete()?;
-            }
-
-            // see if any are ready
-            for i in 0..self.initiators.len() {
-                let (ref mut channel, ref mut listener, _) = self.initiators[i];
-
-                // poll before checking the channel, listener is allowed to start_send and return in the same poll
-                let listener_poll = listener.poll()?;
-
-                // poll the channel, send any packets it has
-                if let Async::Ready(Some((pack, addr))) = channel.poll()? {
-                    self.sock.start_send((pack, addr))?;
-                    self.sock.poll_complete()?;
-                }
-
-                if let Async::Ready(conn) = listener_poll {
-                    let (mut chan, _, _) = self.initiators.remove(i);
-
-                    let _ = chan.poll()?;
-
-                    self.connections.push((chan, conn.settings().local_sockid));
-
-                    info!("Multiplexed connection to {} ready", conn.settings().remote);
-                    return Ok(Async::Ready(Some(conn)));
+                if let Poll::Ready(Err(e)) = Pin::new(chan).poll_flush(cx) {
+                    return Poll::Ready(Some(Err(format_err!(
+                        "Failed to poll underlying channel: {}",
+                        e
+                    ))));
                 }
             }
 
+            if let Some(conn) = pin.check_for_complete_connections(cx)? {
+                return Poll::Ready(Some(Ok(conn)));
+            }
+
+            let mut to_remove = vec![];
             // send out outgoing packets
-            for (ref mut chan, _) in &mut self.connections {
-                while let Async::Ready(Some((pack, addr))) = chan.poll()? {
-                    self.sock.start_send((pack, addr))?;
-                    self.sock.poll_complete()?;
+            for (sockid, chan) in &mut pin.connections {
+                let mut pin_chan = Pin::new(chan);
+                while let Poll::Ready(opt) = pin_chan.as_mut().poll_next(cx)? {
+                    if let Some(pa) = opt {
+                        ready!(Pin::new(&mut pin.sock).poll_ready(cx))?;
+                        Pin::new(&mut pin.sock).start_send(pa)?;
+                        let _ = Pin::new(&mut pin.sock).poll_flush(cx)?;
+                    } else {
+                        // stream returned None, remove it from connections
+                        to_remove.push(*sockid);
+                        break;
+                    }
                 }
+            }
+            for r in to_remove {
+                pin.connections.remove(&r);
             }
 
             // deal with incomming packets
             'outer: loop {
-                let (pack, addr) = match try_ready!(self.sock.poll()) {
-                    Some(pa) => pa,
-                    None => bail!("Underlying socket ended"),
+                let (pack, addr) = match ready!(pin.sock().poll_next(cx)) {
+                    Some(Ok(pa)) => pa,
+                    _ => {
+                        return Poll::Ready(Some(Err(format_err!(
+                            "Underlying socket ended or errored"
+                        ))))
+                    }
                 };
 
                 let dest_sockid = pack.dest_sockid();
 
                 // is this an initator?
-                for (ref mut chan, ref listener, ref remote_sockid) in &mut self.initiators {
+                for (remote_sockid, md) in &mut pin.initiators {
                     let same_src = if let Packet::Control(ControlPacket {
                         control_type: ControlTypes::Handshake(info),
                         ..
@@ -113,21 +165,25 @@ impl Stream for MultiplexServer {
                         false
                     };
 
-                    if dest_sockid == listener.sockid() || same_src {
+                    if same_src {
                         // forward it on
-                        chan.start_send((pack, addr))?;
-                        chan.poll_complete()?;
+                        let mut pin_chan = Pin::new(&mut md.chan);
+                        ready!(pin_chan.as_mut().poll_ready(cx)?); // TODO: this will drop the packet
+                        pin_chan.as_mut().start_send((pack, addr))?;
+                        let _ = pin_chan.as_mut().poll_flush(cx)?;
 
                         continue 'outer;
                     }
                 }
 
                 // is this an already made connection?
-                for (ref mut chan, sockid) in &mut self.connections {
+                for (sockid, ref mut chan) in &mut pin.connections {
                     if dest_sockid == *sockid {
                         // forward it
-                        chan.start_send((pack, addr))?;
-                        chan.poll_complete()?;
+                        let mut pin_chan = Pin::new(chan);
+                        ready!(pin_chan.as_mut().poll_ready(cx)?); // TODO: this will drop the packet
+                        pin_chan.as_mut().start_send((pack, addr))?;
+                        let _ = pin_chan.as_mut().poll_flush(cx)?;
 
                         continue 'outer;
                     }
@@ -146,14 +202,30 @@ impl Stream for MultiplexServer {
 
                     let socket_id = info.socket_id; // cache so we can move out of pack
 
-                    let (mut chan_a, chan_b) = PackChan::channel(1000); // TODO: what should this size be?
+                    let (mut chan_a, mut chan_b) = PackChan::channel(1000); // TODO: what should this size be?
 
-                    let listener = Listen::new(chan_b, rand::random(), self.latency);
+                    let listener = {
+                        let latency = pin.latency;
+                        Box::pin(async move {
+                            Ok((
+                                pending_connection::listen(&mut chan_b, rand::random(), latency)
+                                    .await?,
+                                chan_b,
+                            ))
+                        })
+                    };
 
-                    chan_a.start_send((pack, addr))?;
-                    chan_a.poll_complete()?;
+                    let mut pin_chan_a = Pin::new(&mut chan_a);
+                    pin_chan_a.as_mut().start_send((pack, addr))?;
+                    let _ = pin_chan_a.as_mut().poll_flush(cx)?;
 
-                    self.initiators.push((chan_a, listener, socket_id));
+                    pin.initiators.insert(
+                        socket_id,
+                        InitMd {
+                            chan: chan_a,
+                            future: listener,
+                        },
+                    );
 
                     continue 'whole_poll; // listen needs to be polled now, so just go back to the beginning of the function
                 } else {

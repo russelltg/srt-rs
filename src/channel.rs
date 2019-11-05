@@ -1,7 +1,9 @@
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use futures::channel::mpsc::{self, Receiver, Sender};
 use futures::sink::Sink;
 use futures::stream::Stream;
-use futures::sync::mpsc::{self, Receiver, Sender};
-use futures::{Poll, StartSend};
 
 use failure::Error;
 
@@ -11,28 +13,30 @@ pub struct Channel<T> {
 }
 
 impl<T: Send + Sync> Stream for Channel<T> {
-    type Item = T;
-    type Error = Error;
+    type Item = Result<T, Error>;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        Ok(self.recvr.poll().unwrap())
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        Poll::Ready(futures::ready!(Pin::new(&mut self.recvr).poll_next(cx)).map(Ok))
     }
 }
 
-impl<T: Send + Sync + 'static> Sink for Channel<T> {
-    type SinkItem = T;
-    type SinkError = Error;
+impl<T: Send + Sync + 'static> Sink<T> for Channel<T> {
+    type Error = Error;
 
-    fn start_send(&mut self, item: T) -> StartSend<Self::SinkItem, Self::SinkError> {
-        Ok(self.sender.start_send(item)?)
+    fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Error> {
+        Ok(Pin::new(&mut self.sender).start_send(item)?)
     }
 
-    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        Ok(self.sender.poll_complete()?)
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
+        Poll::Ready(futures::ready!(Pin::new(&mut self.sender).poll_ready(cx)).map_err(Error::from))
     }
 
-    fn close(&mut self) -> Poll<(), Self::SinkError> {
-        Ok(self.sender.close()?)
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
+        Poll::Ready(futures::ready!(Pin::new(&mut self.sender).poll_flush(cx)).map_err(Error::from))
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
+        Poll::Ready(futures::ready!(Pin::new(&mut self.sender).poll_close(cx)).map_err(Error::from))
     }
 }
 

@@ -111,13 +111,13 @@ impl<I: Iterator<Item = u32>> Iterator for DecompressLossList<I> {
                 // loop is over
                 self.loop_next_end = None;
 
-                Some(SeqNumber::new(next))
+                Some(SeqNumber::new_truncate(next))
             }
             Some((next, end)) => {
                 // continue the loop
                 self.loop_next_end = Some((next + 1, end));
 
-                Some(SeqNumber::new(next))
+                Some(SeqNumber::new_truncate(next))
             }
             None => {
                 // no current loop
@@ -135,10 +135,10 @@ impl<I: Iterator<Item = u32>> Iterator for DecompressLossList<I> {
                         },
                     ));
 
-                    Some(SeqNumber::new(next_num))
+                    Some(SeqNumber::new_truncate(next_num))
                 } else {
                     // no looping is possible
-                    Some(SeqNumber::new(next))
+                    Some(SeqNumber::new_truncate(next))
                 }
             }
         }
@@ -163,13 +163,17 @@ mod test {
         macro_rules! test_comp_decomp {
             ($x:expr, $y:expr) => {{
                 assert_eq!(
-                    compress_loss_list($x.iter().cloned().map(SeqNumber::new)).collect::<Vec<_>>(),
+                    compress_loss_list($x.iter().cloned().map(SeqNumber::new_truncate))
+                        .collect::<Vec<_>>(),
                     $y.iter().cloned().collect::<Vec<_>>(),
                     "Compressed wasn't same as given"
                 );
                 assert_eq!(
                     decompress_loss_list($y.iter().cloned()).collect::<Vec<_>>(),
-                    $x.iter().cloned().map(SeqNumber::new).collect::<Vec<_>>(),
+                    $x.iter()
+                        .cloned()
+                        .map(SeqNumber::new_truncate)
+                        .collect::<Vec<_>>(),
                     "Decompressed not same as given"
                 );
             }};

@@ -5,7 +5,7 @@ use bytes::{Buf, BufMut};
 use failure::{bail, format_err, Error};
 use log::warn;
 
-use crate::{SeqNumber, SocketID};
+use crate::{MsgNumber, SeqNumber, SocketID};
 
 mod srt;
 
@@ -13,7 +13,7 @@ pub use self::srt::{CipherType, SrtControlPacket, SrtHandshake, SrtKeyMessage, S
 
 /// A UDP packet carrying control information
 ///
-/// ```
+/// ```ignore,
 ///  0                   1                   2                   3
 ///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -96,7 +96,7 @@ pub enum ControlTypes {
     DropRequest {
         /// The message to drop
         /// Stored in the "addditional info" field of the packet.
-        msg_to_drop: i32,
+        msg_to_drop: MsgNumber,
 
         /// The first sequence number in the message to drop
         first: SeqNumber,
@@ -343,6 +343,10 @@ impl ControlTypes {
         match packet_type {
             0x0 => {
                 // Handshake
+                // make sure the packet is large enough -- 8 32-bit words, 1 128 (ip)
+                if buf.remaining() < 8 * 4 + 16 {
+                    bail!("Packet not large enough to be a handshake");
+                }
 
                 let udt_version = buf.get_i32_be();
                 if udt_version != 4 && udt_version != 5 {
@@ -357,9 +361,11 @@ impl ControlTypes {
                 let crypto_size = buf.get_u16_be() << 3;
                 // byte 3-4: the SRT_MAGIC_CODE, to make sure a client is HSv5 or the ExtFlags if this is an induction response
                 //           else, this is the extension flags
+                //
+                // it's ok to only have the lower 16 bits here for the socket type because socket types always have a zero upper 16 bits
                 let type_ext_socket_type = buf.get_u16_be();
 
-                let init_seq_num = SeqNumber::new(buf.get_u32_be());
+                let init_seq_num = SeqNumber::new_truncate(buf.get_u32_be()); // TODO: should this truncate?
                 let max_packet_size = buf.get_u32_be();
                 let max_flow_size = buf.get_u32_be();
                 let shake_type = match ShakeType::from_i32(buf.get_i32_be()) {
@@ -393,7 +399,7 @@ impl ControlTypes {
                             0 | 16 | 24 | 32 => crypto_size as u8,
                             c => {
                                 warn!(
-                                    "Unrecognized crypto key length: {}, disabling encryption",
+                                    "Unrecognized crypto key length: {}, disabling encryption. Should be 16, 24, or 32 bytes",
                                     c
                                 );
                                 0
@@ -402,6 +408,7 @@ impl ControlTypes {
 
                         if shake_type == ShakeType::Induction {
                             if type_ext_socket_type != SRT_MAGIC_CODE {
+                                // TODO: should this bail? What does the reference implementation do?
                                 warn!("HSv5 induction response did not have SRT_MAGIC_CODE, which is suspicious")
                             }
 
@@ -427,6 +434,9 @@ impl ControlTypes {
 
                             // parse out extensions
                             let ext_hs = if extensions.contains(ExtFlags::HS) {
+                                if buf.remaining() < 4 {
+                                    bail!("Not enough room for declared exceptions")
+                                }
                                 let pack_type = buf.get_u16_be();
                                 let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
                                 match pack_type {
@@ -441,6 +451,9 @@ impl ControlTypes {
                                 None
                             };
                             let ext_km = if extensions.contains(ExtFlags::KM) {
+                                if buf.remaining() < 4 {
+                                    bail!("Not enough room for declared exceptions")
+                                }
                                 let pack_type = buf.get_u16_be();
                                 let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
                                 match pack_type {
@@ -455,6 +468,9 @@ impl ControlTypes {
                                 None
                             };
                             let ext_config = if extensions.contains(ExtFlags::CONFIG) {
+                                if buf.remaining() < 4 {
+                                    bail!("Not enough room for declared exceptions")
+                                }
                                 let pack_type = buf.get_u16_be();
                                 let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
                                 match pack_type {
@@ -491,8 +507,13 @@ impl ControlTypes {
             0x2 => {
                 // ACK
 
+                // make sure there are enough bytes -- 6 32-bit words
+                if buf.remaining() < 6 * 4 {
+                    bail!("Not enough data for an ack packet");
+                }
+
                 // read control info
-                let ack_number = SeqNumber::new(buf.get_u32_be());
+                let ack_number = SeqNumber::new_truncate(buf.get_u32_be());
 
                 // if there is more data, use it. However, it's optional
                 let mut opt_read_next = move || {
@@ -535,7 +556,15 @@ impl ControlTypes {
             }
             0x7 => {
                 // Drop request
-                unimplemented!()
+                if buf.remaining() < 2 * 4 {
+                    bail!("Not enough data for a drop request");
+                }
+
+                Ok(ControlTypes::DropRequest {
+                    msg_to_drop: MsgNumber::new_truncate(extra_info as u32), // cast is safe, just reinterpret
+                    first: SeqNumber::new_truncate(buf.get_u32_be()),
+                    last: SeqNumber::new_truncate(buf.get_u32_be()),
+                })
             }
             0x7FFF => {
                 // Srt
@@ -563,9 +592,8 @@ impl ControlTypes {
     fn additional_info(&self) -> i32 {
         match self {
             // These types have additional info
-            ControlTypes::Ack2(a)
-            | ControlTypes::DropRequest { msg_to_drop: a, .. }
-            | ControlTypes::Ack { ack_seq_num: a, .. } => *a,
+            ControlTypes::DropRequest { msg_to_drop: a, .. } => a.as_raw() as i32,
+            ControlTypes::Ack2(a) | ControlTypes::Ack { ack_seq_num: a, .. } => *a,
             // These do not, just use zero
             _ => 0,
         }
@@ -648,8 +676,13 @@ impl ControlTypes {
                 }
             }
             ControlTypes::DropRequest { .. } => unimplemented!(),
-            // control data
-            ControlTypes::Shutdown | ControlTypes::Ack2(_) | ControlTypes::KeepAlive => {}
+            ControlTypes::Ack2(_) => {
+                // The reference implementation appends one (4 byte) word at the end of the ack2 packet, which wireshark labels as 'Unused'
+                // I have no idea why, but wireshark reports it as a "malformed packet" without it. For the record,
+                // this is NOT in the UDT specification. I wonder if this was carried over from the original UDT implementation.
+                into.put_u32_be(0x0);
+            }
+            ControlTypes::Shutdown | ControlTypes::KeepAlive => {}
             ControlTypes::Srt(srt) => {
                 srt.serialize(into);
             }
@@ -684,7 +717,7 @@ mod test {
             timestamp: 0,
             dest_sockid: SocketID(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                init_seq_num: SeqNumber::new(1_827_131),
+                init_seq_num: SeqNumber::new_truncate(1_827_131),
                 max_packet_size: 1500,
                 max_flow_size: 25600,
                 shake_type: ShakeType::Conclusion,
@@ -720,7 +753,7 @@ mod test {
             dest_sockid: SocketID(2_453_706_529),
             control_type: ControlTypes::Ack {
                 ack_seq_num: 1,
-                ack_number: SeqNumber::new(282_049_186),
+                ack_number: SeqNumber::new_truncate(282_049_186),
                 rtt: Some(10_002),
                 rtt_variance: Some(1000),
                 buffer_available: Some(1314),

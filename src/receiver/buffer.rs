@@ -80,8 +80,8 @@ impl RecvBuffer {
                         - start_time
                         - Duration::from_micros(first_pack_ts_us as u64)
                         - latency;
-                    dur_too_late.as_secs() * 1_000
-                        + u64::from(dur_too_late.subsec_nanos()) / 1_000_000
+
+                    dur_too_late.as_millis()
                 }
             );
             // start dropping packets
@@ -179,10 +179,7 @@ impl RecvBuffer {
 
         // optimize for single packet messages
         if count == 1 {
-            return Some((
-                origin_ts,
-                self.buffer.pop_front().unwrap().unwrap().payload.clone(),
-            ));
+            return Some((origin_ts, self.buffer.pop_front().unwrap().unwrap().payload));
         }
 
         // accumulate the rest
@@ -223,7 +220,7 @@ mod test {
 
     fn basic_pack() -> DataPacket {
         DataPacket {
-            seq_number: SeqNumber::new(5),
+            seq_number: SeqNumber::new_truncate(5),
             message_loc: PacketLocation::FIRST,
             in_order_delivery: false,
             message_number: MsgNumber(0),
@@ -235,7 +232,7 @@ mod test {
 
     #[test]
     fn not_ready_empty() {
-        let mut buf = RecvBuffer::new(SeqNumber::new(3));
+        let mut buf = RecvBuffer::new(SeqNumber::new_truncate(3));
 
         assert_eq!(buf.next_msg_ready(), None);
         assert_eq!(buf.next_msg(), None);
@@ -244,7 +241,7 @@ mod test {
 
     #[test]
     fn not_ready_no_more() {
-        let mut buf = RecvBuffer::new(SeqNumber::new(5));
+        let mut buf = RecvBuffer::new(SeqNumber::new_truncate(5));
         buf.add(DataPacket {
             seq_number: SeqNumber(5),
             message_loc: PacketLocation::FIRST,
@@ -258,7 +255,7 @@ mod test {
 
     #[test]
     fn not_ready_none() {
-        let mut buf = RecvBuffer::new(SeqNumber::new(5));
+        let mut buf = RecvBuffer::new(SeqNumber::new_truncate(5));
         buf.add(DataPacket {
             seq_number: SeqNumber(5),
             message_loc: PacketLocation::FIRST,
@@ -277,7 +274,7 @@ mod test {
 
     #[test]
     fn not_ready_middle() {
-        let mut buf = RecvBuffer::new(SeqNumber::new(5));
+        let mut buf = RecvBuffer::new(SeqNumber::new_truncate(5));
         buf.add(DataPacket {
             seq_number: SeqNumber(5),
             message_loc: PacketLocation::FIRST,
@@ -296,7 +293,7 @@ mod test {
 
     #[test]
     fn ready_single() {
-        let mut buf = RecvBuffer::new(SeqNumber::new(5));
+        let mut buf = RecvBuffer::new(SeqNumber::new_truncate(5));
         buf.add(DataPacket {
             seq_number: SeqNumber(5),
             message_loc: PacketLocation::FIRST | PacketLocation::LAST,
@@ -318,7 +315,7 @@ mod test {
 
     #[test]
     fn ready_multi() {
-        let mut buf = RecvBuffer::new(SeqNumber::new(5));
+        let mut buf = RecvBuffer::new(SeqNumber::new_truncate(5));
         buf.add(DataPacket {
             seq_number: SeqNumber(5),
             message_loc: PacketLocation::FIRST,
@@ -343,5 +340,4 @@ mod test {
         assert_eq!(buf.next_release(), SeqNumber(8));
         assert_eq!(buf.buffer.len(), 0);
     }
-
 }

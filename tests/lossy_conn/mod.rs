@@ -1,17 +1,23 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::fmt::Debug;
+use std::marker::Unpin;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use failure::{bail, Error};
+use failure::{format_err, Error};
 
 use futures::channel::mpsc;
-use futures::{Future, Poll, Sink, Stream};
+use futures::{ready, Future, Sink, Stream};
+
+use tokio::timer::{delay, Delay};
 
 use log::{debug, info};
 
 use rand;
-use rand::distributions::{Distribution, Normal};
+use rand::distributions::Distribution;
+use rand_distr::Normal;
 
 pub struct LossyConn<T> {
     sender: mpsc::Sender<T>,
@@ -50,85 +56,85 @@ impl<T> PartialEq for TTime<T> {
 
 impl<T> Eq for TTime<T> {}
 
-impl<T> Stream for LossyConn<T> {
+impl<T: Unpin> Stream for LossyConn<T> {
     type Item = Result<T, Error>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<T>> {
-        match self.receiver.poll() {
-            Ok(e) => Ok(e),
-            Err(_) => unreachable!(),
-        }
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        Poll::Ready(ready!(Pin::new(&mut self.receiver).poll_next(cx)).map(Ok))
     }
 }
 
-impl<T: Debug + Sync + Send + 'static> Sink for LossyConn<T> {
-    type SinkItem = T;
-    type SinkError = Error;
+impl<T: Debug + Sync + Send + Unpin + 'static> Sink<T> for LossyConn<T> {
+    type Error = Error;
 
-    fn start_send(&mut self, to_send: T) -> StartSend<T, Error> {
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(self: Pin<&mut Self>, to_send: T) -> Result<(), Error> {
+        let pin = self.get_mut();
         // should we drop it?
         {
-            if rand::random::<f64>() < self.loss_rate {
+            if rand::random::<f64>() < pin.loss_rate {
                 debug!("Dropping packet: {:?}", to_send);
 
                 // drop
-                return Ok(AsyncSink::Ready);
+                return Ok(());
             }
         }
 
-        if self.delay_avg == Duration::from_secs(0) {
-            self.sender.start_send(to_send)?;
+        if pin.delay_avg == Duration::from_secs(0) {
+            pin.sender.start_send(to_send)?;
         } else
         // delay
         {
-            let center =
-                self.delay_avg.as_secs() as f64 + f64::from(self.delay_avg.subsec_nanos()) / 1e9;
-            let stddev = self.delay_stddev.as_secs() as f64
-                + f64::from(self.delay_stddev.subsec_nanos()) / 1e9;
-
-            let between = Normal::new(center, stddev);
+            let center = pin.delay_avg.as_secs_f64();
+            let stddev = pin.delay_stddev.as_secs_f64();
+            let between = Normal::new(center, stddev).unwrap();
             let delay_secs = f64::abs(between.sample(&mut rand::thread_rng()));
 
-            let delay = Duration::new(delay_secs.floor() as u64, ((delay_secs % 1.0) * 1e9) as u32);
+            let delay = Duration::from_secs_f64(delay_secs);
 
-            self.delay_buffer.push(TTime {
+            pin.delay_buffer.push(TTime {
                 data: to_send,
                 time: Instant::now() + delay,
             });
 
             // update the timer
-            self.delay.reset_at(self.delay_buffer.peek().unwrap().time);
+            pin.delay.reset(pin.delay_buffer.peek().unwrap().time);
         }
 
-        Ok(AsyncSink::Ready)
+        Ok(())
     }
 
-    fn poll_complete(&mut self) -> Poll<(), Error> {
-        while let Async::Ready(_) = self.delay.poll()? {
-            let val = match self.delay_buffer.pop() {
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
+        let pin = self.get_mut();
+
+        while let Poll::Ready(_) = Pin::new(&mut pin.delay).poll(cx) {
+            let val = match pin.delay_buffer.pop() {
                 Some(v) => v,
                 None => break,
             };
-            if let Err(err) = self.sender.try_send(val.data) {
+            if let Err(err) = pin.sender.try_send(val.data) {
                 if err.is_disconnected() {
-                    return Ok(Async::Ready(()));
+                    return Poll::Ready(Ok(()));
                 }
-                bail!("{}", err);
+                return Poll::Ready(Err(format_err!("{}", err)));
             }
 
             // reset timer
-            if let Some(i) = self.delay_buffer.peek() {
-                self.delay.reset_at(i.time);
+            if let Some(i) = pin.delay_buffer.peek() {
+                pin.delay.reset(i.time);
             }
         }
 
-        Ok(self.sender.poll_complete()?) // TODO: not this
+        Poll::Ready(Ok(ready!(Pin::new(&mut pin.sender).poll_flush(cx))?))
     }
 
-    fn close(&mut self) -> Poll<(), Error> {
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
         info!("Closing sink...");
 
-        Ok(self.sender.close()?) // TODO: here too
+        Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_close(cx))?))
     }
 }
 
@@ -150,7 +156,7 @@ impl<T> LossyConn<T> {
                 delay_stddev,
 
                 delay_buffer: BinaryHeap::new(),
-                delay: Delay::new_at(Instant::now()),
+                delay: delay(Instant::now()),
             },
             LossyConn {
                 sender: b2a,
@@ -160,7 +166,7 @@ impl<T> LossyConn<T> {
                 delay_stddev,
 
                 delay_buffer: BinaryHeap::new(),
-                delay: Delay::new_at(Instant::now()),
+                delay: delay(Instant::now()),
             },
         )
     }

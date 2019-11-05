@@ -8,23 +8,21 @@ use futures::prelude::*;
 use log::{info, warn};
 use tokio::timer::Interval;
 
-use crate::connected::Connected;
-
 use crate::packet::{
-    CipherType, ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet,
-    ShakeType, SocketType, SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags,
+    ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
+    SocketType, SrtControlPacket, SrtHandshake, SrtShakeFlags,
 };
 use crate::util::{get_packet, select_discard, Selected};
 use crate::{ConnectionSettings, SocketID, SrtVersion};
 
 pub async fn connect<T>(
-    mut sock: T,
+    sock: &mut T,
     remote: SocketAddr,
     local_sockid: SocketID,
     local_addr: IpAddr,
     tsbpd_latency: Duration,
     _crypto: Option<(u8, String)>,
-) -> Result<Connected<T>, Error>
+) -> Result<ConnectionSettings, Error>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
         + Sink<(Packet, SocketAddr), Error = Error>
@@ -52,7 +50,7 @@ where
     // get first response packet
     let (timestamp, hs_info) = loop {
         // just drop the future that didn't finish first
-        match select_discard(send_interval.next(), get_packet(&mut sock)).await {
+        match select_discard(send_interval.next(), get_packet(sock)).await {
             Selected::Left(_interval_reached) => {
                 sock.send((request_packet.clone(), remote)).await?
             }
@@ -60,7 +58,6 @@ where
                 // make sure the socket id and packet type match
                 if let Packet::Control(ControlPacket {
                     timestamp,
-                    dest_sockid: sockid,
                     control_type:
                         ControlTypes::Handshake(
                             info @ HandshakeControlInfo {
@@ -79,10 +76,6 @@ where
                         warn!("Handshake was HSv4, expected HSv5");
                         continue;
                     }
-                    if sockid == local_sockid {
-                        warn!("Handshake did not target this socketid, discarding");
-                        continue;
-                    }
                     break (timestamp, info);
                 }
             }
@@ -98,6 +91,7 @@ where
         timestamp,
         control_type: ControlTypes::Handshake(HandshakeControlInfo {
             shake_type: ShakeType::Conclusion,
+            socket_id: local_sockid,
             info: HandshakeVSInfo::V5 {
                 crypto_size: 0, // TODO: implement
                 ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
@@ -132,7 +126,7 @@ where
     sock.send((pack.clone(), remote)).await?;
 
     loop {
-        match select_discard(send_interval.next(), get_packet(&mut sock)).await {
+        match select_discard(send_interval.next(), get_packet(sock)).await {
             Selected::Left(_interval_reached) => sock.send((pack.clone(), remote)).await?,
             Selected::Right(Ok((packet, from))) => {
                 if let Packet::Control(ControlPacket {
@@ -169,24 +163,21 @@ where
                     };
 
                     info!(
-                        "Got second handshaek, connection established to {} with latency {:?}",
+                        "Got second handshake, connection established to {} with latency {:?}",
                         remote, latency
                     );
-                    return Ok(Connected::new(
-                        sock,
-                        ConnectionSettings {
-                            remote,
-                            max_flow_size: info.max_flow_size,
-                            max_packet_size: info.max_packet_size,
-                            init_seq_num: info.init_seq_num,
-                            socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
-                            local_sockid,
-                            remote_sockid: info.socket_id,
-                            tsbpd_latency: latency,
-                            // TODO: is this right? Needs testing.
-                            handshake_returner: Box::new(move |_| None),
-                        },
-                    ));
+                    return Ok(ConnectionSettings {
+                        remote,
+                        max_flow_size: info.max_flow_size,
+                        max_packet_size: info.max_packet_size,
+                        init_seq_num: info.init_seq_num,
+                        socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
+                        local_sockid,
+                        remote_sockid: info.socket_id,
+                        tsbpd_latency: latency,
+                        // TODO: is this right? Needs testing.
+                        handshake_returner: Box::new(move |_| None),
+                    });
                 }
             }
             Selected::Right(Err(e)) => bail!(e),

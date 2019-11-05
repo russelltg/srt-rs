@@ -1,18 +1,26 @@
-use std::mem;
+#![feature(async_closure)]
+
+use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::ops::Deref;
 use std::path::Path;
+use std::pin::Pin;
 use std::process::exit;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use clap::{App, Arg};
 use failure::{bail, Error};
-use futures::{future, prelude::*, try_ready, Poll, StartSend};
-use tokio::codec::BytesCodec;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{UdpFramed, UdpSocket};
 use url::{Host, Url};
+
+use futures::future::BoxFuture;
+use futures::stream::BoxStream;
+use futures::{future, prelude::*, stream};
+
+use tokio::codec::BytesCodec;
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::net::{UdpFramed, UdpSocket};
 
 use srt::{ConnInitMethod, SrtSocketBuilder, StreamerServer};
 
@@ -118,34 +126,33 @@ FILE - save or send a file
 
 "#;
 
-struct MultiSink<I> {
-    sinks: Vec<Box<dyn Sink<SinkItem = I, SinkError = Error> + Send>>,
+// boxed() combinator for sink, which somehow doesn't exist
+trait MySinkExt<Item>: Sink<Item> {
+    fn boxed_sink<'a>(self) -> Pin<Box<dyn Sink<Item, Error = Self::Error> + 'a + Send>>
+    where
+        Self: Sized + Send + 'a,
+    {
+        Box::pin(self)
+    }
 }
+impl<T, Item> MySinkExt<Item> for T where T: Sink<Item> {}
 
-impl<I: Clone> Sink for MultiSink<I> {
-    type SinkItem = I;
-    type SinkError = Error;
-
-    fn start_send(&mut self, item: I) -> StartSend<I, Error> {
-        for s in &mut self.sinks {
-            // just discard the result, don't send that packet
-            let _ = s.start_send(item.clone())?;
-        }
-        Ok(AsyncSink::Ready)
+// futures::AsyncWrite impl for tokio::io::AsyncWrite
+struct FutAsyncWrite<T>(T);
+impl<T: tokio::io::AsyncWrite + Unpin> futures::AsyncWrite for FutAsyncWrite<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        <T as tokio::io::AsyncWrite>::poll_write(Pin::new(&mut self.0), cx, buf)
     }
 
-    fn poll_complete(&mut self) -> Poll<(), Error> {
-        for s in &mut self.sinks {
-            try_ready!(s.poll_complete());
-        }
-        Ok(Async::Ready(()))
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        <T as tokio::io::AsyncWrite>::poll_flush(Pin::new(&mut self.0), cx)
     }
-
-    fn close(&mut self) -> Poll<(), Error> {
-        for s in &mut self.sinks {
-            try_ready!(s.poll_complete());
-        }
-        Ok(Async::Ready(()))
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        <T as tokio::io::AsyncWrite>::poll_shutdown(Pin::new(&mut self.0), cx)
     }
 }
 
@@ -155,93 +162,60 @@ enum DataType<'a> {
     File(&'a Path),
 }
 
-// Stream/Sink implementaton for primatives that only implement AsyncRead/AsyncWrite
-// not sure why this doesn't already exist in tokio.
-struct StreamWriteRead<T> {
-    file: T,
-    buffer: BytesMut,
-}
+fn read_to_stream(read: impl AsyncRead + Unpin) -> impl Stream<Item = Result<Bytes, Error>> {
+    stream::unfold(read, async move |mut source| {
+        let mut buf = [0; 4096];
+        let bytes_read = match source.read(&mut buf[..]).await {
+            Ok(0) => return None,
+            Ok(bytes_read) => bytes_read,
+            Err(e) => return Some((Err(Error::from(e)), source)),
+        };
 
-impl<T> StreamWriteRead<T> {
-    fn new(file: T) -> Self {
-        Self {
-            file,
-            buffer: BytesMut::from(vec![0; 4096]),
-        }
-    }
-}
-
-impl<T: AsyncRead> Stream for StreamWriteRead<T> {
-    type Error = Error;
-    type Item = Bytes;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let num_read = try_ready!(self.file.poll_read(&mut self.buffer[..]));
-
-        if num_read == 0 {
-            return Ok(Async::Ready(None));
-        }
-
-        let mut a = BytesMut::from(vec![0; 4096]);
-        mem::swap(&mut self.buffer, &mut a);
-
-        Ok(Async::Ready(Some(a.split_to(num_read).clone().freeze())))
-    }
-}
-
-impl<T: AsyncWrite> Sink for StreamWriteRead<T> {
-    type SinkError = Error;
-    type SinkItem = Bytes;
-
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
-        match self.file.poll_write(&item[..])? {
-            Async::Ready(_) => Ok(AsyncSink::Ready),
-            Async::NotReady => Ok(AsyncSink::NotReady(item)),
-        }
-    }
-
-    fn poll_complete(&mut self) -> Poll<(), Error> {
-        Ok(self.file.poll_flush()?)
-    }
+        Some((Ok(Bytes::from(&buf[0..bytes_read])), source))
+    })
 }
 
 fn add_srt_args<C>(
     args: impl Iterator<Item = (C, C)>,
-    builder: &mut SrtSocketBuilder,
-) -> Result<(), Error>
+    mut builder: SrtSocketBuilder,
+) -> Result<SrtSocketBuilder, Error>
 where
     C: Deref<Target = str>,
 {
     for (k, v) in args {
         match &*k {
-            "latency_ms" => builder.latency(Duration::from_millis(match v.parse() {
-                Ok(i) => i,
-                Err(e) => bail!(
-                    "Failed to parse latency_ms parameter to input as integer: {}",
-                    e
-                ),
-            })),
-            "interface" => builder.local_addr(match v.parse() {
-                Ok(local) => local,
-                Err(e) => bail!("Failed to parse interface parameter as ip address: {}", e),
-            }),
+            "latency_ms" => {
+                builder = builder.latency(Duration::from_millis(match v.parse() {
+                    Ok(i) => i,
+                    Err(e) => bail!(
+                        "Failed to parse latency_ms parameter to input as integer: {}",
+                        e
+                    ),
+                }))
+            }
+            "interface" => {
+                builder = builder.local_addr(match v.parse() {
+                    Ok(local) => local,
+                    Err(e) => bail!("Failed to parse interface parameter as ip address: {}", e),
+                })
+            }
             "local_port" => match builder.conn_type() {
                 ConnInitMethod::Listen => {
                     bail!("local_port is incompatible with listen connection technique")
                 }
-                _ => builder.local_port(match v.parse() {
-                    Ok(addr) => addr,
-                    Err(e) => bail!("Failed to parse local_port as a 16-bit integer: {}", e),
-                }),
+                _ => {
+                    builder = builder.local_port(match v.parse() {
+                        Ok(addr) => addr,
+                        Err(e) => bail!("Failed to parse local_port as a 16-bit integer: {}", e),
+                    })
+                }
             },
             // this has already been handled, ignore
-            "rendezvous" => builder,
-            "multiplex" => builder,
+            "rendezvous" | "multiplex" => (),
             unrecog => bail!("Unrecgonized parameter '{}' for srt", unrecog),
         };
     }
-
-    Ok(())
+    Ok(builder)
 }
 
 // get the local port and address from the input url
@@ -339,13 +313,7 @@ where
 
 fn resolve_input<'a>(
     input_url: DataType<'a>,
-) -> Result<
-    Box<
-        dyn Future<Item = Box<dyn Stream<Item = Bytes, Error = Error> + Send>, Error = Error>
-            + Send,
-    >,
-    Error,
-> {
+) -> Result<BoxFuture<'static, Result<BoxStream<'static, Bytes>, Error>>, Error> {
     Ok(match input_url {
         DataType::Url(input_url) => {
             let (input_local_port, input_addr) = local_port_addr(&input_url, "input")?;
@@ -353,22 +321,19 @@ fn resolve_input<'a>(
                     "udp" if input_local_port == 0 => 
                         bail!("Must not designate a ip to receive UDP. Example: udp://:1234, not udp://127.0.0.1:1234. If you with to bind to a specific adapter, use the adapter setting instead."),
                     "udp" => {
-                        Box::new(future::ok::<
-                            Box<dyn Stream<Item = Bytes, Error = Error> + Send>,
-                            Error,
-                        >(Box::new(
-                            UdpFramed::new(
+                        async move {
+                            Ok(UdpFramed::new(
                                 UdpSocket::bind(&parse_udp_options(
                                     input_url.query_pairs(),
                                     UdpKind::Listen(input_local_port),
-                                )?)?,
+                                )?).await?,
                                 BytesCodec::new(),
-                            )
-                            .map(|(b, _)| b.freeze())
-                            .map_err(From::from),
-                        )))
+                            ).map(Result::unwrap).map(|(b, _)| b.freeze()).boxed())
+                        }.boxed()
                     }
                     "srt" => {
+                        async move {
+
                         let mut builder = SrtSocketBuilder::new(get_conn_init_method(
                             input_addr,
                             input_url
@@ -376,57 +341,48 @@ fn resolve_input<'a>(
                                 .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None })
                                 .as_ref()
                                 .map(|a| &**a),
-                        )?);
-                        builder.local_port(input_local_port);
+                        )?).local_port(input_local_port);
 
-                        add_srt_args(input_url.query_pairs(), &mut builder)?;
+                        builder = add_srt_args(input_url.query_pairs(), builder)?;
 
                         // make sure multiplex was not specified
                         if input_url.query_pairs().any(|(k, _)| &*k == "multiplex") {
                             bail!("multiplex is not a valid option for input urls");
                         }
 
-                        Box::new(builder.build()?.map(
-                            |c| -> Box<dyn Stream<Item = Bytes, Error = Error> + Send> {
-                                Box::new(c.receiver().map(|(_, b)| b))
-                            },
-                        ))
+                        Ok(builder.connect_receiver().await?.map(Result::unwrap).map(|(_, b)| b).boxed())
+
+                        }.boxed()
                     }
                     s => bail!("unrecognized scheme: {} designated in input url", s),
                 }
         }
         DataType::File(file) => {
             if file == Path::new("-") {
-                Box::new(future::ok::<
-                    Box<dyn Stream<Item = Bytes, Error = Error> + Send>,
-                    Error,
-                >(Box::new(StreamWriteRead::new(
-                    tokio::io::stdin(),
-                ))))
+                async move {
+                    Ok(read_to_stream(tokio::io::stdin())
+                        .map(Result::unwrap)
+                        .boxed())
+                }
+                    .boxed()
             } else {
-                let file_fut = tokio::fs::File::open(file.to_owned());
+                let file = file.to_owned();
+                async move {
+                    let f = tokio::fs::File::open(file).await?;
 
-                Box::new(
-                    file_fut
-                        .map(|f| -> Box<dyn Stream<Item = Bytes, Error = Error> + Send> {
-                            Box::new(StreamWriteRead::new(f))
-                        })
-                        .map_err(Error::from),
-                )
+                    Ok(read_to_stream(f).map(Result::unwrap).boxed())
+                }
+                    .boxed()
             }
         }
     })
 }
 
+type BoxSink = Pin<Box<dyn Sink<Bytes, Error = Error> + Send>>;
+
 fn resolve_output<'a>(
     output_url: DataType<'a>,
-) -> Result<
-    Box<
-        dyn Future<Item = Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send>, Error = Error>
-            + Send,
-    >,
-    Error,
-> {
+) -> Result<BoxFuture<'static, Result<BoxSink, Error>>, Error> {
     Ok(match output_url {
         DataType::Url(output_url) => {
             let (output_local_port, output_addr) = local_port_addr(&output_url, "output")?;
@@ -434,29 +390,25 @@ fn resolve_output<'a>(
             match output_url.scheme() {
                     "udp" if output_addr.is_none() => 
                         bail!("Must designate a ip to send to to send UDP. Example: udp://127.0.0.1:1234, not udp://:1234"),
-                    "udp" => Box::new(future::ok::<
-                        Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send>,
-                        Error,
-                    >(Box::new(
-                        UdpFramed::new(
+                    "udp" => async move {
+                        Ok(UdpFramed::new(
                             UdpSocket::bind(&parse_udp_options(
                                 output_url.query_pairs(),
                                 UdpKind::Send,
-                            )?)?,
+                            )?).await?,
                             BytesCodec::new(),
                         )
-                        .with(move |b| future::ok((b, output_addr.unwrap()))),
-                    ))),
+                        .with(move |b| future::ready(Ok((b, output_addr.unwrap())))).boxed_sink())
+                    }.boxed(),
                     "srt" => {
-                        let mut builder = SrtSocketBuilder::new(get_conn_init_method(
+                        let builder = SrtSocketBuilder::new(get_conn_init_method(
                             output_addr,
                             output_url
                                 .query_pairs()
                                 .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None })
                                 .as_ref()
                                 .map(|a| &**a),
-                        )?);
-                        builder.local_port(output_local_port);
+                        )?).local_port(output_local_port);
 
                         let is_multiplex = match (
                             output_url
@@ -477,53 +429,48 @@ fn resolve_output<'a>(
                             (Some(a), _) => bail!("Unexpected value for multiplex: {}", a),
                         };
 
-                        add_srt_args(output_url.query_pairs(), &mut builder)?;
+                        let  builder = add_srt_args(output_url.query_pairs(), builder)?;
 
                         if is_multiplex {
-                            let boxed: Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send> =
-                                Box::new(
-                                    StreamerServer::new(builder.build_multiplexed()?)
-                                        .with(|b| future::ok((Instant::now(), b))),
-                                );
-
-                            Box::new(future::ok(boxed))
+                            async move {
+                                Ok(StreamerServer::new(builder.build_multiplexed().await?)
+                                    .with(|b| future::ok((Instant::now(), b))).boxed_sink())
+                            }.boxed()
                         } else {
-                            Box::new(builder.build()?.map(
-                                |c| -> Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send> {
-                                    Box::new(c.sender().with(|b| future::ok((Instant::now(), b))))
-                                },
-                            ))
+                            async move {
+                                Ok(builder.connect_sender().await?.with(|b| future::ok((Instant::now(), b))).boxed_sink())
+                            }.boxed()
                         }
-                    }
-                    s => bail!("unrecognized scheme: {} designated in output url", s),
+                    },
+                    s => bail!("unrecognized scheme '{}' designated in output url", s),
                 }
         }
         DataType::File(file) => {
             if file == Path::new("-") {
-                Box::new(future::ok::<
-                    Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send>,
-                    Error,
-                >(Box::new(StreamWriteRead::new(
-                    tokio::io::stdout(),
-                ))))
+                async move {
+                    Ok(FutAsyncWrite(tokio::io::stdout())
+                        .into_sink()
+                        .sink_map_err(Error::from)
+                        .boxed_sink())
+                }
+                    .boxed()
             } else {
-                let file_fut = tokio::fs::File::create(file.to_owned());
-                Box::new(
-                    file_fut
-                        .map(
-                            |f| -> Box<dyn Sink<SinkItem = Bytes, SinkError = Error> + Send> {
-                                Box::new(StreamWriteRead::new(f))
-                            },
-                        )
-                        .map_err(Error::from),
-                )
+                let file = file.to_owned();
+                async move {
+                    Ok(FutAsyncWrite(tokio::fs::File::create(file).await?)
+                        .into_sink()
+                        .sink_map_err(Error::from)
+                        .boxed_sink())
+                }
+                    .boxed()
             }
         }
     })
 }
 
-fn main() {
-    if let Err(e) = run() {
+#[tokio::main]
+async fn main() {
+    if let Err(e) = run().await {
         eprintln!(
             "Invalid settings detected: {}\n\nSee stransmit-rs --help for more info",
             e
@@ -532,7 +479,7 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), Error> {
+async fn run() -> Result<(), Error> {
     env_logger::init();
 
     let matches = App::new("stransmit_rs")
@@ -572,16 +519,24 @@ fn run() -> Result<(), Error> {
 
     // Resolve the sender side
     // similar to the receiver side, except a sink instead of a stream
-    let to_iter = output_urls_iter
-        .map(resolve_output)
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut to_vec = vec![];
+    for to in output_urls_iter.map(resolve_output) {
+        to_vec.push(to?);
+    }
 
-    tokio::run(
-        from.join(future::join_all(to_iter.into_iter()))
-            .and_then(|(from, to_vec)| from.forward(MultiSink { sinks: to_vec }))
-            .map(|_| ())
-            .map_err(|e| panic!("{:?}", e)),
-    );
+    let (from, to_sinks) = futures::join!(from, future::try_join_all(to_vec.iter_mut()));
+    let mut to_sinks = to_sinks?;
 
+    // combine the sinks
+    let mut to_sink: Pin<Box<dyn Sink<Bytes, Error = Error> + Send + 'static>> = to_sinks
+        .pop()
+        .expect("To sinks didn't even have one element");
+    for sink in to_sinks {
+        to_sink = to_sink.fanout(sink).boxed_sink();
+    }
+
+    let mut from = from?;
+    to_sink.send_all(&mut from).await?;
+    to_sink.close().await?;
     Ok(())
 }

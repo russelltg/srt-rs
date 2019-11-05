@@ -1,38 +1,36 @@
-use std::thread;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use failure::Error;
-use futures::{Sink, Stream};
-use futures_timer::Interval;
+use futures::{stream, SinkExt, StreamExt};
+use tokio::timer::Interval;
 
 use srt::{ConnectionSettings, Receiver, Sender, SeqNumber, SocketID, SrtCongestCtrl};
 
 mod lossy_conn;
 use crate::lossy_conn::LossyConn;
 
-#[test]
-fn lossy() {
+#[tokio::test]
+async fn lossy() {
     let _ = env_logger::try_init();
 
     const INIT_SEQ_NUM: u32 = 0;
-    const ITERS: u32 = 10_000;
+    const ITERS: u32 = 1_000;
 
     // a stream of ascending stringified integers
-    let counting_stream = iter_ok(0..ITERS)
+    let counting_stream = stream::iter(0..ITERS)
         .map(|i| Bytes::from(i.to_string()))
-        .zip(Interval::new(Duration::from_millis(1)))
+        .zip(Interval::new(Instant::now(), Duration::from_millis(1)))
         .map(|(b, _)| b);
 
     // 5% packet loss, 20ms delay
     let (send, recv) =
         LossyConn::channel(0.05, Duration::from_millis(20), Duration::from_millis(4));
 
-    let sender = Sender::new(
+    let mut sender = Sender::new(
         send,
         SrtCongestCtrl,
         ConnectionSettings {
-            init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
+            init_seq_num: SeqNumber::new_truncate(INIT_SEQ_NUM),
             socket_start_time: Instant::now(),
             remote_sockid: SocketID(81),
             local_sockid: SocketID(13),
@@ -44,10 +42,10 @@ fn lossy() {
         },
     );
 
-    let recvr = Receiver::new(
+    let mut recvr = Receiver::new(
         recv,
         ConnectionSettings {
-            init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
+            init_seq_num: SeqNumber::new_truncate(INIT_SEQ_NUM),
             socket_start_time: Instant::now(),
             remote_sockid: SocketID(13),
             local_sockid: SocketID(81),
@@ -59,22 +57,19 @@ fn lossy() {
         },
     );
 
-    let sender = thread::spawn(|| {
-        sender
-            .send_all(counting_stream.map(|b| (Instant::now(), b)))
-            .map_err(|e: Error| panic!("{:?}", e))
-            .wait()
-            .unwrap();
-    });
+    let sender = async move {
+        let mut stream = counting_stream.map(|b| (Instant::now(), b));
+        sender.send_all(&mut stream).await.unwrap();
+        sender.close().await.unwrap();
+    };
 
-    let receiver = thread::spawn(|| {
+    let receiver = async move {
         let mut next_data = 0;
 
-        for payload in recvr.wait() {
+        while let Some(payload) = recvr.next().await {
             let (ts, payload) = payload.unwrap();
 
-            let diff = Instant::now() - ts;
-            let diff_ms = diff.as_secs() * 1_000 + u64::from(diff.subsec_nanos() / 1_000_000);
+            let diff_ms = ts.elapsed().as_millis();
 
             assert!(
                 7900 < diff_ms && diff_ms < 8700,
@@ -87,8 +82,7 @@ fn lossy() {
         }
 
         assert_eq!(next_data, ITERS);
-    });
+    };
 
-    sender.join().unwrap();
-    receiver.join().unwrap();
+    futures::join!(sender, receiver);
 }

@@ -1,8 +1,9 @@
-use std::io::{Error, ErrorKind, Result};
 use std::time::Duration;
 
 use bitflags::bitflags;
 use bytes::{Buf, BufMut};
+use failure::{bail, Error};
+use log::warn;
 
 use crate::SrtVersion;
 
@@ -43,6 +44,7 @@ pub enum SrtControlPacket {
 ///
 /// HaiCrypt KMmsg (Keying Material):
 ///
+/// ```ignore,
 ///        0                   1                   2                   3
 ///        0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 ///       +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
@@ -60,6 +62,7 @@ pub enum SrtControlPacket {
 ///       |                              Wrap                             |
 ///       |                              ...                              |
 ///       +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
+/// ```
 ///
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SrtKeyMessage {
@@ -127,11 +130,17 @@ bitflags! {
 
         /// One bit in payload packet msgno is "retransmitted" flag
         const REXMITFLG = 0x20;
+
+        /// Not entirely sure what this means.... TODO:
+        const STREAM = 0x40;
+
+        /// Again not sure... TODO:
+        const FILTERCAP = 0x80;
     }
 }
 
 impl SrtControlPacket {
-    pub fn parse<T: Buf>(packet_type: u16, buf: &mut T) -> Result<SrtControlPacket> {
+    pub fn parse<T: Buf>(packet_type: u16, buf: &mut T) -> Result<SrtControlPacket, Error> {
         use self::SrtControlPacket::*;
 
         match packet_type {
@@ -140,10 +149,7 @@ impl SrtControlPacket {
             2 => Ok(HandshakeResponse(SrtHandshake::parse(buf)?)),
             3 => Ok(KeyManagerRequest(SrtKeyMessage::parse(buf)?)),
             4 => Ok(KeyManagerResponse(SrtKeyMessage::parse(buf)?)),
-            _ => Err(Error::new(
-                ErrorKind::InvalidData,
-                format!("Unrecognized custom packet type {}", packet_type),
-            )),
+            _ => bail!("Unrecognized custom packet type {}", packet_type),
         }
     }
 
@@ -194,22 +200,19 @@ impl SrtControlPacket {
 }
 
 impl SrtHandshake {
-    pub fn parse<T: Buf>(buf: &mut T) -> Result<SrtHandshake> {
+    pub fn parse<T: Buf>(buf: &mut T) -> Result<SrtHandshake, Error> {
         if buf.remaining() < 12 {
-            return Err(Error::new(
-                ErrorKind::UnexpectedEof,
-                "Unexpected EOF in SRT handshake packet",
-            ));
+            bail!("Unexpected EOF in SRT handshake packet");
         }
 
         let version = SrtVersion::parse(buf.get_u32_be());
-        let flags = match SrtShakeFlags::from_bits(buf.get_u32_be()) {
+
+        let shake_flags = buf.get_u32_be();
+        let flags = match SrtShakeFlags::from_bits(shake_flags) {
             Some(i) => i,
             None => {
-                return Err(Error::new(
-                    ErrorKind::InvalidData,
-                    "Invalid combination of SRT flags",
-                ));
+                warn!("Unrecognized SRT flags: 0b{:b}", shake_flags);
+                SrtShakeFlags::from_bits_truncate(shake_flags)
             }
         };
         let peer_latency = buf.get_u16_be();
@@ -227,42 +230,39 @@ impl SrtHandshake {
         into.put_u32_be(self.version.to_u32());
         into.put_u32_be(self.flags.bits());
         // upper 16 bits are peer latency
-        into.put_u16_be(
-            self.peer_latency.subsec_millis() as u16 + self.peer_latency.as_secs() as u16 * 1_000,
-        );
+        into.put_u16_be(self.peer_latency.as_millis() as u16); // TODO: handle overflow
+
         // lower 16 is latency
-        into.put_u16_be(
-            self.latency.subsec_millis() as u16 + self.latency.as_secs() as u16 * 1_000,
-        );
+        into.put_u16_be(self.latency.as_millis() as u16); // TODO: handle overflow
     }
 }
 
 impl SrtKeyMessage {
-    pub fn parse<T: Buf>(buf: &mut T) -> Result<SrtKeyMessage> {
+    pub fn parse<T: Buf>(buf: &mut T) -> Result<SrtKeyMessage, Error> {
         // first 32-bit word:
         //
         //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
         // +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
         // |0|Vers |   PT  |             Sign              |    resv   |KF |
 
+        // make sure there is enough data left in the buffer to at least get to the key flags and length, which tells us how long the packet will be
+        // that's 4x32bit words
+        if buf.remaining() < 4 * 4 {
+            bail!("Not enough data for SrtKeyMessage");
+        }
+
         let vers_pt = buf.get_u8();
 
         // make sure the first bit is zero
         if (vers_pt & 0b1000_0000) != 0 {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
-                "First bit of SRT key message must be zero",
-            ));
+            bail!("First bit of SRT key message must be zero");
         }
 
         // upper 4 bits are version
         let version = vers_pt >> 4;
 
         if version != 1 {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
-                format!("Invalid SRT key message version: {} must be 1.", version),
-            ));
+            bail!("Invalid SRT key message version: {} must be 1.", version);
         }
 
         // lower 4 bits are pt
@@ -304,11 +304,15 @@ impl SrtKeyMessage {
             16 | 24 | 32 => {}
             // not
             e => {
-                return Err(Error::new(
-                    ErrorKind::InvalidData,
-                    format!("Invalid key length: {}. Expected 16, 24, or 32", e),
-                ));
+                bail!("Invalid key length: {}. Expected 16, 24, or 32", e);
             }
+        }
+
+        // get the size of the packet to make sure that there is enough space
+
+        // salt + keys (there's a 1 for each in key flags, it's already been anded with 0b11 so max is 2), wrap data is 8 long
+        if buf.remaining() < salt_len + key_len * (key_flags.count_ones() as usize) + 8 {
+            bail!("Not enough data for SrtKeyMessage");
         }
 
         // the reference implmentation converts the whole thing to network order (bit endian) (in 32-bit words)
@@ -322,7 +326,7 @@ impl SrtKeyMessage {
         }
 
         // then key[s]
-        let even_key = if key_flags & 0b1 == 0b1 {
+        let even_key = if key_flags & 0b01 == 0b01 {
             let mut even_key = vec![];
 
             for _ in 0..key_len / 4 {
@@ -470,19 +474,16 @@ mod tests {
 }
 
 impl CipherType {
-    fn from_u8(from: u8) -> Result<CipherType> {
+    fn from_u8(from: u8) -> Result<CipherType, Error> {
         match from {
             0 => Ok(CipherType::None),
             1 => Ok(CipherType::ECB),
             2 => Ok(CipherType::CTR),
             3 => Ok(CipherType::CBC),
-            e => Err(Error::new(
-                ErrorKind::InvalidData,
-                format!(
-                    "Unexpected cipher type in key message: {}. Must be 0, 1, 2, or 3",
-                    e
-                ),
-            )),
+            e => bail!(
+                "Unexpected cipher type in key message: {}. Must be 0, 1, 2, or 3",
+                e
+            ),
         }
     }
 }

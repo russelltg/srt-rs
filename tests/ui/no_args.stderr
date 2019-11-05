@@ -1,8 +1,8 @@
 error: The following required arguments were not provided:
     <FROM>
-    <TO>
+    <TO>...
 
 USAGE:
-    stransmit-rs <FROM> <TO>
+    stransmit-rs <FROM> <TO>...
 
 For more information try --help

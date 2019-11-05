@@ -1,20 +1,19 @@
 /// A test testing if a connection is setup with not enough latency, ie rtt > 3ish*latency
 use std::str;
-use std::thread;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use failure::Error;
-use futures::{stream::iter_ok, Future, Sink, Stream};
+use futures::{stream::iter, SinkExt, StreamExt};
 use log::{debug, info};
+use tokio::timer::Interval;
 
 use srt::{ConnectionSettings, Receiver, Sender, SeqNumber, SocketID, SrtCongestCtrl};
 
 mod lossy_conn;
 use crate::lossy_conn::LossyConn;
 
-#[test]
-fn not_enough_latency() {
+#[tokio::test]
+async fn not_enough_latency() {
     env_logger::init();
 
     const INIT_SEQ_NUM: u32 = 12314;
@@ -22,19 +21,19 @@ fn not_enough_latency() {
 
     // a stream of ascending stringified integers
     // 1 ms between packets
-    let counting_stream = iter_ok(INIT_SEQ_NUM..INIT_SEQ_NUM + PACKETS)
+    let counting_stream = iter(INIT_SEQ_NUM..INIT_SEQ_NUM + PACKETS)
         .map(|i| Bytes::from(i.to_string()))
-        .zip(Interval::new(Duration::from_millis(1)))
+        .zip(Interval::new(Instant::now(), Duration::from_millis(1)))
         .map(|(b, _)| b);
 
     // 4% packet loss, 4 sec latency with 0.2 s variance
     let (send, recv) = LossyConn::channel(0.04, Duration::from_secs(4), Duration::from_millis(200));
 
-    let sender = Sender::new(
+    let mut sender = Sender::new(
         send,
         SrtCongestCtrl,
         ConnectionSettings {
-            init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
+            init_seq_num: SeqNumber::new_truncate(INIT_SEQ_NUM),
             socket_start_time: Instant::now(),
             remote_sockid: SocketID(81),
             local_sockid: SocketID(13),
@@ -46,10 +45,10 @@ fn not_enough_latency() {
         },
     );
 
-    let recvr = Receiver::new(
+    let mut recvr = Receiver::new(
         recv,
         ConnectionSettings {
-            init_seq_num: SeqNumber::new(INIT_SEQ_NUM),
+            init_seq_num: SeqNumber::new_truncate(INIT_SEQ_NUM),
             socket_start_time: Instant::now(),
             remote_sockid: SocketID(13),
             local_sockid: SocketID(81),
@@ -61,22 +60,20 @@ fn not_enough_latency() {
         },
     );
 
-    let t1 = thread::spawn(move || {
-        sender
-            .send_all(counting_stream.map(|b| (Instant::now(), b)))
-            .map_err(|e: Error| panic!(e))
-            .wait()
-            .unwrap();
+    tokio::spawn(async move {
+        let mut stream = counting_stream.map(|b| (Instant::now(), b));
+        sender.send_all(&mut stream).await.unwrap();
+        sender.close().await.unwrap();
 
         info!("Sender exiting");
     });
 
-    let t2 = thread::spawn(move || {
+    tokio::spawn(async move {
         let mut last_seq_num = INIT_SEQ_NUM - 1;
 
         let mut total = 0;
 
-        for by in recvr.wait() {
+        while let Some(by) = recvr.next().await {
             let (ts, by) = by.unwrap();
 
             total += 1;
@@ -93,21 +90,22 @@ fn not_enough_latency() {
             last_seq_num = this_seq_num;
 
             // make sure the timings are still decent
-            let diff = Instant::now() - ts;
-            let diff_ms = (diff.as_secs() as f64 + f64::from(diff.subsec_nanos()) / 1e9) * 1e3;
+            let diff_ms = ts.elapsed().as_millis();
             assert!(
-                diff_ms > 4900. && diff_ms < 6000.,
+                diff_ms > 4900 && diff_ms < 6000,
                 "Time difference {}ms not within 4.7 sec and 6 sec",
                 diff_ms,
             );
         }
 
         // make sure we got 3/4 of the packets
-        assert!(total > PACKETS * 3 / 4);
+        assert!(
+            total > PACKETS * 3 / 4,
+            "total={}, expected={}",
+            total,
+            PACKETS * 3 / 4
+        );
 
         info!("Reciever exiting");
     });
-
-    t1.join().unwrap();
-    t2.join().unwrap();
 }

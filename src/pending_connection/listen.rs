@@ -7,7 +7,6 @@ use failure::{bail, Error};
 use futures::prelude::*;
 use log::{info, warn};
 
-use crate::connected::Connected;
 use crate::packet::{
     ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
     SrtControlPacket, SrtHandshake,
@@ -16,10 +15,10 @@ use crate::util::get_packet;
 use crate::{ConnectionSettings, SocketID};
 
 pub async fn listen<T>(
-    mut sock: T,
-    local_socket_id: SocketID,
+    sock: &mut T,
+    local_sockid: SocketID,
     tsbpd_latency: Duration,
-) -> Result<Connected<T>, Error>
+) -> Result<ConnectionSettings, Error>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
         + Sink<(Packet, SocketAddr), Error = Error>
@@ -28,31 +27,26 @@ where
     info!("Listening...");
 
     // keep on retrying
-    loop {
-        let (cookie, from) = get_handshake(&mut sock).await?;
+    let (cookie, from) = get_handshake(sock, local_sockid).await?;
 
-        let (latency, _timestamp, shake, resp_handshake) =
-            get_conclusion(&mut sock, cookie, local_socket_id, tsbpd_latency, &from).await?;
-        // select the smaller packet size and max window size
-        // TODO: allow configuration of these parameters, for now just
-        // use the remote ones
+    let (latency, shake, resp_handshake) =
+        get_conclusion(sock, cookie, local_sockid, tsbpd_latency, &from).await?;
+    // select the smaller packet size and max window size
+    // TODO: allow configuration of these parameters, for now just
+    // use the remote ones
 
-        // finish the connection
-        return Ok(Connected::new(
-            sock,
-            ConnectionSettings {
-                init_seq_num: shake.init_seq_num,
-                remote_sockid: shake.socket_id,
-                remote: from,
-                max_flow_size: 16000, // TODO: what is this?
-                max_packet_size: shake.max_packet_size,
-                local_sockid: local_socket_id,
-                socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
-                tsbpd_latency: latency,
-                handshake_returner: Box::new(move |_| Some(resp_handshake.clone())),
-            },
-        ));
-    }
+    // finish the connection
+    Ok(ConnectionSettings {
+        init_seq_num: shake.init_seq_num,
+        remote_sockid: shake.socket_id,
+        remote: from,
+        max_flow_size: 16000, // TODO: what is this?
+        max_packet_size: shake.max_packet_size,
+        local_sockid,
+        socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
+        tsbpd_latency: latency,
+        handshake_returner: Box::new(move |_| Some(resp_handshake.clone())),
+    })
 }
 
 async fn get_handshake<
@@ -61,11 +55,12 @@ async fn get_handshake<
         + Unpin,
 >(
     sock: &mut T,
+    local_sockid: SocketID,
 ) -> Result<(i32, SocketAddr), Error> {
     loop {
         let (packet, from) = get_packet(sock).await?;
 
-        let _cookie = if let Packet::Control(ControlPacket {
+        if let Packet::Control(ControlPacket {
             control_type: ControlTypes::Handshake(shake),
             timestamp,
             ..
@@ -93,7 +88,7 @@ async fn get_handshake<
                 dest_sockid: shake.socket_id,
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     syn_cookie: cookie,
-                    socket_id: shake.socket_id,
+                    socket_id: local_sockid,
                     info: HandshakeVSInfo::V5 {
                         crypto_size: 0,
                         ext_hs: None,
@@ -123,7 +118,7 @@ async fn get_conclusion<
     local_socket_id: SocketID,
     tsbpd_latency: Duration,
     from: &SocketAddr,
-) -> Result<(Duration, i32, HandshakeControlInfo, Packet), Error> {
+) -> Result<(Duration, HandshakeControlInfo, Packet), Error> {
     // https://tools.ietf.org/html/draft-gg-udt-03#page-10
     // The server, when receiving a handshake packet and the correct cookie,
     // compares the packet size and maximum window size with its own values
@@ -141,10 +136,10 @@ async fn get_conclusion<
                 Packet::Control(ControlPacket {
                     control_type: ControlTypes::Handshake(ref shake),
                     timestamp,
-                    dest_sockid,
+                    ..
                 }),
                 from_second,
-            ) if from_second == *from && local_socket_id == dest_sockid => {
+            ) if from_second == *from => {
                 if shake.shake_type != ShakeType::Conclusion {
                     // discard
                     info!(
@@ -205,6 +200,8 @@ async fn get_conclusion<
 
                 // send the packet
                 sock.send((resp_handshake.clone(), *from)).await?;
+
+                return Ok((latency, shake.clone(), resp_handshake));
             }
             _ => continue,
         }

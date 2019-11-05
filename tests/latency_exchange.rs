@@ -1,25 +1,22 @@
-use srt::{ConnInitMethod, SrtSocketBuilder};
-
 use failure::Error;
-
-use futures::prelude::Future;
-
+use srt::{ConnInitMethod, SrtSocketBuilder};
 use std::time::Duration;
 
-fn test_latency_exchange(
+async fn test_latency_exchange(
     connecter_latency: Duration,
     listener_latency: Duration,
 ) -> Result<(), Error> {
     let connecter = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:4000".parse()?))
         .latency(connecter_latency)
-        .build()?;
+        .connect_sender();
 
     let listener = SrtSocketBuilder::new(ConnInitMethod::Listen)
         .local_port(4000)
         .latency(listener_latency)
-        .build()?;
+        .connect_receiver();
 
-    let (connector, listener) = connecter.join(listener).wait()?;
+    let (connector, listener) = futures::join!(connecter, listener);
+    let (connector, listener) = (connector?, listener?);
 
     let expected = Duration::max(connecter_latency, listener_latency);
 
@@ -29,10 +26,10 @@ fn test_latency_exchange(
     Ok(())
 }
 
-#[test]
-fn latency_exchange() -> Result<(), Error> {
-    test_latency_exchange(Duration::from_secs(3), Duration::from_secs(4))?;
-    test_latency_exchange(Duration::from_secs(4), Duration::from_secs(3))?;
+#[tokio::test]
+async fn latency_exchange() -> Result<(), Error> {
+    test_latency_exchange(Duration::from_secs(3), Duration::from_secs(4)).await?;
+    test_latency_exchange(Duration::from_secs(4), Duration::from_secs(3)).await?;
 
     Ok(())
 }

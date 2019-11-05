@@ -4,95 +4,90 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use tokio_codec::BytesCodec;
-use tokio_udp::{UdpFramed, UdpSocket};
+use tokio::codec::BytesCodec;
+use tokio::net::{UdpFramed, UdpSocket};
+use tokio::timer::{delay, Interval};
 
-use futures_timer::{Delay, Interval};
+use failure::Error;
 
-use futures::future::{Either, Future};
-use futures::stream::{iter_ok, Stream};
+use futures::{stream, FutureExt, SinkExt, StreamExt, TryStreamExt};
 
 use bytes::Bytes;
 
 fn find_stransmit_rs() -> PathBuf {
     let mut stransmit_rs_path = env::current_exe().unwrap();
     stransmit_rs_path.pop();
-    stransmit_rs_path.pop();
+
     stransmit_rs_path.push("stransmit-rs");
+
+    if !stransmit_rs_path.exists() {
+        stransmit_rs_path.pop();
+        stransmit_rs_path.pop();
+        stransmit_rs_path.push("stransmit-rs");
+    }
+
+    assert!(
+        stransmit_rs_path.exists(),
+        "Could not find stransmit at {:?}",
+        stransmit_rs_path
+    );
 
     stransmit_rs_path
 }
 
-fn test_send(udp_in: u16, args_a: &'static [&str], args_b: &'static [&str], udp_out: u16) {
+async fn test_send(
+    udp_in: u16,
+    args_a: &'static [&str],
+    args_b: &'static [&str],
+    udp_out: u16,
+) -> Result<(), Error> {
     let srs_path = find_stransmit_rs();
 
-    let mut a = Command::new(&srs_path).args(args_a).spawn().unwrap();
-    let mut b = Command::new(&srs_path).args(args_b).spawn().unwrap();
+    let mut a = Command::new(&srs_path).args(args_a).spawn()?;
+    let mut b = Command::new(&srs_path).args(args_b).spawn()?;
 
-    let sender = thread::spawn(move || {
-        use futures::sink::Sink;
+    let sender = async move {
+        let mut sock = UdpFramed::new(UdpSocket::bind("127.0.0.1:0").await?, BytesCodec::new());
+        let mut stream = stream::iter(0..100)
+            .zip(Interval::new(Instant::now(), Duration::from_millis(100)))
+            .map(|_| {
+                (
+                    Bytes::from("asdf"),
+                    SocketAddr::new("127.0.0.1".parse().unwrap(), udp_in),
+                )
+            });
+        sock.send_all(&mut stream).await.unwrap();
 
-        UdpFramed::new(
-            UdpSocket::bind(&"127.0.0.1:0".parse().unwrap()).unwrap(),
+        Ok::<_, Error>(())
+    };
+
+    let recvr = async move {
+        let mut sock = UdpFramed::new(
+            UdpSocket::bind(&SocketAddr::new("127.0.0.1".parse()?, udp_out)).await?,
             BytesCodec::new(),
-        )
-        .send_all(
-            iter_ok(0..100)
-                .zip(Interval::new(Duration::from_millis(100)))
-                .map(|_| {
-                    (
-                        Bytes::from("asdf"),
-                        SocketAddr::new("127.0.0.1".parse().unwrap(), udp_in),
-                    )
-                }),
-        )
-        .wait()
-        .unwrap();
-    });
+        );
+        let receive_data = async move {
+            let mut i = 0;
+            while let Some((pack, _)) = sock.try_next().await.unwrap() {
+                assert_eq!(&pack, "asdf");
 
-    let recvr = thread::spawn(move || {
-        let mut i = 0;
-
-        let udp = UdpFramed::new(
-            UdpSocket::bind(&SocketAddr::new("127.0.0.1".parse().unwrap(), udp_out)).unwrap(),
-            BytesCodec::new(),
-        )
-        .into_future()
-        .map_err(|(e, _)| e)
-        .select2(Delay::new(Duration::from_secs(4)))
-        .map_err(|e| match e {
-            Either::A((e, _)) | Either::B((e, _)) => e,
-        });
-
-        let udp = match udp.wait().unwrap() {
-            Either::A(((Some((_, _)), udp), _)) => udp,
-            Either::A(_) => panic!("Stream ended unexpectedly"),
-            Either::B(_) => panic!(
-                "Timeout when waiting for data. Args:\n\t{}\n\t{}\n",
-                args_a.join(" "),
-                args_b.join(" ")
-            ),
-        };
-
-        for a in udp.wait() {
-            let (pack, _) = a.unwrap();
-
-            assert_eq!(&pack, "asdf");
-
-            // once we get 20, that's good enough for validity
-            i += 1;
-            if i > 20 {
-                break;
+                // once we get 20, that's good enough for validity
+                i += 1;
+                if i > 20 {
+                    break;
+                }
             }
-        }
-        assert!(i > 20);
-    });
+        };
+        // 4s timeout
+        let succ = futures::select!(_ = receive_data.boxed().fuse() => true, _ = delay(Instant::now() + Duration::from_secs(4)).fuse() => false);
+        assert!(succ, "Timeout with receiving");
 
-    // don't unwrap here, to avoid not killing the processes
-    let recvr_res = recvr.join();
-    let sendr_res = sender.join();
+        Ok::<_, Error>(())
+    };
+
+    futures::try_join!(recvr, sender)?;
 
     let failure_str = format!(
         "Failed send test. Args:\n\t{}\n\t{}\n",
@@ -107,10 +102,7 @@ fn test_send(udp_in: u16, args_a: &'static [&str], args_b: &'static [&str], udp_
     a.wait().expect(&failure_str);
     b.wait().expect(&failure_str);
 
-    recvr_res.expect(&failure_str);
-    sendr_res.expect(&failure_str);
-
-    thread::sleep(Duration::from_millis(100));
+    Ok(())
 }
 
 fn ui_test(flags: &[&str], stderr: &str) {
@@ -144,29 +136,32 @@ fn ui_test(flags: &[&str], stderr: &str) {
 
 mod stransmit_rs_snd_rcv {
     use super::test_send;
+    use failure::Error;
 
-    #[test]
-    fn basic() {
+    #[tokio::test]
+    async fn basic() -> Result<(), Error> {
         test_send(
             2000,
             &["udp://:2000", "srt://127.0.0.1:2001"],
             &["srt://:2001", "udp://127.0.0.1:2002"],
             2002,
-        );
+        )
+        .await
     }
 
-    #[test]
-    fn sender_as_listener() {
+    #[tokio::test]
+    async fn sender_as_listener() -> Result<(), Error> {
         test_send(
             2003,
             &["udp://:2003", "srt://:2004"],
             &["srt://127.0.0.1:2004", "udp://127.0.0.1:2005"],
             2005,
-        );
+        )
+        .await
     }
 
-    #[test]
-    fn sender_as_listener_srt_local_port() {
+    #[tokio::test]
+    async fn sender_as_listener_srt_local_port() -> Result<(), Error> {
         test_send(
             2006,
             &["udp://:2006", "srt://:2007"],
@@ -175,11 +170,12 @@ mod stransmit_rs_snd_rcv {
                 "udp://127.0.0.1:2009",
             ],
             2009,
-        );
+        )
+        .await
     }
 
-    #[test]
-    fn rendezvous() {
+    #[tokio::test]
+    async fn rendezvous() -> Result<(), Error> {
         test_send(
             2010,
             &[
@@ -191,11 +187,12 @@ mod stransmit_rs_snd_rcv {
                 "udp://127.0.0.1:2013",
             ],
             2013,
-        );
+        )
+        .await
     }
 
-    #[test]
-    fn stransmit_rs_rendezvous_udp_local_port() {
+    #[tokio::test]
+    async fn stransmit_rs_rendezvous_udp_local_port() -> Result<(), Error> {
         test_send(
             2014,
             &[
@@ -207,11 +204,12 @@ mod stransmit_rs_snd_rcv {
                 "udp://127.0.0.1:2018?local_port=2017",
             ],
             2018,
-        );
+        )
+        .await
     }
 
-    #[test]
-    fn latency() {
+    #[tokio::test]
+    async fn latency() -> Result<(), Error> {
         test_send(
             2019,
             &["udp://:2019", "srt://:2020?latency_ms=500"],
@@ -220,27 +218,30 @@ mod stransmit_rs_snd_rcv {
                 "udp://127.0.0.1:2021",
             ],
             2021,
-        );
+        )
+        .await
     }
 
-    #[test]
-    fn udp_to_udp() {
+    #[tokio::test]
+    async fn udp_to_udp() -> Result<(), Error> {
         test_send(
             2022,
             &["udp://:2022", "udp://127.0.0.1:2023"],
             &["udp://:2023", "udp://127.0.0.1:2024"],
             2024,
-        );
+        )
+        .await
     }
 
-    #[test]
-    fn multicast() {
+    #[tokio::test]
+    async fn multiplex() -> Result<(), Error> {
         test_send(
             2025,
             &["udp://:2025", "srt://:2026?multiplex"],
             &["srt://127.0.0.1:2026", "udp://127.0.0.1:2027"],
             2027,
-        );
+        )
+        .await
     }
 }
 

@@ -44,7 +44,7 @@ impl ConnectionSettings {
     pub fn get_timestamp(&self, at: Instant) -> i32 {
         let elapsed = at - self.socket_start_time;
 
-        (elapsed.as_secs() * 1_000_000 + (u64::from(elapsed.subsec_nanos()) / 1_000)) as i32
+        elapsed.as_micros() as i32 // TODO: handle overflow here
     }
 
     /// Timestamp in us

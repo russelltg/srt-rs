@@ -1,16 +1,21 @@
 use bytes::Bytes;
 use failure::Error;
 use futures::prelude::*;
+use futures::ready;
 use log::{debug, info, trace, warn};
-use tokio::timer::{Delay, Interval};
+use tokio::timer::{delay, Delay, Interval};
 
 use crate::loss_compression::compress_loss_list;
 use crate::packet::{ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket};
+use crate::sink_send_wrapper::SinkSendWrapper;
 use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber};
 
 use std::cmp;
+use std::cmp::Ordering;
 use std::iter::Iterator;
 use std::net::SocketAddr;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 mod buffer;
@@ -115,12 +120,16 @@ pub struct Receiver<T> {
     /// Release delay
     /// wakes the thread when there is a new packet to be released
     release_delay: Delay,
+
+    /// A buffer of packets to send to the underlying sink
+    send_wrapper: SinkSendWrapper<(Packet, SocketAddr)>,
 }
 
 impl<T> Receiver<T>
 where
-    T: Stream<Item = (Packet, SocketAddr), Error = Error>
-        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+    T: Stream<Item = Result<(Packet, SocketAddr), Error>>
+        + Sink<(Packet, SocketAddr), Error = Error>
+        + Unpin,
 {
     pub fn new(sock: T, settings: ConnectionSettings) -> Receiver<T> {
         let init_seq_num = settings.init_seq_num;
@@ -141,16 +150,17 @@ where
             packet_history_window: Vec::new(),
             packet_pair_window: Vec::new(),
             ack_interval: Interval::new_interval(Duration::from_millis(10)),
-            nak_interval: Delay::new(Instant::now() + Duration::from_millis(10)),
+            nak_interval: delay(Instant::now() + Duration::from_millis(10)),
             lrsn: init_seq_num, // at start, we have received everything until the first packet, exclusive (aka nothing)
             next_ack: 1,
             exp_count: 1,
             probe_time: None,
-            timeout_timer: Delay::new(Instant::now() + Duration::from_secs(1)),
+            timeout_timer: delay(Instant::now() + Duration::from_secs(1)),
             lr_ack_acked: (0, init_seq_num),
             buffer: RecvBuffer::new(init_seq_num),
             shutdown_flag: false,
-            release_delay: Delay::new(Instant::now() + Duration::from_secs(0)), // start with an empty delay
+            release_delay: delay(Instant::now() + Duration::from_secs(0)), // start with an empty delay
+            send_wrapper: SinkSendWrapper::new(),
         }
     }
 
@@ -162,12 +172,37 @@ where
         self.settings.remote
     }
 
+    fn timeout_timer(&mut self) -> Pin<&mut Delay> {
+        Pin::new(&mut self.timeout_timer)
+    }
+
+    fn sock(&mut self) -> Pin<&mut T> {
+        Pin::new(&mut self.sock)
+    }
+
+    fn ack_interval(&mut self) -> Pin<&mut Interval> {
+        Pin::new(&mut self.ack_interval)
+    }
+
+    fn nak_interval(&mut self) -> Pin<&mut Delay> {
+        Pin::new(&mut self.nak_interval)
+    }
+
+    fn release_delay(&mut self) -> Pin<&mut Delay> {
+        Pin::new(&mut self.release_delay)
+    }
+
+    fn send_to_remote(&mut self, cx: &mut Context, packet: Packet) -> Result<(), Error> {
+        self.send_wrapper
+            .send(&mut self.sock, (packet, self.settings.remote), cx)
+    }
+
     fn reset_timeout(&mut self) {
         self.timeout_timer
             .reset(Instant::now() + self.listen_timeout)
     }
 
-    fn on_ack_event(&mut self) -> Result<(), Error> {
+    fn on_ack_event(&mut self, cx: &mut Context) -> Result<(), Error> {
         // get largest inclusive received packet number
         let ack_number = match self.loss_list.first() {
             // There is an element in the loss list
@@ -299,12 +334,12 @@ where
             ack_seq_num,
             timestamp: now,
         });
-        self.sock.start_send((ack, self.settings.remote))?;
+        self.send_to_remote(cx, ack)?;
 
         Ok(())
     }
 
-    fn on_nak_event(&mut self) -> Result<(), Error> {
+    fn on_nak_event(&mut self, cx: &mut Context) -> Result<(), Error> {
         // reset NAK timer, rtt and variance are in us, so convert to ns
 
         // NAK is used to trigger a negative acknowledgement (NAK). Its period
@@ -346,7 +381,7 @@ where
         }
 
         // send the nak
-        self.send_nak(seq_nums.into_iter())?;
+        self.send_nak(cx, seq_nums.into_iter())?;
 
         Ok(())
     }
@@ -354,18 +389,18 @@ where
     // checks the timers
     // if a timer was triggered, then an RSFutureTimeout will be returned
     // if not, the socket is given back
-    fn check_timers(&mut self) -> Result<(), Error> {
+    fn check_timers(&mut self, cx: &mut Context) -> Result<(), Error> {
         // see if we need to ACK or NAK
-        if let Async::Ready(_) = self.ack_interval.poll()? {
-            self.on_ack_event()?;
+        if let Poll::Ready(Some(_)) = self.ack_interval().poll_next(cx) {
+            self.on_ack_event(cx)?;
         }
 
-        if let Async::Ready(_) = self.nak_interval.poll()? {
-            self.on_nak_event()?;
+        if let Poll::Ready(_) = self.nak_interval().poll(cx) {
+            self.on_nak_event(cx)?;
         }
 
         // no need to do anything specific
-        let _ = self.release_delay.poll()?;
+        let _ = self.release_delay().poll(cx);
 
         Ok(())
     }
@@ -385,7 +420,12 @@ where
     }
 
     // handles an incomming a packet
-    fn handle_packet(&mut self, packet: &Packet, from: &SocketAddr) -> Result<(), Error> {
+    fn handle_packet(
+        &mut self,
+        cx: &mut Context,
+        packet: &Packet,
+        from: &SocketAddr,
+    ) -> Result<(), Error> {
         // We don't care about packets from elsewhere
         if *from != self.settings.remote {
             info!("Packet received from unknown address: {:?}", from);
@@ -414,7 +454,7 @@ where
                     ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(_) => {
                         if let Some(pack) = (*self.settings.handshake_returner)(&packet) {
-                            self.sock.start_send((pack, self.settings.remote))?;
+                            self.send_to_remote(cx, pack)?;
                         }
                     }
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
@@ -428,7 +468,7 @@ where
                     }
                 }
             }
-            Packet::Data(data) => self.handle_data_packet(&data)?,
+            Packet::Data(data) => self.handle_data_packet(cx, &data)?,
         };
 
         Ok(())
@@ -479,7 +519,7 @@ where
         Ok(())
     }
 
-    fn handle_data_packet(&mut self, data: &DataPacket) -> Result<(), Error> {
+    fn handle_data_packet(&mut self, cx: &mut Context, data: &DataPacket) -> Result<(), Error> {
         let now = self.get_timestamp_now();
 
         // 1) Reset the ExpCount to 1. If there is no unacknowledged data
@@ -511,37 +551,40 @@ where
         //    than LRSN, put all the sequence numbers between (but
         //    excluding) these two values into the receiver's loss list and
         //    send them to the sender in an NAK packet.
-        if data.seq_number > self.lrsn {
-            // lrsn is the latest packet received, so nak the one after that
-            for i in seq_num_range(self.lrsn, data.seq_number) {
-                self.loss_list.push(LossListEntry {
-                    seq_num: i,
-                    feedback_time: now,
-                    // k is initialized at 2, as stated on page 12 (very end)
-                    k: 2,
-                })
+        match data.seq_number.cmp(&self.lrsn) {
+            Ordering::Greater => {
+                // lrsn is the latest packet received, so nak the one after that
+                for i in seq_num_range(self.lrsn, data.seq_number) {
+                    self.loss_list.push(LossListEntry {
+                        seq_num: i,
+                        feedback_time: now,
+                        // k is initialized at 2, as stated on page 12 (very end)
+                        k: 2,
+                    })
+                }
+
+                self.send_nak(cx, seq_num_range(self.lrsn, data.seq_number))?;
             }
-
-            self.send_nak(seq_num_range(self.lrsn, data.seq_number))?;
-
-        // b. If the sequence number is less than LRSN, remove it from the
-        //    receiver's loss list.
-        } else if data.seq_number < self.lrsn {
-            match self.loss_list[..].binary_search_by(|ll| ll.seq_num.cmp(&data.seq_number)) {
-                Ok(i) => {
-                    self.loss_list.remove(i);
-                }
-                Err(_) => {
-                    debug!(
-                        "Packet received that's not in the loss list: {:?}, loss_list={:?}",
-                        data.seq_number,
-                        self.loss_list
-                            .iter()
-                            .map(|ll| ll.seq_num.as_raw())
-                            .collect::<Vec<_>>()
-                    );
-                }
-            };
+            // b. If the sequence number is less than LRSN, remove it from the
+            //    receiver's loss list.
+            Ordering::Less => {
+                match self.loss_list[..].binary_search_by(|ll| ll.seq_num.cmp(&data.seq_number)) {
+                    Ok(i) => {
+                        self.loss_list.remove(i);
+                    }
+                    Err(_) => {
+                        debug!(
+                            "Packet received that's not in the loss list: {:?}, loss_list={:?}",
+                            data.seq_number,
+                            self.loss_list
+                                .iter()
+                                .map(|ll| ll.seq_num.as_raw())
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                };
+            }
+            Ordering::Equal => {}
         }
 
         // record that we got this packet
@@ -566,7 +609,7 @@ where
     }
 
     // send a NAK, and return the future
-    fn send_nak<I>(&mut self, lost_seq_nums: I) -> Result<(), Error>
+    fn send_nak<I>(&mut self, cx: &mut Context, lost_seq_nums: I) -> Result<(), Error>
     where
         I: Iterator<Item = SeqNumber>,
     {
@@ -577,7 +620,7 @@ where
             compress_loss_list(vec.iter().cloned()).collect(),
         ));
 
-        self.sock.start_send((pack, self.settings.remote))?;
+        self.send_to_remote(cx, pack)?;
 
         Ok(())
     }
@@ -598,87 +641,95 @@ where
 
 impl<T> Stream for Receiver<T>
 where
-    T: Stream<Item = (Packet, SocketAddr), Error = Error>
-        + Sink<SinkItem = (Packet, SocketAddr), SinkError = Error>,
+    T: Stream<Item = Result<(Packet, SocketAddr), Error>>
+        + Sink<(Packet, SocketAddr), Error = Error>
+        + Unpin,
 {
-    type Item = (Instant, Bytes);
-    type Error = Error;
+    type Item = Result<(Instant, Bytes), Error>;
 
-    fn poll(&mut self) -> Poll<Option<(Instant, Bytes)>, Error> {
-        self.check_timers()?;
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Option<Result<(Instant, Bytes), Error>>> {
+        let pin = self.get_mut();
 
-        self.sock.poll_complete()?;
+        pin.check_timers(cx)?;
+        pin.send_wrapper.poll_send(&mut pin.sock, cx)?;
+
+        // either way we want to continue
+        let _ = pin.sock().poll_flush(cx)?;
 
         loop {
             // try to release packets
-
-            let tsbpd = self.settings.tsbpd_latency;
-
-            if let Some((ts, p)) = self
+            if let Some((ts, p)) = pin
                 .buffer
-                .next_msg_tsbpd(tsbpd, self.settings.socket_start_time)
+                .next_msg_tsbpd(pin.settings.tsbpd_latency, pin.settings.socket_start_time)
             {
-                return Ok(Async::Ready(Some((
-                    self.settings.socket_start_time + Duration::from_micros(ts as u64),
+                return Poll::Ready(Some(Ok((
+                    pin.settings.socket_start_time + Duration::from_micros(ts as u64),
                     p,
                 ))));
             }
 
             // drop packets
             // TODO: do something with this
-            let _dropped = self
+            let _dropped = pin
                 .buffer
-                .drop_too_late_packets(tsbpd, self.settings.socket_start_time);
+                .drop_too_late_packets(pin.settings.tsbpd_latency, pin.settings.socket_start_time);
 
-            match self.timeout_timer.poll() {
-                Err(e) => panic!(e), // why would this ever happen
-                Ok(Async::Ready(_)) => {
-                    self.exp_count += 1;
-                    self.reset_timeout();
-                }
-                Ok(Async::NotReady) => {}
+            if let Poll::Ready(_) = pin.timeout_timer().poll(cx) {
+                pin.exp_count += 1;
+                pin.reset_timeout();
             }
 
             // if there is a packet ready, set the timeout timer for it
-            if let Some(release_time) = self
-                .buffer
-                .next_message_release_time(self.settings.socket_start_time, tsbpd)
-            {
-                self.release_delay.reset(release_time);
+            if let Some(release_time) = pin.buffer.next_message_release_time(
+                pin.settings.socket_start_time,
+                pin.settings.tsbpd_latency,
+            ) {
+                pin.release_delay.reset(release_time);
+                let _ = Pin::new(&mut pin.release_delay).poll(cx);
+
+                // if we are setup to shutdown, then the internal socket
+                // returned None, so we shouldn't poll it again, as it may panic
+                // returning Pending is okay assuming release_delay is greater
+                // than zero. Techically this should check the reutnr value of
+                // the above poll, but it seems to work.
+                if pin.shutdown_flag {
+                    return Poll::Pending;
+                }
             }
 
             // if there isn't a complete message at the beginning of the buffer and we are supposed to be shutting down, shut down
-            if self.shutdown_flag && self.buffer.next_msg_ready().is_none() {
+            if pin.shutdown_flag && pin.buffer.next_msg_ready().is_none() {
                 info!("Shutdown received and all packets released, finishing up");
-                return Ok(Async::Ready(None));
+                return Poll::Ready(None);
             }
-
-            let (packet, addr) = match self.sock.poll() {
-                Err(e) => {
+            // TODO: exp_count
+            let (packet, addr) = match ready!(pin.sock().poll_next(cx)) {
+                Some(Ok(p)) => p,
+                Some(Err(e)) => {
                     warn!("Error reading packet: {:?}", e);
 
                     continue;
                 }
-                Ok(Async::Ready(Some(p))) => p,
-                Ok(Async::Ready(None)) => {
+                None => {
                     // end of stream, shutdown
-                    self.shutdown_flag = true;
+                    pin.shutdown_flag = true;
 
                     continue;
                 }
-                // TODO: exp_count
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
             };
 
             // handle the socket
             // packet was received, reset exp_count
-            self.exp_count = 1;
-            self.reset_timeout();
+            pin.exp_count = 1;
+            pin.reset_timeout();
 
-            self.handle_packet(&packet, &addr)?;
+            pin.handle_packet(cx, &packet, &addr)?;
 
             // TODO: should this be here for optimal performance?
-            self.sock.poll_complete()?;
+            let _ = pin.sock().poll_flush(cx)?;
         }
     }
 }
