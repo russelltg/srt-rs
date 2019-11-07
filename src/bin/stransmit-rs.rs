@@ -524,18 +524,20 @@ async fn run() -> Result<(), Error> {
         to_vec.push(to?);
     }
 
-    let (from, to_sinks) = futures::join!(from, future::try_join_all(to_vec.iter_mut()));
-    let mut to_sinks = to_sinks?;
+    let (mut from, mut to_sinks) =
+        futures::try_join!(from, future::try_join_all(to_vec.iter_mut()))?;
 
     // combine the sinks
     let mut to_sink: Pin<Box<dyn Sink<Bytes, Error = Error> + Send + 'static>> = to_sinks
         .pop()
         .expect("To sinks didn't even have one element");
+
+    // TODO: this can be optimized. This is a linked list right now, list would
+    // be more efficient
     for sink in to_sinks {
         to_sink = to_sink.fanout(sink).boxed_sink();
     }
 
-    let mut from = from?;
     to_sink.send_all(&mut from).await?;
     to_sink.close().await?;
     Ok(())
