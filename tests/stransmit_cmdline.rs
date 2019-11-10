@@ -6,9 +6,10 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tokio::codec::BytesCodec;
-use tokio::net::{UdpFramed, UdpSocket};
-use tokio::timer::{delay, Interval};
+use tokio::net::UdpSocket;
+use tokio::time::{delay, Interval};
+use tokio_util::codec::BytesCodec;
+use tokio_util::udp::UdpFramed;
 
 use failure::Error;
 
@@ -48,15 +49,17 @@ async fn test_send(
     let mut a = Command::new(&srs_path).args(args_a).spawn()?;
     let mut b = Command::new(&srs_path).args(args_b).spawn()?;
 
+    let ident: i32 = rand::random();
+
     let sender = async move {
         let mut sock = UdpFramed::new(UdpSocket::bind("127.0.0.1:0").await?, BytesCodec::new());
         let mut stream = stream::iter(0..100)
             .zip(Interval::new(Instant::now(), Duration::from_millis(100)))
             .map(|_| {
-                (
-                    Bytes::from("asdf"),
+                Ok((
+                    Bytes::from(format!("asdf{}", ident)),
                     SocketAddr::new("127.0.0.1".parse().unwrap(), udp_in),
-                )
+                ))
             });
         sock.send_all(&mut stream).await.unwrap();
 
@@ -71,7 +74,7 @@ async fn test_send(
         let receive_data = async move {
             let mut i = 0;
             while let Some((pack, _)) = sock.try_next().await.unwrap() {
-                assert_eq!(&pack, "asdf");
+                assert_eq!(&pack, &format!("asdf{}", ident));
 
                 // once we get 20, that's good enough for validity
                 i += 1;

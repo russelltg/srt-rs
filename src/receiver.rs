@@ -3,7 +3,7 @@ use failure::Error;
 use futures::prelude::*;
 use futures::ready;
 use log::{debug, info, trace, warn};
-use tokio::timer::{delay, Delay, Interval};
+use tokio::time::{delay, Delay, Interval};
 
 use crate::loss_compression::compress_loss_list;
 use crate::packet::{ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket};

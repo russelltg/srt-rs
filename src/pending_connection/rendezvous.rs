@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use failure::{bail, Error};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use log::warn;
-use tokio::timer::Interval;
+use tokio::time::Interval;
 
 use crate::packet::{ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SocketType};
 use crate::util::{select_discard, Selected};

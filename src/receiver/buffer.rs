@@ -107,10 +107,11 @@ impl RecvBuffer {
 
         if (start_time + Duration::from_micros(origin_ts_usec as u64) + latency) <= Instant::now() {
             debug!(
-                "Packet was deemed reaady for release, Now={:?}, Ts={:?}, Latency={:?}",
+                "Packet was deemed reaady for release, Now={:?}, Ts={:?}, Latency={:?}, len={}",
                 Instant::now() - start_time,
                 Duration::from_micros(origin_ts_usec as u64),
-                latency
+                latency,
+                msg_size,
             );
             Some(msg_size)
         } else {

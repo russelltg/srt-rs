@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures::{stream, SinkExt, StreamExt};
-use tokio::timer::Interval;
+use tokio::time::Interval;
 
 use srt::{ConnectionSettings, Receiver, Sender, SeqNumber, SocketID, SrtCongestCtrl};
 
@@ -58,7 +58,7 @@ async fn lossy() {
     );
 
     let sender = async move {
-        let mut stream = counting_stream.map(|b| (Instant::now(), b));
+        let mut stream = counting_stream.map(|b| Ok((Instant::now(), b)));
         sender.send_all(&mut stream).await.unwrap();
         sender.close().await.unwrap();
     };

@@ -19,6 +19,7 @@ os:
   - linux
 
 rust:
+  - stable
   - beta
   - nightly
 
@@ -39,12 +40,12 @@ script:
   - cd ../..
   # build & run tests
   - cargo clean
-  - if [ "$TRAVIS_RUST_VERSION" == beta ]; then cargo fmt --all -- --check; fi
+  - if [ "$TRAVIS_RUST_VERSION" == stable ]; then cargo fmt --all -- --check; fi
   - cargo build --verbose
   - RUST_LOG=srt=info,lossy=info,message_splitting=info RUST_BACKTRACE=full cargo test --verbose
 
 after_success: |
-  if [ "$TRAVIS_RUST_VERSION" == beta ] && [ "$TRAVIS_OS_NAME" == linux ]; then
+  if [ "$TRAVIS_RUST_VERSION" == stable ] && [ "$TRAVIS_OS_NAME" == linux ]; then
     wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz &&
     tar xzf master.tar.gz &&
     cd kcov-master &&

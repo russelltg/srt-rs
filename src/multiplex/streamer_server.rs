@@ -3,10 +3,9 @@ use std::task::{Context, Poll};
 use std::time::Instant;
 
 use futures::channel::mpsc;
-use futures::ready;
 use futures::sink::Sink;
 use futures::stream::Stream;
-use futures::SinkExt;
+use futures::{ready, SinkExt, StreamExt};
 
 use bytes::Bytes;
 
@@ -71,13 +70,13 @@ impl Sink<(Instant, Bytes)> for StreamerServer {
 
             let mut sender = Sender::new(chan, SrtCongestCtrl, settings);
 
-            let (tx, mut rx) = mpsc::channel(100);
+            let (tx, rx) = mpsc::channel(100);
 
             self.channels.push(tx);
 
             // TODO: remove from the channel list when finished
             tokio::spawn(async move {
-                sender.send_all(&mut rx).await.unwrap();
+                sender.send_all(&mut rx.map(Ok)).await.unwrap();
                 sender.close().await.unwrap();
             });
         }

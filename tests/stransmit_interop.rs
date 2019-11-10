@@ -7,10 +7,10 @@ use bytes::Bytes;
 use failure::Error;
 use futures::{join, stream, SinkExt, Stream, StreamExt};
 
-use tokio::codec::BytesCodec;
-use tokio::net::UdpFramed;
 use tokio::net::UdpSocket;
-use tokio::timer::Interval;
+use tokio::time::Interval;
+use tokio_util::codec::BytesCodec;
+use tokio_util::udp::UdpFramed;
 
 use srt::{ConnInitMethod, SrtSocketBuilder};
 
@@ -85,7 +85,7 @@ async fn stransmit_client() -> Result<(), Error> {
                     BytesCodec::new(),
                 );
                 let mut stream = counting_stream(PACKETS, Duration::from_millis(1))
-                    .map(|b| (b, "127.0.0.1:2002".parse().unwrap()));
+                    .map(|b| Ok((b, "127.0.0.1:2002".parse().unwrap())));
 
                 sock.send_all(&mut stream).await.unwrap();
                 sock.close().await.unwrap();
@@ -133,7 +133,7 @@ async fn stransmit_server() -> Result<(), Error> {
         assert_eq!(sender.settings().tsbpd_latency, Duration::from_millis(123));
 
         let mut stream =
-            counting_stream(PACKETS, Duration::from_millis(1)).map(|b| (Instant::now(), b));
+            counting_stream(PACKETS, Duration::from_millis(1)).map(|b| Ok((Instant::now(), b)));
         sender.send_all(&mut stream).await.unwrap();
         sender.close().await.unwrap();
     };

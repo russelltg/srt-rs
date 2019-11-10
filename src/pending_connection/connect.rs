@@ -6,7 +6,7 @@ use failure::{bail, Error};
 use futures::prelude::*;
 
 use log::{info, warn};
-use tokio::timer::Interval;
+use tokio::time::Interval;
 
 use crate::packet::{
     ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,

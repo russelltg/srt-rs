@@ -11,7 +11,7 @@ use failure::{format_err, Error};
 use futures::channel::mpsc;
 use futures::{ready, Future, Sink, Stream};
 
-use tokio::timer::{delay, Delay};
+use tokio::time::{delay, Delay};
 
 use log::{debug, info};
 

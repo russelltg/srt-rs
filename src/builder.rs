@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use failure::{bail, Error};
 use rand;
-use tokio::net::{UdpFramed, UdpSocket};
+use tokio::net::UdpSocket;
+use tokio_util::udp::UdpFramed;
 
 use crate::pending_connection;
 use crate::MultiplexServer;

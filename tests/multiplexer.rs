@@ -30,7 +30,8 @@ async fn multiplexer() -> Result<(), Error> {
         {
             let mut sender = Sender::new(channel, SrtCongestCtrl, settings);
 
-            let mut stream = stream::iter(Some((Instant::now(), Bytes::from("asdf"))).into_iter());
+            let mut stream =
+                stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());
 
             tokio::spawn(async move {
                 sender.send_all(&mut stream).await.unwrap();

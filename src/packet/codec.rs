@@ -2,7 +2,7 @@ use crate::Packet;
 use bytes::BytesMut;
 use failure::Error;
 use std::io::Cursor;
-use tokio::codec::{Decoder, Encoder};
+use tokio_util::codec::{Decoder, Encoder};
 
 pub struct PacketCodec;
 
