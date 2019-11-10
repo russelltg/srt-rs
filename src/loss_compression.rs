@@ -52,9 +52,9 @@ where
             // the list must be sorted
             assert!(
                 this < self.next.unwrap(),
-                "error: {:?}<{:?}",
-                this,
-                self.next.unwrap()
+                "error: {}!<{}",
+                this.0,
+                self.next.unwrap().0
             );
 
             if let Some(last_in_loop) = self.last_in_loop {
@@ -158,6 +158,8 @@ mod test {
     use super::{compress_loss_list, decompress_loss_list};
     use crate::SeqNumber;
 
+    const ONE: u32 = 1 << 31;
+
     #[test]
     fn loss_compression_test() {
         macro_rules! test_comp_decomp {
@@ -178,20 +180,32 @@ mod test {
                 );
             }};
         }
-        let one = 1 << 31;
 
-        test_comp_decomp!([13, 14, 15, 16, 17, 18, 19], [13 | one, 19]);
+        test_comp_decomp!([13, 14, 15, 16, 17, 18, 19], [13 | ONE, 19]);
 
         test_comp_decomp!(
             [1, 2, 3, 4, 5, 9, 11, 12, 13, 16, 17],
-            [1 | 1 << 31, 5, 9, 11 | 1 << 31, 13, 16 | 1 << 31, 17]
+            [1 | ONE, 5, 9, 11 | ONE, 13, 16 | ONE, 17]
         );
 
-        test_comp_decomp!([15, 16], [15 | 1 << 31, 16]);
+        test_comp_decomp!([15, 16], [15 | ONE, 16]);
 
         test_comp_decomp!(
             [1_687_761_238, 1_687_761_239],
-            [1_687_761_238 | 1 << 31, 1_687_761_239]
+            [1_687_761_238 | ONE, 1_687_761_239]
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "error: 10!<1")]
+    fn invalid_ordering() {
+        let _ = compress_loss_list([10, 1].iter().copied().map(SeqNumber::new_truncate))
+            .collect::<Vec<_>>();
+    }
+
+    #[test]
+    #[should_panic(expected = "unterminated loop")]
+    fn unterminated_loop() {
+        let _ = decompress_loss_list([10 | ONE].iter().copied()).collect::<Vec<_>>();
     }
 }

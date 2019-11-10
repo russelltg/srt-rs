@@ -69,3 +69,19 @@ impl fmt::Debug for SrtVersion {
         write!(f, "{}", self)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::SrtVersion;
+    #[test]
+    fn test_parse() {
+        assert_eq!(SrtVersion::parse(0x01_01_01), SrtVersion::new(1, 1, 1));
+        assert_eq!(SrtVersion::parse(0x00_00_00), SrtVersion::new(0, 0, 0));
+    }
+
+    #[test]
+    fn test_display_debug() {
+        assert_eq!(format!("{}", SrtVersion::new(12, 12, 12)), "12.12.12");
+        assert_eq!(format!("{:?}", SrtVersion::new(12, 12, 12)), "12.12.12");
+    }
+}
