@@ -11,7 +11,7 @@ use failure::{format_err, Error};
 use futures::channel::mpsc;
 use futures::{ready, Future, Sink, Stream};
 
-use tokio::time::{delay, Delay};
+use tokio::time::{self, delay_for, Delay};
 
 use log::{debug, info};
 
@@ -101,7 +101,9 @@ impl<T: Debug + Sync + Send + Unpin + 'static> Sink<T> for LossyConn<T> {
             });
 
             // update the timer
-            pin.delay.reset(pin.delay_buffer.peek().unwrap().time);
+            pin.delay.reset(time::Instant::from_std(
+                pin.delay_buffer.peek().unwrap().time,
+            ));
         }
 
         Ok(())
@@ -124,7 +126,7 @@ impl<T: Debug + Sync + Send + Unpin + 'static> Sink<T> for LossyConn<T> {
 
             // reset timer
             if let Some(i) = pin.delay_buffer.peek() {
-                pin.delay.reset(i.time);
+                pin.delay.reset(time::Instant::from_std(i.time));
             }
         }
 
@@ -156,7 +158,7 @@ impl<T> LossyConn<T> {
                 delay_stddev,
 
                 delay_buffer: BinaryHeap::new(),
-                delay: delay(Instant::now()),
+                delay: delay_for(Duration::from_secs(0)),
             },
             LossyConn {
                 sender: b2a,
@@ -166,7 +168,7 @@ impl<T> LossyConn<T> {
                 delay_stddev,
 
                 delay_buffer: BinaryHeap::new(),
-                delay: delay(Instant::now()),
+                delay: delay_for(Duration::from_secs(0)),
             },
         )
     }

@@ -3,7 +3,7 @@ use failure::Error;
 use futures::prelude::*;
 use futures::ready;
 use log::{debug, info, trace, warn};
-use tokio::time::{delay, Delay, Interval};
+use tokio::time::{self, delay_for, interval, Delay, Interval};
 
 use crate::loss_compression::compress_loss_list;
 use crate::packet::{ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket};
@@ -149,17 +149,17 @@ where
             ack_history_window: Vec::new(),
             packet_history_window: Vec::new(),
             packet_pair_window: Vec::new(),
-            ack_interval: Interval::new_interval(Duration::from_millis(10)),
-            nak_interval: delay(Instant::now() + Duration::from_millis(10)),
+            ack_interval: interval(Duration::from_millis(10)),
+            nak_interval: delay_for(Duration::from_millis(10)),
             lrsn: init_seq_num, // at start, we have received everything until the first packet, exclusive (aka nothing)
             next_ack: 1,
             exp_count: 1,
             probe_time: None,
-            timeout_timer: delay(Instant::now() + Duration::from_secs(1)),
+            timeout_timer: delay_for(Duration::from_secs(1)),
             lr_ack_acked: (0, init_seq_num),
             buffer: RecvBuffer::new(init_seq_num),
             shutdown_flag: false,
-            release_delay: delay(Instant::now() + Duration::from_secs(0)), // start with an empty delay
+            release_delay: delay_for(Duration::from_secs(0)), // start with an empty delay
             send_wrapper: SinkSendWrapper::new(),
         }
     }
@@ -198,8 +198,9 @@ where
     }
 
     fn reset_timeout(&mut self) {
-        self.timeout_timer
-            .reset(Instant::now() + self.listen_timeout)
+        self.timeout_timer.reset(time::Instant::from_std(
+            Instant::now() + self.listen_timeout,
+        ))
     }
 
     fn on_ack_event(&mut self, cx: &mut Context) -> Result<(), Error> {
@@ -346,8 +347,9 @@ where
         // is dynamically updated to 4 * RTT_+ RTTVar + SYN, where RTTVar is the
         // variance of RTT samples.
         let nak_interval_us = 4 * self.rtt as u64 + self.rtt_variance as u64 + 10_000;
-        self.nak_interval
-            .reset(Instant::now() + Duration::from_micros(nak_interval_us));
+        self.nak_interval.reset(time::Instant::from_std(
+            Instant::now() + Duration::from_micros(nak_interval_us),
+        ));
 
         // Search the receiver's loss list, find out all those sequence numbers
         // whose last feedback time is k*RTT before, where k is initialized as 2
@@ -508,7 +510,7 @@ where
 
             // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
             let ack_us = 4 * self.rtt as u64 + self.rtt_variance as u64 + 10_000;
-            self.ack_interval = Interval::new_interval(Duration::from_micros(ack_us));
+            self.ack_interval = interval(Duration::from_micros(ack_us));
         } else {
             warn!(
                 "ACK sequence number in ACK2 packet not found in ACK history: {}",
@@ -687,7 +689,8 @@ where
                 pin.settings.socket_start_time,
                 pin.settings.tsbpd_latency,
             ) {
-                pin.release_delay.reset(release_time);
+                pin.release_delay
+                    .reset(time::Instant::from_std(release_time));
                 let _ = Pin::new(&mut pin.release_delay).poll(cx);
 
                 // if we are setup to shutdown, then the internal socket

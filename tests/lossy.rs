@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures::{stream, SinkExt, StreamExt};
-use tokio::time::Interval;
+use tokio::time::interval;
 
 use srt::{ConnectionSettings, Receiver, Sender, SeqNumber, SocketID, SrtCongestCtrl};
 
@@ -19,7 +19,7 @@ async fn lossy() {
     // a stream of ascending stringified integers
     let counting_stream = stream::iter(0..ITERS)
         .map(|i| Bytes::from(i.to_string()))
-        .zip(Interval::new(Instant::now(), Duration::from_millis(1)))
+        .zip(interval(Duration::from_millis(1)))
         .map(|(b, _)| b);
 
     // 5% packet loss, 20ms delay

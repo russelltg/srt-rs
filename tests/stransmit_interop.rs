@@ -8,7 +8,7 @@ use failure::Error;
 use futures::{join, stream, SinkExt, Stream, StreamExt};
 
 use tokio::net::UdpSocket;
-use tokio::time::Interval;
+use tokio::time::interval;
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
@@ -17,7 +17,7 @@ use srt::{ConnInitMethod, SrtSocketBuilder};
 fn counting_stream(packets: u32, delay: Duration) -> impl Stream<Item = Bytes> {
     stream::iter(0..packets)
         .map(|i| Bytes::from(i.to_string()))
-        .zip(Interval::new(Instant::now(), delay))
+        .zip(interval(delay))
         .map(|(b, _)| b)
 }
 

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use futures::{stream::iter, SinkExt, StreamExt};
 use log::{debug, info};
-use tokio::time::Interval;
+use tokio::time::interval;
 
 use srt::{ConnectionSettings, Receiver, Sender, SeqNumber, SocketID, SrtCongestCtrl};
 
@@ -23,7 +23,7 @@ async fn not_enough_latency() {
     // 1 ms between packets
     let counting_stream = iter(INIT_SEQ_NUM..INIT_SEQ_NUM + PACKETS)
         .map(|i| Bytes::from(i.to_string()))
-        .zip(Interval::new(Instant::now(), Duration::from_millis(1)))
+        .zip(interval(Duration::from_millis(1)))
         .map(|(b, _)| b);
 
     // 4% packet loss, 4 sec latency with 0.2 s variance

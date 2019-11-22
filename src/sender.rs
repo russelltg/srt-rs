@@ -3,7 +3,7 @@ use failure::{format_err, Error};
 use futures::prelude::*;
 use futures::ready;
 use log::{debug, info, trace, warn};
-use tokio::time::{delay, Delay, Interval};
+use tokio::time::{delay_for, interval, Delay, Interval};
 
 use crate::loss_compression::decompress_loss_list;
 use crate::packet::{
@@ -135,8 +135,8 @@ where
             retrans_packets: 0,
             recvd_packets: 0,
             lr_acked_ack: -1,
-            snd_timer: delay(Instant::now() + Duration::from_millis(1)),
-            stats_interval: Interval::new_interval(Duration::from_secs(1)),
+            snd_timer: delay_for(Duration::from_millis(1)),
+            stats_interval: interval(Duration::from_secs(1)),
             send_wrapper: SinkSendWrapper::new(),
             closed: false,
         }
@@ -144,8 +144,8 @@ where
 
     /// Set the interval to get statistics on
     /// Defaults to one second
-    pub fn set_stats_interval(&mut self, interval: Duration) {
-        self.stats_interval = Interval::new_interval(interval);
+    pub fn set_stats_interval(&mut self, ivl: Duration) {
+        self.stats_interval = interval(ivl);
     }
 
     pub fn settings(&self) -> &ConnectionSettings {
@@ -380,12 +380,12 @@ where
                 // re-add the rest of the packet
                 self.pending_packets.push_front((
                     time,
-                    payload.slice(self.settings.max_packet_size as usize, payload.len()),
+                    payload.slice(self.settings.max_packet_size as usize..payload.len()),
                 ));
                 self.at_msg_beginning = false;
 
                 (
-                    payload.slice(0, self.settings.max_packet_size as usize),
+                    payload.slice(0..self.settings.max_packet_size as usize),
                     time,
                     false,
                     is_msg_begin,
@@ -523,7 +523,8 @@ where
 
             // reset the timer
             let new_snd_time = Instant::now() + pin.congest_ctrl.send_interval();
-            pin.snd_timer.reset(new_snd_time);
+            pin.snd_timer
+                .reset(tokio::time::Instant::from_std(new_snd_time));
 
             // 1) If the sender's loss list is not empty, send all the packets it in
             if let Some(pack) = pin.loss_list.pop_front() {
@@ -619,7 +620,7 @@ where
     type Item = Result<Stats, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        ready!(self.stats_interval.poll_next(cx));
+        ready!(Pin::new(&mut self.stats_interval).poll_next(cx));
 
         Poll::Ready(Some(Ok(self.stats())))
     }

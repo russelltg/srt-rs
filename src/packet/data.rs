@@ -64,9 +64,9 @@ bitflags! {
 }
 
 impl DataPacket {
-    pub fn parse<T: Buf>(mut buf: T) -> Result<DataPacket, Error> {
+    pub fn parse(buf: &mut impl Buf) -> Result<DataPacket, Error> {
         // get the sequence number, which is the last 31 bits of the header
-        let seq_number = SeqNumber::new_truncate(buf.get_u32_be());
+        let seq_number = SeqNumber::new_truncate(buf.get_u32());
 
         // the first two bits of the second line (second_line >> 24) is the location
         let message_loc = PacketLocation::from_bits_truncate(buf.bytes()[0]);
@@ -74,9 +74,9 @@ impl DataPacket {
         // in order delivery is the third bit
         let in_order_delivery = (buf.bytes()[0] & 0b0010_0000) != 0;
 
-        let message_number = MsgNumber::new_truncate(buf.get_u32_be());
-        let timestamp = buf.get_i32_be();
-        let dest_sockid = SocketID(buf.get_u32_be());
+        let message_number = MsgNumber::new_truncate(buf.get_u32());
+        let timestamp = buf.get_i32();
+        let dest_sockid = SocketID(buf.get_u32());
 
         Ok(DataPacket {
             seq_number,
@@ -85,24 +85,24 @@ impl DataPacket {
             message_number,
             timestamp,
             dest_sockid,
-            payload: buf.collect(),
+            payload: buf.to_bytes(),
         })
     }
 
-    pub fn serialize<T: BufMut>(&self, into: &mut T) {
+    pub fn serialize(&self, into: &mut impl BufMut) {
         assert!(self.seq_number.as_raw() & (1 << 31) == 0);
 
-        into.put_u32_be(self.seq_number.as_raw());
+        into.put_u32(self.seq_number.as_raw());
 
         // the format is first two bits are the message location, third is in order delivery, and the rest is message number
         // message number is garunteed have it's first three bits as zero
-        into.put_u32_be(
+        into.put_u32(
             self.message_number.as_raw()
                 | ((u32::from(self.message_loc.bits() | (self.in_order_delivery as u8) << 5))
                     << 24),
         );
-        into.put_i32_be(self.timestamp);
-        into.put_u32_be(self.dest_sockid.0);
-        into.put(&self.payload);
+        into.put_i32(self.timestamp);
+        into.put_u32(self.dest_sockid.0);
+        into.put(&self.payload[..]);
     }
 }

@@ -6,7 +6,7 @@ use failure::{bail, Error};
 use futures::prelude::*;
 
 use log::{info, warn};
-use tokio::time::Interval;
+use tokio::time::interval;
 
 use crate::packet::{
     ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
@@ -28,7 +28,7 @@ where
         + Sink<(Packet, SocketAddr), Error = Error>
         + Unpin,
 {
-    let mut send_interval = Interval::new(Instant::now(), Duration::from_millis(100));
+    let mut send_interval = interval(Duration::from_millis(100));
 
     let request_packet = Packet::Control(ControlPacket {
         dest_sockid: SocketID(0),

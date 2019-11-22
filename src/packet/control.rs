@@ -287,14 +287,14 @@ impl SocketType {
 }
 
 impl ControlPacket {
-    pub fn parse<T: Buf>(mut buf: T) -> Result<ControlPacket, Error> {
-        let control_type = buf.get_u16_be() << 1 >> 1; // clear first bit
+    pub fn parse(buf: &mut impl Buf) -> Result<ControlPacket, Error> {
+        let control_type = buf.get_u16() << 1 >> 1; // clear first bit
 
         // get reserved data, which is the last two bytes of the first four bytes
-        let reserved = buf.get_u16_be();
-        let add_info = buf.get_i32_be();
-        let timestamp = buf.get_i32_be();
-        let dest_sockid = buf.get_u32_be();
+        let reserved = buf.get_u16();
+        let add_info = buf.get_i32();
+        let timestamp = buf.get_i32();
+        let dest_sockid = buf.get_u32();
 
         Ok(ControlPacket {
             timestamp,
@@ -306,19 +306,19 @@ impl ControlPacket {
 
     pub fn serialize<T: BufMut>(&self, into: &mut T) {
         // first half of first row, the control type and the 1st bit which is a one
-        into.put_u16_be(self.control_type.id_byte() | (0b1 << 15));
+        into.put_u16(self.control_type.id_byte() | (0b1 << 15));
 
         // finish that row, which is reserved
-        into.put_u16_be(self.control_type.reserved());
+        into.put_u16(self.control_type.reserved());
 
         // the additonal info line
-        into.put_i32_be(self.control_type.additional_info());
+        into.put_i32(self.control_type.additional_info());
 
         // timestamp
-        into.put_i32_be(self.timestamp);
+        into.put_i32(self.timestamp);
 
         // dest sock id
-        into.put_u32_be(self.dest_sockid.0);
+        into.put_u32(self.dest_sockid.0);
 
         // the rest of the info
         self.control_type.serialize(into);
@@ -348,7 +348,7 @@ impl ControlTypes {
                     bail!("Packet not large enough to be a handshake");
                 }
 
-                let udt_version = buf.get_i32_be();
+                let udt_version = buf.get_i32();
                 if udt_version != 4 && udt_version != 5 {
                     bail!("Incompatable UDT version: {}", udt_version);
                 }
@@ -358,22 +358,22 @@ impl ControlTypes {
                 //
                 // byte 1-2: the crypto key size, rightshifted by three. For example 0b11 would translate to a crypto size of 24
                 //           source: https://github.com/Haivision/srt/blob/4f7f2beb2e1e306111b9b11402049a90cb6d3787/srtcore/handshake.h#L123-L125
-                let crypto_size = buf.get_u16_be() << 3;
+                let crypto_size = buf.get_u16() << 3;
                 // byte 3-4: the SRT_MAGIC_CODE, to make sure a client is HSv5 or the ExtFlags if this is an induction response
                 //           else, this is the extension flags
                 //
                 // it's ok to only have the lower 16 bits here for the socket type because socket types always have a zero upper 16 bits
-                let type_ext_socket_type = buf.get_u16_be();
+                let type_ext_socket_type = buf.get_u16();
 
-                let init_seq_num = SeqNumber::new_truncate(buf.get_u32_be()); // TODO: should this truncate?
-                let max_packet_size = buf.get_u32_be();
-                let max_flow_size = buf.get_u32_be();
-                let shake_type = match ShakeType::from_i32(buf.get_i32_be()) {
+                let init_seq_num = SeqNumber::new_truncate(buf.get_u32()); // TODO: should this truncate?
+                let max_packet_size = buf.get_u32();
+                let max_flow_size = buf.get_u32();
+                let shake_type = match ShakeType::from_i32(buf.get_i32()) {
                     Ok(ct) => ct,
                     Err(err_ct) => bail!("Invalid connection type {}", err_ct),
                 };
-                let socket_id = SocketID(buf.get_u32_be());
-                let syn_cookie = buf.get_i32_be();
+                let socket_id = SocketID(buf.get_u32());
+                let syn_cookie = buf.get_i32();
 
                 // get the IP
                 let mut ip_buf: [u8; 16] = [0; 16];
@@ -437,8 +437,8 @@ impl ControlTypes {
                                 if buf.remaining() < 4 {
                                     bail!("Not enough room for declared exceptions")
                                 }
-                                let pack_type = buf.get_u16_be();
-                                let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
+                                let pack_type = buf.get_u16();
+                                let _pack_size = buf.get_u16(); // TODO: why exactly is this needed?
                                 match pack_type {
                                     // 1 and 2 are handshake response and requests
                                     1 | 2 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
@@ -454,8 +454,8 @@ impl ControlTypes {
                                 if buf.remaining() < 4 {
                                     bail!("Not enough room for declared exceptions")
                                 }
-                                let pack_type = buf.get_u16_be();
-                                let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
+                                let pack_type = buf.get_u16();
+                                let _pack_size = buf.get_u16(); // TODO: why exactly is this needed?
                                 match pack_type {
                                     // 3 and 4 are km packets
                                     3 | 4 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
@@ -471,8 +471,8 @@ impl ControlTypes {
                                 if buf.remaining() < 4 {
                                     bail!("Not enough room for declared exceptions")
                                 }
-                                let pack_type = buf.get_u16_be();
-                                let _pack_size = buf.get_u16_be(); // TODO: why exactly is this needed?
+                                let pack_type = buf.get_u16();
+                                let _pack_size = buf.get_u16(); // TODO: why exactly is this needed?
                                 match pack_type {
                                     // 5 is sid 6 is smoother
                                     5 | 6 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
@@ -513,12 +513,12 @@ impl ControlTypes {
                 }
 
                 // read control info
-                let ack_number = SeqNumber::new_truncate(buf.get_u32_be());
+                let ack_number = SeqNumber::new_truncate(buf.get_u32());
 
                 // if there is more data, use it. However, it's optional
                 let mut opt_read_next = move || {
                     if buf.remaining() >= 4 {
-                        Some(buf.get_i32_be())
+                        Some(buf.get_i32())
                     } else {
                         None
                     }
@@ -544,7 +544,7 @@ impl ControlTypes {
 
                 let mut loss_info = Vec::new();
                 while buf.remaining() >= 4 {
-                    loss_info.push(buf.get_u32_be());
+                    loss_info.push(buf.get_u32());
                 }
 
                 Ok(ControlTypes::Nak(loss_info))
@@ -562,8 +562,8 @@ impl ControlTypes {
 
                 Ok(ControlTypes::DropRequest {
                     msg_to_drop: MsgNumber::new_truncate(extra_info as u32), // cast is safe, just reinterpret
-                    first: SeqNumber::new_truncate(buf.get_u32_be()),
-                    last: SeqNumber::new_truncate(buf.get_u32_be()),
+                    first: SeqNumber::new_truncate(buf.get_u32()),
+                    last: SeqNumber::new_truncate(buf.get_u32()),
                 })
             }
             0x7FFF => {
@@ -609,20 +609,20 @@ impl ControlTypes {
     fn serialize<T: BufMut>(&self, into: &mut T) {
         match self {
             ControlTypes::Handshake(ref c) => {
-                into.put_u32_be(c.info.version());
-                into.put_u32_be(c.info.type_flags(c.shake_type));
-                into.put_u32_be(c.init_seq_num.as_raw());
-                into.put_u32_be(c.max_packet_size);
-                into.put_u32_be(c.max_flow_size);
-                into.put_i32_be(c.shake_type as i32);
-                into.put_u32_be(c.socket_id.0);
-                into.put_i32_be(c.syn_cookie);
+                into.put_u32(c.info.version());
+                into.put_u32(c.info.type_flags(c.shake_type));
+                into.put_u32(c.init_seq_num.as_raw());
+                into.put_u32(c.max_packet_size);
+                into.put_u32(c.max_flow_size);
+                into.put_i32(c.shake_type as i32);
+                into.put_u32(c.socket_id.0);
+                into.put_i32(c.syn_cookie);
 
                 match c.peer_addr {
                     IpAddr::V4(four) => {
                         let mut v = Vec::from(&four.octets()[..]);
                         v.reverse(); // reverse bytes
-                        into.put(&v);
+                        into.put(&v[..]);
 
                         // the data structure reuiqres enough space for an ipv6, so pad the end with 16 - 4 = 12 bytes
                         into.put(&[0; 12][..]);
@@ -631,7 +631,7 @@ impl ControlTypes {
                         let mut v = Vec::from(&six.octets()[..]);
                         v.reverse();
 
-                        into.put(&v);
+                        into.put(&v[..]);
                     }
                 }
 
@@ -647,9 +647,9 @@ impl ControlTypes {
                         .iter()
                         .filter_map(|&s| s.as_ref())
                     {
-                        into.put_u16_be(ext.type_id());
+                        into.put_u16(ext.type_id());
                         // put the size in 32-bit integers
-                        into.put_u16_be(ext.size_words());
+                        into.put_u16(ext.size_words());
                         ext.serialize(into);
                     }
                 }
@@ -663,16 +663,16 @@ impl ControlTypes {
                 est_link_cap,
                 ..
             } => {
-                into.put_u32_be(ack_number.as_raw());
-                into.put_i32_be(rtt.unwrap_or(10_000));
-                into.put_i32_be(rtt_variance.unwrap_or(50_000));
-                into.put_i32_be(buffer_available.unwrap_or(8175)); // TODO: better defaults
-                into.put_i32_be(packet_recv_rate.unwrap_or(10_000));
-                into.put_i32_be(est_link_cap.unwrap_or(1_000));
+                into.put_u32(ack_number.as_raw());
+                into.put_i32(rtt.unwrap_or(10_000));
+                into.put_i32(rtt_variance.unwrap_or(50_000));
+                into.put_i32(buffer_available.unwrap_or(8175)); // TODO: better defaults
+                into.put_i32(packet_recv_rate.unwrap_or(10_000));
+                into.put_i32(est_link_cap.unwrap_or(1_000));
             }
             ControlTypes::Nak(ref n) => {
                 for &loss in n {
-                    into.put_u32_be(loss);
+                    into.put_u32(loss);
                 }
             }
             ControlTypes::DropRequest { .. } => unimplemented!(),
@@ -680,7 +680,7 @@ impl ControlTypes {
                 // The reference implementation appends one (4 byte) word at the end of the ack2 packet, which wireshark labels as 'Unused'
                 // I have no idea why, but wireshark reports it as a "malformed packet" without it. For the record,
                 // this is NOT in the UDT specification. I wonder if this was carried over from the original UDT implementation.
-                into.put_u32_be(0x0);
+                into.put_u32(0x0);
             }
             ControlTypes::Shutdown | ControlTypes::KeepAlive => {}
             ControlTypes::Srt(srt) => {
@@ -741,7 +741,7 @@ mod test {
         let mut buf = vec![];
         pack.serialize(&mut buf);
 
-        let des = ControlPacket::parse(Cursor::new(buf)).unwrap();
+        let des = ControlPacket::parse(&mut Cursor::new(buf)).unwrap();
 
         assert_eq!(pack, des);
     }
@@ -765,7 +765,7 @@ mod test {
         let mut buf = vec![];
         pack.serialize(&mut buf);
 
-        let des = ControlPacket::parse(Cursor::new(buf)).unwrap();
+        let des = ControlPacket::parse(&mut Cursor::new(buf)).unwrap();
 
         assert_eq!(pack, des);
     }
@@ -785,7 +785,7 @@ mod test {
         // dword 2 should have 831 in big endian, so the last two bits of the second dword
         assert_eq!((u32::from(buf[6]) << 8) + u32::from(buf[7]), 831);
 
-        let des = ControlPacket::parse(Cursor::new(buf)).unwrap();
+        let des = ControlPacket::parse(&mut Cursor::new(buf)).unwrap();
 
         assert_eq!(pack, des);
     }
@@ -797,7 +797,7 @@ mod test {
         let packet_data =
             hex::decode("FFFF000000000000000189702BFFEFF2000103010000001E00000078").unwrap();
 
-        let packet = ControlPacket::parse(Cursor::new(packet_data)).unwrap();
+        let packet = ControlPacket::parse(&mut Cursor::new(packet_data)).unwrap();
 
         assert_eq!(
             packet,
@@ -813,7 +813,7 @@ mod test {
     fn raw_handshake_srt() {
         // this is a example HSv5 conclusion packet from the reference implementation
         let packet_data = hex::decode("8000000000000000000F9EC400000000000000050000000144BEA60D000005DC00002000FFFFFFFF3D6936B6E3E405DD0100007F00000000000000000000000000010003000103010000002F00780000").unwrap();
-        let packet = ControlPacket::parse(Cursor::new(&packet_data[..])).unwrap();
+        let packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..])).unwrap();
         assert_eq!(
             packet,
             ControlPacket {
@@ -857,7 +857,7 @@ mod test {
     fn raw_handshake_crypto() {
         // this is an example HSv5 conclusion packet from the reference implementation that has crypto data embedded.
         let packet_data = hex::decode("800000000000000000175E8A0000000000000005000000036FEFB8D8000005DC00002000FFFFFFFF35E790ED5D16CCEA0100007F00000000000000000000000000010003000103010000002F01F401F40003000E122029010000000002000200000004049D75B0AC924C6E4C9EC40FEB4FE973DB1D215D426C18A2871EBF77E2646D9BAB15DBD7689AEF60EC").unwrap();
-        let packet = ControlPacket::parse(Cursor::new(&packet_data[..])).unwrap();
+        let packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..])).unwrap();
 
         assert_eq!(
             packet,
@@ -913,6 +913,6 @@ mod test {
     #[test]
     fn raw_handshake_crypto_pt2() {
         let packet_data = hex::decode("8000000000000000000000000C110D94000000050000000374B7526E000005DC00002000FFFFFFFF18C1CED1F3819B720100007F00000000000000000000000000020003000103010000003F03E803E80004000E12202901000000000200020000000404D3B3D84BE1188A4EBDA4DA16EA65D522D82DE544E1BE06B6ED8128BF15AA4E18EC50EAA95546B101").unwrap();
-        let _packet = ControlPacket::parse(Cursor::new(&packet_data[..])).unwrap();
+        let _packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..])).unwrap();
     }
 }

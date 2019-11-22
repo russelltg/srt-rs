@@ -4,10 +4,10 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tokio::net::UdpSocket;
-use tokio::time::{delay, Interval};
+use tokio::time::{delay_for, interval};
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
@@ -54,7 +54,7 @@ async fn test_send(
     let sender = async move {
         let mut sock = UdpFramed::new(UdpSocket::bind("127.0.0.1:0").await?, BytesCodec::new());
         let mut stream = stream::iter(0..100)
-            .zip(Interval::new(Instant::now(), Duration::from_millis(100)))
+            .zip(interval(Duration::from_millis(100)))
             .map(|_| {
                 Ok((
                     Bytes::from(format!("asdf{}", ident)),
@@ -84,7 +84,7 @@ async fn test_send(
             }
         };
         // 4s timeout
-        let succ = futures::select!(_ = receive_data.boxed().fuse() => true, _ = delay(Instant::now() + Duration::from_secs(4)).fuse() => false);
+        let succ = futures::select!(_ = receive_data.boxed().fuse() => true, _ = delay_for(Duration::from_secs(4)).fuse() => false);
         assert!(succ, "Timeout with receiving");
 
         Ok::<_, Error>(())

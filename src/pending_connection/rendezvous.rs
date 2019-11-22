@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use failure::{bail, Error};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use log::warn;
-use tokio::time::Interval;
+use tokio::time::interval;
 
 use crate::packet::{ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SocketType};
 use crate::util::{select_discard, Selected};
@@ -23,7 +23,7 @@ where
         + Sink<(Packet, SocketAddr), Error = Error>
         + Unpin,
 {
-    let mut snd_interval = Interval::new_interval(Duration::from_millis(100));
+    let mut snd_interval = interval(Duration::from_millis(100));
     let mut init_seq_num = rand::random();
 
     let (info, packet) = loop {

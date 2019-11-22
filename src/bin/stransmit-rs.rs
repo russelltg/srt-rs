@@ -71,7 +71,7 @@ fn read_to_stream(read: impl AsyncRead + Unpin) -> impl Stream<Item = Result<Byt
                 Err(e) => return Some((Err(Error::from(e)), source)),
             };
 
-            Some((Ok(Bytes::from(&buf[0..bytes_read])), source))
+            Some((Ok(Bytes::copy_from_slice(&buf[0..bytes_read])), source))
         }
     })
 }

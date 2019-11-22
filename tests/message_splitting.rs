@@ -28,7 +28,7 @@ async fn message_splitting() -> Result<(), Error> {
     info!("Connected!");
 
     // send a really really long packet
-    let long_message = Bytes::from(&vec![b'8'; PACKET_SIZE][..]);
+    let long_message = Bytes::from(&[b'8'; PACKET_SIZE][..]);
 
     let (_, data_vec) = futures::join!(
         async {
@@ -45,7 +45,7 @@ async fn message_splitting() -> Result<(), Error> {
             .map(|r| r.as_ref().unwrap())
             .map(|(_, b)| b)
             .collect::<Vec<_>>(),
-        &[&Bytes::from(&vec![b'8'; PACKET_SIZE][..])]
+        &[&Bytes::from(&[b'8'; PACKET_SIZE][..])]
     );
 
     Ok(())

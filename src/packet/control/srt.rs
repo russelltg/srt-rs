@@ -205,9 +205,9 @@ impl SrtHandshake {
             bail!("Unexpected EOF in SRT handshake packet");
         }
 
-        let version = SrtVersion::parse(buf.get_u32_be());
+        let version = SrtVersion::parse(buf.get_u32());
 
-        let shake_flags = buf.get_u32_be();
+        let shake_flags = buf.get_u32();
         let flags = match SrtShakeFlags::from_bits(shake_flags) {
             Some(i) => i,
             None => {
@@ -215,8 +215,8 @@ impl SrtHandshake {
                 SrtShakeFlags::from_bits_truncate(shake_flags)
             }
         };
-        let peer_latency = buf.get_u16_be();
-        let latency = buf.get_u16_be();
+        let peer_latency = buf.get_u16();
+        let latency = buf.get_u16();
 
         Ok(SrtHandshake {
             version,
@@ -227,18 +227,18 @@ impl SrtHandshake {
     }
 
     pub fn serialize<T: BufMut>(&self, into: &mut T) {
-        into.put_u32_be(self.version.to_u32());
-        into.put_u32_be(self.flags.bits());
+        into.put_u32(self.version.to_u32());
+        into.put_u32(self.flags.bits());
         // upper 16 bits are peer latency
-        into.put_u16_be(self.peer_latency.as_millis() as u16); // TODO: handle overflow
+        into.put_u16(self.peer_latency.as_millis() as u16); // TODO: handle overflow
 
         // lower 16 is latency
-        into.put_u16_be(self.latency.as_millis() as u16); // TODO: handle overflow
+        into.put_u16(self.latency.as_millis() as u16); // TODO: handle overflow
     }
 }
 
 impl SrtKeyMessage {
-    pub fn parse<T: Buf>(buf: &mut T) -> Result<SrtKeyMessage, Error> {
+    pub fn parse(buf: &mut impl Buf) -> Result<SrtKeyMessage, Error> {
         // first 32-bit word:
         //
         //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -269,13 +269,13 @@ impl SrtKeyMessage {
         let pt = vers_pt & 0b0000_1111;
 
         // next 16 bis are sign
-        let sign = buf.get_u16_be();
+        let sign = buf.get_u16();
 
         // next 6 bits is reserved, then two bits of KF
         let key_flags = buf.get_u8() & 0b0000_0011;
 
         // second 32-bit word: keki
-        let keki = buf.get_u32_be();
+        let keki = buf.get_u32();
 
         // third 32-bit word:
         //
@@ -294,7 +294,7 @@ impl SrtKeyMessage {
         // +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
         // |             Resv2             |     Slen/4    |     Klen/4    |
 
-        let _resv2 = buf.get_u16_be();
+        let _resv2 = buf.get_u16();
         let salt_len = usize::from(buf.get_u8()) * 4;
         let key_len = usize::from(buf.get_u8()) * 4;
 
@@ -322,7 +322,7 @@ impl SrtKeyMessage {
         // after this, is the salt
         let mut salt = vec![];
         for _ in 0..salt_len / 4 {
-            salt.extend_from_slice(&buf.get_u32_be().to_be_bytes()[..]);
+            salt.extend_from_slice(&buf.get_u32().to_be_bytes()[..]);
         }
 
         // then key[s]
@@ -330,7 +330,7 @@ impl SrtKeyMessage {
             let mut even_key = vec![];
 
             for _ in 0..key_len / 4 {
-                even_key.extend_from_slice(&buf.get_u32_be().to_be_bytes()[..]);
+                even_key.extend_from_slice(&buf.get_u32().to_be_bytes()[..]);
             }
             Some(even_key)
         } else {
@@ -341,7 +341,7 @@ impl SrtKeyMessage {
             let mut odd_key = vec![];
 
             for _ in 0..key_len / 4 {
-                odd_key.extend_from_slice(&buf.get_u32_be().to_be_bytes()[..]);
+                odd_key.extend_from_slice(&buf.get_u32().to_be_bytes()[..]);
             }
             Some(odd_key)
         } else {
@@ -351,8 +351,8 @@ impl SrtKeyMessage {
         // finally, is the wrap data. it's 8 bytes. make sure to swap bytes correctly
         let mut wrap_data = [0; 8];
 
-        wrap_data[..4].clone_from_slice(&buf.get_u32_be().to_be_bytes()[..]);
-        wrap_data[4..].clone_from_slice(&buf.get_u32_be().to_be_bytes()[..]);
+        wrap_data[..4].clone_from_slice(&buf.get_u32().to_be_bytes()[..]);
+        wrap_data[4..].clone_from_slice(&buf.get_u32().to_be_bytes()[..]);
 
         Ok(SrtKeyMessage {
             pt,
@@ -378,7 +378,7 @@ impl SrtKeyMessage {
         // version is 1
         into.put_u8(1 << 4 | self.pt);
 
-        into.put_u16_be(self.sign);
+        into.put_u16(self.sign);
 
         // rightmost bit of KF is even, other is odd
         into.put_u8(match (&self.odd_key, &self.even_key) {
@@ -389,7 +389,7 @@ impl SrtKeyMessage {
         });
 
         // second 32-bit word: keki
-        into.put_u32_be(self.keki);
+        into.put_u32(self.keki);
 
         // third 32-bit word:
         //
@@ -406,7 +406,7 @@ impl SrtKeyMessage {
         //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
         // +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
         // |             Resv2             |     Slen/4    |     Klen/4    |
-        into.put_u16_be(0); // resv2
+        into.put_u16(0); // resv2
         into.put_u8((self.salt.len() / 4) as u8);
 
         // this unwrap is okay because we already panic above if both are None
@@ -427,17 +427,17 @@ impl SrtKeyMessage {
 
         if let Some(ref even) = self.even_key {
             for num in even[..].chunks(4) {
-                into.put_u32_be(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
+                into.put_u32(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
             }
         }
         if let Some(ref odd) = self.odd_key {
             for num in odd[..].chunks(4) {
-                into.put_u32_be(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
+                into.put_u32(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
             }
         }
         // put the wrap
         for num in self.wrap_data[..].chunks(4) {
-            into.put_u32_be(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
+            into.put_u32(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
         }
     }
 }
