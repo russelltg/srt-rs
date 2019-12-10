@@ -31,7 +31,9 @@ stages:
     parameters:
       test-flags:
         nocapture: true
-      skip: 'stransmit_interop'
+      skip: 
+      - stransmit_client
+      - stransmit_server
   # Nightly
   - template: ci/jobs/cargo-test.yaml@rust_pipelines
     parameters:
@@ -41,4 +43,6 @@ stages:
       job_continueOnError: true
       test-flags: 
         nocapture: true
-      skip: 'stransmit_interop'
+      skip: 
+      - stransmit_client
+      - stransmit_server
