@@ -1,6 +1,9 @@
 trigger:
 - master
 
+variables:
+  VCPKGRS_DYNAMIC: 1
+
 pr:
 - master
 
