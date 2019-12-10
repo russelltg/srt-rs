@@ -27,10 +27,8 @@ stages:
   # Latest stable
   - template: ci/cargo-test.yml
     parameters:
-      test_flags-nocapture: true
-      test_flags-skip: 
-      - stransmit_client
-      - stransmit_server
+      extra_test_flags: '--exclude=stransmit_interop'
+      extra_runner_flags: '--nocapture'
       job_pre-steps:
       - template: openssl-win.yml
   # Nightly
@@ -39,10 +37,7 @@ stages:
       rust: nightly
       job_name: cargo_test_nightly
       job_displayName: Cargo test (nightly)
-      job_continueOnError: true
-      test_flags-nocapture: true
-      test_flags-skip: 
-      - stransmit_client
-      - stransmit_server
+      extra_test_flags: '--exclude=stransmit_interop'
+      extra_runner_flags: '--nocapture'
       job_pre-steps:
       - template: openssl-win.yml
