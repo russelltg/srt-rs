@@ -1,8 +1,3 @@
-# Starter pipeline
-# Start with a minimal pipeline that you can customize to build and deploy your code.
-# Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
-
 trigger:
 - master
 
@@ -27,15 +22,17 @@ stages:
   displayName: "Multi OS native tests"
   jobs:
   # Latest stable
-  - template: ci/jobs/cargo-test.yaml@rust_pipelines
+  - template: ci/cargo-test.yml
     parameters:
       test-flags:
         nocapture: true
-      skip: 
-      - stransmit_client
-      - stransmit_server
+        skip: 
+        - stransmit_client
+        - stransmit_server
+      job_pre-steps:
+        - template: ci/openssl-win.yml
   # Nightly
-  - template: ci/jobs/cargo-test.yaml@rust_pipelines
+  - template: ci/cargo-test.yml
     parameters:
       rust: nightly
       job_name: cargo_test_nightly
@@ -43,6 +40,8 @@ stages:
       job_continueOnError: true
       test-flags: 
         nocapture: true
-      skip: 
-      - stransmit_client
-      - stransmit_server
+        skip: 
+        - stransmit_client
+        - stransmit_server
+      job_pre-steps:
+        - template: ci/openssl-win.yml
