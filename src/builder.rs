@@ -6,11 +6,14 @@ use rand;
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 
-use crate::pending_connection;
-use crate::MultiplexServer;
-use crate::{ConnectionSettings, PacketCodec, Receiver, Sender, SrtCongestCtrl};
+use futures::{Sink, Stream};
 
-pub type SrtSocket = UdpFramed<PacketCodec>;
+use crate::pending_connection;
+use crate::socket::create_bidrectional_srt;
+use crate::MultiplexServer;
+use crate::{Packet, PacketCodec, SrtSocket};
+
+pub type UnderlyingSocket = UdpFramed<PacketCodec>;
 
 /// Struct to build sockets
 #[derive(Debug, Clone)]
@@ -76,19 +79,14 @@ impl SrtSocketBuilder {
         self
     }
 
-    pub async fn connect_sender(self) -> Result<Sender<SrtSocket, SrtCongestCtrl>, Error> {
-        let (sett, sock) = self.establish_conn().await?;
-        Ok(Sender::new(sock, SrtCongestCtrl, sett))
-    }
-
-    pub async fn connect_receiver(self) -> Result<Receiver<SrtSocket>, Error> {
-        let (sett, sock) = self.establish_conn().await?;
-        Ok(Receiver::new(sock, sett))
-    }
-
-    async fn establish_conn(self) -> Result<(ConnectionSettings, SrtSocket), Error> {
-        let mut socket = UdpFramed::new(UdpSocket::bind(&self.local_addr).await?, PacketCodec {});
-
+    pub async fn connect_with_sock<T>(self, mut socket: T) -> Result<SrtSocket, Error>
+    where
+        T: Stream<Item = Result<(Packet, SocketAddr), Error>>
+            + Sink<(Packet, SocketAddr), Error = Error>
+            + Unpin
+            + Send
+            + 'static,
+    {
         // validate crypto
         match self.crypto {
             // OK
@@ -101,35 +99,41 @@ impl SrtSocketBuilder {
             }
         }
 
-        Ok((
-            match self.conn_type {
-                ConnInitMethod::Listen => {
-                    pending_connection::listen(&mut socket, rand::random(), self.latency).await?
-                }
-                ConnInitMethod::Connect(addr) => {
-                    pending_connection::connect(
-                        &mut socket,
-                        addr,
-                        rand::random(),
-                        self.local_addr.ip(),
-                        self.latency,
-                        self.crypto.clone(),
-                    )
-                    .await?
-                }
-                ConnInitMethod::Rendezvous(remote_public) => {
-                    pending_connection::rendezvous(
-                        &mut socket,
-                        rand::random(),
-                        self.local_addr.ip(),
-                        remote_public,
-                        self.latency,
-                    )
-                    .await?
-                }
-            },
-            socket,
-        ))
+        let conn = match self.conn_type {
+            ConnInitMethod::Listen => {
+                pending_connection::listen(&mut socket, rand::random(), self.latency).await?
+            }
+            ConnInitMethod::Connect(addr) => {
+                pending_connection::connect(
+                    &mut socket,
+                    addr,
+                    rand::random(),
+                    self.local_addr.ip(),
+                    self.latency,
+                    self.crypto.clone(),
+                )
+                .await?
+            }
+            ConnInitMethod::Rendezvous(remote_public) => {
+                pending_connection::rendezvous(
+                    &mut socket,
+                    rand::random(),
+                    self.local_addr.ip(),
+                    remote_public,
+                    self.latency,
+                )
+                .await?
+            }
+        };
+
+        Ok(create_bidrectional_srt(socket, conn))
+    }
+
+    pub async fn connect(self) -> Result<SrtSocket, Error> {
+        let la = self.local_addr;
+        Ok(self
+            .connect_with_sock(UdpFramed::new(UdpSocket::bind(&la).await?, PacketCodec {}))
+            .await?)
     }
 
     pub async fn build_multiplexed(self) -> Result<MultiplexServer, Error> {

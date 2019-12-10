@@ -17,13 +17,14 @@ Reference implementation is available at https://github.com/haivision/srt
 
 - [x] Listen server connecting
 - [x] Client (connect) connecting
-- [ ] Rendezvous connecting
+- [x] Rendezvous connecting
 - [x] Receiving
 - [x] Sending
 - [x] Special SRT packets (partial)
 - [x] Actual SRT (TSBPD)
 - [ ] Timestamp drift recovery
 - [ ] Encryption
+- [x] Bidirectional
 
 # Heap efficiency
 

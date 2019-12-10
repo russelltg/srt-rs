@@ -16,14 +16,13 @@ async fn message_splitting() -> Result<(), Error> {
     info!("Hi");
 
     let sender = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:11124".parse().unwrap()))
-        .connect_sender();
+        .connect();
 
     let recvr = SrtSocketBuilder::new(ConnInitMethod::Listen)
         .local_port(11124)
-        .connect_receiver();
+        .connect();
 
-    let (sender, recvr) = futures::join!(sender, recvr);
-    let (mut sender, recvr) = (sender?, recvr?);
+    let (mut sender, recvr) = futures::try_join!(sender, recvr)?;
 
     info!("Connected!");
 

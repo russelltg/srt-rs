@@ -1,19 +1,20 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
-use failure::{bail, Error};
+use failure::Error;
 
 use futures::prelude::*;
+use futures::select;
 
-use log::{info, warn};
+use log::{debug, info, warn};
 use tokio::time::interval;
 
 use crate::packet::{
     ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
     SocketType, SrtControlPacket, SrtHandshake, SrtShakeFlags,
 };
-use crate::util::{get_packet, select_discard, Selected};
-use crate::{ConnectionSettings, SocketID, SrtVersion};
+use crate::util::get_packet;
+use crate::{Connection, ConnectionSettings, SocketID, SrtVersion};
 
 pub async fn connect<T>(
     sock: &mut T,
@@ -22,13 +23,15 @@ pub async fn connect<T>(
     local_addr: IpAddr,
     tsbpd_latency: Duration,
     _crypto: Option<(u8, String)>,
-) -> Result<ConnectionSettings, Error>
+) -> Result<Connection, Error>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
         + Sink<(Packet, SocketAddr), Error = Error>
         + Unpin,
 {
     let mut send_interval = interval(Duration::from_millis(100));
+
+    info!("Connecting to {}...", remote);
 
     let request_packet = Packet::Control(ControlPacket {
         dest_sockid: SocketID(0),
@@ -47,39 +50,40 @@ where
 
     sock.send((request_packet.clone(), remote)).await?;
 
+    info!("Sent first packet to {}", remote);
+
     // get first response packet
     let (timestamp, hs_info) = loop {
         // just drop the future that didn't finish first
-        match select_discard(send_interval.next(), get_packet(sock)).await {
-            Selected::Left(_interval_reached) => {
-                sock.send((request_packet.clone(), remote)).await?
+        let (packet, addr) = select! {
+            _ = send_interval.tick().fuse() => {sock.send((request_packet.clone(), remote)).await?; continue},
+            res = get_packet(sock).fuse() => res?
+        };
+
+        debug!("Got packet from {}", addr);
+        // make sure the socket id and packet type match
+        if let Packet::Control(ControlPacket {
+            timestamp,
+            control_type: ControlTypes::Handshake(info @ HandshakeControlInfo { .. }),
+            ..
+        }) = packet
+        {
+            if info.shake_type != ShakeType::Induction {
+                info!(
+                    "Expected Induction (1) packet, got {:?} ({})",
+                    info.shake_type, info.shake_type as u32
+                );
+                continue;
             }
-            Selected::Right(Ok((packet, addr))) => {
-                // make sure the socket id and packet type match
-                if let Packet::Control(ControlPacket {
-                    timestamp,
-                    control_type:
-                        ControlTypes::Handshake(
-                            info @ HandshakeControlInfo {
-                                shake_type: ShakeType::Induction,
-                                ..
-                            },
-                        ),
-                    ..
-                }) = packet
-                {
-                    if addr != remote {
-                        warn!("Expected packet from {}, got {}", remote, addr);
-                        continue;
-                    }
-                    if info.info.version() != 5 {
-                        warn!("Handshake was HSv4, expected HSv5");
-                        continue;
-                    }
-                    break (timestamp, info);
-                }
+            if addr != remote {
+                warn!("Expected packet from {}, got {}", remote, addr);
+                continue;
             }
-            Selected::Right(Err(e)) => bail!(e),
+            if info.info.version() != 5 {
+                warn!("Handshake was HSv4, expected HSv5");
+                continue;
+            }
+            break (timestamp, info);
         }
     };
 
@@ -126,61 +130,61 @@ where
     sock.send((pack.clone(), remote)).await?;
 
     loop {
-        match select_discard(send_interval.next(), get_packet(sock)).await {
-            Selected::Left(_interval_reached) => sock.send((pack.clone(), remote)).await?,
-            Selected::Right(Ok((packet, from))) => {
-                if let Packet::Control(ControlPacket {
-                    dest_sockid,
-                    control_type:
-                        ControlTypes::Handshake(
-                            info @ HandshakeControlInfo {
-                                shake_type: ShakeType::Conclusion,
-                                ..
-                            },
-                        ),
-                    ..
-                }) = packet
-                {
-                    if from != remote {
-                        warn!("Got packet from {}, expected {}", from, remote)
-                    }
-                    if dest_sockid != local_sockid {
-                        warn!(
-                            "Unexpected destination socket id, expected {:?}, got {:?}",
-                            local_sockid, dest_sockid
-                        );
-                        continue;
-                    }
-                    let latency = if let HandshakeVSInfo::V5 {
-                        ext_hs: Some(SrtControlPacket::HandshakeResponse(hs)),
+        let (packet, from) = select! {
+            _ = send_interval.tick().fuse() => {sock.send((pack.clone(), remote)).await?; continue},
+            res = get_packet(sock).fuse() => res?
+        };
+        if let Packet::Control(ControlPacket {
+            dest_sockid,
+            control_type:
+                ControlTypes::Handshake(
+                    info @ HandshakeControlInfo {
+                        shake_type: ShakeType::Conclusion,
                         ..
-                    } = info.info
-                    {
-                        hs.latency
-                    } else {
-                        warn!("Did not get SRT handhsake in conclusion handshake packet, using latency from connector's end");
-                        tsbpd_latency
-                    };
-
-                    info!(
-                        "Got second handshake, connection established to {} with latency {:?}",
-                        remote, latency
-                    );
-                    return Ok(ConnectionSettings {
-                        remote,
-                        max_flow_size: info.max_flow_size,
-                        max_packet_size: info.max_packet_size,
-                        init_seq_num: info.init_seq_num,
-                        socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
-                        local_sockid,
-                        remote_sockid: info.socket_id,
-                        tsbpd_latency: latency,
-                        // TODO: is this right? Needs testing.
-                        handshake_returner: Box::new(move |_| None),
-                    });
-                }
+                    },
+                ),
+            ..
+        }) = packet
+        {
+            if from != remote {
+                warn!("Got packet from {}, expected {}", from, remote)
             }
-            Selected::Right(Err(e)) => bail!(e),
+            if dest_sockid != local_sockid {
+                warn!(
+                    "Unexpected destination socket id, expected {:?}, got {:?}",
+                    local_sockid, dest_sockid
+                );
+                continue;
+            }
+            let latency = if let HandshakeVSInfo::V5 {
+                ext_hs: Some(SrtControlPacket::HandshakeResponse(hs)),
+                ..
+            } = info.info
+            {
+                hs.latency
+            } else {
+                warn!("Did not get SRT handhsake in conclusion handshake packet, using latency from connector's end");
+                tsbpd_latency
+            };
+
+            info!(
+                "Got second handshake, connection established to {} with latency {:?}",
+                remote, latency
+            );
+            return Ok(Connection {
+                settings: ConnectionSettings {
+                    remote,
+                    max_flow_size: info.max_flow_size,
+                    max_packet_size: info.max_packet_size,
+                    init_seq_num: info.init_seq_num,
+                    socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly. TODO: technically it would be 1 rtt off....
+                    local_sockid,
+                    remote_sockid: info.socket_id,
+                    tsbpd_latency: latency,
+                },
+                // TODO: is this right? Needs testing.
+                hs_returner: Box::new(move |_| None),
+            });
         }
     }
 }

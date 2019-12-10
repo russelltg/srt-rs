@@ -22,7 +22,7 @@ use tokio_util::udp::UdpFramed;
 
 use crate::channel::Channel;
 use crate::packet::{ControlPacket, ControlTypes};
-use crate::{pending_connection, ConnectionSettings, Packet, PacketCodec, SocketID};
+use crate::{pending_connection, Connection, Packet, PacketCodec, SocketID};
 
 type PackChan = Channel<(Packet, SocketAddr)>;
 
@@ -40,7 +40,7 @@ pub struct MultiplexServer {
 
 struct InitMd {
     chan: PackChan,
-    future: BoxFuture<'static, Result<(ConnectionSettings, PackChan), Error>>,
+    future: BoxFuture<'static, Result<(Connection, PackChan), Error>>,
 }
 
 impl MultiplexServer {
@@ -60,7 +60,7 @@ impl MultiplexServer {
     fn check_for_complete_connections(
         &mut self,
         cx: &mut Context,
-    ) -> Result<Option<(ConnectionSettings, PackChan)>, Error> {
+    ) -> Result<Option<(Connection, PackChan)>, Error> {
         // see if any are ready
         let keys = self.initiators.keys().copied().collect::<Vec<_>>(); // TODO: is there a better way to do this?
         for sockid in keys {
@@ -78,14 +78,13 @@ impl MultiplexServer {
             }
 
             if let Poll::Ready(conn) = listener_poll {
-                let conn = conn?;
-                // let _ = chan.poll_next(cx)?;
+                let (conn, chan) = conn?;
 
                 let md = self.initiators.remove(&sockid).unwrap();
-                self.connections.insert(conn.0.local_sockid, md.chan);
+                self.connections.insert(conn.settings.local_sockid, md.chan);
 
-                info!("Multiplexed connection to {} ready", conn.0.remote);
-                return Ok(Some(conn));
+                info!("Multiplexed connection to {} ready", conn.settings.remote);
+                return Ok(Some((conn, chan)));
             }
         }
 
@@ -94,7 +93,7 @@ impl MultiplexServer {
 }
 
 impl Stream for MultiplexServer {
-    type Item = Result<(ConnectionSettings, PackChan), Error>;
+    type Item = Result<(Connection, PackChan), Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();

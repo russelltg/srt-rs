@@ -5,6 +5,7 @@ use futures::ready;
 use log::{debug, info, trace, warn};
 use tokio::time::{delay_for, interval, Delay, Interval};
 
+use crate::connection::HandshakeReturner;
 use crate::loss_compression::decompress_loss_list;
 use crate::packet::{
     ControlPacket, ControlTypes, DataPacket, Packet, PacketLocation, SrtControlPacket,
@@ -27,6 +28,9 @@ pub struct Sender<T, CC> {
 
     /// The settings, including remote sockid and address
     settings: ConnectionSettings,
+
+    /// Handhsake returner
+    hs_returner: Option<HandshakeReturner>,
 
     /// The list of pending packets
     /// In the case of a message longer than the packet size,
@@ -107,7 +111,12 @@ where
         + Unpin,
     CC: CongestCtrl + Unpin,
 {
-    pub fn new(sock: T, congest_ctrl: CC, settings: ConnectionSettings) -> Sender<T, CC> {
+    pub fn new(
+        sock: T,
+        congest_ctrl: CC,
+        settings: ConnectionSettings,
+        hs_returner: Option<HandshakeReturner>,
+    ) -> Sender<T, CC> {
         info!(
             "Sending started to {:?}, with latency={:?}",
             settings.remote, settings.tsbpd_latency
@@ -119,6 +128,7 @@ where
             sock,
             congest_ctrl,
             settings,
+            hs_returner,
             pending_packets: VecDeque::new(),
             at_msg_beginning: true,
             next_seq_number: init_seq_num,
@@ -287,8 +297,10 @@ where
                     ControlTypes::Ack2(_) => warn!("Sender received ACK2, unusual"),
                     ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(_shake) => {
-                        if let Some(pack) = (*self.settings.handshake_returner)(&pack) {
-                            self.send_to_remote(cx, pack)?;
+                        if let Some(ret) = self.hs_returner.as_ref() {
+                            if let Some(pack) = (*ret)(&pack) {
+                                self.send_to_remote(cx, pack)?;
+                            }
                         }
                     }
                     // TODO: reset EXP-ish

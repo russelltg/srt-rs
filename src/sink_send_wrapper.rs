@@ -1,11 +1,13 @@
 use failure::Error;
 use futures::sink::Sink;
-/// A wrapper for Sink::Send that allows buffering
 use std::collections::VecDeque;
 use std::marker::Unpin;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use log::info;
+
+/// A wrapper for Sink::Send that allows buffering
 #[derive(Debug)]
 pub struct SinkSendWrapper<Item> {
     buffer: VecDeque<Item>,
@@ -32,6 +34,7 @@ impl<Item> SinkSendWrapper<Item> {
         if let Poll::Ready(_) = pin.as_mut().poll_ready(cx) {
             pin.start_send(i)?;
         } else {
+            info!("Sink not ready, buffering buffer.len={}", self.buffer.len());
             self.buffer.push_back(i);
         }
         Ok(())
@@ -42,9 +45,11 @@ impl<Item> SinkSendWrapper<Item> {
         S: Sink<Item, Error = Error> + Unpin,
     {
         let mut pin = Pin::new(sink);
-        while !self.buffer.is_empty() {
-            if let Poll::Ready(_) = pin.as_mut().poll_ready(cx) {
+        while let Poll::Ready(_) = pin.as_mut().poll_ready(cx) {
+            if !self.buffer.is_empty() {
                 pin.as_mut().start_send(self.buffer.pop_front().unwrap())?
+            } else {
+                break;
             }
         }
         Ok(())

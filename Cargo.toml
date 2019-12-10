@@ -16,27 +16,19 @@ clap = { version = "2", default-features = false }
 env_logger = { version = "0.7", default-features = false, optional = true }
 failure = { version = "0.1", default-features = false, features=["std"] }
 futures = "0.3"
-pin-utils = "0.1.0-alpha.4"
 log = { version = "0.4", default-features = false }
 rand = "0.7"
 url = { version = "2", optional = true }
 openssl = "0.10.24"
+bytes = "0.5"
 
 [dependencies.tokio]
-# version = "0.2.0-alpha.6"
-git = "https://github.com/tokio-rs/tokio"
-branch = "master"
-default-features = false
-features = ["udp", "time",  "fs"]
-
-[dependencies.bytes]
-git = "https://github.com/tokio-rs/bytes"
-branch = "master"
+version = "0.2"
+features = ["udp", "time",  "fs", "stream", "test-util", "macros", "io-util", "dns", "io-std", "sync"]
 
 [dependencies.tokio-util]
-git = "https://github.com/tokio-rs/tokio"
-branch = "master"
-
+version = "0.2"
+features = ["full"]
 
 [dev-dependencies]
 hex = "0.4"

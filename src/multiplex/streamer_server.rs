@@ -64,11 +64,12 @@ impl Sink<(Instant, Bytes)> for StreamerServer {
         }
 
         loop {
-            let (settings, chan) = ready!(Pin::new(&mut self.server).poll_next(cx))
+            let (conn, chan) = ready!(Pin::new(&mut self.server).poll_next(cx))
                 .expect("Multiplexer stream ended, strange")
                 .expect("Multiplex server return Err");
 
-            let mut sender = Sender::new(chan, SrtCongestCtrl, settings);
+            let mut sender =
+                Sender::new(chan, SrtCongestCtrl, conn.settings, Some(conn.hs_returner));
 
             let (tx, rx) = mpsc::channel(100);
 

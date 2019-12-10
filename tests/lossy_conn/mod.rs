@@ -6,14 +6,14 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use failure::{format_err, Error};
+use failure::Error;
 
 use futures::channel::mpsc;
-use futures::{ready, Future, Sink, Stream};
+use futures::{ready, stream::Fuse, Future, Sink, Stream, StreamExt};
 
 use tokio::time::{self, delay_for, Delay};
 
-use log::{debug, info};
+use log::trace;
 
 use rand;
 use rand::distributions::Distribution;
@@ -21,7 +21,7 @@ use rand_distr::Normal;
 
 pub struct LossyConn<T> {
     sender: mpsc::Sender<T>,
-    receiver: mpsc::Receiver<T>,
+    receiver: Fuse<mpsc::Receiver<T>>,
 
     loss_rate: f64,
     delay_avg: Duration,
@@ -56,38 +56,60 @@ impl<T> PartialEq for TTime<T> {
 
 impl<T> Eq for TTime<T> {}
 
-impl<T: Unpin> Stream for LossyConn<T> {
+// Have the queue on the Stream impl so that way flushing doesn't act strangely.
+impl<T: Unpin + Debug> Stream for LossyConn<T> {
     type Item = Result<T, Error>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        Poll::Ready(ready!(Pin::new(&mut self.receiver).poll_next(cx)).map(Ok))
-    }
-}
-
-impl<T: Debug + Sync + Send + Unpin + 'static> Sink<T> for LossyConn<T> {
-    type Error = Error;
-
-    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn start_send(self: Pin<&mut Self>, to_send: T) -> Result<(), Error> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
-        // should we drop it?
-        {
-            if rand::random::<f64>() < pin.loss_rate {
-                debug!("Dropping packet: {:?}", to_send);
 
-                // drop
-                return Ok(());
+        let _ = Pin::new(&mut pin.delay).poll(cx);
+
+        while let Some(ttime) = pin.delay_buffer.peek() {
+            if ttime.time > Instant::now() {
+                // not ready yet
+                break;
             }
+            let val = pin.delay_buffer.pop().unwrap();
+
+            // reset timer
+            if let Some(i) = pin.delay_buffer.peek() {
+                pin.delay.reset(time::Instant::from_std(i.time));
+            }
+
+            trace!(
+                "Forwarding packet {:?}, queue.len={}",
+                val.data,
+                pin.delay_buffer.len()
+            );
+            return Poll::Ready(Some(Ok(val.data)));
         }
 
-        if pin.delay_avg == Duration::from_secs(0) {
-            pin.sender.start_send(to_send)?;
-        } else
-        // delay
-        {
+        loop {
+            let to_send = match ready!(Pin::new(&mut pin.receiver).poll_next(cx)) {
+                None => {
+                    // There can't be any more packets AND there are no packets remaining
+                    if pin.delay_buffer.is_empty() {
+                        return Poll::Ready(None);
+                    } else {
+                        return Poll::Pending;
+                    }
+                }
+                Some(to_send) => to_send,
+            };
+
+            if rand::random::<f64>() < pin.loss_rate {
+                trace!("Dropping packet: {:?}", to_send);
+
+                // drop
+                continue;
+            }
+
+            if pin.delay_avg == Duration::from_secs(0) {
+                // return it
+                return Poll::Ready(Some(Ok(to_send)));
+            }
+            // delay
             let center = pin.delay_avg.as_secs_f64();
             let stddev = pin.delay_stddev.as_secs_f64();
             let between = Normal::new(center, stddev).unwrap();
@@ -104,38 +126,30 @@ impl<T: Debug + Sync + Send + Unpin + 'static> Sink<T> for LossyConn<T> {
             pin.delay.reset(time::Instant::from_std(
                 pin.delay_buffer.peek().unwrap().time,
             ));
+            let _ = Pin::new(&mut pin.delay).poll(cx);
         }
+    }
+}
 
+impl<T: Sync + Send + Unpin + 'static> Sink<T> for LossyConn<T> {
+    type Error = Error;
+
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
+        let _ = ready!(self.sender.poll_ready(cx));
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, to_send: T) -> Result<(), Error> {
+        // just discard it, like a real UDP connection
+        let _ = self.sender.start_send(to_send);
         Ok(())
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
-        let pin = self.get_mut();
-
-        while let Poll::Ready(_) = Pin::new(&mut pin.delay).poll(cx) {
-            let val = match pin.delay_buffer.pop() {
-                Some(v) => v,
-                None => break,
-            };
-            if let Err(err) = pin.sender.try_send(val.data) {
-                if err.is_disconnected() {
-                    return Poll::Ready(Ok(()));
-                }
-                return Poll::Ready(Err(format_err!("{}", err)));
-            }
-
-            // reset timer
-            if let Some(i) = pin.delay_buffer.peek() {
-                pin.delay.reset(time::Instant::from_std(i.time));
-            }
-        }
-
-        Poll::Ready(Ok(ready!(Pin::new(&mut pin.sender).poll_flush(cx))?))
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
+        Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_flush(cx))?))
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
-        info!("Closing sink...");
-
         Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_close(cx))?))
     }
 }
@@ -152,7 +166,7 @@ impl<T> LossyConn<T> {
         (
             LossyConn {
                 sender: a2b,
-                receiver: afromb,
+                receiver: afromb.fuse(),
                 loss_rate,
                 delay_avg,
                 delay_stddev,
@@ -162,7 +176,7 @@ impl<T> LossyConn<T> {
             },
             LossyConn {
                 sender: b2a,
-                receiver: bfroma,
+                receiver: bfroma.fuse(),
                 loss_rate,
                 delay_avg,
                 delay_stddev,

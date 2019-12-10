@@ -14,12 +14,12 @@ async fn single_packet_tsbpd() -> Result<(), Error> {
 
     let sender = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:3000".parse().unwrap()))
         .latency(Duration::from_secs(5))
-        .connect_sender();
+        .connect();
 
     let recvr = SrtSocketBuilder::new(ConnInitMethod::Listen)
         .local_port(3000)
         .latency(Duration::from_secs(2))
-        .connect_receiver();
+        .connect();
 
     // init the connection
     let (sender, recvr) = futures::join!(sender, recvr);

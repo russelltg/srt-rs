@@ -5,6 +5,12 @@ use std::{
 
 use crate::{Packet, SeqNumber, SocketID};
 
+pub struct Connection {
+    pub settings: ConnectionSettings,
+    pub hs_returner: HandshakeReturner,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct ConnectionSettings {
     /// The remote socket to send & receive to
     pub remote: SocketAddr,
@@ -31,13 +37,13 @@ pub struct ConnectionSettings {
     /// Not necessarily the actual decided on latency, which
     /// is the max of both side's respective latencies.
     pub tsbpd_latency: Duration,
-
-    /// handshake returner
-    /// A function that returns a response to a handshake.
-    /// Because this depends on the connection initilization method
-    /// the sender/receiver needs to have this information.
-    pub handshake_returner: Box<dyn Fn(&Packet) -> Option<Packet> + Send>,
 }
+
+/// handshake returner
+/// A handshake packet to return
+/// Because this depends on the connection initilization method
+/// the sender/receiver needs to have this information.
+pub type HandshakeReturner = Box<dyn Fn(&Packet) -> Option<Packet> + Send>;
 
 impl ConnectionSettings {
     /// Timestamp in us

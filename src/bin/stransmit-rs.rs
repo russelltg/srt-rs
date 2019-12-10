@@ -16,8 +16,9 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{future, prelude::*, stream};
 
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::UdpSocket;
+use tokio::prelude::AsyncRead;
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
@@ -251,7 +252,7 @@ fn resolve_input<'a>(
                             bail!("multiplex is not a valid option for input urls");
                         }
 
-                        Ok(builder.connect_receiver().await?.map(Result::unwrap).map(|(_, b)| b).boxed())
+                        Ok(builder.connect().await?.map(Result::unwrap).map(|(_, b)| b).boxed())
 
                         }.boxed()
                     }
@@ -339,7 +340,7 @@ fn resolve_output<'a>(
                             }.boxed()
                         } else {
                             async move {
-                                Ok(builder.connect_sender().await?.with(|b| future::ok((Instant::now(), b))).boxed_sink())
+                                Ok(builder.connect().await?.with(|b| future::ok((Instant::now(), b))).boxed_sink())
                             }.boxed()
                         }
                     },

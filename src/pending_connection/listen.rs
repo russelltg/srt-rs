@@ -5,20 +5,20 @@ use std::time::{Duration, Instant};
 
 use failure::{bail, Error};
 use futures::prelude::*;
-use log::{info, warn};
+use log::{debug, info, warn};
 
 use crate::packet::{
     ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, Packet, ShakeType,
     SrtControlPacket, SrtHandshake,
 };
 use crate::util::get_packet;
-use crate::{ConnectionSettings, SocketID};
+use crate::{Connection, ConnectionSettings, SocketID};
 
 pub async fn listen<T>(
     sock: &mut T,
     local_sockid: SocketID,
     tsbpd_latency: Duration,
-) -> Result<ConnectionSettings, Error>
+) -> Result<Connection, Error>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
         + Sink<(Packet, SocketAddr), Error = Error>
@@ -27,25 +27,36 @@ where
     info!("Listening...");
 
     // keep on retrying
-    let (cookie, from) = get_handshake(sock, local_sockid).await?;
+    let (cookie, from, induction_pkt) = get_handshake(sock, local_sockid).await?;
 
-    let (latency, shake, resp_handshake) =
-        get_conclusion(sock, cookie, local_sockid, tsbpd_latency, &from).await?;
+    info!("Got induction shake from {}", from);
+
+    let (latency, shake, resp_handshake) = get_conclusion(
+        sock,
+        &induction_pkt,
+        cookie,
+        local_sockid,
+        tsbpd_latency,
+        &from,
+    )
+    .await?;
     // select the smaller packet size and max window size
     // TODO: allow configuration of these parameters, for now just
     // use the remote ones
 
     // finish the connection
-    Ok(ConnectionSettings {
-        init_seq_num: shake.init_seq_num,
-        remote_sockid: shake.socket_id,
-        remote: from,
-        max_flow_size: 16000, // TODO: what is this?
-        max_packet_size: shake.max_packet_size,
-        local_sockid,
-        socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
-        tsbpd_latency: latency,
-        handshake_returner: Box::new(move |_| Some(resp_handshake.clone())),
+    Ok(Connection {
+        settings: ConnectionSettings {
+            init_seq_num: shake.init_seq_num,
+            remote_sockid: shake.socket_id,
+            remote: from,
+            max_flow_size: 16000, // TODO: what is this?
+            max_packet_size: shake.max_packet_size,
+            local_sockid,
+            socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
+            tsbpd_latency: latency,
+        },
+        hs_returner: Box::new(move |_| Some(resp_handshake.clone())),
     })
 }
 
@@ -56,7 +67,7 @@ async fn get_handshake<
 >(
     sock: &mut T,
     local_sockid: SocketID,
-) -> Result<(i32, SocketAddr), Error> {
+) -> Result<(i32, SocketAddr, Packet), Error> {
     loop {
         let (packet, from) = get_packet(sock).await?;
 
@@ -66,6 +77,14 @@ async fn get_handshake<
             ..
         }) = packet
         {
+            if shake.shake_type != ShakeType::Induction {
+                info!(
+                    "Expected Induction (1), got {:?} ({})",
+                    shake.shake_type, shake.shake_type as u32
+                );
+                continue;
+            }
+
             // https://tools.ietf.org/html/draft-gg-udt-03#page-9
             // When the server first receives the connection request from a client,
             // it generates a cookie value according to the client address and a
@@ -99,9 +118,10 @@ async fn get_handshake<
                 }),
             });
 
-            sock.send((resp_handshake, from)).await?;
+            sock.send((resp_handshake.clone(), from)).await?;
+            debug!("Sending induction to {}", from);
 
-            return Ok((cookie, from));
+            return Ok((cookie, from, resp_handshake));
         } else {
             continue; // try again
         };
@@ -114,6 +134,7 @@ async fn get_conclusion<
         + Unpin,
 >(
     sock: &mut T,
+    induction_hs: &Packet,
     cookie: i32,
     local_socket_id: SocketID,
     tsbpd_latency: Duration,
@@ -140,7 +161,11 @@ async fn get_conclusion<
                 }),
                 from_second,
             ) if from_second == *from => {
-                if shake.shake_type != ShakeType::Conclusion {
+                if shake.shake_type == ShakeType::Induction {
+                    // it maybe missed our induction packet, so send it again
+                    sock.send((induction_hs.clone(), *from)).await?;
+                    continue;
+                } else if shake.shake_type != ShakeType::Conclusion {
                     // discard
                     info!(
                         "Expected Conclusion (-1) packet, got {:?} ({}). Discarding handshake.",

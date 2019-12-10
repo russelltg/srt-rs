@@ -6,16 +6,17 @@ use futures::{join, try_join, SinkExt, TryStreamExt};
 
 use bytes::Bytes;
 
-// #[tokio:test]
+#[tokio::test]
+#[ignore]
 async fn crypto_exchange() {
     let sender = SrtSocketBuilder::new(ConnInitMethod::Listen)
         .crypto(24, "password123".into())
         .local_port(2000)
-        .connect_sender();
+        .connect();
 
     let recvr = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:2000".parse().unwrap()))
         .crypto(24, "password123".into())
-        .connect_receiver();
+        .connect();
 
     let (mut sender, mut recvr) = try_join!(sender, recvr).unwrap();
 

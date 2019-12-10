@@ -28,7 +28,12 @@ async fn multiplexer() -> Result<(), Error> {
         while let Some(Ok((settings, channel))) =
             futures::select!(res = server.next().fuse() => res, _ = fused_finish => None)
         {
-            let mut sender = Sender::new(channel, SrtCongestCtrl, settings);
+            let mut sender = Sender::new(
+                channel,
+                SrtCongestCtrl,
+                settings.settings,
+                Some(settings.hs_returner),
+            );
 
             let mut stream =
                 stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());
@@ -46,7 +51,7 @@ async fn multiplexer() -> Result<(), Error> {
         tokio::spawn(async move {
             let mut recvr =
                 SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:2000".parse().unwrap()))
-                    .connect_receiver()
+                    .connect()
                     .await
                     .unwrap();
             info!("Created connection");

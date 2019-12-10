@@ -70,7 +70,7 @@ async fn stransmit_client() -> Result<(), Error> {
         let mut conn = SrtSocketBuilder::new(ConnInitMethod::Listen)
             .local_port(2003)
             .latency(Duration::from_millis(827))
-            .connect_receiver()
+            .connect()
             .await
             .unwrap();
         assert_eq!(conn.settings().tsbpd_latency, Duration::from_millis(827));
@@ -126,7 +126,7 @@ async fn stransmit_server() -> Result<(), Error> {
         let mut sender =
             SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:2000".parse().unwrap()))
                 .latency(Duration::from_millis(99))
-                .connect_sender()
+                .connect()
                 .await
                 .unwrap();
 

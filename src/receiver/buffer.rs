@@ -103,15 +103,16 @@ impl RecvBuffer {
     pub fn next_msg_ready_tsbpd(&self, latency: Duration, start_time: Instant) -> Option<usize> {
         let msg_size = self.next_msg_ready()?;
 
-        let origin_ts_usec = self.buffer.front().unwrap().as_ref().unwrap().timestamp;
+        let pack = self.buffer.front().unwrap().as_ref().unwrap();
 
-        if (start_time + Duration::from_micros(origin_ts_usec as u64) + latency) <= Instant::now() {
+        if (start_time + Duration::from_micros(pack.timestamp as u64) + latency) <= Instant::now() {
             debug!(
-                "Packet was deemed reaady for release, Now={:?}, Ts={:?}, Latency={:?}, len={}",
+                "Packet was deemed reaady for release, Now={:?}, Ts={:?}, Latency={:?}, len={}, sn={}",
                 Instant::now() - start_time,
-                Duration::from_micros(origin_ts_usec as u64),
+                Duration::from_micros(pack.timestamp as u64),
                 latency,
                 msg_size,
+                pack.seq_number
             );
             Some(msg_size)
         } else {

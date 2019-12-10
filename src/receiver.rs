@@ -5,6 +5,7 @@ use futures::ready;
 use log::{debug, info, trace, warn};
 use tokio::time::{self, delay_for, interval, Delay, Interval};
 
+use crate::connection::HandshakeReturner;
 use crate::loss_compression::compress_loss_list;
 use crate::packet::{ControlPacket, ControlTypes, DataPacket, Packet, SrtControlPacket};
 use crate::sink_send_wrapper::SinkSendWrapper;
@@ -44,6 +45,9 @@ struct AckHistoryEntry {
 
 pub struct Receiver<T> {
     settings: ConnectionSettings,
+
+    // Function to return handshakes with
+    hs_returner: Option<HandshakeReturner>,
 
     /// the round trip time, in microseconds
     /// is calculated each ACK2
@@ -131,7 +135,11 @@ where
         + Sink<(Packet, SocketAddr), Error = Error>
         + Unpin,
 {
-    pub fn new(sock: T, settings: ConnectionSettings) -> Receiver<T> {
+    pub fn new(
+        sock: T,
+        settings: ConnectionSettings,
+        hs_returner: Option<HandshakeReturner>,
+    ) -> Receiver<T> {
         let init_seq_num = settings.init_seq_num;
 
         info!(
@@ -141,6 +149,7 @@ where
 
         Receiver {
             settings,
+            hs_returner,
             sock,
             rtt: 10_000,
             rtt_variance: 1_000,
@@ -317,7 +326,6 @@ where
 
         // Pack the ACK packet with RTT, RTT Variance, and flow window size (available
         // receiver buffer size).
-        debug!("Sending ACK packet for packets <{}", ack_number);
         let ack = self.make_control_packet(ControlTypes::Ack {
             ack_seq_num,
             ack_number,
@@ -455,8 +463,10 @@ where
                     ControlTypes::Ack2(seq_num) => self.handle_ack2(*seq_num)?,
                     ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(_) => {
-                        if let Some(pack) = (*self.settings.handshake_returner)(&packet) {
-                            self.send_to_remote(cx, pack)?;
+                        if let Some(ret) = self.hs_returner.as_ref() {
+                            if let Some(pack) = (*ret)(&packet) {
+                                self.send_to_remote(cx, pack)?;
+                            }
                         }
                     }
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc

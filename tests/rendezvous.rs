@@ -8,13 +8,13 @@ async fn rendezvous() {
         "127.0.0.1:5000".parse().unwrap(),
     ))
     .local_port(5001)
-    .connect_sender();
+    .connect();
 
     let b = SrtSocketBuilder::new(ConnInitMethod::Rendezvous(
         "127.0.0.1:5001".parse().unwrap(),
     ))
     .local_port(5000)
-    .connect_receiver();
+    .connect();
 
     let _ = try_join!(a, b).unwrap();
 }

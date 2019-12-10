@@ -7,7 +7,7 @@ use futures::{stream::iter, SinkExt, StreamExt};
 use log::{debug, info};
 use tokio::time::interval;
 
-use srt::{ConnectionSettings, Receiver, Sender, SeqNumber, SocketID, SrtCongestCtrl};
+use srt::{ConnInitMethod, SrtSocketBuilder};
 
 mod lossy_conn;
 use crate::lossy_conn::LossyConn;
@@ -29,36 +29,11 @@ async fn not_enough_latency() {
     // 4% packet loss, 4 sec latency with 0.2 s variance
     let (send, recv) = LossyConn::channel(0.04, Duration::from_secs(4), Duration::from_millis(200));
 
-    let mut sender = Sender::new(
-        send,
-        SrtCongestCtrl,
-        ConnectionSettings {
-            init_seq_num: SeqNumber::new_truncate(INIT_SEQ_NUM),
-            socket_start_time: Instant::now(),
-            remote_sockid: SocketID(81),
-            local_sockid: SocketID(13),
-            max_packet_size: 1316,
-            max_flow_size: 50_000,
-            remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
-            tsbpd_latency: Duration::from_secs(5), // five seconds TSBPD, should be loss
-            handshake_returner: Box::new(|_| None),
-        },
-    );
+    let sender = SrtSocketBuilder::new(ConnInitMethod::Listen).connect_with_sock(send);
+    let recvr = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:0".parse().unwrap()))
+        .connect_with_sock(recv);
 
-    let mut recvr = Receiver::new(
-        recv,
-        ConnectionSettings {
-            init_seq_num: SeqNumber::new_truncate(INIT_SEQ_NUM),
-            socket_start_time: Instant::now(),
-            remote_sockid: SocketID(13),
-            local_sockid: SocketID(81),
-            max_packet_size: 1316,
-            max_flow_size: 50_000,
-            remote: "0.0.0.0:0".parse().unwrap(),
-            tsbpd_latency: Duration::from_secs(5),
-            handshake_returner: Box::new(|_| None),
-        },
-    );
+    let (mut sender, mut recvr) = futures::try_join!(sender, recvr).unwrap();
 
     tokio::spawn(async move {
         let mut stream = counting_stream.map(|b| Ok((Instant::now(), b)));

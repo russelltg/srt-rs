@@ -4,7 +4,7 @@ use bytes::Bytes;
 use futures::{stream, SinkExt, StreamExt};
 use tokio::time::interval;
 
-use srt::{ConnectionSettings, Receiver, Sender, SeqNumber, SocketID, SrtCongestCtrl};
+use srt::{ConnInitMethod, SrtSocketBuilder};
 
 mod lossy_conn;
 use crate::lossy_conn::LossyConn;
@@ -13,49 +13,25 @@ use crate::lossy_conn::LossyConn;
 async fn lossy() {
     let _ = env_logger::try_init();
 
-    const INIT_SEQ_NUM: u32 = 0;
     const ITERS: u32 = 1_000;
 
     // a stream of ascending stringified integers
     let counting_stream = stream::iter(0..ITERS)
-        .map(|i| Bytes::from(i.to_string()))
         .zip(interval(Duration::from_millis(1)))
-        .map(|(b, _)| b);
+        .map(|(i, _)| Bytes::from(i.to_string()));
 
     // 5% packet loss, 20ms delay
     let (send, recv) =
         LossyConn::channel(0.05, Duration::from_millis(20), Duration::from_millis(4));
 
-    let mut sender = Sender::new(
-        send,
-        SrtCongestCtrl,
-        ConnectionSettings {
-            init_seq_num: SeqNumber::new_truncate(INIT_SEQ_NUM),
-            socket_start_time: Instant::now(),
-            remote_sockid: SocketID(81),
-            local_sockid: SocketID(13),
-            max_packet_size: 1316,
-            max_flow_size: 50_000,
-            remote: "0.0.0.0:0".parse().unwrap(), // doesn't matter, it's getting discarded
-            tsbpd_latency: Duration::from_secs(8),
-            handshake_returner: Box::new(|_| None),
-        },
-    );
+    let sender = SrtSocketBuilder::new(ConnInitMethod::Listen)
+        .local_port(1111)
+        .latency(Duration::from_secs(8))
+        .connect_with_sock(send);
+    let recvr = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:1111".parse().unwrap()))
+        .connect_with_sock(recv);
 
-    let mut recvr = Receiver::new(
-        recv,
-        ConnectionSettings {
-            init_seq_num: SeqNumber::new_truncate(INIT_SEQ_NUM),
-            socket_start_time: Instant::now(),
-            remote_sockid: SocketID(13),
-            local_sockid: SocketID(81),
-            max_packet_size: 1316,
-            max_flow_size: 50_000,
-            remote: "0.0.0.0:0".parse().unwrap(),
-            tsbpd_latency: Duration::from_secs(8),
-            handshake_returner: Box::new(|_| None),
-        },
-    );
+    let (mut sender, mut recvr) = futures::try_join!(sender, recvr).unwrap();
 
     let sender = async move {
         let mut stream = counting_stream.map(|b| Ok((Instant::now(), b)));
