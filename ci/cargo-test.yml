@@ -64,7 +64,7 @@ jobs:
   variables:
     check_flags: ''
   steps:
-  - template: install-rust.yml
+  - template: ci/steps/install-rust.yml@rust_pipelines
     parameters:
       rust_toolchain: ${{ parameters.rust }}
 
