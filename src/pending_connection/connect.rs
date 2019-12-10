@@ -29,65 +29,11 @@ where
         + Sink<(Packet, SocketAddr), Error = Error>
         + Unpin,
 {
+    info!("Got hanshake from {}", remote);
     let mut send_interval = interval(Duration::from_millis(100));
 
-    info!("Connecting to {}...", remote);
-
-    let request_packet = Packet::Control(ControlPacket {
-        dest_sockid: SocketID(0),
-        timestamp: 0, // TODO: this is not zero in the reference implementation
-        control_type: ControlTypes::Handshake(HandshakeControlInfo {
-            init_seq_num: rand::random(),
-            max_packet_size: 1500, // TODO: take as a parameter
-            max_flow_size: 8192,   // TODO: take as a parameter
-            socket_id: local_sockid,
-            shake_type: ShakeType::Induction,
-            peer_addr: local_addr,
-            syn_cookie: 0,
-            info: HandshakeVSInfo::V4(SocketType::Datagram),
-        }),
-    });
-
-    sock.send((request_packet.clone(), remote)).await?;
-
-    info!("Sent first packet to {}", remote);
-
-    // get first response packet
-    let (timestamp, hs_info) = loop {
-        // just drop the future that didn't finish first
-        let (packet, addr) = select! {
-            _ = send_interval.tick().fuse() => {sock.send((request_packet.clone(), remote)).await?; continue},
-            res = get_packet(sock).fuse() => res?
-        };
-
-        debug!("Got packet from {}", addr);
-        // make sure the socket id and packet type match
-        if let Packet::Control(ControlPacket {
-            timestamp,
-            control_type: ControlTypes::Handshake(info @ HandshakeControlInfo { .. }),
-            ..
-        }) = packet
-        {
-            if info.shake_type != ShakeType::Induction {
-                info!(
-                    "Expected Induction (1) packet, got {:?} ({})",
-                    info.shake_type, info.shake_type as u32
-                );
-                continue;
-            }
-            if addr != remote {
-                warn!("Expected packet from {}, got {}", remote, addr);
-                continue;
-            }
-            if info.info.version() != 5 {
-                warn!("Handshake was HSv4, expected HSv5");
-                continue;
-            }
-            break (timestamp, info);
-        }
-    };
-
-    info!("Got hanshake from {}", remote);
+    let (timestamp, hs_info) =
+        get_initial_handshake(sock, local_addr, local_sockid, remote).await?;
 
     // send back a packet with the same syn cookie
     let pack = Packet::Control(ControlPacket {
@@ -187,4 +133,76 @@ where
             });
         }
     }
+}
+
+async fn get_initial_handshake<T>(
+    sock: &mut T,
+    local_addr: IpAddr,
+    local_sockid: SocketID,
+    remote: SocketAddr,
+) -> Result<(i32, HandshakeControlInfo), Error>
+where
+    T: Stream<Item = Result<(Packet, SocketAddr), Error>>
+        + Sink<(Packet, SocketAddr), Error = Error>
+        + Unpin,
+{
+    let mut send_interval = interval(Duration::from_millis(100));
+
+    info!("Connecting to {}...", remote);
+
+    let request_packet = Packet::Control(ControlPacket {
+        dest_sockid: SocketID(0),
+        timestamp: 0, // TODO: this is not zero in the reference implementation
+        control_type: ControlTypes::Handshake(HandshakeControlInfo {
+            init_seq_num: rand::random(),
+            max_packet_size: 1500, // TODO: take as a parameter
+            max_flow_size: 8192,   // TODO: take as a parameter
+            socket_id: local_sockid,
+            shake_type: ShakeType::Induction,
+            peer_addr: local_addr,
+            syn_cookie: 0,
+            info: HandshakeVSInfo::V4(SocketType::Datagram),
+        }),
+    });
+
+    sock.send((request_packet.clone(), remote)).await?;
+
+    info!("Sent first packet to {}", remote);
+
+    // get first response packet
+    let (timestamp, hs_info) = loop {
+        // just drop the future that didn't finish first
+        let (packet, addr) = select! {
+            _ = send_interval.tick().fuse() => {sock.send((request_packet.clone(), remote)).await?; continue},
+            res = get_packet(sock).fuse() => res?
+        };
+
+        debug!("Got packet from {}", addr);
+        // make sure the socket id and packet type match
+        if let Packet::Control(ControlPacket {
+            timestamp,
+            control_type: ControlTypes::Handshake(info @ HandshakeControlInfo { .. }),
+            ..
+        }) = packet
+        {
+            if info.shake_type != ShakeType::Induction {
+                info!(
+                    "Expected Induction (1) packet, got {:?} ({})",
+                    info.shake_type, info.shake_type as u32
+                );
+                continue;
+            }
+            if addr != remote {
+                warn!("Expected packet from {}, got {}", remote, addr);
+                continue;
+            }
+            if info.info.version() != 5 {
+                warn!("Handshake was HSv4, expected HSv5");
+                continue;
+            }
+            break (timestamp, info);
+        }
+    };
+
+    Ok((timestamp, hs_info))
 }
