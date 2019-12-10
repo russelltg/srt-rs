@@ -18,7 +18,6 @@ parameters:
         vmImage: vs2017-win2016
   # global parameters
   rust: stable                # Version of rust. Could be [stable, beta, nightly, 1.31, nightly-2018-08-01 ... ]
-  
   extra_test_flags: ''
   extra_runner_flags: ''
 
@@ -46,7 +45,7 @@ jobs:
   # parameters from libtest `cargo test -- --help`
 
   # *********************************************************************************************
-  - script: cargo test $(extra_test_flags) -- $(extra_runner_flags)
+  - script: cargo test ${{parameters.extra_test_flags}} -- ${{parameters.extra_runner_flags}}
     displayName: cargo test
     
   # Custom steps:
