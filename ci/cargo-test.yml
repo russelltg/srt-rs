@@ -111,7 +111,7 @@ jobs:
     displayName: "[cli flag modify]Set number of threads used for running tests in parallel to ${{ parameters['test_flags-test-threads'] }}"
 
   - ${{ each s in parameters['test_flags-skip'] }}:
-    - script: echo '##vso[task.setvariableV variable=check_flags]$(check_flags) --skip ${{ s }}'
+    - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --skip ${{ s }}'
       displayName: "[cli flag modify]Skip test using filter ${{ s }}"
       
   - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --quiet'
@@ -131,7 +131,7 @@ jobs:
     displayName: "[cli flag modify] Configure formatting of output: ${{ parameters['test_flags-format'] }}"
 
   - ${{ each z in parameters['test_flags-Z'] }}:
-    - script: echo '##vso[task.setvariableV variable=check_flags]$(check_flags) --Z ${{ z }}'
+    - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --Z ${{ z }}'
       displayName: "[cli flag modify] unstable-option: ${{ z }}"
 
   # *********************************************************************************************
