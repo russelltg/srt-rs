@@ -1,5 +1,8 @@
 os: Visual Studio 2015
 
+variables:
+  VCPKGRS_DYNAMIC: 1
+
 environment:
   matrix:
 
