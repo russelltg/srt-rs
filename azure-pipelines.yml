@@ -27,8 +27,7 @@ stages:
   # Latest stable
   - template: ci/cargo-test.yml
     parameters:
-      extra_test_flags: '--exclude=stransmit_interop'
-      extra_runner_flags: '--nocapture'
+      extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
       job_pre-steps:
       - template: openssl-win.yml
   # Nightly
@@ -38,6 +37,6 @@ stages:
       job_name: cargo_test_nightly
       job_displayName: Cargo test (nightly)
       extra_test_flags: '--exclude=stransmit_interop'
-      extra_runner_flags: '--nocapture'
+      extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
       job_pre-steps:
       - template: openssl-win.yml
