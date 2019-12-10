@@ -30,7 +30,7 @@ stages:
         - stransmit_client
         - stransmit_server
       job_pre-steps:
-        - template: ci/openssl-win.yml
+        - template: openssl-win.yml
   # Nightly
   - template: ci/cargo-test.yml
     parameters:
@@ -44,4 +44,4 @@ stages:
         - stransmit_client
         - stransmit_server
       job_pre-steps:
-        - template: ci/openssl-win.yml
+        - template: openssl-win.yml
