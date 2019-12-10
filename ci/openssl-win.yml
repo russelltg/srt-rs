@@ -4,6 +4,7 @@ steps:
     condition: eq(variables['Agent.OS'], 'Windows_NT')
     displayName: 'Cache vcpkg artifacts'
     inputs:
+      key: 'openssl:x64-windows | $(vcpkgGitRef) | $(Agent.OS)'
       path: '$(Build.BinariesDirectory)/vcpkg'
   - task: run-vcpkg@0
     displayName: 'Run vcpkg (install openssl)'
