@@ -24,13 +24,12 @@ stages:
   # Latest stable
   - template: ci/cargo-test.yml
     parameters:
-      test_flags:
-        nocapture: true
-        skip: 
-        - stransmit_client
-        - stransmit_server
+      test_flags-nocapture: true
+      test_flags-skip: 
+      - stransmit_client
+      - stransmit_server
       job_pre-steps:
-        - template: openssl-win.yml
+      - template: openssl-win.yml
   # Nightly
   - template: ci/cargo-test.yml
     parameters:
@@ -38,10 +37,9 @@ stages:
       job_name: cargo_test_nightly
       job_displayName: Cargo test (nightly)
       job_continueOnError: true
-      test_flags: 
-        nocapture: true
-        skip: 
-        - stransmit_client
-        - stransmit_server
+      test_flags-nocapture: true
+      test_flags-skip: 
+      - stransmit_client
+      - stransmit_server
       job_pre-steps:
-        - template: openssl-win.yml
+      - template: openssl-win.yml

@@ -23,33 +23,32 @@ parameters:
   # TODO
   
   # parameters from libtest `cargo test -- --help`
-  test_flags:
-    include-ignored: false      # Run ignored and not ignored tests
-    ignored: false              # Run only ignored tests
-    exclude-should-panic: false # Excludes tests marked as should_panic
-    test: false                 # Run tests and not benchmarks
-    bench: false                # Run benchmarks instead of tests
-    list: false                 # List all tests and benchmarks
-    logfile: ''                 # Write logs to the specified file instead of stdout
-    nocapture: false            # don't capture stdout/stderr of each task, allow
-                                # printing directly
-    test-threads: 0             # Number of threads used for running tests in parallel
-    skip: []                    # Skip tests whose names contain FILTER (this flag can
-                                # be used multiple times)
-    quite: false                # Display one character per test instead of one line.
-                                # Alias to --format=terse
-    exact: false                # Exactly match filters rather than by substring
-    color: ''                   # auto|always|never
-                                # Configure coloring of output: auto = colorize if
-                                # stdout is a tty and tests are run on serially
-                                # (default); always = always colorize output; never =
-                                # never colorize output;
-    format: ''                  # pretty|terse|json
-                                # Configure formatting of output: pretty = Print verbose
-                                # output; terse = Display one character per test; json =
-                                # Output a json document
-    Z: []                       # unstable-options Enable nightly-only flags: unstable-options = Allow
-                                # use of experimental features
+  test_flags-include-ignored: false      # Run ignored and not ignored tests
+  test_flags-ignored: false              # Run only ignored tests
+  test_flags-exclude-should-panic: false # Excludes tests marked as should_panic
+  test_flags-test: false                 # Run tests and not benchmarks
+  test_flags-bench: false                # Run benchmarks instead of tests
+  test_flags-list: false                 # List all tests and benchmarks
+  test_flags-logfile: ''                 # Write logs to the specified file instead of stdout
+  test_flags-nocapture: false            # don't capture stdout/stderr of each task, allow
+                                         # printing directly
+  test_flags-test-threads: 0             # Number of threads used for running tests in parallel
+  test_flags-skip: []                    # Skip tests whose names contain FILTER (this flag can
+                                         # be used multiple times)
+  test_flags-quiet: false                # Display one character per test instead of one line.
+                                         # Alias to --format=terse
+  test_flags-exact: false                # Exactly match filters rather than by substring
+  test_flags-color: ''                   # auto|always|never
+                                         # Configure coloring of output: auto = colorize if
+                                         # stdout is a tty and tests are run on serially
+                                         # (default); always = always colorize output; never =
+                                         # never colorize output;
+  test_flags-format: ''                  # pretty|terse|json
+                                         # Configure formatting of output: pretty = Print verbose
+                                         # output; terse = Display one character per test; json =
+                                         # Output a json document
+  test_flags-Z: []                       # unstable-options Enable nightly-only flags: unstable-options = Allow
+                                         # use of experimental features
 
 
 jobs:
@@ -76,62 +75,62 @@ jobs:
   # parameters from libtest `cargo test -- --help`
 
   - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --include-ignored'
-    enabled: ${{ parameters.test_flags['include-ignored'] }}
+    enabled: ${{ parameters.['test_flags-include-ignored'] }}
     displayName: "[cli flag modify]Run ignored and not ignored tests"
 
   - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --ignored'
-    enabled: ${{ parameters.test_flags['ignored'] }}
+    enabled: ${{ parameters.['test_flags-ignored'] }}
     displayName: "[cli flag modify]Run only ignored tests"
 
   - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --exclude-should-panic'
-    enabled: ${{ parameters.test_flags['exclude-should-panic'] }}
+    enabled: ${{ parameters.['test_flags-exclude-should-panic'] }}
     displayName: "[cli flag modify]Excludes tests marked as should_panic"
 
   - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --test'
-    enabled: ${{ parameters.test_flags['test'] }}
+    enabled: ${{ parameters.['test_flags-test'] }}
     displayName: "[cli flag modify]Run tests and not benchmarks"
 
   - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --bench'
-    enabled: ${{ parameters.test_flags['bench'] }}
+    enabled: ${{ parameters.['test_flags-bench'] }}
     displayName: "[cli flag modify]Run benchmarks instead of tests"
 
   - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --list'
-    enabled: ${{ parameters.test_flags['list'] }}
+    enabled: ${{ parameters.['test_flags-list'] }}
     displayName: "[cli flag modify]List all tests and benchmarks"
 
   - script: echo "##vso[task.setvariable variable=check_flags]$(check_flags) --logfile ${{ parameters.test_flags['logfile'] }}"
-    enabled: ${{ ne(parameters.test_flags['logfile'], '') }}
+    enabled: ${{ ne(parameters.['test_flags-logfile'], '') }}
     displayName: "[cli flag modify] Write logs to the specified file ${{ parameters.test_flags['logfile'] }}"
 
   - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --nocapture'
-    enabled: ${{ parameters.test_flags['nocapture'] }}
+    enabled: ${{ parameters.['test_flags-nocapture'] }}
     displayName: "[cli flag modify]don't capture stdout/stderr of each task, allow printing it directly"
 
   - script: echo "##vso[task.setvariable variable=check_flags]$(check_flags) --test-threads ${{ parameters.test_flags['test-threads'] }}"
-    enabled: ${{ ne(parameters.test_flags['test-threads'], 0) }}
+    enabled: ${{ ne(parameters.['test_flags-test-threads'], 0) }}
     displayName: "[cli flag modify]Set number of threads used for running tests in parallel to ${{ parameters.test_flags['test-threads'] }}"
 
-  - ${{ each s in parameters.test_flags['skip'] }}:
+  - ${{ each s in parameters.['test_flags-skip'] }}:
     - script: echo '##vso[task.setvariableV variable=check_flags]$(check_flags) --skip ${{ s }}'
       displayName: "[cli flag modify]Skip test using filter ${{ s }}"
       
-  - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --quite'
-    enabled: ${{ parameters.test_flags['quite'] }}
+  - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --quiet'
+    enabled: ${{ parameters.['test_flags-quiet'] }}
     displayName: "[cli flag modify]Display one character per test instead of one line."
 
   - script: echo '##vso[task.setvariable variable=check_flags]$(check_flags) --exact'
-    enabled: ${{ parameters.test_flags['exact'] }}
+    enabled: ${{ parameters.['test_flags-exact'] }}
     displayName: "[cli flag modify]Exactly match filters rather than by substring"
 
   - script: echo "##vso[task.setvariable variable=check_flags]$(check_flags) --color ${{ parameters.test_flags['color'] }}"
-    enabled: ${{ ne(parameters.test_flags['color'], '') }}
+    enabled: ${{ ne(parameters.['test_flags-color'], '') }}
     displayName: "[cli flag modify] Configure coloring of output: ${{ parameters.test_flags['color'] }}"
     
   - script: echo "##vso[task.setvariable variable=check_flags]$(check_flags) --format ${{ parameters.test_flags['format'] }}"
-    enabled: ${{ ne(parameters.test_flags['format'], '') }}
+    enabled: ${{ ne(parameters.['test_flags-format'], '') }}
     displayName: "[cli flag modify] Configure formatting of output: ${{ parameters.test_flags['format'] }}"
 
-  - ${{ each z in parameters.test_flags['Z'] }}:
+  - ${{ each z in parameters.['test_flags-Z'] }}:
     - script: echo '##vso[task.setvariableV variable=check_flags]$(check_flags) --Z ${{ z }}'
       displayName: "[cli flag modify] unstable-option: ${{ z }}"
 
