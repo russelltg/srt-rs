@@ -26,8 +26,9 @@ stages:
     parameters:
       test_flags:
         nocapture: true
-        skip: stransmit_client
-        skip: stransmit_server
+        skip: 
+        - stransmit_client
+        - stransmit_server
       job_pre-steps:
         - template: openssl-win.yml
   # Nightly
@@ -39,7 +40,8 @@ stages:
       job_continueOnError: true
       test_flags: 
         nocapture: true
-        skip: stransmit_client
-        skip: stransmit_server
+        skip: 
+        - stransmit_client
+        - stransmit_server
       job_pre-steps:
         - template: openssl-win.yml
