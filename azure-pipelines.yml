@@ -26,7 +26,19 @@ stages:
 - stage: test
   displayName: "Multi OS native tests"
   jobs:
-  - template: ci/scenarios/test.yml@rust_pipelines
+  # Latest stable
+  - template: ci/jobs/cargo-test.yaml@rust_pipelines
     parameters:
-      min_rust_supported: 1.39
-      
+      test-flags:
+        nocapture: true
+      skip: 'stransmit_interop'
+  # Nightly
+  - template: ci/jobs/cargo-test.yaml@rust_pipelines
+    parameters:
+      rust: nightly
+      job_name: cargo_test_nightly
+      job_displayName: Cargo test (nightly)
+      job_continueOnError: true
+      test-flags: 
+        nocapture: true
+      skip: 'stransmit_interop'
