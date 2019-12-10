@@ -16,6 +16,7 @@ resources:
       type: github
       name: xoac/rust-azure-pipelines
       ref: refs/heads/master
+      endpoint: PipelinesTemplates
 stages:
 - stage: check
   displayName: "Quick checks"
