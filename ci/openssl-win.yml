@@ -2,6 +2,7 @@
 steps:
   - task: run-vcpkg@0
     displayName: 'Run vcpkg (install openssl)'
-    vcpkgArguments: 'openssl:x64-windows'
     condition: eq(variables['Agent.OS'], 'Windows_NT')
+    inputs:
+      vcpkgArguments: 'openssl:x64-windows'
   
