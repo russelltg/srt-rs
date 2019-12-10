@@ -1,5 +1,10 @@
 # Runs vcpkg on windows
 steps:
+  - task: Cache@2
+    condition: eq(variables['Agent.OS'], 'Windows_NT')
+    displayName: 'Cache vcpkg artifacts'
+    inputs:
+      path: '$(Build.BinariesDirectory)/vcpkg'
   - task: run-vcpkg@0
     displayName: 'Run vcpkg (install openssl)'
     condition: eq(variables['Agent.OS'], 'Windows_NT')
