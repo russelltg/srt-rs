@@ -17,16 +17,21 @@ use futures::{stream, FutureExt, SinkExt, StreamExt, TryStreamExt};
 
 use bytes::Bytes;
 
+#[cfg(target_os = "windows")]
+const STRANSMIT_NAME: &'static str = "stransmit-rs.exe";
+#[cfg(not(target_os = "windows"))]
+const STRANSMIT_NAME: &'static str = "stransmit-rs";
+
 fn find_stransmit_rs() -> PathBuf {
     let mut stransmit_rs_path = env::current_exe().unwrap();
     stransmit_rs_path.pop();
 
-    stransmit_rs_path.push("stransmit-rs");
+    stransmit_rs_path.push(STRANSMIT_NAME);
 
     if !stransmit_rs_path.exists() {
         stransmit_rs_path.pop();
         stransmit_rs_path.pop();
-        stransmit_rs_path.push("stransmit-rs");
+        stransmit_rs_path.push(STRANSMIT_NAME);
     }
 
     assert!(
