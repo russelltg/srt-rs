@@ -2,10 +2,10 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use failure::Error;
-use futures::select;
 use futures::prelude::*;
-use tokio::time::Instant;
+use futures::select;
 use tokio::time::interval;
+use tokio::time::Instant;
 
 use log::warn;
 
@@ -184,19 +184,15 @@ impl Connect {
     pub fn next_packet(&mut self, next: (Packet, SocketAddr)) -> ConnectResult {
         let (packet, from) = next;
         match (self.1.clone(), packet) {
-            (InductionResponseWait(_), Packet::Control(control)) => {
-                match control.control_type {
-                    ControlTypes::Handshake(shake) =>
-                        self.wait_for_induction(from, control.timestamp,shake),
-                    control_type => Err(HandshakeExpected(ShakeType::Induction, control_type)),
+            (InductionResponseWait(_), Packet::Control(control)) => match control.control_type {
+                ControlTypes::Handshake(shake) => {
+                    self.wait_for_induction(from, control.timestamp, shake)
                 }
+                control_type => Err(HandshakeExpected(ShakeType::Induction, control_type)),
             },
-            (ConclusionResponseWait(_), Packet::Control(control)) => {
-                match control.control_type {
-                    ControlTypes::Handshake(shake) =>
-                        self.wait_for_conclusion(from, shake),
-                    control_type => Err(HandshakeExpected(ShakeType::Conclusion, control_type)),
-                }
+            (ConclusionResponseWait(_), Packet::Control(control)) => match control.control_type {
+                ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, shake),
+                control_type => Err(HandshakeExpected(ShakeType::Conclusion, control_type)),
             },
             (_, Packet::Data(data)) => Err(ControlExpected(ShakeType::Induction, data)),
             (_, _) => Ok(None),
