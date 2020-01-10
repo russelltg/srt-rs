@@ -110,7 +110,7 @@ impl Listen {
                 );
                 Ok(Some((induction_response, from)))
             }
-            _ => Err(InductionExpected(shake)),
+            _ => Err(InductionExpected(shake.clone())),
         }
     }
 
@@ -186,39 +186,43 @@ impl Listen {
 
                 Ok(Some((resp_handshake, from)))
             }
-            (ShakeType::Conclusion, 5, syn_cookie) => Err(InvalidHandshakeCookie(
-                state.cookie,
-                syn_cookie,
-            )),
+            (ShakeType::Conclusion, 5, syn_cookie) => {
+                Err(InvalidHandshakeCookie(state.cookie, syn_cookie))
+            }
             (ShakeType::Conclusion, version, _) => Err(UnsupportedProtocolVersion(version)),
             (_, _, _) => Err(ConclusionExpected(shake)),
         }
     }
 
+    pub fn handle_control_packets(
+        &mut self,
+        control: ControlPacket,
+        from: SocketAddr,
+    ) -> ListenResult {
+        match (self.1.clone(), control.control_type) {
+            (InductionWait, ControlTypes::Handshake(shake)) => {
+                self.wait_for_induction(from, control.timestamp, shake)
+            }
+            (InductionWait, control_type) => Err(HandshakeExpected(
+                ShakeType::Induction,
+                control_type.clone(),
+            )),
+            (ConclusionWait(state), ControlTypes::Handshake(shake)) => {
+                self.wait_for_conclusion(from, control.timestamp, &state, shake)
+            }
+            (ConclusionWait(_), control_type) => Err(HandshakeExpected(
+                ShakeType::Conclusion,
+                control_type.clone(),
+            )),
+            (Connected(_,_), _) => Ok(None),
+        }
+    }
+
     pub fn next_packet(&mut self, next: (Packet, SocketAddr)) -> ListenResult {
         let (packet, from) = next;
-        match (self.1.clone(), packet) {
-            (InductionWait, Packet::Control(control)) => match control.control_type {
-                ControlTypes::Handshake(shake) => {
-                    self.wait_for_induction(from, control.timestamp, shake)
-                }
-                control_type => Err(HandshakeExpected(ShakeType::Induction, control_type)),
-            },
-            (InductionWait, Packet::Data(data)) => Err(ControlExpected(ShakeType::Induction, data)),
-            (ConclusionWait(state), Packet::Control(control)) => {
-                match (control.timestamp, control.control_type) {
-                    (timestamp, ControlTypes::Handshake(shake)) => {
-                        self.wait_for_conclusion(from, timestamp, &state, shake)
-                    }
-                    (_, control_type) => {
-                        Err(HandshakeExpected(ShakeType::Conclusion, control_type))
-                    }
-                }
-            }
-            (ConclusionWait(_), Packet::Data(data)) => {
-                Err(ControlExpected(ShakeType::Conclusion, data))
-            }
-            _ => Ok(None),
+        match packet {
+            Packet::Control(control) => self.handle_control_packets(control, from),
+            Packet::Data(data) => Err(ControlExpected(ShakeType::Induction, data.clone())),
         }
     }
 }

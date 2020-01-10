@@ -195,7 +195,7 @@ impl Connect {
                 match control.control_type {
                     ControlTypes::Handshake(shake) =>
                         self.wait_for_conclusion(from, shake),
-                    control_type => Err(HandshakeExpected(ShakeType::Induction, control_type)),
+                    control_type => Err(HandshakeExpected(ShakeType::Conclusion, control_type)),
                 }
             },
             (_, Packet::Data(data)) => Err(ControlExpected(ShakeType::Induction, data)),
