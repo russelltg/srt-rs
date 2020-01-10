@@ -11,8 +11,8 @@ use crate::packet::*;
 use crate::util::get_packet;
 use crate::{Connection, ConnectionSettings, DataPacket, SocketID};
 
-use ListenState::*;
 use ListenError::*;
+use ListenState::*;
 
 pub struct Listen(ListenConfiguration, ListenState);
 
@@ -214,7 +214,7 @@ impl Listen {
                 ShakeType::Conclusion,
                 control_type.clone(),
             )),
-            (Connected(_,_), _) => Ok(None),
+            (Connected(_, _), _) => Ok(None),
         }
     }
 
