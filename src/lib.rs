@@ -12,6 +12,7 @@ mod msg_number;
 mod multiplex;
 mod packet;
 mod pending_connection;
+pub mod protocol;
 mod receiver;
 mod sender;
 mod seq_number;
@@ -21,6 +22,7 @@ mod socket_id;
 mod srt_congest_ctrl;
 mod srt_version;
 mod stats;
+pub mod tokio;
 mod util;
 
 pub use crate::builder::{ConnInitMethod, SrtSocketBuilder, UnderlyingSocket};

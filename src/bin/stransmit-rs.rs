@@ -266,7 +266,7 @@ fn resolve_input<'a>(
                         .map(Result::unwrap)
                         .boxed())
                 }
-                    .boxed()
+                .boxed()
             } else {
                 let file = file.to_owned();
                 async move {
@@ -274,7 +274,7 @@ fn resolve_input<'a>(
 
                     Ok(read_to_stream(f).map(Result::unwrap).boxed())
                 }
-                    .boxed()
+                .boxed()
             }
         }
     })
@@ -355,7 +355,7 @@ fn resolve_output<'a>(
                         .sink_map_err(Error::from)
                         .boxed_sink())
                 }
-                    .boxed()
+                .boxed()
             } else {
                 let file = file.to_owned();
                 async move {
@@ -364,7 +364,7 @@ fn resolve_output<'a>(
                         .sink_map_err(Error::from)
                         .boxed_sink())
                 }
-                    .boxed()
+                .boxed()
             }
         }
     })

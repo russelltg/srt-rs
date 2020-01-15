@@ -13,3 +13,10 @@ impl CongestCtrl for SrtCongestCtrl {
         10_0000
     }
 }
+
+impl SrtCongestCtrl {
+    #[allow(non_snake_case)]
+    pub fn SDN(&self) -> Duration {
+        Duration::from_millis(100)
+    }
+}
