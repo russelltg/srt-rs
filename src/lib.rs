@@ -14,7 +14,10 @@
 //! use failure::Error;
 //!
 //! #[tokio::main]
-//! async fn main() {
+//! async fn main()
+//!# // keep this to quell `needless_doctest_main` warning
+//!# -> ()
+//! {
 //!     let sender_fut = async {
 //!         let mut tx = SrtSocketBuilder::new_listen().local_port(2223).connect().await?;
 //!
