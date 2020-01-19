@@ -18,6 +18,13 @@ use tokio::spawn;
 
 type PackChan = Channel<(Packet, SocketAddr)>;
 
+/// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
+///
+/// These are bidirectional sockets, meaning data can be sent in either direction.
+/// Use the `Stream + Sink` implementatino to send or receive data.
+///
+/// The sockets yield and consume `(Bytes, Instant)`, representng the data and the origin instant. This instant
+/// defines when the packet will be released on the receiving side, at more or less one latency later.
 pub struct SrtSocket {
     // The two tasks started need to be stopped when this struct is dropped
     // because those tasks own the socket, so the file handles won't be released

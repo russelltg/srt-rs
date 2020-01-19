@@ -1,5 +1,5 @@
 use bytes::{Bytes, BytesMut};
-use log::debug;
+use log::{debug, info};
 use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -54,11 +54,18 @@ impl RecvBuffer {
     ///
     /// Returns the number of packets dropped
     pub fn drop_too_late_packets(&mut self, latency: Duration, start_time: Instant) -> usize {
-        let first_non_none_idx = self.buffer.iter().position(Option::is_some);
+        // Not only does it have to be non-none, it also has to be a First (don't drop half messages)
+        let first_non_none_idx = self.buffer.iter().position(|a| {
+            a.is_some()
+                && a.as_ref()
+                    .unwrap()
+                    .message_loc
+                    .contains(PacketLocation::FIRST)
+        });
 
         let first_non_none_idx = match first_non_none_idx {
+            None | Some(0) => return 0, // even though some of these may be too late, there are none that can be released so they can't them back.
             Some(i) => i,
-            None => return 0, // even though some of these may be too late, there are none that can be released so they can't them back.
         };
 
         let first_pack_ts_us = self.buffer[first_non_none_idx].as_ref().unwrap().timestamp;
@@ -71,18 +78,15 @@ impl RecvBuffer {
             <= Instant::now();
 
         if too_late {
-            debug!(
-                "Dropping packets {}..{}, {} ms too late",
+            info!(
+                "Dropping packets [{},{}), {} ms too late",
                 self.head,
                 self.head + first_non_none_idx as u32,
-                {
-                    let dur_too_late = Instant::now()
-                        - start_time
-                        - Duration::from_micros(first_pack_ts_us as u64)
-                        - latency;
-
-                    dur_too_late.as_millis()
-                }
+                (Instant::now()
+                    - start_time
+                    - Duration::from_micros(first_pack_ts_us as u64)
+                    - latency)
+                    .as_millis()
             );
             // start dropping packets
             self.head += first_non_none_idx as u32;
@@ -107,12 +111,14 @@ impl RecvBuffer {
 
         if (start_time + Duration::from_micros(pack.timestamp as u64) + latency) <= Instant::now() {
             debug!(
-                "Packet was deemed reaady for release, Now={:?}, Ts={:?}, Latency={:?}, len={}, sn={}",
+                "Message was deemed ready for release, Now={:?}, Ts={:?}, dT={:?}, Latency={:?}, buf.len={}, sn={}, npackets={}",
                 Instant::now() - start_time,
                 Duration::from_micros(pack.timestamp as u64),
+                Instant::now() - start_time - Duration::from_micros(pack.timestamp as u64),
                 latency,
+                self.buffer.len(),
+                pack.seq_number,
                 msg_size,
-                pack.seq_number
             );
             Some(msg_size)
         } else {
@@ -126,7 +132,11 @@ impl RecvBuffer {
         let first = self.buffer.front();
         if let Some(Some(first)) = first {
             // we have a first packet, make sure it has the start flag set
-            assert!(first.message_loc.contains(PacketLocation::FIRST));
+            assert!(
+                first.message_loc.contains(PacketLocation::FIRST),
+                "Packet seq={} was not marked as the first in it's message",
+                first.seq_number
+            );
 
             let mut count = 1;
 
