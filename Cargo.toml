@@ -12,8 +12,7 @@ publish = false
 
 [dependencies]
 bitflags = "1"
-clap = { version = "2", default-features = false }
-env_logger = { version = "0.7", default-features = false, optional = true }
+clap = { version = "2", default-features = false, optional = true}
 failure = { version = "0.1", default-features = false, features=["std"] }
 futures = "0.3"
 log = { version = "0.4", default-features = false }
@@ -21,6 +20,12 @@ rand = "0.7"
 url = { version = "2", optional = true }
 openssl = "0.10.24"
 bytes = "0.5"
+
+[dependencies.env_logger]
+version = "0.7"
+default-features = false
+features = ["humantime"]
+optional = true
 
 [dependencies.tokio]
 version = "0.2"
@@ -45,5 +50,8 @@ required-features = ["stransmit-rs"]
 path = "src/bin/stransmit-rs.rs"
 
 [features]
-stransmit-rs = ["env_logger", "url"]
+stransmit-rs = ["env_logger", "url", "clap"]
 default = ["stransmit-rs"]
+
+[profile.release]
+debug = true
