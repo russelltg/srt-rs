@@ -87,12 +87,7 @@ impl SrtSocketBuilder {
     }
 
     pub fn new_listen() -> Self {
-        SrtSocketBuilder {
-            local_addr: "0.0.0.0:0".parse().unwrap(),
-            conn_type: ConnInitMethod::Listen,
-            latency: Duration::from_millis(50),
-            crypto: None,
-        }
+        Self::new(ConnInitMethod::Listen)
     }
 
     /// Connects to the first address yielded by `to`
@@ -100,12 +95,9 @@ impl SrtSocketBuilder {
     /// # Panics
     /// * `to` fails to resolve to a [`SocketAddr`]
     pub fn new_connect(to: impl ToSocketAddrs) -> Self {
-        SrtSocketBuilder {
-            local_addr: "0.0.0.0:0".parse().unwrap(),
-            conn_type: ConnInitMethod::Connect(to.to_socket_addrs().unwrap().next().unwrap()),
-            latency: Duration::from_millis(50),
-            crypto: None,
-        }
+        Self::new(ConnInitMethod::Connect(
+            to.to_socket_addrs().unwrap().next().unwrap(),
+        ))
     }
 
     /// Connects to the first address yielded by `to`
@@ -113,12 +105,9 @@ impl SrtSocketBuilder {
     /// # Panics
     /// * `to` fails to resolve to a [`SocketAddr`]
     pub fn new_rendezvous(to: impl ToSocketAddrs) -> Self {
-        SrtSocketBuilder {
-            local_addr: "0.0.0.0:0".parse().unwrap(),
-            conn_type: ConnInitMethod::Connect(to.to_socket_addrs().unwrap().next().unwrap()),
-            latency: Duration::from_millis(50),
-            crypto: None,
-        }
+        Self::new(ConnInitMethod::Rendezvous(
+            to.to_socket_addrs().unwrap().next().unwrap(),
+        ))
     }
 
     /// Gets the [`ConnInitMethod`] of the builder.
