@@ -65,14 +65,14 @@ enum DataType<'a> {
 fn read_to_stream(read: impl AsyncRead + Unpin) -> impl Stream<Item = Result<Bytes, Error>> {
     stream::unfold(read, |mut source| {
         async move {
-            let mut buf = [0; 4096];
+            let mut buf = [0; 1316];
             let bytes_read = match source.read(&mut buf[..]).await {
                 Ok(0) => return None,
                 Ok(bytes_read) => bytes_read,
                 Err(e) => return Some((Err(Error::from(e)), source)),
             };
 
-            Some((Ok(Bytes::copy_from_slice(&buf[0..bytes_read])), source))
+            Some((Ok(Bytes::copy_from_slice(&buf[..bytes_read])), source))
         }
     })
 }
@@ -266,7 +266,7 @@ fn resolve_input<'a>(
                         .map(Result::unwrap)
                         .boxed())
                 }
-                    .boxed()
+                .boxed()
             } else {
                 let file = file.to_owned();
                 async move {
@@ -274,7 +274,7 @@ fn resolve_input<'a>(
 
                     Ok(read_to_stream(f).map(Result::unwrap).boxed())
                 }
-                    .boxed()
+                .boxed()
             }
         }
     })
@@ -355,7 +355,7 @@ fn resolve_output<'a>(
                         .sink_map_err(Error::from)
                         .boxed_sink())
                 }
-                    .boxed()
+                .boxed()
             } else {
                 let file = file.to_owned();
                 async move {
@@ -364,7 +364,7 @@ fn resolve_output<'a>(
                         .sink_map_err(Error::from)
                         .boxed_sink())
                 }
-                    .boxed()
+                .boxed()
             }
         }
     })
@@ -382,7 +382,10 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Error> {
-    env_logger::init();
+    env_logger::Builder::from_default_env()
+        // .format(|buf, record| writeln!(buf, "{} [{}] {}", record.args()))
+        .format_timestamp_micros()
+        .init();
 
     let matches = App::new("stransmit_rs")
         .version("1.0")
