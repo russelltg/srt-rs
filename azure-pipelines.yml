@@ -3,6 +3,7 @@ trigger:
 
 variables:
   VCPKGRS_DYNAMIC: 1
+  VCPKG_ROOT: '$(Build.BinariesDirectory)/vcpkg'
 
 pr:
 - master
