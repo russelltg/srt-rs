@@ -1,11 +1,6 @@
 trigger:
 - master
 
-variables:
-  - name: OPENSSL_DIR
-    value: 'C:/Program Files/OpenSSL'
-    condition: eq(variables['Agent.OS'], 'Windows_NT')
-
 pr:
 - master
 
@@ -30,11 +25,8 @@ stages:
   - template: ci/cargo-test.yml
     parameters:
       extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
-      # extra_test_flags: '$(EXTRA_TEST_FLAGS)'
-      # job_pre-steps:
-      #   - powershell: "$env:EXTRA_TEST_FLAGS='--features=vendored-openssl'"
-      #     condition: eq(variables['Agent.OS'], 'Windows_NT')
-      # - template: openssl-win.yml
+      job_pre-steps:
+        - powershell: "$env:OPENSSL_DIR='C:/Program Files/OpenSSL'"
   # Nightly
   - template: ci/cargo-test.yml
     parameters:
@@ -42,8 +34,5 @@ stages:
       job_name: cargo_test_nightly
       job_displayName: Cargo test (nightly)
       extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
-      # extra_test_flags: '$(EXTRA_TEST_FLAGS)'
-      # job_pre-steps:
-      #   - powershell: "$env:EXTRA_TEST_FLAGS='--features=vendored-openssl'"
-      #     condition: eq(variables['Agent.OS'], 'Windows_NT')
-      # - template: openssl-win.yml
+      job_pre-steps:
+        - powershell: "$env:OPENSSL_DIR='C:/Program Files/OpenSSL'"
