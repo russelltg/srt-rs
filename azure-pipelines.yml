@@ -25,6 +25,7 @@ stages:
   - template: ci/cargo-test.yml
     parameters:
       extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
+      extra_test_flags: $(EXTRA_TEST_FLAGS)
       # job_pre-steps:
         # - powershell: "$env:OPENSSL_DIR='C:/Program Files/OpenSSL'"
   # Nightly
