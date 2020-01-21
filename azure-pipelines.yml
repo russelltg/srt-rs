@@ -1,9 +1,8 @@
 trigger:
 - master
 
-# variables:
-#   VCPKGRS_DYNAMIC: 1
-#   VCPKG_ROOT: '$(Build.BinariesDirectory)/vcpkg'
+variables:
+  OPENSSL_DIR: 'C:/Program Files/OpenSSL'
 
 pr:
 - master
@@ -29,10 +28,10 @@ stages:
   - template: ci/cargo-test.yml
     parameters:
       extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
-      extra_test_flags: '$(EXTRA_TEST_FLAGS)'
-      job_pre-steps:
-        - powershell: "$env:EXTRA_TEST_FLAGS='--features=vendored-openssl'"
-          condition: eq(variables['Agent.OS'], 'Windows_NT')
+      # extra_test_flags: '$(EXTRA_TEST_FLAGS)'
+      # job_pre-steps:
+      #   - powershell: "$env:EXTRA_TEST_FLAGS='--features=vendored-openssl'"
+      #     condition: eq(variables['Agent.OS'], 'Windows_NT')
       # - template: openssl-win.yml
   # Nightly
   - template: ci/cargo-test.yml
@@ -41,8 +40,8 @@ stages:
       job_name: cargo_test_nightly
       job_displayName: Cargo test (nightly)
       extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
-      extra_test_flags: '$(EXTRA_TEST_FLAGS)'
-      job_pre-steps:
-        - powershell: "$env:EXTRA_TEST_FLAGS='--features=vendored-openssl'"
-          condition: eq(variables['Agent.OS'], 'Windows_NT')
+      # extra_test_flags: '$(EXTRA_TEST_FLAGS)'
+      # job_pre-steps:
+      #   - powershell: "$env:EXTRA_TEST_FLAGS='--features=vendored-openssl'"
+      #     condition: eq(variables['Agent.OS'], 'Windows_NT')
       # - template: openssl-win.yml
