@@ -51,6 +51,7 @@ path = "src/bin/stransmit-rs.rs"
 
 [features]
 stransmit-rs = ["env_logger", "url", "clap"]
+vendored-openssl = ["openssl/vendored"]
 default = ["stransmit-rs"]
 
 [profile.release]
