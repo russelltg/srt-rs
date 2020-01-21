@@ -2,7 +2,9 @@ trigger:
 - master
 
 variables:
-  OPENSSL_DIR: 'C:/Program Files/OpenSSL'
+  - name: OPENSSL_DIR
+    value: 'C:/Program Files/OpenSSL'
+    condition: eq(variables['Agent.OS'], 'Windows_NT')
 
 pr:
 - master
