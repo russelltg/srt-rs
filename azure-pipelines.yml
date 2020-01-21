@@ -31,7 +31,7 @@ stages:
       extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
       extra_test_flags: '$(EXTRA_TEST_FLAGS)'
       job_pre-steps:
-        - powershell: "$env:EXTRA_TEST_FLAGS=--features=vendored-openssl"
+        - powershell: "$env:EXTRA_TEST_FLAGS='--features=vendored-openssl'"
           condition: eq(variables['Agent.OS'], 'Windows_NT')
       # - template: openssl-win.yml
   # Nightly
@@ -43,6 +43,6 @@ stages:
       extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
       extra_test_flags: '$(EXTRA_TEST_FLAGS)'
       job_pre-steps:
-        - powershell: "$env:EXTRA_TEST_FLAGS=--features=vendored-openssl"
+        - powershell: "$env:EXTRA_TEST_FLAGS='--features=vendored-openssl'"
           condition: eq(variables['Agent.OS'], 'Windows_NT')
       # - template: openssl-win.yml
