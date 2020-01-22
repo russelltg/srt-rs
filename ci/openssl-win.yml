@@ -5,6 +5,6 @@ steps:
       targetType: inline
       script: |
         Invoke-WebRequest -Uri "http://slproweb.com/download/Win64OpenSSL-1_1_1d.exe" -OutFile ssl.exe
-        ssl.exe /SILENT /VERYSILENT /SP- /DIR="$[Build.BinariesDirectory]/OpenSSL"
+        .\ssl.exe /SILENT /VERYSILENT /SP- /DIR="$[Build.BinariesDirectory]/OpenSSL"
     displayName: 'Install Openssl'
     condition: eq(variables['Agent.OS'], 'Windows_NT')
