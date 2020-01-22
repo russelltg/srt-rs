@@ -1,14 +1,7 @@
 # Runs vcpkg on windows
 steps:
-  - task: Cache@2
+  - displayName: 'Install Openssl'
+    powershell: |
+      Start-FileDownload "http://slproweb.com/download/Win64OpenSSL-1_1_1d.exe"
+      Win64OpenSSL-1_1_1d.exe /SILENT /VERYSILENT /SP- /DIR="$[Build.BinariesDirectory]/OpenSSL"
     condition: eq(variables['Agent.OS'], 'Windows_NT')
-    displayName: 'Cache vcpkg artifacts'
-    inputs:
-      key: 'openssl:x64-windows | $(vcpkgGitRef) | $(Agent.OS)'
-      path: '$(Build.BinariesDirectory)/vcpkg'
-  - task: run-vcpkg@0
-    displayName: 'Run vcpkg (install openssl)'
-    condition: eq(variables['Agent.OS'], 'Windows_NT')
-    inputs:
-      vcpkgArguments: 'openssl:x64-windows'
-  

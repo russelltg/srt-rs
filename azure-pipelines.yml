@@ -27,10 +27,8 @@ stages:
       extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
       # extra_test_flags: $(EXTRA_TEST_FLAGS)
       job_pre-steps:
-        - condition: eq(variables['Agent.OS'], 'Windows_NT')
-          powershell: |
-            Start-FileDownload "http://slproweb.com/download/Win64OpenSSL-1_1_1d.exe"
-            Win64OpenSSL-1_1_1d.exe /SILENT /VERYSILENT /SP- /DIR="$[Build.BinariesDirectory]/OpenSSL"
+        - template: 'ci/openssl-win.yml'
+        
   # Nightly
   - template: ci/cargo-test.yml
     parameters:
@@ -39,7 +37,4 @@ stages:
       job_displayName: Cargo test (nightly)
       # extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
       job_pre-steps:
-        - condition: eq(variables['Agent.OS'], 'Windows_NT')
-          powershell: |
-            Start-FileDownload "http://slproweb.com/download/Win64OpenSSL-1_1_1d.exe"
-            Win64OpenSSL-1_1_1d.exe /SILENT /VERYSILENT /SP- /DIR="$[Build.BinariesDirectory]/OpenSSL"
+        - template: 'ci/openssl-win.yml'
