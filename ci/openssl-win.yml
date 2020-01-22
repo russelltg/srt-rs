@@ -1,7 +1,9 @@
 # Runs vcpkg on windows
 steps:
-  - displayName: 'Install Openssl'
-    powershell: |
-      Start-FileDownload "http://slproweb.com/download/Win64OpenSSL-1_1_1d.exe"
-      Win64OpenSSL-1_1_1d.exe /SILENT /VERYSILENT /SP- /DIR="$[Build.BinariesDirectory]/OpenSSL"
+  - task: PowerShell@2
+    inputs:
+      script: |
+        Start-FileDownload "http://slproweb.com/download/Win64OpenSSL-1_1_1d.exe"
+        Win64OpenSSL-1_1_1d.exe /SILENT /VERYSILENT /SP- /DIR="$[Build.BinariesDirectory]/OpenSSL"
+    displayName: 'Install Openssl'
     condition: eq(variables['Agent.OS'], 'Windows_NT')
