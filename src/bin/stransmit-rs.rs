@@ -387,7 +387,7 @@ async fn run() -> Result<(), Error> {
         .format_timestamp_micros()
         .init();
 
-    let matches = App::new("stransmit_rs")
+    let matches = App::new("stransmit-rs")
         .version("1.0")
         .author("Russell Greene")
         .about("SRT sender and receiver written in rust")

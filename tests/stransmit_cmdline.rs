@@ -127,6 +127,13 @@ fn ui_test(flags: &[&str], stderr: &str) {
 
             let mut string = String::new();
             child.stderr.unwrap().read_to_string(&mut string).unwrap();
+
+            // windows puts stranmsit-rs.exe instead of stranmsit-rs, this isn't a real failure so just remove all .exe
+            #[cfg(target_os = "windows")]
+            {
+                string = string.replace(".exe", "");
+            }
+
             if &string != stderr {
                 panic!(
                     "Expected stderr did not match actual. Actual:\n{}\n\nExpected:\n{}\n",
