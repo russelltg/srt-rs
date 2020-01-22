@@ -29,8 +29,8 @@ stages:
       job_pre-steps:
         - condition: eq(variables['Agent.OS'], 'Windows_NT')
           powershell: |
-          Start-FileDownload "http://slproweb.com/download/Win64OpenSSL-1_1_1d.exe"
-          Win64OpenSSL-1_1_1d.exe /SILENT /VERYSILENT /SP- /DIR="$[Build.BinariesDirectory]/OpenSSL"
+            Start-FileDownload "http://slproweb.com/download/Win64OpenSSL-1_1_1d.exe"
+            Win64OpenSSL-1_1_1d.exe /SILENT /VERYSILENT /SP- /DIR="$[Build.BinariesDirectory]/OpenSSL"
   # Nightly
   - template: ci/cargo-test.yml
     parameters:
@@ -41,5 +41,5 @@ stages:
       job_pre-steps:
         - condition: eq(variables['Agent.OS'], 'Windows_NT')
           powershell: |
-          Start-FileDownload "http://slproweb.com/download/Win64OpenSSL-1_1_1d.exe"
-          Win64OpenSSL-1_1_1d.exe /SILENT /VERYSILENT /SP- /DIR="$[Build.BinariesDirectory]/OpenSSL"
+            Start-FileDownload "http://slproweb.com/download/Win64OpenSSL-1_1_1d.exe"
+            Win64OpenSSL-1_1_1d.exe /SILENT /VERYSILENT /SP- /DIR="$[Build.BinariesDirectory]/OpenSSL"
