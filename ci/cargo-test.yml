@@ -16,7 +16,8 @@ parameters:
         vmImage: macOS-10.13
       Windows:
         vmImage: vs2017-win2016
-        EXTRA_TEST_FLAGS: '--features=vendored-openssl'
+        # EXTRA_TEST_FLAGS: '--features=vendored-openssl'
+        OPENSSL_DIR: $[Build.BinariesDirectory]/OpenSSL
   # global parameters
   rust: stable                # Version of rust. Could be [stable, beta, nightly, 1.31, nightly-2018-08-01 ... ]
   extra_test_flags: ''
