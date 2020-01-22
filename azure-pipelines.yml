@@ -27,7 +27,7 @@ stages:
       extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
       # extra_test_flags: $(EXTRA_TEST_FLAGS)
       job_pre-steps:
-        - template: 'ci/openssl-win.yml'
+        - template: 'openssl-win.yml'
         
   # Nightly
   - template: ci/cargo-test.yml
@@ -37,4 +37,4 @@ stages:
       job_displayName: Cargo test (nightly)
       # extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
       job_pre-steps:
-        - template: 'ci/openssl-win.yml'
+        - template: 'openssl-win.yml'
