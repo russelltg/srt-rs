@@ -35,6 +35,6 @@ stages:
       rust: nightly
       job_name: cargo_test_nightly
       job_displayName: Cargo test (nightly)
-      # extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
+      extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
       job_pre-steps:
         - template: 'openssl-win.yml'
