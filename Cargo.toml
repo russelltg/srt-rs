@@ -18,7 +18,7 @@ futures = "0.3"
 log = { version = "0.4", default-features = false }
 rand = "0.7"
 url = { version = "=2.1.0", optional = true } # https://github.com/servo/rust-url/issues/581
-openssl = "0.10.24"
+# openssl = "0.10.24"
 bytes = "0.5"
 
 [dependencies.env_logger]
@@ -51,7 +51,7 @@ path = "src/bin/stransmit-rs.rs"
 
 [features]
 stransmit-rs = ["env_logger", "url", "clap"]
-vendored-openssl = ["openssl/vendored"]
+# vendored-openssl = ["openssl/vendored"]
 default = ["stransmit-rs"]
 
 [profile.release]
