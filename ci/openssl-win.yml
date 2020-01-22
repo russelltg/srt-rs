@@ -5,8 +5,8 @@ steps:
       targetType: inline
       # Pipe to Out-Null to wait for it to finish installing
       script: |
-        Invoke-WebRequest -Uri "http://slproweb.com/download/Win64OpenSSL-1_1_1d.exe" -OutFile ssl.exe
         cd $(Build.BinariesDirectory)
+        Invoke-WebRequest -Uri "http://slproweb.com/download/Win64OpenSSL-1_1_1d.exe" -OutFile ssl.exe
         .\ssl.exe /SILENT /VERYSILENT /SP- /DIR="./OpenSSL" | Out-Null
     displayName: 'Install Openssl'
     condition: eq(variables['Agent.OS'], 'Windows_NT')
