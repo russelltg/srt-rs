@@ -34,6 +34,7 @@ pub struct ConclusionWaitState {
 }
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum ListenState {
     InductionWait,
     ConclusionWait(std::sync::Arc<ConclusionWaitState>),
@@ -42,6 +43,7 @@ pub enum ListenState {
 
 #[derive(Debug)]
 #[non_exhaustive]
+#[allow(clippy::large_enum_variant)]
 pub enum ListenError {
     //#[error("Expected Control packet, expected: {0} found: {1}")]
     ControlExpected(ShakeType, DataPacket),
@@ -115,7 +117,7 @@ impl Listen {
                 );
                 Ok(Some((induction_response, from)))
             }
-            _ => Err(InductionExpected(shake.clone())),
+            _ => Err(InductionExpected(shake)),
         }
     }
 
@@ -208,17 +210,15 @@ impl Listen {
             (InductionWait, ControlTypes::Handshake(shake)) => {
                 self.wait_for_induction(from, control.timestamp, shake)
             }
-            (InductionWait, control_type) => Err(HandshakeExpected(
-                ShakeType::Induction,
-                control_type.clone(),
-            )),
+            (InductionWait, control_type) => {
+                Err(HandshakeExpected(ShakeType::Induction, control_type))
+            }
             (ConclusionWait(state), ControlTypes::Handshake(shake)) => {
                 self.wait_for_conclusion(from, control.timestamp, &state, shake)
             }
-            (ConclusionWait(_), control_type) => Err(HandshakeExpected(
-                ShakeType::Conclusion,
-                control_type.clone(),
-            )),
+            (ConclusionWait(_), control_type) => {
+                Err(HandshakeExpected(ShakeType::Conclusion, control_type))
+            }
             (Connected(_, _), _) => Ok(None),
         }
     }
@@ -227,7 +227,7 @@ impl Listen {
         let (packet, from) = next;
         match packet {
             Packet::Control(control) => self.handle_control_packets(control, from),
-            Packet::Data(data) => Err(ControlExpected(ShakeType::Induction, data.clone())),
+            Packet::Data(data) => Err(ControlExpected(ShakeType::Induction, data)),
         }
     }
 }

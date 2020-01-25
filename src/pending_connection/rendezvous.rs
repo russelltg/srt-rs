@@ -31,6 +31,7 @@ pub struct RendezvousConfiguration {
 }
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum RendezvousState {
     Negotiating,
     Connected(ConnectionSettings, Option<ControlPacket>),
@@ -48,6 +49,7 @@ impl Rendezvous {
 
 #[derive(Debug)]
 #[non_exhaustive]
+#[allow(clippy::large_enum_variant)]
 pub enum RendezvousError {
     //#[error("Expected Control packet, expected: {0} found: {1}")]
     ControlExpected(DataPacket),

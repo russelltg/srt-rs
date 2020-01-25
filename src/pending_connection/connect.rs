@@ -23,6 +23,7 @@ pub struct ConnectConfiguration {
 }
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum ConnectState {
     /// initial sequence number
     Configured(SeqNumber),
@@ -41,6 +42,7 @@ impl ConnectState {
 
 #[derive(Debug)]
 #[non_exhaustive]
+#[allow(clippy::large_enum_variant)]
 pub enum ConnectError {
     //#[error("Expected Control packet, expected: {0} found: {1}")]
     ControlExpected(ShakeType, DataPacket),
