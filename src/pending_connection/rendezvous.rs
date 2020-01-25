@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use failure::Error;
 use futures::{select, FutureExt, Sink, SinkExt, Stream};
+use log::warn;
 use tokio::time::interval;
 use tokio::time::Instant;
 
@@ -16,7 +17,11 @@ use std::cmp;
 use RendezvousError::*;
 use RendezvousState::*;
 
-pub struct Rendezvous(RendezvousConfiguration, RendezvousState, SeqNumber);
+pub struct Rendezvous {
+    config: RendezvousConfiguration,
+    state: RendezvousState,
+    seq_num: SeqNumber,
+}
 
 pub struct RendezvousConfiguration {
     local_socket_id: SocketID,
@@ -33,11 +38,16 @@ pub enum RendezvousState {
 
 impl Rendezvous {
     pub fn new(config: RendezvousConfiguration) -> Self {
-        Self(config, Negotiating, rand::random())
+        Self {
+            config,
+            state: Negotiating,
+            seq_num: rand::random(),
+        }
     }
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RendezvousError {
     //#[error("Expected Control packet, expected: {0} found: {1}")]
     ControlExpected(DataPacket),
@@ -55,34 +65,33 @@ pub type RendezvousResult = Result<Option<(ControlPacket, SocketAddr)>, Rendezvo
 
 impl Rendezvous {
     fn send(&self, packet: ControlPacket) -> RendezvousResult {
-        Ok(Some((packet, self.0.remote_public)))
+        Ok(Some((packet, self.config.remote_public)))
     }
 
     fn set_state_connected(&mut self, info: &HandshakeControlInfo, packet: Option<ControlPacket>) {
-        eprintln!("Rendezvous CONNECTED!!");
-
-        self.1 = Connected(
+        let config = &self.config;
+        self.state = Connected(
             ConnectionSettings {
-                remote: self.0.remote_public,
+                remote: config.remote_public,
                 max_flow_size: info.max_flow_size,
                 max_packet_size: info.max_packet_size,
                 init_seq_num: info.init_seq_num,
                 socket_start_time: Instant::now().into_std(), // restamp the socket start time, so TSBPD works correctly
-                local_sockid: self.0.local_socket_id,
+                local_sockid: config.local_socket_id,
                 remote_sockid: info.socket_id,
-                tsbpd_latency: self.0.tsbpd_latency, // TODO: needs to be send in the handshakes
+                tsbpd_latency: config.tsbpd_latency, // TODO: needs to be send in the handshakes
             },
             packet,
         );
     }
 
     fn send_handwave(&mut self) -> RendezvousResult {
-        let config = &self.0;
+        let config = &self.config;
         self.send(ControlPacket {
             timestamp: 0, // TODO: is this right?
             dest_sockid: SocketID(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                init_seq_num: self.2,
+                init_seq_num: self.seq_num,
                 max_packet_size: 1500, // TODO: take as a parameter
                 max_flow_size: 8192,   // TODO: take as a parameter
                 socket_id: config.local_socket_id,
@@ -95,8 +104,8 @@ impl Rendezvous {
     }
 
     fn wait_for_negotiation(&mut self, info: HandshakeControlInfo) -> RendezvousResult {
-        let config = &self.0;
-        self.2 = cmp::max(info.init_seq_num, self.2);
+        let config = &self.config;
+        self.seq_num = cmp::max(info.init_seq_num, self.seq_num);
 
         match info.shake_type {
             ShakeType::Waveahand => {
@@ -107,7 +116,7 @@ impl Rendezvous {
                         shake_type: ShakeType::Conclusion,
                         socket_id: config.local_socket_id,
                         peer_addr: config.local_addr,
-                        init_seq_num: self.2,
+                        init_seq_num: self.seq_num,
                         ..info
                     }),
                 })
@@ -140,9 +149,9 @@ impl Rendezvous {
         }
     }
 
-    pub fn next_packet(&mut self, next: (Packet, SocketAddr)) -> RendezvousResult {
+    pub fn handle_packet(&mut self, next: (Packet, SocketAddr)) -> RendezvousResult {
         match next {
-            (Packet::Control(control), from) if from == self.0.remote_public => {
+            (Packet::Control(control), from) if from == self.config.remote_public => {
                 match control.control_type {
                     ControlTypes::Handshake(info) => self.wait_for_negotiation(info),
                     control_type => Err(HandshakeExpected(control_type)),
@@ -153,8 +162,8 @@ impl Rendezvous {
         }
     }
 
-    pub fn next_tick(&mut self, _now: Instant) -> RendezvousResult {
-        match &self.1 {
+    pub fn handle_tick(&mut self, _now: Instant) -> RendezvousResult {
+        match &self.state {
             Negotiating => self.send_handwave(),
             Connected(_, _) => Ok(None),
         }
@@ -185,8 +194,8 @@ where
     let mut tick_interval = interval(Duration::from_millis(100));
     loop {
         let result = select! {
-            now = tick_interval.tick().fuse() => rendezvous.next_tick(now),
-            packet = get_packet(sock).fuse() => rendezvous.next_packet(packet?),
+            now = tick_interval.tick().fuse() => rendezvous.handle_tick(now),
+            packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?),
         };
 
         match result {
@@ -194,34 +203,31 @@ where
                 sock.send((Packet::Control(packet), address)).await?;
             }
             Err(e) => {
-                eprintln!("{:?}", e);
+                warn!("{:?}", e);
             }
             _ => {}
         }
 
-        match rendezvous.1 {
-            Connected(settings, packet) => {
-                return Ok(Connection {
-                    settings,
-                    hs_returner: Box::new(move |pack| {
-                        if let Packet::Control(ControlPacket {
-                            control_type: ControlTypes::Handshake(info),
-                            ..
-                        }) = pack
-                        {
-                            match info.shake_type {
-                                ShakeType::Conclusion => {
-                                    packet.as_ref().map(|p| Packet::Control(p.clone()))
-                                }
-                                _ => None,
+        if let Connected(settings, packet) = rendezvous.state {
+            return Ok(Connection {
+                settings,
+                hs_returner: Box::new(move |pack| {
+                    if let Packet::Control(ControlPacket {
+                        control_type: ControlTypes::Handshake(info),
+                        ..
+                    }) = pack
+                    {
+                        match info.shake_type {
+                            ShakeType::Conclusion => {
+                                packet.as_ref().map(|p| Packet::Control(p.clone()))
                             }
-                        } else {
-                            None
+                            _ => None,
                         }
-                    }),
-                });
-            }
-            _ => {}
-        }
+                    } else {
+                        None
+                    }
+                }),
+            });
+        };
     }
 }

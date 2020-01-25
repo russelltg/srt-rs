@@ -4,10 +4,9 @@ use std::time::Duration;
 use failure::Error;
 use futures::prelude::*;
 use futures::select;
+use log::warn;
 use tokio::time::interval;
 use tokio::time::Instant;
-
-use log::warn;
 
 use crate::packet::*;
 use crate::util::get_packet;
@@ -25,8 +24,11 @@ pub struct ConnectConfiguration {
 
 #[derive(Clone)]
 pub enum ConnectState {
+    /// initial sequence number
     Configured(SeqNumber),
+    /// keep induction packet around for retransmit
     InductionResponseWait(Packet),
+    /// keep conclusion packet around for retransmit
     ConclusionResponseWait(Packet),
     Connected(ConnectionSettings),
 }
@@ -38,6 +40,7 @@ impl ConnectState {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ConnectError {
     //#[error("Expected Control packet, expected: {0} found: {1}")]
     ControlExpected(ShakeType, DataPacket),
@@ -59,13 +62,16 @@ pub enum ConnectError {
     //SrtHandshakeExpected(HandshakeControlInfo),
 }
 
-pub struct Connect(ConnectConfiguration, ConnectState);
+pub struct Connect {
+    config: ConnectConfiguration,
+    state: ConnectState,
+}
 
 pub type ConnectResult = Result<Option<(Packet, SocketAddr)>, ConnectError>;
 
 impl Connect {
     fn on_start(&mut self, init_seq_num: SeqNumber) -> ConnectResult {
-        let config = &self.0;
+        let config = &self.config;
         let packet = Packet::Control(ControlPacket {
             dest_sockid: SocketID(0),
             timestamp: 0, // TODO: this is not zero in the reference implementation
@@ -80,8 +86,8 @@ impl Connect {
                 info: HandshakeVSInfo::V4(SocketType::Datagram),
             }),
         });
-        self.1 = InductionResponseWait(packet.clone());
-        Ok(Some((packet, self.0.remote)))
+        self.state = InductionResponseWait(packet.clone());
+        Ok(Some((packet, config.remote)))
     }
 
     pub fn wait_for_induction(
@@ -90,7 +96,7 @@ impl Connect {
         timestamp: i32,
         info: HandshakeControlInfo,
     ) -> ConnectResult {
-        let config = &self.0;
+        let config = &self.config;
         match (info.shake_type, info.info.version(), from) {
             (ShakeType::Induction, 5, from) if from == config.remote => {
                 // send back a packet with the same syn cookie
@@ -130,7 +136,7 @@ impl Connect {
                         ..info
                     }),
                 });
-                self.1 = ConclusionResponseWait(packet.clone());
+                self.state = ConclusionResponseWait(packet.clone());
                 Ok(Some((packet, from)))
             }
             (ShakeType::Induction, 5, from) => Err(UnexpectedHost(config.remote, from)),
@@ -144,7 +150,7 @@ impl Connect {
         from: SocketAddr,
         info: HandshakeControlInfo,
     ) -> ConnectResult {
-        let config = &self.0;
+        let config = &self.config;
         match (info.shake_type, info.info.version(), from) {
             (ShakeType::Conclusion, 5, from) if from == config.remote => {
                 let latency = match info.info {
@@ -158,7 +164,7 @@ impl Connect {
                     }
                 };
 
-                self.1 = Connected(ConnectionSettings {
+                self.state = Connected(ConnectionSettings {
                     remote: config.remote,
                     max_flow_size: info.max_flow_size,
                     max_packet_size: info.max_packet_size,
@@ -181,9 +187,9 @@ impl Connect {
         }
     }
 
-    pub fn next_packet(&mut self, next: (Packet, SocketAddr)) -> ConnectResult {
+    pub fn handle_packet(&mut self, next: (Packet, SocketAddr)) -> ConnectResult {
         let (packet, from) = next;
-        match (self.1.clone(), packet) {
+        match (self.state.clone(), packet) {
             (InductionResponseWait(_), Packet::Control(control)) => match control.control_type {
                 ControlTypes::Handshake(shake) => {
                     self.wait_for_induction(from, control.timestamp, shake)
@@ -199,11 +205,13 @@ impl Connect {
         }
     }
 
-    pub fn next_tick(&mut self, _now: Instant) -> ConnectResult {
-        match self.1.clone() {
+    pub fn handle_tick(&mut self, _now: Instant) -> ConnectResult {
+        match self.state.clone() {
             Configured(init_seq_num) => self.on_start(init_seq_num),
-            InductionResponseWait(request_packet) => Ok(Some((request_packet, self.0.remote))),
-            ConclusionResponseWait(request_packet) => Ok(Some((request_packet, self.0.remote))),
+            InductionResponseWait(request_packet) => Ok(Some((request_packet, self.config.remote))),
+            ConclusionResponseWait(request_packet) => {
+                Ok(Some((request_packet, self.config.remote)))
+            }
             _ => Ok(None),
         }
     }
@@ -222,21 +230,21 @@ where
         + Sink<(Packet, SocketAddr), Error = Error>
         + Unpin,
 {
-    let mut connect = Connect(
-        ConnectConfiguration {
+    let mut connect = Connect {
+        config: ConnectConfiguration {
             remote,
             local_sockid,
             local_addr,
             tsbpd_latency,
         },
-        ConnectState::new(),
-    );
+        state: ConnectState::new(),
+    };
 
     let mut tick_interval = interval(Duration::from_millis(100));
     loop {
         let result = select! {
-            now = tick_interval.tick().fuse() => connect.next_tick(now),
-            packet = get_packet(sock).fuse() => connect.next_packet(packet?),
+            now = tick_interval.tick().fuse() => connect.handle_tick(now),
+            packet = get_packet(sock).fuse() => connect.handle_packet(packet?),
         };
 
         match result {
@@ -244,18 +252,15 @@ where
                 sock.send(packet).await?;
             }
             Err(e) => {
-                eprintln!("{:?}", e);
+                warn!("{:?}", e);
             }
             _ => {}
         }
-        match connect.1.clone() {
-            Connected(settings) => {
-                return Ok(Connection {
-                    settings,
-                    hs_returner: Box::new(move |_| None),
-                });
-            }
-            _ => {}
+        if let Connected(settings) = connect.state.clone() {
+            return Ok(Connection {
+                settings,
+                hs_returner: Box::new(move |_| None),
+            });
         }
     }
 }

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use failure::Error;
 use futures::prelude::*;
+use log::warn;
 use tokio::time::Instant;
 
 use crate::packet::*;
@@ -14,7 +15,10 @@ use crate::{Connection, ConnectionSettings, DataPacket, SocketID};
 use ListenError::*;
 use ListenState::*;
 
-pub struct Listen(ListenConfiguration, ListenState);
+pub struct Listen {
+    config: ListenConfiguration,
+    state: ListenState,
+}
 
 pub struct ListenConfiguration {
     local_socket_id: SocketID,
@@ -37,6 +41,7 @@ pub enum ListenState {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ListenError {
     //#[error("Expected Control packet, expected: {0} found: {1}")]
     ControlExpected(ShakeType, DataPacket),
@@ -86,7 +91,7 @@ impl Listen {
                     dest_sockid: shake.socket_id,
                     control_type: ControlTypes::Handshake(HandshakeControlInfo {
                         syn_cookie: cookie,
-                        socket_id: self.0.local_socket_id,
+                        socket_id: self.config.local_socket_id,
                         info: HandshakeVSInfo::V5 {
                             crypto_size: 0,
                             ext_hs: None,
@@ -99,7 +104,7 @@ impl Listen {
 
                 // save induction message for potential later retransmit
                 let save_induction_response = induction_response.clone();
-                self.1 = ConclusionWait(
+                self.state = ConclusionWait(
                     ConclusionWaitState {
                         timestamp,
                         from: (from, shake.socket_id),
@@ -144,7 +149,7 @@ impl Listen {
                     _ => Err(SrtHandshakeExpected(shake.clone())),
                 }?;
 
-                let latency = Duration::max(srt_handshake.latency, self.0.tsbpd_latency);
+                let latency = Duration::max(srt_handshake.latency, self.config.tsbpd_latency);
 
                 // construct a packet to send back
                 let resp_handshake = Packet::Control(ControlPacket {
@@ -152,7 +157,7 @@ impl Listen {
                     dest_sockid: shake.socket_id,
                     control_type: ControlTypes::Handshake(HandshakeControlInfo {
                         syn_cookie: state.cookie,
-                        socket_id: self.0.local_socket_id,
+                        socket_id: self.config.local_socket_id,
                         info: HandshakeVSInfo::V5 {
                             ext_hs: Some(SrtControlPacket::HandshakeResponse(SrtHandshake {
                                 latency,
@@ -177,12 +182,12 @@ impl Listen {
                     remote: from,
                     max_flow_size: 16000, // TODO: what is this?
                     max_packet_size: shake.max_packet_size,
-                    local_sockid: self.0.local_socket_id,
+                    local_sockid: self.config.local_socket_id,
                     socket_start_time: Instant::now().into_std(), // restamp the socket start time, so TSBPD works correctly
                     tsbpd_latency: latency,
                 };
 
-                self.1 = Connected(resp_handshake.clone(), settings);
+                self.state = Connected(resp_handshake.clone(), settings);
 
                 Ok(Some((resp_handshake, from)))
             }
@@ -199,7 +204,7 @@ impl Listen {
         control: ControlPacket,
         from: SocketAddr,
     ) -> ListenResult {
-        match (self.1.clone(), control.control_type) {
+        match (self.state.clone(), control.control_type) {
             (InductionWait, ControlTypes::Handshake(shake)) => {
                 self.wait_for_induction(from, control.timestamp, shake)
             }
@@ -218,7 +223,7 @@ impl Listen {
         }
     }
 
-    pub fn next_packet(&mut self, next: (Packet, SocketAddr)) -> ListenResult {
+    pub fn handle_packet(&mut self, next: (Packet, SocketAddr)) -> ListenResult {
         let (packet, from) = next;
         match packet {
             Packet::Control(control) => self.handle_control_packets(control, from),
@@ -237,33 +242,30 @@ where
         + Sink<(Packet, SocketAddr), Error = Error>
         + Unpin,
 {
-    let mut listen = Listen(
-        ListenConfiguration {
+    let mut listen = Listen {
+        config: ListenConfiguration {
             local_socket_id: local_sockid,
             tsbpd_latency,
         },
-        InductionWait,
-    );
+        state: InductionWait,
+    };
 
     loop {
         let packet = get_packet(sock).await?;
-        match listen.next_packet(packet) {
+        match listen.handle_packet(packet) {
             Ok(Some(packet)) => {
                 sock.send(packet).await?;
             }
             Err(e) => {
-                eprintln!("{:?}", e);
+                warn!("{:?}", e);
             }
             _ => {}
         }
-        match listen.1.clone() {
-            Connected(resp_handshake, settings) => {
-                return Ok(Connection {
-                    settings,
-                    hs_returner: Box::new(move |_| Some(resp_handshake.clone())),
-                });
-            }
-            _ => {}
+        if let Connected(resp_handshake, settings) = listen.state.clone() {
+            return Ok(Connection {
+                settings,
+                hs_returner: Box::new(move |_| Some(resp_handshake.clone())),
+            });
         }
     }
 }
