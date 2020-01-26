@@ -4,7 +4,8 @@ use srt::{ConnInitMethod, MultiplexServer, Sender, SrtCongestCtrl, SrtSocketBuil
 
 use bytes::Bytes;
 use failure::Error;
-use futures::channel::{mpsc, oneshot};
+use futures::channel::oneshot;
+use futures::future::join_all;
 use futures::stream;
 use futures::{FutureExt, SinkExt, StreamExt};
 use log::info;
@@ -14,7 +15,6 @@ async fn multiplexer() -> Result<(), Error> {
     let _ = env_logger::try_init();
 
     let (finished_send, finished_recv) = oneshot::channel();
-    let (client_done_send, mut client_done_recv) = mpsc::channel(10);
 
     tokio::spawn(async {
         let mut server = MultiplexServer::bind(
@@ -41,14 +41,15 @@ async fn multiplexer() -> Result<(), Error> {
             tokio::spawn(async move {
                 sender.send_all(&mut stream).await.unwrap();
                 sender.close().await.unwrap();
+                info!("Sender finished");
             });
         }
     });
 
     // connect 10 clients to it
-    for _ in 0..10 {
-        let mut done_chan = client_done_send.clone();
-        tokio::spawn(async move {
+    let mut join_handles = vec![];
+    for _ in 0..3 {
+        join_handles.push(tokio::spawn(async move {
             let mut recvr =
                 SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:2000".parse().unwrap()))
                     .connect()
@@ -61,15 +62,13 @@ async fn multiplexer() -> Result<(), Error> {
             let second = recvr.next().await;
             assert!(second.is_none());
 
-            done_chan.send(()).await.unwrap();
-        });
+            info!("Connection done");
+        }));
     }
 
     // close the multiplex server when all is done
-    for _ in 0..10 {
-        client_done_recv.next().await.unwrap(); // make sure it wasn't None
-        info!("Got a finish");
-    }
+    join_all(join_handles).await;
+    info!("all finished");
     finished_send.send(()).unwrap();
     Ok(())
 }
