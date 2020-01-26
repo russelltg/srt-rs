@@ -1,14 +1,176 @@
-use std::cmp;
 use std::net::{IpAddr, SocketAddr};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use failure::{bail, Error};
-use futures::{select, FutureExt, Sink, SinkExt, Stream, TryStreamExt};
+use failure::Error;
+use futures::{select, FutureExt, Sink, SinkExt, Stream};
 use log::warn;
 use tokio::time::interval;
+use tokio::time::Instant;
 
 use crate::packet::{ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SocketType};
-use crate::{Connection, ConnectionSettings, ControlPacket, Packet, SeqNumber, SocketID};
+use crate::util::get_packet;
+use crate::{
+    Connection, ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber, SocketID,
+};
+
+use std::cmp;
+use RendezvousError::*;
+use RendezvousState::*;
+
+pub struct Rendezvous {
+    config: RendezvousConfiguration,
+    state: RendezvousState,
+    seq_num: SeqNumber,
+}
+
+pub struct RendezvousConfiguration {
+    local_socket_id: SocketID,
+    local_addr: IpAddr,
+    remote_public: SocketAddr,
+    tsbpd_latency: Duration,
+}
+
+#[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
+pub enum RendezvousState {
+    Negotiating,
+    Connected(ConnectionSettings, Option<ControlPacket>),
+}
+
+impl Rendezvous {
+    pub fn new(config: RendezvousConfiguration) -> Self {
+        Self {
+            config,
+            state: Negotiating,
+            seq_num: rand::random(),
+        }
+    }
+}
+
+#[derive(Debug)]
+#[non_exhaustive]
+#[allow(clippy::large_enum_variant)]
+pub enum RendezvousError {
+    //#[error("Expected Control packet, expected: {0} found: {1}")]
+    ControlExpected(DataPacket),
+    //#[error("Expected Handshake packet, expected: {0} found: {1}")]
+    // warn!("Received non-handshake packet when negotiating rendezvous");
+    HandshakeExpected(ControlTypes),
+    // #[error("Expected Rendezvous packet, found: {0}")]
+    // warn!("Received induction handshake while initiating a rendezvous connection. Maybe you tried to pair connect with rendezvous?");
+    RendezvousExpected(HandshakeControlInfo),
+    // warn!("Received control packet from unrecognized location: {}", from_addr );
+    UnrecognizedHost(SocketAddr, ControlPacket),
+}
+
+pub type RendezvousResult = Result<Option<(ControlPacket, SocketAddr)>, RendezvousError>;
+
+impl Rendezvous {
+    fn send(&self, packet: ControlPacket) -> RendezvousResult {
+        Ok(Some((packet, self.config.remote_public)))
+    }
+
+    fn set_state_connected(&mut self, info: &HandshakeControlInfo, packet: Option<ControlPacket>) {
+        let config = &self.config;
+        self.state = Connected(
+            ConnectionSettings {
+                remote: config.remote_public,
+                max_flow_size: info.max_flow_size,
+                max_packet_size: info.max_packet_size,
+                init_seq_num: info.init_seq_num,
+                socket_start_time: Instant::now().into_std(), // restamp the socket start time, so TSBPD works correctly
+                local_sockid: config.local_socket_id,
+                remote_sockid: info.socket_id,
+                tsbpd_latency: config.tsbpd_latency, // TODO: needs to be send in the handshakes
+            },
+            packet,
+        );
+    }
+
+    fn send_handwave(&mut self) -> RendezvousResult {
+        let config = &self.config;
+        self.send(ControlPacket {
+            timestamp: 0, // TODO: is this right?
+            dest_sockid: SocketID(0),
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                init_seq_num: self.seq_num,
+                max_packet_size: 1500, // TODO: take as a parameter
+                max_flow_size: 8192,   // TODO: take as a parameter
+                socket_id: config.local_socket_id,
+                shake_type: ShakeType::Waveahand, // as per the spec, the first packet is waveahand
+                peer_addr: config.local_addr,
+                syn_cookie: 0,
+                info: HandshakeVSInfo::V4(SocketType::Datagram),
+            }),
+        })
+    }
+
+    fn wait_for_negotiation(&mut self, info: HandshakeControlInfo) -> RendezvousResult {
+        let config = &self.config;
+        self.seq_num = cmp::max(info.init_seq_num, self.seq_num);
+
+        match info.shake_type {
+            ShakeType::Waveahand => {
+                self.send(ControlPacket {
+                    dest_sockid: info.socket_id,
+                    timestamp: 0, // TODO: deal with timestamp
+                    control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                        shake_type: ShakeType::Conclusion,
+                        socket_id: config.local_socket_id,
+                        peer_addr: config.local_addr,
+                        init_seq_num: self.seq_num,
+                        ..info
+                    }),
+                })
+            }
+            ShakeType::Conclusion => {
+                // connection is created, send Agreement back
+                // TODO: if this packet gets dropped, this connection will never init. This is a pretty big bug.
+
+                let packet = ControlPacket {
+                    dest_sockid: info.socket_id,
+                    timestamp: 0, // TODO: deal with timestamp,
+                    control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                        shake_type: ShakeType::Agreement,
+                        socket_id: config.local_socket_id,
+                        peer_addr: config.local_addr,
+                        ..info.clone()
+                    }),
+                };
+
+                self.set_state_connected(&info, Some(packet.clone()));
+
+                self.send(packet)
+            }
+            ShakeType::Agreement => {
+                self.set_state_connected(&info, None);
+
+                Ok(None)
+            }
+            ShakeType::Induction => Err(RendezvousError::RendezvousExpected(info.clone())),
+        }
+    }
+
+    pub fn handle_packet(&mut self, next: (Packet, SocketAddr)) -> RendezvousResult {
+        match next {
+            (Packet::Control(control), from) if from == self.config.remote_public => {
+                match control.control_type {
+                    ControlTypes::Handshake(info) => self.wait_for_negotiation(info),
+                    control_type => Err(HandshakeExpected(control_type)),
+                }
+            }
+            (Packet::Control(control), from) => Err(UnrecognizedHost(from, control)),
+            (Packet::Data(data), _) => Err(ControlExpected(data)),
+        }
+    }
+
+    pub fn handle_tick(&mut self, _now: Instant) -> RendezvousResult {
+        match &self.state {
+            Negotiating => self.send_handwave(),
+            Connected(_, _) => Ok(None),
+        }
+    }
+}
 
 pub async fn rendezvous<T>(
     sock: &mut T,
@@ -22,146 +184,52 @@ where
         + Sink<(Packet, SocketAddr), Error = Error>
         + Unpin,
 {
-    let mut snd_interval = interval(Duration::from_millis(100));
-    let mut init_seq_num = rand::random();
-
-    let (info, packet) = loop {
-        let opt_pack_addr = select! {
-            _ = snd_interval.tick().fuse() => {
-                send_packet(
-                    sock,
-                    init_seq_num,
-                    local_socket_id,
-                    local_addr,
-                    remote_public,
-                )
-                .await?;
-                continue
-            },
-            res = sock.try_next().fuse() => res?
-        };
-        if let Some((packet, from_addr)) = opt_pack_addr {
-            if from_addr != remote_public {
-                warn!(
-                    "Received handshake packet from unrecognized location: {}",
-                    from_addr
-                );
-                continue;
-            }
-
-            let info = match packet {
-                Packet::Control(ControlPacket {
-                    control_type: ControlTypes::Handshake(info),
-                    ..
-                }) => info,
-                _ => {
-                    warn!("Received non-handshake packet when negotiating rendezvous");
-                    continue;
-                }
-            };
-
-            // update our init seq num
-            init_seq_num = cmp::max(info.init_seq_num, init_seq_num);
-
-            match info.shake_type {
-                ShakeType::Waveahand => {
-                    // we now respond with a Conclusion packet
-                    let new_packet = Packet::Control(ControlPacket {
-                        dest_sockid: info.socket_id,
-                        timestamp: 0, // TODO: deal with timestamp
-                        control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                            shake_type: ShakeType::Conclusion,
-                            socket_id: local_socket_id,
-                            peer_addr: local_addr,
-                            init_seq_num,
-                            ..info
-                        }),
-                    });
-
-                    sock.send((new_packet, remote_public)).await?;
-                }
-                ShakeType::Conclusion => {
-                    // connection is created, send Agreement back
-                    // TODO: if this packet gets dropped, this connection will never init. This is a pretty big bug.
-                    let new_packet = Packet::Control(ControlPacket {
-                        dest_sockid: info.socket_id,
-                        timestamp: 0, // TODO: deal with timestamp,
-                        control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                            shake_type: ShakeType::Agreement,
-                            socket_id: local_socket_id,
-                            peer_addr: local_addr,
-                            ..info.clone()
-                        }),
-                    });
-
-                    sock.send((new_packet.clone(), remote_public)).await?;
-
-                    break (info, Some(new_packet));
-                }
-                ShakeType::Agreement => {
-                    // connection is established
-                    break (info, None);
-                }
-                ShakeType::Induction => {
-                    warn!("Received induction handshake while initiating a rendezvous connection. Maybe you tried to pair connect with rendezvous?");
-                }
-            }
-        } else {
-            bail!("Underlying stream ended");
-        }
+    let configuration = RendezvousConfiguration {
+        local_socket_id,
+        local_addr,
+        remote_public,
+        tsbpd_latency,
     };
-    Ok(Connection {
-        settings: ConnectionSettings {
-            remote: remote_public,
-            max_flow_size: info.max_flow_size,
-            max_packet_size: info.max_packet_size,
-            init_seq_num: info.init_seq_num,
-            socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
-            local_sockid: local_socket_id,
-            remote_sockid: info.socket_id,
-            tsbpd_latency, // TODO: needs to be send in the handshakes
-        },
-        hs_returner: Box::new(move |pack| {
-            if let Packet::Control(ControlPacket {
-                control_type: ControlTypes::Handshake(info),
-                ..
-            }) = pack
-            {
-                match info.shake_type {
-                    ShakeType::Conclusion => packet.clone(),
-                    _ => None,
-                }
-            } else {
-                None
-            }
-        }),
-    })
-}
 
-async fn send_packet<T>(
-    sock: &mut T,
-    init_seq_num: SeqNumber,
-    local_socket_id: SocketID,
-    local_addr: IpAddr,
-    remote_public: SocketAddr,
-) -> Result<(), Error>
-where
-    T: Sink<(Packet, SocketAddr), Error = Error> + Unpin,
-{
-    let pack = Packet::Control(ControlPacket {
-        timestamp: 0, // TODO: is this right?
-        dest_sockid: SocketID(0),
-        control_type: ControlTypes::Handshake(HandshakeControlInfo {
-            init_seq_num,
-            max_packet_size: 1500, // TODO: take as a parameter
-            max_flow_size: 8192,   // TODO: take as a parameter
-            socket_id: local_socket_id,
-            shake_type: ShakeType::Waveahand, // as per the spec, the first packet is waveahand
-            peer_addr: local_addr,
-            syn_cookie: 0,
-            info: HandshakeVSInfo::V4(SocketType::Datagram),
-        }),
-    });
-    sock.send((pack, remote_public)).await?;
-    Ok(())
+    let mut rendezvous = Rendezvous::new(configuration);
+
+    let mut tick_interval = interval(Duration::from_millis(100));
+    loop {
+        let result = select! {
+            now = tick_interval.tick().fuse() => rendezvous.handle_tick(now),
+            packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?),
+        };
+
+        match result {
+            Ok(Some((packet, address))) => {
+                sock.send((Packet::Control(packet), address)).await?;
+            }
+            Err(e) => {
+                warn!("{:?}", e);
+            }
+            _ => {}
+        }
+
+        if let Connected(settings, packet) = rendezvous.state {
+            return Ok(Connection {
+                settings,
+                hs_returner: Box::new(move |pack| {
+                    if let Packet::Control(ControlPacket {
+                        control_type: ControlTypes::Handshake(info),
+                        ..
+                    }) = pack
+                    {
+                        match info.shake_type {
+                            ShakeType::Conclusion => {
+                                packet.as_ref().map(|p| Packet::Control(p.clone()))
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                }),
+            });
+        };
+    }
 }
