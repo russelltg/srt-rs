@@ -132,6 +132,7 @@ fn ui_test(flags: &[&str], stderr: &str) {
             #[cfg(target_os = "windows")]
             {
                 string = string.replace(".exe", "");
+                string = string.replace("\r\n", "\n");
             }
 
             if &string != stderr {
