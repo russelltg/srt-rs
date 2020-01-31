@@ -1,6 +1,6 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use srt::{ConnInitMethod, MultiplexServer, Sender, SrtCongestCtrl, SrtSocketBuilder};
+use srt::{Sender, SrtCongestCtrl, SrtSocketBuilder};
 
 use bytes::Bytes;
 use failure::Error;
@@ -17,12 +17,12 @@ async fn multiplexer() -> Result<(), Error> {
     let (finished_send, finished_recv) = oneshot::channel();
 
     tokio::spawn(async {
-        let mut server = MultiplexServer::bind(
-            &"127.0.0.1:2000".parse().unwrap(),
-            Duration::from_millis(20),
-        )
-        .await
-        .unwrap();
+        let mut server = SrtSocketBuilder::new_listen()
+            .local_port(2000)
+            .build_multiplexed()
+            .await
+            .unwrap()
+            .boxed();
 
         let mut fused_finish = finished_recv.fuse();
         while let Some(Ok((settings, channel))) =
@@ -50,11 +50,10 @@ async fn multiplexer() -> Result<(), Error> {
     let mut join_handles = vec![];
     for _ in 0..3 {
         join_handles.push(tokio::spawn(async move {
-            let mut recvr =
-                SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:2000".parse().unwrap()))
-                    .connect()
-                    .await
-                    .unwrap();
+            let mut recvr = SrtSocketBuilder::new_connect("127.0.0.1:2000")
+                .connect()
+                .await
+                .unwrap();
             info!("Created connection");
 
             let first = recvr.next().await;

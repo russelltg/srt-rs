@@ -11,17 +11,19 @@ use bytes::Bytes;
 
 use failure::Error;
 
-use crate::{MultiplexServer, Sender, SrtCongestCtrl};
+use crate::{Connection, PackChan, Sender, SrtCongestCtrl};
 
 pub struct StreamerServer {
-    server: MultiplexServer,
+    server: Pin<Box<dyn Stream<Item = Result<(Connection, PackChan), Error>> + Send>>,
     channels: Vec<mpsc::Sender<(Instant, Bytes)>>,
 }
 
 impl StreamerServer {
-    pub fn new(server: MultiplexServer) -> Self {
+    pub fn new(
+        server: impl Stream<Item = Result<(Connection, PackChan), Error>> + Send + 'static,
+    ) -> Self {
         StreamerServer {
-            server,
+            server: server.boxed(),
             channels: vec![], // TODO: research lengths
         }
     }

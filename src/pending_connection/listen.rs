@@ -21,8 +21,8 @@ pub struct Listen {
 }
 
 pub struct ListenConfiguration {
-    local_socket_id: SocketID,
-    tsbpd_latency: Duration,
+    pub local_socket_id: SocketID,
+    pub tsbpd_latency: Duration,
 }
 
 #[derive(Clone)]
@@ -64,6 +64,12 @@ pub enum ListenError {
 type ListenResult = Result<Option<(Packet, SocketAddr)>, ListenError>;
 
 impl Listen {
+    pub fn new(config: ListenConfiguration) -> Listen {
+        Listen {
+            config,
+            state: InductionWait,
+        }
+    }
     fn wait_for_induction(
         &mut self,
         from: SocketAddr,
@@ -223,12 +229,15 @@ impl Listen {
         }
     }
 
-    pub fn handle_packet(&mut self, next: (Packet, SocketAddr)) -> ListenResult {
-        let (packet, from) = next;
+    pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr)) -> ListenResult {
         match packet {
             Packet::Control(control) => self.handle_control_packets(control, from),
             Packet::Data(data) => Err(ControlExpected(ShakeType::Induction, data)),
         }
+    }
+
+    pub fn state(&self) -> &ListenState {
+        &self.state
     }
 }
 

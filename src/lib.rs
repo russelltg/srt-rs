@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 #![forbid(unsafe_code)]
+#![recursion_limit = "256"]
 
 //! Implementation of [SRT](https://www.haivision.com/products/srt-secure-reliable-transport/) in pure safe rust.
 //!
@@ -57,7 +58,7 @@ mod modular_num;
 mod msg_number;
 mod multiplex;
 mod packet;
-mod pending_connection;
+pub mod pending_connection;
 mod receiver;
 mod sender;
 mod seq_number;
@@ -73,7 +74,7 @@ pub use crate::builder::{ConnInitMethod, SrtSocketBuilder};
 pub use crate::congest_ctrl::{CCData, CongestCtrl};
 pub use crate::connection::{Connection, ConnectionSettings};
 pub use crate::msg_number::MsgNumber;
-pub use crate::multiplex::{MultiplexServer, StreamerServer};
+pub use crate::multiplex::{multiplex, PackChan, StreamerServer};
 pub use crate::packet::{ControlPacket, DataPacket, Packet, PacketCodec};
 pub use crate::receiver::Receiver;
 // TODO: remove

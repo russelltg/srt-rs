@@ -8,10 +8,8 @@ use tokio_util::udp::UdpFramed;
 
 use futures::{Sink, Stream};
 
-use crate::pending_connection;
 use crate::socket::create_bidrectional_srt;
-use crate::MultiplexServer;
-use crate::{Packet, PacketCodec, SrtSocket};
+use crate::{multiplex, pending_connection, Connection, PackChan, Packet, PacketCodec, SrtSocket};
 
 /// Struct to build sockets.
 ///
@@ -213,9 +211,11 @@ impl SrtSocketBuilder {
     }
 
     /// Build a multiplexed connection. This acts as a sort of server, allowing many connections to this one socket.
-    pub async fn build_multiplexed(self) -> Result<MultiplexServer, Error> {
+    pub async fn build_multiplexed(
+        self,
+    ) -> Result<impl Stream<Item = Result<(Connection, PackChan), Error>>, Error> {
         match self.conn_type {
-            ConnInitMethod::Listen => MultiplexServer::bind(&self.local_addr, self.latency).await,
+            ConnInitMethod::Listen => multiplex(self.local_addr, self.latency).await,
             _ => bail!("Cannot bind multiplexed with any connection mode other than listen"),
         }
     }
