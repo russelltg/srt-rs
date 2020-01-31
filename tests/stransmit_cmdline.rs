@@ -18,9 +18,9 @@ use futures::{stream, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use bytes::Bytes;
 
 #[cfg(target_os = "windows")]
-const STRANSMIT_NAME: &'static str = "stransmit-rs.exe";
+const STRANSMIT_NAME: &str = "stransmit-rs.exe";
 #[cfg(not(target_os = "windows"))]
-const STRANSMIT_NAME: &'static str = "stransmit-rs";
+const STRANSMIT_NAME: &str = "stransmit-rs";
 
 fn find_stransmit_rs() -> PathBuf {
     let mut stransmit_rs_path = env::current_exe().unwrap();
@@ -135,10 +135,11 @@ fn ui_test(flags: &[&str], stderr: &str) {
                 string = string.replace("\r\n", "\n");
             }
 
-            if &string != stderr {
+            let cs = difference::Changeset::new(&string, stderr, "\n");
+            if !cs.diffs.is_empty() {
                 panic!(
-                    "Expected stderr did not match actual. Actual:\n{}\n\nExpected:\n{}\n",
-                    string, stderr
+                    "Expected stderr did not match actual. Actual:\n{}\n\nExpected:\n{}\nDiff:\n{}",
+                    string, stderr, cs
                 );
             }
 

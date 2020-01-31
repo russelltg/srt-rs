@@ -65,24 +65,22 @@ impl<T: Unpin + Debug> Stream for LossyConn<T> {
 
         let _ = Pin::new(&mut pin.delay).poll(cx);
 
-        while let Some(ttime) = pin.delay_buffer.peek() {
-            if ttime.time > Instant::now() {
-                // not ready yet
-                break;
-            }
-            let val = pin.delay_buffer.pop().unwrap();
+        if let Some(ttime) = pin.delay_buffer.peek() {
+            if ttime.time <= Instant::now() {
+                let val = pin.delay_buffer.pop().unwrap();
 
-            // reset timer
-            if let Some(i) = pin.delay_buffer.peek() {
-                pin.delay.reset(time::Instant::from_std(i.time));
-            }
+                // reset timer
+                if let Some(i) = pin.delay_buffer.peek() {
+                    pin.delay.reset(time::Instant::from_std(i.time));
+                }
 
-            trace!(
-                "Forwarding packet {:?}, queue.len={}",
-                val.data,
-                pin.delay_buffer.len()
-            );
-            return Poll::Ready(Some(Ok(val.data)));
+                trace!(
+                    "Forwarding packet {:?}, queue.len={}",
+                    val.data,
+                    pin.delay_buffer.len()
+                );
+                return Poll::Ready(Some(Ok(val.data)));
+            }
         }
 
         loop {
