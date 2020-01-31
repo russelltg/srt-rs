@@ -63,17 +63,15 @@ enum DataType<'a> {
 }
 
 fn read_to_stream(read: impl AsyncRead + Unpin) -> impl Stream<Item = Result<Bytes, Error>> {
-    stream::unfold(read, |mut source| {
-        async move {
-            let mut buf = [0; 1316];
-            let bytes_read = match source.read(&mut buf[..]).await {
-                Ok(0) => return None,
-                Ok(bytes_read) => bytes_read,
-                Err(e) => return Some((Err(Error::from(e)), source)),
-            };
+    stream::unfold(read, |mut source| async move {
+        let mut buf = [0; 1316];
+        let bytes_read = match source.read(&mut buf[..]).await {
+            Ok(0) => return None,
+            Ok(bytes_read) => bytes_read,
+            Err(e) => return Some((Err(Error::from(e)), source)),
+        };
 
-            Some((Ok(Bytes::copy_from_slice(&buf[..bytes_read])), source))
-        }
+        Some((Ok(Bytes::copy_from_slice(&buf[..bytes_read])), source))
     })
 }
 

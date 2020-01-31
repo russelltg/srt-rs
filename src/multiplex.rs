@@ -122,13 +122,11 @@ pub async fn multiplex(
             conns: HashMap::new(),
             latency,
         },
-        |mut state| {
-            async move {
-                match state.next_conn().await {
-                    Err(e) => Some((Err(e), state)),
-                    Ok(Some(c)) => Some((Ok(c), state)),
-                    Ok(None) => None,
-                }
+        |mut state| async move {
+            match state.next_conn().await {
+                Err(e) => Some((Err(e), state)),
+                Ok(Some(c)) => Some((Ok(c), state)),
+                Ok(None) => None,
             }
         },
     ))
