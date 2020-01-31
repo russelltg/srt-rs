@@ -13,8 +13,9 @@ use failure::Error;
 
 use crate::{Connection, PackChan, Sender, SrtCongestCtrl};
 
+type BoxConnStream = Pin<Box<dyn Stream<Item = Result<(Connection, PackChan), Error>> + Send>>;
 pub struct StreamerServer {
-    server: Pin<Box<dyn Stream<Item = Result<(Connection, PackChan), Error>> + Send>>,
+    server: BoxConnStream,
     channels: Vec<mpsc::Sender<(Instant, Bytes)>>,
 }
 

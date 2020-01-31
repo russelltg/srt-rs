@@ -34,6 +34,12 @@ pub enum ConnectState {
     Connected(ConnectionSettings),
 }
 
+impl Default for ConnectState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConnectState {
     pub fn new() -> ConnectState {
         Configured(rand::random())

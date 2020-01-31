@@ -107,7 +107,7 @@ impl MultiplexState {
                 s,
             )));
         }
-        return Ok(None);
+        Ok(None)
     }
 }
 
