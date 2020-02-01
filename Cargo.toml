@@ -39,6 +39,7 @@ features = ["full"]
 hex = "0.4"
 rand_distr = "0.2"
 env_logger = { version = "0.7", default-features = false }
+difference = "2"
 
 [lib]
 name = "srt"
