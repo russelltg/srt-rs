@@ -39,6 +39,7 @@ features = ["full"]
 hex = "0.4"
 rand_distr = "0.2"
 env_logger = { version = "0.7", default-features = false }
+normalize-line-endings = "0.3"
 
 [lib]
 name = "srt"

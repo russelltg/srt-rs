@@ -1,9 +1,9 @@
 use std::env;
 use std::io::Read;
+use std::iter::FromIterator;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
@@ -130,8 +130,9 @@ fn ui_test(flags: &[&str], stderr: &str) {
             child.stderr.unwrap().read_to_string(&mut string).unwrap();
 
             // windows puts stranmsit-rs.exe instead of stranmsit-rs, this isn't a real failure so just remove all .exe
-            string = string.replace(".exe", "");
-            string = string.replace("\r\n", "\n");
+            // normalize all line endings
+            let string = string.replace(".exe", "");
+            let string = String::from_iter(normalize_line_endings::normalized(string.chars()));
 
             if &string != stderr {
                 panic!(
