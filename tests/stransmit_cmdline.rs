@@ -3,6 +3,7 @@ use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
@@ -120,8 +121,8 @@ fn ui_test(flags: &[&str], stderr: &str) {
         .spawn()
         .unwrap();
 
-    // wait for 1s for the process to exit
-    for _ in 0..100 {
+    // wait for 5s for the process to exit
+    for _ in 0..500 {
         if let Some(status) = child.try_wait().unwrap() {
             assert!(!status.success(), "failure test succeeded, it should fail");
 
@@ -133,6 +134,7 @@ fn ui_test(flags: &[&str], stderr: &str) {
             {
                 string = string.replace(".exe", "");
                 string = string.replace("\r\n", "\n");
+                string = "this block worked?";
             }
 
             if &string != stderr {
