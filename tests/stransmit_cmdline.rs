@@ -130,11 +130,8 @@ fn ui_test(flags: &[&str], stderr: &str) {
             child.stderr.unwrap().read_to_string(&mut string).unwrap();
 
             // windows puts stranmsit-rs.exe instead of stranmsit-rs, this isn't a real failure so just remove all .exe
-            #[cfg(target_os = "windows")]
-            {
-                string = string.replace(".exe", "");
-                string = string.replace("\r\n", "\n");
-            }
+            string = string.replace(".exe", "");
+            string = string.replace("\r\n", "\n");
 
             if &string != stderr {
                 panic!(
