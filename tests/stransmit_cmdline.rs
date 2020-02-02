@@ -1,6 +1,5 @@
 use std::env;
 use std::io::Read;
-use std::iter::FromIterator;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -130,17 +129,16 @@ fn ui_test(flags: &[&str], stderr: &str) {
             child.stderr.unwrap().read_to_string(&mut string).unwrap();
 
             // windows puts stranmsit-rs.exe instead of stranmsit-rs, this isn't a real failure so just remove all .exe
-            // normalize all line endings
             let string = string.replace(".exe", "");
-            let string = String::from_iter(normalize_line_endings::normalized(string.chars()));
 
-            if &string != stderr {
-                panic!(
-                    "Expected stderr did not match actual. Actual:\n{:?}\nExpected:\n{:?}\n\n\n",
-                    string, stderr
-                );
+            for (i, (a, b)) in string.lines().zip(stderr.lines()).enumerate() {
+                if a.trim() != b.trim() {
+                    panic!(
+                        "Line {} differed. Expected: {:?}\nActual:   {:?}\n",
+                        i, a, b
+                    );
+                }
             }
-
             return;
         }
         thread::sleep(Duration::from_millis(10));
