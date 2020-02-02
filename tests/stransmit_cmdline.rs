@@ -134,7 +134,7 @@ fn ui_test(flags: &[&str], stderr: &str) {
             {
                 string = string.replace(".exe", "");
                 string = string.replace("\r\n", "\n");
-                string = "this block worked?";
+                string = "this block worked?".to_string();
             }
 
             if &string != stderr {
