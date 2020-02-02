@@ -134,12 +134,11 @@ fn ui_test(flags: &[&str], stderr: &str) {
             {
                 string = string.replace(".exe", "");
                 string = string.replace("\r\n", "\n");
-                string = "this block worked?".to_string();
             }
 
             if &string != stderr {
                 panic!(
-                    "Expected stderr did not match actual. Actual:\n{:?}\n\nExpected:\n{:?}",
+                    "Expected stderr did not match actual. Actual:\n{:?}\nExpected:\n{:?}\n\n\n",
                     string, stderr
                 );
             }
