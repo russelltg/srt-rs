@@ -135,11 +135,10 @@ fn ui_test(flags: &[&str], stderr: &str) {
                 string = string.replace("\r\n", "\n");
             }
 
-            let cs = difference::Changeset::new(&string, stderr, "\n");
-            if !cs.diffs.is_empty() {
+            if &string != stderr {
                 panic!(
-                    "Expected stderr did not match actual. Actual:\n{}\n\nExpected:\n{}\nDiff:\n{}",
-                    string, stderr, cs
+                    "Expected stderr did not match actual. Actual:\n{:?}\n\nExpected:\n{:?}",
+                    string, stderr
                 );
             }
 
