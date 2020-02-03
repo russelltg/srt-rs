@@ -120,8 +120,8 @@ fn ui_test(flags: &[&str], stderr: &str) {
         .spawn()
         .unwrap();
 
-    // wait for 5s for the process to exit
-    for _ in 0..500 {
+    // wait for 10s for the process to exit
+    for _ in 0..1000 {
         if let Some(status) = child.try_wait().unwrap() {
             assert!(!status.success(), "failure test succeeded, it should fail");
 
