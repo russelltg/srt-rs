@@ -13,7 +13,7 @@ parameters:
       Linux:
         vmImage: ubuntu-16.04
       MacOS:
-        vmImage: macOS-10.13
+        vmImage: macOS-10.14
       Windows:
         vmImage: vs2017-win2016
         # EXTRA_TEST_FLAGS: '--features=vendored-openssl'

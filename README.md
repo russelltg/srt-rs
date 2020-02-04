@@ -1,6 +1,10 @@
 # srt-rs
 
-[![Build Status](https://travis-ci.org/russelltg/srt-rs.svg?branch=master)](https://travis-ci.org/russelltg/srt-rs) [![Build status](https://ci.appveyor.com/api/projects/status/q0eu7a4mtunff041?svg=true)](https://ci.appveyor.com/project/GuapoTaco/srt-rs) [![codecov](https://codecov.io/gh/russelltg/srt-rs/branch/master/graph/badge.svg)](https://codecov.io/gh/russelltg/srt-rs)
+| OS | Status |
+| --- | --- |
+| Linux | [![Build Status](https://russelltg.visualstudio.com/srt-rs/_apis/build/status/russelltg.srt-rs?branchName=master&stageName=Multi%20OS%20native%20tests&jobName=Cargo%20test&configuration=Cargo%20test%20Linux)](https://russelltg.visualstudio.com/srt-rs/_build/latest?definitionId=2&branchName=master) |
+| macOS | [![Build Status](https://russelltg.visualstudio.com/srt-rs/_apis/build/status/russelltg.srt-rs?branchName=master&stageName=Multi%20OS%20native%20tests&jobName=Cargo%20test&configuration=Cargo%20test%20MacOS)](https://russelltg.visualstudio.com/srt-rs/_build/latest?definitionId=2&branchName=master) |
+| Windows | [![Build Status](https://russelltg.visualstudio.com/srt-rs/_apis/build/status/russelltg.srt-rs?branchName=master&stageName=Multi%20OS%20native%20tests&jobName=Cargo%20test&configuration=Cargo%20test%20Windows)](https://russelltg.visualstudio.com/srt-rs/_build/latest?definitionId=2&branchName=master) |
 
 > NOTE: THIS IS NOT PRODUCTION READY.
 
