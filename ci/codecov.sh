@@ -2,7 +2,7 @@
 set -ex
 
 sudo apt-get update
-sudo apt-get install libbfd-dev libdw-dev libelv-dev
+sudo apt-get install libbfd-dev libdw-dev libelf-dev
 wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz
 tar xzf master.tar.gz
 cd kcov-master
