@@ -1,6 +1,6 @@
 steps:
   - task: ShellScript@2
     inputs:
-      scriptPath: ./codecov.sh
+      scriptPath: ./ci/codecov.sh
     displayName: 'Run codecov'
     condition: eq(variables['Agent.OS'], 'Linux')
