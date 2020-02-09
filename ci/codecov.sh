@@ -1,6 +1,8 @@
 #!/bin/bash
 set -ex
 
+cd "$(dirname "$0")/.."
+
 sudo apt-get update
 sudo apt-get install libbfd-dev libdw-dev libelf-dev libcurl4-openssl-dev libbfd-dev libiberty-dev
 wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz
