@@ -16,7 +16,7 @@ make install
 export PATH=~/.local/bin:$PATH
 cd ../..
 rm -rf kcov-master master.tar.gz
-for file in target/debug/deps/{bidirectional,latency_exchange,lossy_connect,lossy,message_splitting,multiplexer,not_enough_latency,single_packet_tsbpd,srt,stransmit_cmdline}-*; do
+for file in target/debug/deps/{bidirectional,latency_exchange,lossy_connect,lossy,message_splitting,multiplexer,not_enough_latency,rendezvous,single_packet_tsbpd,srt,stransmit_cmdline}-*; do
     if [[ -x "$file" ]]; then
         echo Doing kcov for $file
         mkdir -p "target/cov/$(basename $file)"
