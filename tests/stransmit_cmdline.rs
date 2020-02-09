@@ -88,8 +88,8 @@ async fn test_send(
                 }
             }
         };
-        // 4s timeout
-        let succ = futures::select!(_ = receive_data.boxed().fuse() => true, _ = delay_for(Duration::from_secs(4)).fuse() => false);
+        // 10s timeout
+        let succ = futures::select!(_ = receive_data.boxed().fuse() => true, _ = delay_for(Duration::from_secs(10)).fuse() => false);
         assert!(succ, "Timeout with receiving");
 
         Ok::<_, Error>(())
@@ -132,7 +132,8 @@ fn ui_test(flags: &[&str], stderr: &str) {
             let string = string.replace(".exe", "");
 
             for (i, (a, b)) in string.lines().zip(stderr.lines()).enumerate() {
-                if a.trim() != b.trim() {
+                let (a, b) = (a.trim(), b.trim());
+                if a != b {
                     panic!(
                         "Line {} differed. Expected: {:?}\nActual:   {:?}\n",
                         i, a, b
