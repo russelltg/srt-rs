@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use srt::{Sender, SrtCongestCtrl, SrtSocketBuilder};
+use srt::{SenderStream, SrtCongestCtrl, SrtSocketBuilder};
 
 use bytes::Bytes;
 use failure::Error;
@@ -28,11 +28,11 @@ async fn multiplexer() -> Result<(), Error> {
         while let Some(Ok((settings, channel))) =
             futures::select!(res = server.next().fuse() => res, _ = fused_finish => None)
         {
-            let mut sender = Sender::new(
+            let mut sender = SenderStream::new(
                 channel,
                 SrtCongestCtrl,
                 settings.settings,
-                Some(settings.hs_returner),
+                settings.handshake,
             );
 
             let mut stream =

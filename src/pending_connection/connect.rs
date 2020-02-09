@@ -1,25 +1,25 @@
 use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use failure::Error;
 use futures::prelude::*;
 use futures::select;
 use log::warn;
 use tokio::time::interval;
-use tokio::time::Instant;
 
 use crate::packet::*;
+use crate::protocol::handshake::Handshake;
 use crate::util::get_packet;
-use crate::{Connection, ConnectionSettings, DataPacket, SeqNumber, SocketID, SrtVersion};
+use crate::{Connection, ConnectionSettings, SeqNumber, SocketID, SrtVersion};
 
 use ConnectError::*;
 use ConnectState::*;
 
 pub struct ConnectConfiguration {
-    remote: SocketAddr,
-    local_sockid: SocketID,
-    local_addr: IpAddr,
-    tsbpd_latency: Duration,
+    pub remote: SocketAddr,
+    pub local_sockid: SocketID,
+    pub local_addr: IpAddr,
+    pub tsbpd_latency: Duration,
 }
 
 #[derive(Clone)]
@@ -71,8 +71,8 @@ pub enum ConnectError {
 }
 
 pub struct Connect {
-    config: ConnectConfiguration,
-    state: ConnectState,
+    pub config: ConnectConfiguration,
+    pub state: ConnectState,
 }
 
 pub type ConnectResult = Result<Option<(Packet, SocketAddr)>, ConnectError>;
@@ -179,7 +179,7 @@ impl Connect {
                     init_seq_num: info.init_seq_num,
                     // restamp the socket start time, so TSBPD works correctly.
                     // TODO: technically it would be 1 rtt off....
-                    socket_start_time: Instant::now().into_std(),
+                    socket_start_time: Instant::now(),
                     local_sockid: config.local_sockid,
                     remote_sockid: info.socket_id,
                     tsbpd_latency: latency,
@@ -251,7 +251,7 @@ where
     let mut tick_interval = interval(Duration::from_millis(100));
     loop {
         let result = select! {
-            now = tick_interval.tick().fuse() => connect.handle_tick(now),
+            now = tick_interval.tick().fuse() => connect.handle_tick(now.into()),
             packet = get_packet(sock).fuse() => connect.handle_packet(packet?),
         };
 
@@ -267,7 +267,7 @@ where
         if let Connected(settings) = connect.state.clone() {
             return Ok(Connection {
                 settings,
-                hs_returner: Box::new(move |_| None),
+                handshake: Handshake::Connector,
             });
         }
     }

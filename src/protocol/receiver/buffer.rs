@@ -1,11 +1,13 @@
-use bytes::{Bytes, BytesMut};
-use log::{debug, info};
 use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
+use bytes::{Bytes, BytesMut};
+use log::{debug, info};
+
 use crate::packet::PacketLocation;
-use crate::{DataPacket, SeqNumber};
+use crate::protocol::{TimeBase, TimeStamp};
+use crate::{ConnectionSettings, DataPacket, SeqNumber};
 
 pub struct RecvBuffer {
     // stores the incoming packets as they arrive
@@ -14,16 +16,33 @@ pub struct RecvBuffer {
 
     // The next to be released sequence number
     head: SeqNumber,
+
+    time_base: TimeBase,
+
+    /// The TSBPD latency configured by the user.
+    /// Not necessarily the actual decided on latency, which
+    /// is the max of both side's respective latencies.
+    tsbpd_latency: Duration,
 }
 
 impl RecvBuffer {
+    pub fn with(settings: &ConnectionSettings) -> Self {
+        Self::new(
+            settings.init_seq_num,
+            TimeBase::from_raw(settings.socket_start_time),
+            settings.tsbpd_latency,
+        )
+    }
+
     /// Creates a `RecvBuffer`
     ///
     /// * `head` - The sequence number of the next packet
-    pub fn new(head: SeqNumber) -> RecvBuffer {
-        RecvBuffer {
+    pub fn new(head: SeqNumber, time_base: TimeBase, tsbpd_latency: Duration) -> Self {
+        Self {
             buffer: VecDeque::new(),
             head,
+            time_base,
+            tsbpd_latency,
         }
     }
 
@@ -53,7 +72,7 @@ impl RecvBuffer {
     /// IE: there is a packet after it that is ready to be released
     ///
     /// Returns the number of packets dropped
-    pub fn drop_too_late_packets(&mut self, latency: Duration, start_time: Instant) -> usize {
+    pub fn drop_too_late_packets(&mut self, now: Instant) -> usize {
         // Not only does it have to be non-none, it also has to be a First (don't drop half messages)
         let first_non_none_idx = self.buffer.iter().position(|a| {
             a.is_some()
@@ -71,21 +90,17 @@ impl RecvBuffer {
         let first_pack_ts_us = self.buffer[first_non_none_idx].as_ref().unwrap().timestamp;
         // we are too late if that packet is ready
         // give a 2 ms buffer range, be ok with releasing them 2ms late
-        let too_late = start_time
-            + Duration::from_micros(first_pack_ts_us as u64)
-            + latency
+        let too_late = self.time_base.instant_from(first_pack_ts_us)
+            + self.tsbpd_latency
             + Duration::from_millis(2)
-            <= Instant::now();
+            <= now;
 
         if too_late {
             info!(
                 "Dropping packets [{},{}), {} ms too late",
                 self.head,
                 self.head + first_non_none_idx as u32,
-                (Instant::now()
-                    - start_time
-                    - Duration::from_micros(first_pack_ts_us as u64)
-                    - latency)
+                (now - self.time_base.instant_from(first_pack_ts_us) - self.tsbpd_latency)
                     .as_millis()
             );
             // start dropping packets
@@ -104,18 +119,18 @@ impl RecvBuffer {
     /// TODO: this does not account for timestamp wrapping
     ///
     /// Returns `None` if there is no message available, or `Some(i)` if there is a packet available, `i` being the number of packets it spans.
-    pub fn next_msg_ready_tsbpd(&self, latency: Duration, start_time: Instant) -> Option<usize> {
+    pub fn next_msg_ready_tsbpd(&self, now: Instant) -> Option<usize> {
         let msg_size = self.next_msg_ready()?;
 
         let pack = self.buffer.front().unwrap().as_ref().unwrap();
 
-        if (start_time + Duration::from_micros(pack.timestamp as u64) + latency) <= Instant::now() {
+        if self.time_base.instant_from(pack.timestamp) + self.tsbpd_latency <= now {
             debug!(
                 "Message was deemed ready for release, Now={:?}, Ts={:?}, dT={:?}, Latency={:?}, buf.len={}, sn={}, npackets={}",
-                Instant::now() - start_time,
+                now - self.time_base.instant_from(0),
                 Duration::from_micros(pack.timestamp as u64),
-                Instant::now() - start_time - Duration::from_micros(pack.timestamp as u64),
-                latency,
+                now - self.time_base.instant_from(pack.timestamp),
+                self.tsbpd_latency,
                 self.buffer.len(),
                 pack.seq_number,
                 msg_size,
@@ -154,49 +169,40 @@ impl RecvBuffer {
         None
     }
 
-    pub fn next_message_release_time(
-        &self,
-        start_time: Instant,
-        latency: Duration,
-    ) -> Option<Instant> {
+    pub fn next_message_release_time(&self) -> Option<Instant> {
         let _msg_size = self.next_msg_ready()?;
-
-        Some(
-            start_time
-                + Duration::from_micros(
-                    self.buffer.front().unwrap().as_ref().unwrap().timestamp as u64,
-                )
-                + latency,
-        )
+        let timestamp = self.buffer.front()?.as_ref()?.timestamp;
+        Some(self.time_base.instant_from(timestamp) + self.tsbpd_latency)
     }
 
     /// A convenience function for
     /// `self.next_msg_ready_tsbpd(...).map(|_| self.next_msg().unwrap()`
-    pub fn next_msg_tsbpd(
-        &mut self,
-        latency: Duration,
-        start_time: Instant,
-    ) -> Option<(i32, Bytes)> {
-        self.next_msg_ready_tsbpd(latency, start_time)
+    pub fn next_msg_tsbpd(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
+        self.next_msg_ready_tsbpd(now)
             .map(|_| self.next_msg().unwrap())
     }
 
     /// Check if there is an available message, returning, and its origin timestamp it if found
-    pub fn next_msg(&mut self) -> Option<(i32, Bytes)> {
+    pub fn next_msg(&mut self) -> Option<(Instant, Bytes)> {
         let count = self.next_msg_ready()?;
 
         self.head += count as u32;
 
-        let origin_ts = self.buffer[0].as_ref().unwrap().timestamp;
+        let origin_time = self
+            .time_base
+            .instant_from(self.buffer[0].as_ref().unwrap().timestamp);
 
         // optimize for single packet messages
         if count == 1 {
-            return Some((origin_ts, self.buffer.pop_front().unwrap().unwrap().payload));
+            return Some((
+                origin_time,
+                self.buffer.pop_front().unwrap().unwrap().payload,
+            ));
         }
 
         // accumulate the rest
         Some((
-            origin_ts,
+            origin_time,
             self.buffer
                 .drain(0..count)
                 .fold(BytesMut::new(), |mut bytes, pack| {
@@ -205,6 +211,10 @@ impl RecvBuffer {
                 })
                 .freeze(),
         ))
+    }
+
+    pub fn timestamp_from(&self, at: Instant) -> TimeStamp {
+        self.time_base.timestamp_from(at)
     }
 }
 
@@ -227,8 +237,10 @@ impl fmt::Debug for RecvBuffer {
 mod test {
 
     use super::RecvBuffer;
+    use crate::protocol::TimeBase;
     use crate::{packet::PacketLocation, DataPacket, MsgNumber, SeqNumber, SocketID};
     use bytes::Bytes;
+    use std::time::Duration;
 
     fn basic_pack() -> DataPacket {
         DataPacket {
@@ -242,9 +254,13 @@ mod test {
         }
     }
 
+    fn new_buffer(head: SeqNumber) -> RecvBuffer {
+        RecvBuffer::new(head, TimeBase::new(), Duration::from_millis(100))
+    }
+
     #[test]
     fn not_ready_empty() {
-        let mut buf = RecvBuffer::new(SeqNumber::new_truncate(3));
+        let mut buf = new_buffer(SeqNumber::new_truncate(3));
 
         assert_eq!(buf.next_msg_ready(), None);
         assert_eq!(buf.next_msg(), None);
@@ -253,7 +269,7 @@ mod test {
 
     #[test]
     fn not_ready_no_more() {
-        let mut buf = RecvBuffer::new(SeqNumber::new_truncate(5));
+        let mut buf = new_buffer(SeqNumber::new_truncate(5));
         buf.add(DataPacket {
             seq_number: SeqNumber(5),
             message_loc: PacketLocation::FIRST,
@@ -267,7 +283,7 @@ mod test {
 
     #[test]
     fn not_ready_none() {
-        let mut buf = RecvBuffer::new(SeqNumber::new_truncate(5));
+        let mut buf = new_buffer(SeqNumber::new_truncate(5));
         buf.add(DataPacket {
             seq_number: SeqNumber(5),
             message_loc: PacketLocation::FIRST,
@@ -286,7 +302,7 @@ mod test {
 
     #[test]
     fn not_ready_middle() {
-        let mut buf = RecvBuffer::new(SeqNumber::new_truncate(5));
+        let mut buf = new_buffer(SeqNumber::new_truncate(5));
         buf.add(DataPacket {
             seq_number: SeqNumber(5),
             message_loc: PacketLocation::FIRST,
@@ -305,7 +321,7 @@ mod test {
 
     #[test]
     fn ready_single() {
-        let mut buf = RecvBuffer::new(SeqNumber::new_truncate(5));
+        let mut buf = new_buffer(SeqNumber::new_truncate(5));
         buf.add(DataPacket {
             seq_number: SeqNumber(5),
             message_loc: PacketLocation::FIRST | PacketLocation::LAST,
@@ -320,14 +336,17 @@ mod test {
         });
 
         assert_eq!(buf.next_msg_ready(), Some(1));
-        assert_eq!(buf.next_msg(), Some((0, From::from(&b"hello"[..]))));
+        assert_eq!(
+            buf.next_msg(),
+            Some((buf.time_base.instant_from(0), From::from(&b"hello"[..])))
+        );
         assert_eq!(buf.next_release(), SeqNumber(6));
         assert_eq!(buf.buffer.len(), 1);
     }
 
     #[test]
     fn ready_multi() {
-        let mut buf = RecvBuffer::new(SeqNumber::new_truncate(5));
+        let mut buf = new_buffer(SeqNumber::new_truncate(5));
         buf.add(DataPacket {
             seq_number: SeqNumber(5),
             message_loc: PacketLocation::FIRST,
@@ -348,7 +367,13 @@ mod test {
         });
 
         assert_eq!(buf.next_msg_ready(), Some(3));
-        assert_eq!(buf.next_msg(), Some((0, From::from(&b"helloyasnas"[..]))));
+        assert_eq!(
+            buf.next_msg(),
+            Some((
+                buf.time_base.instant_from(0),
+                From::from(&b"helloyasnas"[..])
+            ))
+        );
         assert_eq!(buf.next_release(), SeqNumber(8));
         assert_eq!(buf.buffer.len(), 0);
     }

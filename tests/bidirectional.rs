@@ -21,23 +21,25 @@ async fn bidirectional() {
     let (a, b) = try_join!(a, b).unwrap();
 
     // have each send a bunch of stuff to each other
-    let process = |side: SrtSocket| async {
-        let (mut s, mut r) = side.split();
+    let process = |side: SrtSocket| {
+        async {
+            let (mut s, mut r) = side.split();
 
-        spawn(async move {
-            for i in 0..ITERS {
-                let (_, payload) = r.try_next().await.unwrap().unwrap();
+            spawn(async move {
+                for i in 0..ITERS {
+                    let (_, payload) = r.try_next().await.unwrap().unwrap();
 
-                assert_eq!(payload, Bytes::from(i.to_string()));
-            }
-            assert_eq!(r.try_next().await.unwrap(), None);
-        });
-        let mut counting_stream = stream::iter(0..ITERS)
-            .zip(interval(Duration::from_millis(1)))
-            .map(|(i, _)| Ok((Instant::now(), Bytes::from(i.to_string()))));
+                    assert_eq!(payload, Bytes::from(i.to_string()));
+                }
+                assert_eq!(r.try_next().await.unwrap(), None);
+            });
+            let mut counting_stream = stream::iter(0..ITERS)
+                .zip(interval(Duration::from_millis(1)))
+                .map(|(i, _)| Ok((Instant::now(), Bytes::from(i.to_string()))));
 
-        s.send_all(&mut counting_stream).await.unwrap();
-        s
+            s.send_all(&mut counting_stream).await.unwrap();
+            s
+        }
     };
 
     // wait until the end to close, so that we don't close the bidirectional socket
