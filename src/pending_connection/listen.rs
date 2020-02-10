@@ -16,8 +16,8 @@ use ListenError::*;
 use ListenState::*;
 
 pub struct Listen {
-    pub config: ListenConfiguration,
-    pub state: ListenState,
+    config: ListenConfiguration,
+    state: ListenState,
 }
 
 pub struct ListenConfiguration {

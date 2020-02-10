@@ -71,8 +71,8 @@ pub enum ConnectError {
 }
 
 pub struct Connect {
-    pub config: ConnectConfiguration,
-    pub state: ConnectState,
+    config: ConnectConfiguration,
+    state: ConnectState,
 }
 
 pub type ConnectResult = Result<Option<(Packet, SocketAddr)>, ConnectError>;

@@ -17,7 +17,7 @@ use crate::protocol::sender;
 use crate::protocol::sender::SenderAlgorithmAction;
 use crate::{CongestCtrl, ConnectionSettings, SrtCongestCtrl, Stats};
 
-pub struct SenderStream<T, CC> {
+pub struct SenderSink<T, CC> {
     sock: T,
 
     sender: sender::Sender,
@@ -32,7 +32,7 @@ pub struct SenderStream<T, CC> {
     stats_interval: Interval,
 }
 
-impl<T, CC> SenderStream<T, CC>
+impl<T, CC> SenderSink<T, CC>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
         + Sink<(Packet, SocketAddr), Error = Error>
@@ -44,13 +44,13 @@ where
         congest_ctrl: CC,
         settings: ConnectionSettings,
         handshake: Handshake,
-    ) -> SenderStream<T, CC> {
+    ) -> SenderSink<T, CC> {
         info!(
             "Sending started to {:?}, with latency={:?}",
             settings.remote, settings.tsbpd_latency
         );
 
-        SenderStream {
+        SenderSink {
             sock,
             sender: sender::Sender::new(settings, handshake, SrtCongestCtrl),
             _congest_ctrl: congest_ctrl,
@@ -180,7 +180,7 @@ where
     }
 }
 
-impl<T, CC> Sink<(Instant, Bytes)> for SenderStream<T, CC>
+impl<T, CC> Sink<(Instant, Bytes)> for SenderSink<T, CC>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
         + Sink<(Packet, SocketAddr), Error = Error>
@@ -210,7 +210,7 @@ where
 }
 
 // Stats streaming
-impl<T, CC> Stream for SenderStream<T, CC>
+impl<T, CC> Stream for SenderSink<T, CC>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
         + Sink<(Packet, SocketAddr), Error = Error>

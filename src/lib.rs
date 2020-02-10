@@ -83,4 +83,4 @@ pub use crate::socket_id::SocketID;
 pub use crate::srt_congest_ctrl::SrtCongestCtrl;
 pub use crate::srt_version::SrtVersion;
 pub use crate::stats::Stats;
-pub use crate::tokio::sender::SenderStream;
+pub use crate::tokio::sender::SenderSink;

@@ -18,9 +18,9 @@ use RendezvousError::*;
 use RendezvousState::*;
 
 pub struct Rendezvous {
-    pub config: RendezvousConfiguration,
-    pub state: RendezvousState,
-    pub seq_num: SeqNumber,
+    config: RendezvousConfiguration,
+    state: RendezvousState,
+    seq_num: SeqNumber,
 }
 
 pub struct RendezvousConfiguration {

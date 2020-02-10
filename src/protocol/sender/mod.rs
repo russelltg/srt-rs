@@ -17,7 +17,7 @@ use crate::{
     SrtCongestCtrl, Stats,
 };
 
-pub mod buffers;
+mod buffers;
 
 #[derive(Debug)]
 pub enum SenderError {}

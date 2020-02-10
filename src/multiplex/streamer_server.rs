@@ -11,7 +11,7 @@ use bytes::Bytes;
 
 use failure::Error;
 
-use crate::{Connection, PackChan, SenderStream, SrtCongestCtrl};
+use crate::{Connection, PackChan, SenderSink, SrtCongestCtrl};
 
 type BoxConnStream = Pin<Box<dyn Stream<Item = Result<(Connection, PackChan), Error>> + Send>>;
 pub struct StreamerServer {
@@ -71,7 +71,7 @@ impl Sink<(Instant, Bytes)> for StreamerServer {
                 .expect("Multiplexer stream ended, strange")
                 .expect("Multiplex server return Err");
 
-            let mut sender = SenderStream::new(chan, SrtCongestCtrl, conn.settings, conn.handshake);
+            let mut sender = SenderSink::new(chan, SrtCongestCtrl, conn.settings, conn.handshake);
 
             let (tx, rx) = mpsc::channel(100);
 

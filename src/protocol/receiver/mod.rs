@@ -259,17 +259,17 @@ impl Receiver {
         //      expired. If there is any, process the event (as described below
         //      in this section) and reset the associated time variables. For
         //      ACK, also check the ACK packet interval.
-        if self.timers.ack.poll_next(now).is_some() {
+        if self.timers.ack.check_expired(now).is_some() {
             self.on_ack_event(now).unwrap();
         }
-        if self.timers.nak.poll_next(now).is_some() {
+        if self.timers.nak.check_expired(now).is_some() {
             self.on_nak_event(now).unwrap();
         }
-        if self.timers.exp.poll_next(now).is_some() {
+        if self.timers.exp.check_expired(now).is_some() {
             // TODO: what about EXP?
             self.on_exp_event(now).unwrap();
         }
-        if self.timers.timeout.poll_next(now).is_some() {
+        if self.timers.timeout.check_expired(now).is_some() {
             self.on_timeout();
         }
 

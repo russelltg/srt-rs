@@ -99,7 +99,7 @@ impl Timer {
         self.period = period;
     }
 
-    pub fn poll_next(&mut self, now: Instant) -> Option<Instant> {
+    pub fn check_expired(&mut self, now: Instant) -> Option<Instant> {
         if now > self.next_instant() {
             self.last = self.next_instant();
             Some(self.last)
