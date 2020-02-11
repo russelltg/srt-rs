@@ -126,8 +126,6 @@ pub struct SendBuffer {
     /// The first sequence number in buffer, so seq number i would be found at
     /// buffer[i - first_seq]
     first_seq: SeqNumber,
-
-    max_packet_size: u32,
 }
 
 impl SendBuffer {
@@ -135,7 +133,6 @@ impl SendBuffer {
         Self {
             buffer: Default::default(),
             first_seq: settings.init_seq_num,
-            max_packet_size: settings.max_packet_size,
         }
     }
 
@@ -160,10 +157,6 @@ impl SendBuffer {
 
     pub fn push_back(&mut self, data: DataPacket) {
         self.buffer.push_back(data);
-    }
-
-    pub fn estemated_size(&self) -> u32 {
-        self.buffer.len() as u32 * self.max_packet_size
     }
 
     pub fn is_empty(&self) -> bool {
