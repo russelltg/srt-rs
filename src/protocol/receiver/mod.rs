@@ -6,7 +6,6 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use failure::Error;
 use log::{debug, info, trace, warn};
 
 use super::Timer;
@@ -24,18 +23,18 @@ use buffer::RecvBuffer;
 #[allow(clippy::large_enum_variant)]
 pub enum ReceiverAlgorithmAction {
     TimeBoundedReceive(Instant),
-    SendControl((ControlPacket, SocketAddr)),
+    SendControl(ControlPacket, SocketAddr),
     OutputData((Instant, Bytes)),
     Close,
 }
 
-pub(crate) struct ReceiveTimers {
-    pub syn: Timer,
-    pub ack: Timer,
-    pub nak: Timer,
-    pub exp: Timer,
+struct ReceiveTimers {
+    syn: Timer,
+    ack: Timer,
+    nak: Timer,
+    exp: Timer,
     //pub snd: Timer,
-    pub timeout: Timer,
+    timeout: Timer,
 }
 
 impl ReceiveTimers {
@@ -95,7 +94,7 @@ pub struct Receiver {
 
     handshake: Handshake,
 
-    timers: crate::protocol::receiver::ReceiveTimers,
+    timers: ReceiveTimers,
 
     control_packets: VecDeque<Packet>,
 
@@ -195,12 +194,8 @@ impl Receiver {
         self.shutdown_flag = true;
     }
 
-    // handles an incomming a packet
-    pub fn handle_packet(
-        &mut self,
-        now: Instant,
-        packet: (Packet, SocketAddr),
-    ) -> Result<(), Error> {
+    // handles an incoming a packet
+    pub fn handle_packet(&mut self, now: Instant, packet: (Packet, SocketAddr)) {
         let (packet, from) = packet;
 
         self.exp_count = 1;
@@ -209,7 +204,7 @@ impl Receiver {
         // We don't care about packets from elsewhere
         if from != self.settings.remote {
             info!("Packet received from unknown address: {:?}", from);
-            return Ok(());
+            return;
         }
 
         if self.settings.local_sockid != packet.dest_sockid() {
@@ -219,7 +214,7 @@ impl Receiver {
                 packet.dest_sockid().0,
                 self.settings.local_sockid.0
             );
-            return Ok(());
+            return;
         }
 
         trace!("Received packet: {:?}", packet);
@@ -230,9 +225,9 @@ impl Receiver {
 
                 match ctrl.control_type {
                     ControlTypes::Ack { .. } => warn!("Receiver received ACK packet, unusual"),
-                    ControlTypes::Ack2(seq_num) => self.handle_ack2(seq_num, now)?,
+                    ControlTypes::Ack2(seq_num) => self.handle_ack2(seq_num, now),
                     ControlTypes::DropRequest { .. } => unimplemented!(),
-                    ControlTypes::Handshake(shake) => self.handle_handshake_packet(now, shake)?,
+                    ControlTypes::Handshake(shake) => self.handle_handshake_packet(now, shake),
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
                     ControlTypes::Nak { .. } => warn!("Receiver received NAK packet, unusual"),
                     ControlTypes::Shutdown => {
@@ -240,14 +235,12 @@ impl Receiver {
                         self.shutdown_flag = true;
                     } // end of stream
                     ControlTypes::Srt(srt_packet) => {
-                        self.handle_srt_control_packet(srt_packet)?;
+                        self.handle_srt_control_packet(srt_packet);
                     }
                 }
             }
-            Packet::Data(data) => self.handle_data_packet(&data, now)?,
+            Packet::Data(data) => self.handle_data_packet(&data, now),
         };
-
-        Ok(())
     }
 
     /// 6.2 The Receiver's Algorithm
@@ -260,32 +253,32 @@ impl Receiver {
         //      in this section) and reset the associated time variables. For
         //      ACK, also check the ACK packet interval.
         if self.timers.ack.check_expired(now).is_some() {
-            self.on_ack_event(now).unwrap();
+            self.on_ack_event(now);
         }
         if self.timers.nak.check_expired(now).is_some() {
-            self.on_nak_event(now).unwrap();
+            self.on_nak_event(now);
         }
         if self.timers.exp.check_expired(now).is_some() {
             // TODO: what about EXP?
-            self.on_exp_event(now).unwrap();
+            self.on_exp_event(now);
         }
         if self.timers.timeout.check_expired(now).is_some() {
             self.on_timeout();
         }
 
-        //   2) Start time bounded UDP receiving. If no packet arrives, go to 1).
         if let Some(data) = self.pop_data(now) {
             OutputData(data)
         } else if self.shutdown_flag && self.receive_buffer.next_msg_ready().is_none() {
             Close
         } else if let Some(Packet::Control(packet)) = self.pop_conotrol_packet() {
-            SendControl((packet, self.settings.remote))
+            SendControl(packet, self.settings.remote)
         } else {
+            // 2) Start time bounded UDP receiving. If no packet arrives, go to 1).
             TimeBoundedReceive(self.next_timer(now))
         }
     }
 
-    fn on_ack_event(&mut self, now: Instant) -> Result<(), Error> {
+    fn on_ack_event(&mut self, now: Instant) {
         // get largest inclusive received packet number
         let ack_number = match self.loss_list.first() {
             // There is an element in the loss list
@@ -298,7 +291,7 @@ impl Receiver {
         //    acknowledged by ACK2
         if ack_number == self.lr_ack_acked.1 {
             // stop (do not send this ACK).
-            return Ok(());
+            return;
         }
 
         // make sure this ACK number is greater or equal to a one sent previously
@@ -326,7 +319,7 @@ impl Receiver {
                 (self.receive_buffer.timestamp_from(now) - last_timestamp) < (self.rtt * 2)
             {
                 // stop (do not send this ACK).
-                return Ok(());
+                return;
             }
         }
 
@@ -420,11 +413,9 @@ impl Receiver {
             ack_seq_num,
             timestamp: ts_now,
         });
-
-        Ok(())
     }
 
-    fn on_nak_event(&mut self, now: Instant) -> Result<(), Error> {
+    fn on_nak_event(&mut self, now: Instant) {
         // reset NAK timer, rtt and variance are in us, so convert to ns
 
         // NAK is used to trigger a negative acknowledgement (NAK). Its period
@@ -460,28 +451,21 @@ impl Receiver {
         };
 
         if seq_nums.is_empty() {
-            return Ok(());
+            return;
         }
 
         // send the nak
-        self.send_nak(now, seq_nums.into_iter())?;
-
-        Ok(())
+        self.send_nak(now, seq_nums.into_iter());
     }
 
-    fn handle_handshake_packet(
-        &mut self,
-        now: Instant,
-        control_info: HandshakeControlInfo,
-    ) -> Result<(), Error> {
+    fn handle_handshake_packet(&mut self, now: Instant, control_info: HandshakeControlInfo) {
         if let Some(c) = self.handshake.handle_handshake(control_info) {
             self.send_control(now, c)
         }
-        Ok(())
     }
 
     // handles a SRT control packet
-    fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) -> Result<(), Error> {
+    fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) {
         use self::SrtControlPacket::*;
         match pack {
             HandshakeRequest(_) | HandshakeResponse(_) => {
@@ -489,10 +473,9 @@ impl Receiver {
             }
             _ => unimplemented!(),
         }
-        Ok(())
     }
 
-    fn handle_ack2(&mut self, seq_num: i32, now: Instant) -> Result<(), Error> {
+    fn handle_ack2(&mut self, seq_num: i32, now: Instant) {
         // 1) Locate the related ACK in the ACK History Window according to the
         //    ACK sequence number in this ACK2.
         let id_in_wnd = match self
@@ -532,11 +515,9 @@ impl Receiver {
                 seq_num
             );
         }
-
-        Ok(())
     }
 
-    fn handle_data_packet(&mut self, data: &DataPacket, now: Instant) -> Result<(), Error> {
+    fn handle_data_packet(&mut self, data: &DataPacket, now: Instant) {
         let ts_now = self.receive_buffer.timestamp_from(now);
 
         // 1) Reset the ExpCount to 1. If there is no unacknowledged data
@@ -580,7 +561,7 @@ impl Receiver {
                     })
                 }
 
-                self.send_nak(now, seq_num_range(self.lrsn, data.seq_number))?;
+                self.send_nak(now, seq_num_range(self.lrsn, data.seq_number));
             }
             // b. If the sequence number is less than LRSN, remove it from the
             //    receiver's loss list.
@@ -610,7 +591,7 @@ impl Receiver {
         // we've already gotten this packet, drop it
         if self.receive_buffer.next_release() > data.seq_number {
             debug!("Received packet {:?} twice", data.seq_number);
-            return Ok(());
+            return;
         }
 
         self.receive_buffer.add(data.clone());
@@ -621,15 +602,10 @@ impl Receiver {
             data.message_loc,
             self.receive_buffer,
         );
-
-        Ok(())
     }
 
     // send a NAK, and return the future
-    fn send_nak<I>(&mut self, now: Instant, lost_seq_nums: I) -> Result<(), Error>
-    where
-        I: Iterator<Item = SeqNumber>,
-    {
+    fn send_nak(&mut self, now: Instant, lost_seq_nums: impl Iterator<Item = SeqNumber>) {
         let vec: Vec<_> = lost_seq_nums.collect();
         debug!("Sending NAK for={:?}", vec);
 
@@ -637,8 +613,6 @@ impl Receiver {
             now,
             ControlTypes::Nak(compress_loss_list(vec.iter().cloned()).collect()),
         );
-
-        Ok(())
     }
 
     fn pop_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
@@ -658,9 +632,7 @@ impl Receiver {
         self.control_packets.pop_front()
     }
 
-    fn on_exp_event(&mut self, _now: Instant) -> Result<(), Error> {
-        Ok(())
-    }
+    fn on_exp_event(&mut self, _now: Instant) {}
 
     fn on_timeout(&mut self) {
         self.exp_count += 1;

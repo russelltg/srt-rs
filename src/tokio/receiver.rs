@@ -77,7 +77,7 @@ where
                     } else {
                         return match pin.sock().poll_next(cx) {
                             Poll::Ready(Some(Ok(p))) => {
-                                pin.receiver.handle_packet(Instant::now(), p)?;
+                                pin.receiver.handle_packet(Instant::now(), p);
                                 cx.waker().wake_by_ref();
                                 Poll::Pending
                             }
@@ -96,7 +96,7 @@ where
                         };
                     }
                 }
-                SendControl((packet, to)) => {
+                SendControl(packet, to) => {
                     pin.sock()
                         .start_send((Packet::Control(packet), to))
                         .unwrap();

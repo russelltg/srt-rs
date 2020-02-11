@@ -14,8 +14,8 @@ use tokio::time::{delay_until, interval, Delay, Interval};
 use crate::packet::Packet;
 use crate::protocol::handshake::Handshake;
 use crate::protocol::sender;
-use crate::protocol::sender::SenderAlgorithmAction;
-use crate::{CongestCtrl, ConnectionSettings, SrtCongestCtrl, Stats};
+use crate::protocol::sender::{SenderAlgorithmAction, SenderMetrics};
+use crate::{CongestCtrl, ConnectionSettings, SrtCongestCtrl};
 
 pub struct SenderSink<T, CC> {
     sock: T,
@@ -73,8 +73,8 @@ where
         self.sender.settings().remote
     }
 
-    pub fn stats(&self) -> Stats {
-        self.sender.stats(Instant::now())
+    pub fn metrics(&self) -> SenderMetrics {
+        self.sender.metrics()
     }
 
     fn sock(&mut self) -> Pin<&mut T> {
@@ -217,11 +217,11 @@ where
         + Unpin,
     CC: CongestCtrl + Unpin,
 {
-    type Item = Result<Stats, Error>;
+    type Item = Result<SenderMetrics, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         ready!(Pin::new(&mut self.stats_interval).poll_next(cx));
 
-        Poll::Ready(Some(Ok(self.stats())))
+        Poll::Ready(Some(Ok(self.metrics())))
     }
 }

@@ -14,7 +14,7 @@ use crate::protocol::Timer;
 use crate::Packet::*;
 use crate::{
     CCData, CongestCtrl, ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber,
-    SrtCongestCtrl, Stats,
+    SrtCongestCtrl,
 };
 
 mod buffers;
@@ -24,6 +24,7 @@ pub enum SenderError {}
 
 pub type SenderResult = Result<(), SenderError>;
 
+#[derive(Debug, Clone, Copy)]
 pub struct SenderMetrics {
     /// Round trip time, in microseconds
     pub rtt: i32,
@@ -141,23 +142,8 @@ impl Sender {
         &self.settings
     }
 
-    pub fn stats(&self, now: Instant) -> Stats {
-        Stats {
-            timestamp: self.transmit_buffer.timestamp_from(now),
-            est_link_cap: self.metrics.est_link_cap,
-            flow_size: self.congestion_control.window_size(),
-            lost_packets: self.metrics.lost_packets,
-            received_packets: self.metrics.recvd_packets,
-            retransmitted_packets: self.metrics.retrans_packets,
-            rtt: self.metrics.rtt,
-            rtt_var: self.metrics.rtt_var,
-            sender_buffer: self.send_buffer.estemated_size(),
-            snd: {
-                let si = self.congestion_control.send_interval();
-
-                si.subsec_nanos() as i32 / 1_000
-            },
-        }
+    pub fn metrics(&self) -> SenderMetrics {
+        self.metrics.clone()
     }
 
     pub fn handle_close(&mut self, now: Instant) {

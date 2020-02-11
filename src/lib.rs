@@ -65,7 +65,6 @@ mod socket;
 mod socket_id;
 mod srt_congest_ctrl;
 mod srt_version;
-mod stats;
 pub mod tokio;
 mod util;
 
@@ -82,5 +81,4 @@ pub use crate::socket::SrtSocket;
 pub use crate::socket_id::SocketID;
 pub use crate::srt_congest_ctrl::SrtCongestCtrl;
 pub use crate::srt_version::SrtVersion;
-pub use crate::stats::Stats;
 pub use crate::tokio::sender::SenderSink;
