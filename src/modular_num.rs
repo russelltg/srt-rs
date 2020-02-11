@@ -11,6 +11,7 @@ impl Display for OutOfRangeError {
 }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! modular_num {
     (pub $x:ident($type:ident, $num:expr)) => {
         $crate::modular_num_impls!((pub), $x, $type, $num);
@@ -20,6 +21,7 @@ macro_rules! modular_num {
     };
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! modular_num_impls {
     (($($publicity:tt)*), $x:ident, $type:ident, $num:expr) => {
