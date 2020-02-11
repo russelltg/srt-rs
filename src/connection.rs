@@ -3,11 +3,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{Packet, SeqNumber, SocketID};
+use crate::protocol::handshake::Handshake;
+use crate::{SeqNumber, SocketID};
 
 pub struct Connection {
     pub settings: ConnectionSettings,
-    pub hs_returner: HandshakeReturner,
+    pub handshake: Handshake,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -38,12 +39,6 @@ pub struct ConnectionSettings {
     /// is the max of both side's respective latencies.
     pub tsbpd_latency: Duration,
 }
-
-/// handshake returner
-/// A handshake packet to return
-/// Because this depends on the connection initilization method
-/// the sender/receiver needs to have this information.
-pub type HandshakeReturner = Box<dyn Fn(&Packet) -> Option<Packet> + Send>;
 
 impl ConnectionSettings {
     /// Timestamp in us

@@ -18,6 +18,7 @@ use tokio_util::udp::UdpFramed;
 
 use crate::channel::Channel;
 use crate::pending_connection::listen::{Listen, ListenConfiguration, ListenState};
+use crate::protocol::handshake::Handshake;
 use crate::{Connection, Packet, PacketCodec, SocketID};
 
 pub type PackChan = Channel<(Packet, SocketAddr)>;
@@ -102,7 +103,7 @@ impl MultiplexState {
             return Ok(Some((
                 Connection {
                     settings,
-                    hs_returner: Box::new(move |_| Some(resp_handshake.clone())),
+                    handshake: Handshake::Listener(resp_handshake.control_type),
                 },
                 s,
             )));

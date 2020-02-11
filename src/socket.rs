@@ -1,7 +1,7 @@
 use crate::channel::Channel;
 use crate::packet::ControlTypes;
-use crate::receiver::Receiver;
-use crate::sender::Sender;
+use crate::tokio::receiver::ReceiverStream;
+use crate::tokio::sender::SenderSink;
 use crate::{Connection, ConnectionSettings, Packet, SrtCongestCtrl};
 
 use std::net::SocketAddr;
@@ -9,6 +9,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Instant;
 
+use crate::protocol::handshake::Handshake;
 use bytes::Bytes;
 use failure::Error;
 use futures::channel::oneshot;
@@ -38,8 +39,8 @@ pub struct SrtSocket {
     // This isn't actually used as a sender, it is just used because when the
     // sender gets dropped the receiver gets notified immediately.
     _drop_oneshot: oneshot::Sender<()>,
-    sender: Sender<PackChan, SrtCongestCtrl>,
-    receiver: Receiver<PackChan>,
+    sender: SenderSink<PackChan, SrtCongestCtrl>,
+    receiver: ReceiverStream<PackChan>,
 }
 
 /// This spawns two new tasks:
@@ -114,13 +115,8 @@ where
     // Arbitrarilly make the sender responsible for returning handshakes
     SrtSocket {
         _drop_oneshot: drop_tx,
-        sender: Sender::new(
-            sender_chan,
-            SrtCongestCtrl,
-            conn.settings,
-            Some(conn.hs_returner),
-        ),
-        receiver: Receiver::new(recvr_chan, conn.settings, None),
+        sender: SenderSink::new(sender_chan, SrtCongestCtrl, conn.settings, conn.handshake),
+        receiver: ReceiverStream::new(recvr_chan, conn.settings, Handshake::Connector),
     }
 }
 

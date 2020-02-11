@@ -1,19 +1,19 @@
+use std::cmp;
 use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use failure::Error;
 use futures::{select, FutureExt, Sink, SinkExt, Stream};
 use log::warn;
 use tokio::time::interval;
-use tokio::time::Instant;
 
 use crate::packet::{ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SocketType};
+use crate::protocol::handshake::Handshake;
 use crate::util::get_packet;
 use crate::{
     Connection, ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber, SocketID,
 };
 
-use std::cmp;
 use RendezvousError::*;
 use RendezvousState::*;
 
@@ -24,17 +24,17 @@ pub struct Rendezvous {
 }
 
 pub struct RendezvousConfiguration {
-    local_socket_id: SocketID,
-    local_addr: IpAddr,
-    remote_public: SocketAddr,
-    tsbpd_latency: Duration,
+    pub local_socket_id: SocketID,
+    pub local_addr: IpAddr,
+    pub remote_public: SocketAddr,
+    pub tsbpd_latency: Duration,
 }
 
 #[derive(Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum RendezvousState {
     Negotiating,
-    Connected(ConnectionSettings, Option<ControlPacket>),
+    Connected(ConnectionSettings, Option<ControlTypes>),
 }
 
 impl Rendezvous {
@@ -70,7 +70,11 @@ impl Rendezvous {
         Ok(Some((packet, self.config.remote_public)))
     }
 
-    fn set_state_connected(&mut self, info: &HandshakeControlInfo, packet: Option<ControlPacket>) {
+    fn set_state_connected(
+        &mut self,
+        info: &HandshakeControlInfo,
+        control_type: Option<ControlTypes>,
+    ) {
         let config = &self.config;
         self.state = Connected(
             ConnectionSettings {
@@ -78,12 +82,12 @@ impl Rendezvous {
                 max_flow_size: info.max_flow_size,
                 max_packet_size: info.max_packet_size,
                 init_seq_num: info.init_seq_num,
-                socket_start_time: Instant::now().into_std(), // restamp the socket start time, so TSBPD works correctly
+                socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
                 local_sockid: config.local_socket_id,
                 remote_sockid: info.socket_id,
                 tsbpd_latency: config.tsbpd_latency, // TODO: needs to be send in the handshakes
             },
-            packet,
+            control_type,
         );
     }
 
@@ -138,7 +142,7 @@ impl Rendezvous {
                     }),
                 };
 
-                self.set_state_connected(&info, Some(packet.clone()));
+                self.set_state_connected(&info, Some(packet.control_type.clone()));
 
                 self.send(packet)
             }
@@ -196,7 +200,7 @@ where
     let mut tick_interval = interval(Duration::from_millis(100));
     loop {
         let result = select! {
-            now = tick_interval.tick().fuse() => rendezvous.handle_tick(now),
+            now = tick_interval.tick().fuse() => rendezvous.handle_tick(now.into()),
             packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?),
         };
 
@@ -210,26 +214,11 @@ where
             _ => {}
         }
 
-        if let Connected(settings, packet) = rendezvous.state {
+        if let Connected(settings, control_type) = rendezvous.state {
             return Ok(Connection {
                 settings,
-                hs_returner: Box::new(move |pack| {
-                    if let Packet::Control(ControlPacket {
-                        control_type: ControlTypes::Handshake(info),
-                        ..
-                    }) = pack
-                    {
-                        match info.shake_type {
-                            ShakeType::Conclusion => {
-                                packet.as_ref().map(|p| Packet::Control(p.clone()))
-                            }
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    }
-                }),
+                handshake: Handshake::Rendezvous(control_type),
             });
-        };
+        }
     }
 }
