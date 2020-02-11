@@ -115,6 +115,12 @@ pub struct Sender {
     close: bool,
 }
 
+impl Default for SenderMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Sender {
     pub fn new(
         settings: ConnectionSettings,
@@ -143,7 +149,7 @@ impl Sender {
     }
 
     pub fn metrics(&self) -> SenderMetrics {
-        self.metrics.clone()
+        self.metrics
     }
 
     pub fn handle_close(&mut self, now: Instant) {
