@@ -25,6 +25,7 @@ stages:
   - template: ci/cargo-test.yml
     parameters:
       extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
+      timeout: 10
       job_post-steps:
         template: codecov.yml
         
@@ -35,3 +36,4 @@ stages:
       job_name: cargo_test_nightly
       job_displayName: Cargo test (nightly)
       extra_runner_flags: '--nocapture --skip=stransmit_server --skip=stransmit_client'
+      timeout: 10
