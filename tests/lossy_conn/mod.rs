@@ -13,7 +13,7 @@ use futures::{ready, stream::Fuse, Future, Sink, Stream, StreamExt};
 
 use tokio::time::{self, delay_for, Delay};
 
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 
 use rand::distributions::Distribution;
 use rand::rngs::StdRng;
@@ -66,8 +66,6 @@ impl<T: Unpin + Debug> Stream for LossyConn<T> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
 
-        let _ = Pin::new(&mut pin.delay).poll(cx);
-
         if let Some(ttime) = pin.delay_buffer.peek() {
             if ttime.time <= Instant::now() {
                 let val = pin.delay_buffer.pop().unwrap();
@@ -85,10 +83,13 @@ impl<T: Unpin + Debug> Stream for LossyConn<T> {
                 return Poll::Ready(Some(Ok(val.data)));
             }
         }
+        // poll this after, just in case we reset it
+        let _pret = Pin::new(&mut pin.delay).poll(cx);
 
         loop {
             let to_send = match ready!(Pin::new(&mut pin.receiver).poll_next(cx)) {
                 None => {
+                    warn!("Connection ended");
                     // There can't be any more packets AND there are no packets remaining
                     if pin.delay_buffer.is_empty() {
                         return Poll::Ready(None);

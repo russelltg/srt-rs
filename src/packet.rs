@@ -1,6 +1,8 @@
 // Packet structures
 // see https://tools.ietf.org/html/draft-gg-udt-03#page-5
 
+use std::fmt::{self, Debug, Formatter};
+
 use bytes::{Buf, BufMut};
 use failure::{bail, Error};
 
@@ -19,7 +21,7 @@ use crate::SocketID;
 
 /// Represents A UDT/SRT packet
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Packet {
     Data(DataPacket),
     Control(ControlPacket),
@@ -68,6 +70,14 @@ impl Packet {
             Packet::Data(ref data) => {
                 data.serialize(into);
             }
+        }
+    }
+}
+impl Debug for Packet {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        match self {
+            Packet::Data(dp) => write!(f, "{:?}", dp),
+            Packet::Control(cp) => write!(f, "{:?}", cp),
         }
     }
 }

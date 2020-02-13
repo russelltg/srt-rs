@@ -1,3 +1,4 @@
+use std::fmt::{self, Debug, Formatter};
 use std::net::{IpAddr, Ipv4Addr};
 
 use bitflags::bitflags;
@@ -31,7 +32,7 @@ pub use self::srt::{CipherType, SrtControlPacket, SrtHandshake, SrtKeyMessage, S
 ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /// ```
 /// (from <https://tools.ietf.org/html/draft-gg-udt-03#page-5>)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ControlPacket {
     /// The timestamp, relative to the socket start time
     pub timestamp: i32,
@@ -44,7 +45,7 @@ pub struct ControlPacket {
 }
 
 /// The different kind of control packets
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum ControlTypes {
     /// The control packet for initiating connections, type 0x0
@@ -144,7 +145,7 @@ pub enum HandshakeVSInfo {
 }
 
 /// The control info for handshake packets
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct HandshakeControlInfo {
     /// The initial sequence number, usually randomly initialized
     pub init_seq_num: SeqNumber,
@@ -322,6 +323,16 @@ impl ControlPacket {
 
         // the rest of the info
         self.control_type.serialize(into);
+    }
+}
+
+impl Debug for ControlPacket {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "CTRL ts({}) dst({:X}) {:?}",
+            self.timestamp, self.dest_sockid.0, self.control_type
+        )
     }
 }
 
@@ -687,6 +698,85 @@ impl ControlTypes {
                 srt.serialize(into);
             }
         };
+    }
+}
+
+impl Debug for ControlTypes {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        match self {
+            ControlTypes::Handshake(hs) => write!(f, "{:?}", hs),
+            ControlTypes::KeepAlive => write!(f, "KeepAlive"),
+            ControlTypes::Ack {
+                ack_seq_num,
+                ack_number,
+                rtt,
+                rtt_variance,
+                buffer_available,
+                packet_recv_rate,
+                est_link_cap,
+            } => {
+                write!(f, "Ack asn({}) an({})", ack_seq_num, ack_number,)?;
+                if let Some(rtt) = rtt {
+                    write!(f, " rtt({})", rtt)?;
+                }
+                if let Some(rttvar) = rtt_variance {
+                    write!(f, " rttvar({})", rttvar)?;
+                }
+                if let Some(buf) = buffer_available {
+                    write!(f, " buf_av({})", buf)?;
+                }
+                if let Some(prr) = packet_recv_rate {
+                    write!(f, " pack_rr({})", prr)?;
+                }
+                if let Some(link_cap) = est_link_cap {
+                    write!(f, " link_cap({})", link_cap)?;
+                }
+                Ok(())
+            }
+            ControlTypes::Nak(nak) => {
+                write!(f, "Nak {:?}", nak) // TODO could be better, show ranges
+            }
+            ControlTypes::Shutdown => write!(f, "Shutdown"),
+            ControlTypes::Ack2(ackno) => write!(f, "Ack2 {}", ackno),
+            ControlTypes::DropRequest {
+                msg_to_drop,
+                first,
+                last,
+            } => write!(f, "DropReq msg({}) {}-{}", msg_to_drop, first, last),
+            ControlTypes::Srt(srt) => write!(f, "{:?}", srt),
+        }
+    }
+}
+
+// pub init_seq_num: SeqNumber,
+
+// /// Max packet size, including UDP/IP headers. 1500 by default
+// pub max_packet_size: u32,
+
+// /// Max flow window size, by default 25600
+// pub max_flow_size: u32,
+
+// /// Designates where in the handshake process this packet lies
+// pub shake_type: ShakeType,
+
+// /// The socket ID that this request is originating from
+// pub socket_id: SocketID,
+
+// /// SYN cookie
+// ///
+// /// "generates a cookie value according to the client address and a
+// /// secret key and sends it back to the client. The client must then send
+// /// back the same cookie to the server."
+// pub syn_cookie: i32,
+
+// /// The IP address of the connecting client
+// pub peer_addr: IpAddr,
+
+// /// The rest of the data, which is HS version specific
+// pub info: HandshakeVSInfo,
+impl Debug for HandshakeControlInfo {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        write!(f, "HS {:?} from({:X})", self.shake_type, self.socket_id.0)
     }
 }
 
