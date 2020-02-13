@@ -19,7 +19,7 @@ rm -rf kcov-master master.tar.gz
 
 run_test() {
     testname=$1
-    for testexec in target/debug/deps/${testname}-*; do
+    for testexec in target/debug/${testname}-*; do
         if [ -x $testexec ]; then 
             echo Doing kcov for $testexec
             mkdir -p "target/cov/$(basename $testexec)"
@@ -30,7 +30,6 @@ run_test() {
 
 # Run each rust file in tests
 run_test srt
-run_test stransmit_rs
 for testpath in tests/*.rs; do
     testfile="$(basename $testpath)"
     testname="${testfile%.*}"

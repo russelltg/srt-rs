@@ -13,7 +13,7 @@ use futures::{ready, stream::Fuse, Future, Sink, Stream, StreamExt};
 
 use tokio::time::{self, delay_for, Delay};
 
-use log::trace;
+use log::{debug, trace};
 
 use rand;
 use rand::distributions::Distribution;
@@ -97,7 +97,7 @@ impl<T: Unpin + Debug> Stream for LossyConn<T> {
             };
 
             if rand::random::<f64>() < pin.loss_rate {
-                trace!("Dropping packet: {:?}", to_send);
+                debug!("Dropping packet: {:?}", to_send);
 
                 // drop
                 continue;
