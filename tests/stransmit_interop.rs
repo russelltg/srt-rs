@@ -1,4 +1,5 @@
 #![recursion_limit = "256"]
+use std::io::ErrorKind;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -13,6 +14,23 @@ use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
 use srt::{ConnInitMethod, SrtSocketBuilder};
+
+macro_rules! allow_not_found {
+    ($x:expr) => {
+        match $x {
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                if std::env::var("SRT_ALLOW_NO_INTEROP_TESTS").is_ok() {
+                    log::error!("could not find executable, skipping");
+                    return Ok(());
+                } else {
+                    return Err(e);
+                }
+            }
+            Err(e) => return Err(e.into()),
+            Ok(s) => s,
+        }
+    };
+}
 
 fn counting_stream(packets: u32, delay: Duration) -> impl Stream<Item = Bytes> {
     stream::iter(0..packets)
@@ -59,11 +77,11 @@ async fn stransmit_client() -> Result<(), Error> {
     const PACKETS: u32 = 1_000;
 
     // stranmsit process
-    let mut stransmit = Command::new("srt-live-transmit")
+    let mut stransmit = allow_not_found!(Command::new("srt-live-transmit")
         .arg("udp://:2002")
         .arg("srt://127.0.0.1:2003?latency=182")
         .arg("-a:no") // don't reconnect
-        .spawn()?;
+        .spawn());
 
     let listener = async {
         // connect to process
@@ -141,11 +159,11 @@ async fn stransmit_server() -> Result<(), Error> {
     let udp_recv = async { udp_recvr(PACKETS * 2 / 3, 2001).await.unwrap() };
 
     // start stransmit process
-    let mut child = Command::new("srt-live-transmit")
+    let mut child = allow_not_found!(Command::new("srt-live-transmit")
         .arg("srt://:2000?latency=123?blocking=true")
         .arg("udp://127.0.0.1:2001")
         .arg("-a:no") // don't auto-reconnect
-        .spawn()?;
+        .spawn());
 
     join!(serv, udp_recv);
 
@@ -154,32 +172,40 @@ async fn stransmit_server() -> Result<(), Error> {
     Ok(())
 }
 
-// #[test]
-// fn stransmit_rendezvous() {
-//     let _ = env_logger::try_init();
+// Doesn't pass!!!! This needs work!!!
+#[tokio::test]
+#[ignore]
+async fn stransmit_rendezvous() -> Result<(), Error> {
+    let _ = env_logger::try_init();
 
-//     const PACKETS: u32 = 1_000;
+    const PACKETS: u32 = 1_000;
 
-//     let sender_thread = thread::spawn(move || {
-//         let sock = SrtSocketBuilder::new(ConnInitMethod::Rendezvous(
-//             "127.0.0.1:2004".parse().unwrap(),
-//         ))
-//         .local_port(2005)
-//         .build()
-//         .unwrap();
+    let sender_fut = async move {
+        let mut sender = SrtSocketBuilder::new_rendezvous("127.0.0.1:2004")
+            .local_port(2005)
+            .connect()
+            .await
+            .unwrap();
 
-//         let conn = sock.wait().unwrap().sender();
+        sender
+            .send_all(
+                &mut counting_stream(PACKETS, Duration::from_millis(1))
+                    .map(|b| Ok((Instant::now(), b))),
+            )
+            .await
+            .unwrap();
+    };
 
-//         conn.send_all(
-//             counting_stream(PACKETS, Duration::from_millis(1)).map(|b| (Instant::now(), b)),
-//         )
-//         .wait()
-//         .unwrap();
-//     });
+    let udp_recvr = async { udp_recvr(PACKETS * 2 / 3, 2006).await.unwrap() };
 
-//     let udp_recvr = udp_recvr(PACKETS * 2 / 3, 2006).unwrap();
+    let mut child = allow_not_found!(Command::new("srt-live-transmit")
+        .arg("srt://127.0.0.1:1234?mode=rendezvous")
+        .arg("udp://127.0.0.1:2006")
+        .spawn());
 
-//     let stransmit = Command::new("srt-live-transmit")
-//         .arg("srt://127.0.0.1:1234?mode=rendezvous")
-//         .arg();
-// }
+    join!(sender_fut, udp_recvr);
+
+    child.wait()?;
+
+    Ok(())
+}

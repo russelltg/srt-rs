@@ -16,12 +16,26 @@ make install
 export PATH=~/.local/bin:$PATH
 cd ../..
 rm -rf kcov-master master.tar.gz
-for file in target/debug/deps/{bidirectional,latency_exchange,lossy_connect,lossy,message_splitting,multiplexer,not_enough_latency,rendezvous,single_packet_tsbpd,srt,stransmit_cmdline}-*; do
-    if [[ -x "$file" ]]; then
-        echo Doing kcov for $file
-        mkdir -p "target/cov/$(basename $file)"
-        kcov --exclude-pattern=/.cargo,/usr/lib,/usr/include,/lib,tests/ --verify "target/cov/$(basename $file)" "$file"
-    fi
+
+run_test() {
+    testname=$1
+    for testexec in target/debug/deps/${testname}-*; do
+        if [ -x $testexec ]; then 
+            echo Doing kcov for $testexec
+            mkdir -p "target/cov/$(basename $testexec)"
+            kcov --exclude-pattern=/.cargo,/usr/lib,/usr/include,/lib,tests/ --verify "target/cov/$(basename $testexec)" "$testexec"
+        fi
+    done
+}
+
+# Run each rust file in tests
+run_test srt
+run_test stransmit_rs
+for testpath in tests/*.rs; do
+    testfile="$(basename $testpath)"
+    testname="${testfile%.*}"
+    run_test $testname
 done
+
 bash <(curl -s https://codecov.io/bash)
 echo "Uploaded code coverage"
