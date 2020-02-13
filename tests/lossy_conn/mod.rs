@@ -13,10 +13,11 @@ use futures::{ready, stream::Fuse, Future, Sink, Stream, StreamExt};
 
 use tokio::time::{self, delay_for, Delay};
 
-use log::{debug, trace};
+use log::{debug, info, trace};
 
-use rand;
 use rand::distributions::Distribution;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use rand_distr::Normal;
 
 pub struct LossyConn<T> {
@@ -29,6 +30,8 @@ pub struct LossyConn<T> {
 
     delay_buffer: BinaryHeap<TTime<T>>,
     delay: Delay,
+
+    generator: StdRng,
 }
 
 struct TTime<T> {
@@ -96,7 +99,7 @@ impl<T: Unpin + Debug> Stream for LossyConn<T> {
                 Some(to_send) => to_send,
             };
 
-            if rand::random::<f64>() < pin.loss_rate {
+            if pin.generator.gen::<f64>() < pin.loss_rate {
                 debug!("Dropping packet: {:?}", to_send);
 
                 // drop
@@ -111,7 +114,7 @@ impl<T: Unpin + Debug> Stream for LossyConn<T> {
             let center = pin.delay_avg.as_secs_f64();
             let stddev = pin.delay_stddev.as_secs_f64();
             let between = Normal::new(center, stddev).unwrap();
-            let delay_secs = f64::abs(between.sample(&mut rand::thread_rng()));
+            let delay_secs = f64::abs(between.sample(&mut pin.generator));
 
             let delay = Duration::from_secs_f64(delay_secs);
 
@@ -161,6 +164,17 @@ impl<T> LossyConn<T> {
         let (a2b, bfroma) = mpsc::channel(10000);
         let (b2a, afromb) = mpsc::channel(10000);
 
+        let s = match std::env::var("LOSSY_CONN_SEED") {
+            Ok(s) => {
+                info!("Using seed from env");
+                s.parse().unwrap()
+            }
+            Err(_) => rand::random(),
+        };
+        let mut r1 = StdRng::seed_from_u64(s);
+        let r2 = StdRng::seed_from_u64(r1.gen());
+
+        info!("Lossy seed is {}", s);
         (
             LossyConn {
                 sender: a2b,
@@ -171,6 +185,8 @@ impl<T> LossyConn<T> {
 
                 delay_buffer: BinaryHeap::new(),
                 delay: delay_for(Duration::from_secs(0)),
+
+                generator: r1,
             },
             LossyConn {
                 sender: b2a,
@@ -181,6 +197,8 @@ impl<T> LossyConn<T> {
 
                 delay_buffer: BinaryHeap::new(),
                 delay: delay_for(Duration::from_secs(0)),
+
+                generator: r2,
             },
         )
     }
