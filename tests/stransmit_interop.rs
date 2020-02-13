@@ -23,7 +23,7 @@ macro_rules! allow_not_found {
                     log::error!("could not find executable, skipping");
                     return Ok(());
                 } else {
-                    return Err(e);
+                    return Err(e.into());
                 }
             }
             Err(e) => return Err(e.into()),
