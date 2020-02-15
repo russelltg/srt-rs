@@ -1,46 +1,46 @@
-use crate::channel::Channel;
-use crate::packet::ControlTypes;
-use crate::tokio::receiver::ReceiverStream;
-use crate::tokio::sender::SenderSink;
+use crate::packet::ControlTypes::*;
+
+use crate::protocol::receiver::{Receiver, ReceiverAlgorithmAction};
+use crate::protocol::sender::{Sender, SenderAlgorithmAction};
+use crate::Packet::*;
 use crate::{Connection, ConnectionSettings, Packet, SrtCongestCtrl};
 
+use std::cmp::min;
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::protocol::handshake::Handshake;
 use bytes::Bytes;
-use failure::Error;
-use futures::channel::oneshot;
-use futures::{stream, FutureExt, Sink, SinkExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
-use log::debug;
-use tokio::spawn;
-
-type PackChan = Channel<(Packet, SocketAddr)>;
+use failure::{bail, format_err, Error};
+use futures::stream::BoxStream;
+use futures::{ready, Future, Sink, Stream, StreamExt};
+use log::{debug, warn};
+use tokio::time::{delay_for, delay_until, Delay};
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
 /// These are bidirectional sockets, meaning data can be sent in either direction.
 /// Use the `Stream + Sink` implementatino to send or receive data.
 ///
-/// The sockets yield and consume `(Bytes, Instant)`, representng the data and the origin instant. This instant
+/// The sockets yield and consume `(Instant, Bytes)`, representng the data and the origin instant. This instant
 /// defines when the packet will be released on the receiving side, at more or less one latency later.
 pub struct SrtSocket {
-    // The two tasks started need to be stopped when this struct is dropped
-    // because those tasks own the socket, so the file handles won't be released
-    // if they aren't stopped.
-    //
-    // The one forwarding packets to the socket isn't a problem because when
-    // sender sides of channels are dropped, their receivers return None, so
-    // that task exits correctly. However, the other one needs to wait to
-    // receive a packet to realize that it cannot send, which could be any
-    // arbitrary time. The fix is to use a oneshot to close that task.
-    // This isn't actually used as a sender, it is just used because when the
-    // sender gets dropped the receiver gets notified immediately.
-    _drop_oneshot: oneshot::Sender<()>,
-    sender: SenderSink<PackChan, SrtCongestCtrl>,
-    receiver: ReceiverStream<PackChan>,
+    sender: Sender,
+    receiver: Receiver,
+
+    stream: BoxStream<'static, Result<(Packet, SocketAddr), Error>>,
+    sink: Pin<Box<dyn Sink<(Packet, SocketAddr), Error = Error> + Send>>,
+
+    release_pack: Option<(Instant, Bytes)>,
+
+    send_queue: VecDeque<(Packet, SocketAddr)>,
+
+    closed: bool,
+
+    timer: Delay,
 }
 
 /// This spawns two new tasks:
@@ -54,69 +54,22 @@ where
         + Send
         + 'static,
 {
-    let (to_s, sender_chan) = Channel::channel(10);
-    let (to_r, recvr_chan) = Channel::channel(10);
-
-    let (mut to_s_tx, to_s_rx) = to_s.split();
-    let (mut to_r_tx, to_r_rx) = to_r.split();
-
-    let (mut sock_tx, mut sock_rx) = sock.split();
-
-    let (drop_tx, drop_rx) = oneshot::channel();
-
-    // socket -> sender, receiver
-    spawn(async move {
-        // this needs to be fused here so it actually doesn't get polled after
-        // completion
-        // the stream doesn't need this as we construct a new futures each time
-        let mut drop_fut = drop_rx.fuse();
-        while let Some((pack, addr)) = futures::select! {
-            recv_e =  sock_rx.try_next().fuse() => recv_e.expect("Underlying stream failed"),
-            _ = &mut drop_fut => None,
-        } {
-            use ControlTypes::*;
-            use Packet::*;
-            let res = match &pack {
-                Data(_) => to_r_tx.send((pack, addr)).await,
-                Control(cpk) => match &cpk.control_type {
-                    Handshake(_) => to_s_tx.send((pack, addr)).await,
-                    KeepAlive => unimplemented!(),
-                    Ack { .. } => to_s_tx.send((pack, addr)).await,
-                    Nak { .. } => to_s_tx.send((pack, addr)).await,
-                    Shutdown => {
-                        to_r_tx
-                            .send((pack.clone(), addr))
-                            .and_then(|_| to_s_tx.send((pack, addr)))
-                            .await
-                    }
-                    Ack2(_) => to_r_tx.send((pack, addr)).await,
-                    DropRequest { .. } => to_s_tx.send((pack, addr)).await,
-                    Srt(_) => unimplemented!(),
-                },
-            };
-            if res.is_err() {
-                break;
-            }
-        }
-        debug!("Closing recv task!");
-    });
-    // sender, receiver -> socket
-    spawn(async move {
-        let mut combined = stream::select(to_s_rx, to_r_rx);
-        while let Some(pa) = combined.try_next().await.expect("underlying stream failed") {
-            sock_tx
-                .send(pa)
-                .await
-                .expect("Failed to send to underlying socket");
-        }
-        debug!("Closing tx task!");
-    });
+    let (sink, stream) = sock.split();
 
     // Arbitrarilly make the sender responsible for returning handshakes
     SrtSocket {
-        _drop_oneshot: drop_tx,
-        sender: SenderSink::new(sender_chan, SrtCongestCtrl, conn.settings, conn.handshake),
-        receiver: ReceiverStream::new(recvr_chan, conn.settings, Handshake::Connector),
+        sender: Sender::new(conn.settings, conn.handshake, SrtCongestCtrl),
+        receiver: Receiver::new(conn.settings, Handshake::Connector),
+        stream: stream.boxed(),
+        sink: Box::pin(sink),
+
+        release_pack: None,
+
+        send_queue: VecDeque::new(),
+
+        closed: false,
+
+        timer: delay_for(Duration::from_secs(0)),
     }
 }
 
@@ -124,29 +77,155 @@ impl SrtSocket {
     pub fn settings(&self) -> &ConnectionSettings {
         self.sender.settings()
     }
+
+    fn handle_outgoing(&mut self, cx: &mut Context) -> Result<(), Error> {
+        while let Poll::Ready(_) = self.sink.as_mut().poll_ready(cx)? {
+            if let Some(p) = self.send_queue.pop_front() {
+                self.sink.as_mut().start_send(p)?;
+            } else {
+                break;
+            }
+        }
+        let _ = self.sink.as_mut().poll_flush(cx)?;
+
+        Ok(())
+    }
+
+    fn tick(&mut self, cx: &mut Context) -> Result<(), Error> {
+        self.handle_outgoing(cx)?;
+
+        // handle incomming packet
+        while let Poll::Ready(res) = self.stream.as_mut().poll_next(cx) {
+            match res {
+                Some(Ok((pack, from))) => match &pack {
+                    Data(_) => self.receiver.handle_packet(Instant::now(), (pack, from)),
+                    Control(cp) => match &cp.control_type {
+                        // sender-responsble packets
+                        Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
+                            self.sender
+                                .handle_packet((pack, from), Instant::now())
+                                .unwrap();
+                        }
+                        // receiver-respnsible
+                        Ack2(_) => self.receiver.handle_packet(Instant::now(), (pack, from)),
+                        // both
+                        Shutdown | KeepAlive => {
+                            self.sender
+                                .handle_packet((pack.clone(), from), Instant::now())
+                                .unwrap();
+                            self.receiver.handle_packet(Instant::now(), (pack, from));
+                        }
+                        Srt(_) => unimplemented!(),
+                    },
+                },
+                None => bail!("Underlying connection closed!"),
+                Some(Err(e)) => return Err(e),
+            }
+        }
+
+        loop {
+            let mut next_timeout = None;
+            // get each's next action
+            match self.sender.next_action(Instant::now()) {
+                SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {}
+                SenderAlgorithmAction::WaitUntil(t) => next_timeout = Some(t),
+                SenderAlgorithmAction::Close => self.closed = true,
+            }
+
+            while let Some(out) = self.sender.pop_output() {
+                self.send_queue.push_back(out);
+            }
+
+            match self.receiver.next_algorithm_action(Instant::now()) {
+                ReceiverAlgorithmAction::TimeBoundedReceive(t2) => {
+                    next_timeout = Some(next_timeout.map_or(t2, |t1| min(t1, t2)));
+                }
+                ReceiverAlgorithmAction::SendControl(cp, addr) => {
+                    self.send_queue.push_back((Control(cp), addr))
+                }
+                ReceiverAlgorithmAction::OutputData(ib) => {
+                    if self.release_pack.is_some() {
+                        warn!("Dropping packet, receiver hasn't been polled")
+                    }
+                    self.release_pack = Some(ib);
+                }
+                ReceiverAlgorithmAction::Close => self.closed = true,
+            };
+
+            self.handle_outgoing(cx)?;
+
+            if let Some(to) = next_timeout {
+                self.timer = delay_until(to.into());
+                if let Poll::Ready(_) = Pin::new(&mut self.timer).poll(cx) {
+                    continue;
+                }
+                break;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Stream for SrtSocket {
     type Item = Result<(Instant, Bytes), Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.receiver).poll_next(cx)
+        if self.closed {
+            return Poll::Ready(None);
+        }
+        if let Some(ib) = self.release_pack.take() {
+            return Poll::Ready(Some(Ok(ib)));
+        }
+
+        self.as_mut().tick(cx)?;
+
+        if let Some(ib) = self.release_pack.take() {
+            return Poll::Ready(Some(Ok(ib)));
+        }
+
+        Poll::Pending
     }
 }
 
 impl Sink<(Instant, Bytes)> for SrtSocket {
     type Error = Error;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.sender).poll_ready(cx)
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        if self.closed {
+            return Poll::Ready(Err(format_err!("Sink is closed")));
+        }
+        Poll::Ready(Ok(()))
     }
     fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Self::Error> {
-        Pin::new(&mut self.sender).start_send(item)
+        if self.closed {
+            bail!("Sink is closed");
+        }
+        debug!("start_send called");
+        self.as_mut().sender.handle_data(item);
+        Ok(())
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.sender).poll_flush(cx)
+        self.as_mut().tick(cx)?;
+        if self.as_mut().sender.is_flushed() {
+            return Poll::Ready(Ok(()));
+        } else {
+            return Poll::Pending;
+        }
     }
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.sender).poll_close(cx)
+        ready!(self.as_mut().poll_flush(cx))?;
+
+        let s = self.as_mut().get_mut();
+
+        if !s.closed {
+            s.sender.handle_close(Instant::now());
+            s.closed = true;
+        }
+        s.tick(cx)?;
+
+        if !s.send_queue.is_empty() {
+            return Poll::Pending;
+        }
+        return Poll::Ready(ready!(s.sink.as_mut().poll_flush(cx)));
     }
 }

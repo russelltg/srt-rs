@@ -164,18 +164,22 @@ impl Sender {
         self.transmit_buffer.push_data((b, t));
     }
 
-    pub fn handle_snd_timer(&mut self, now: Instant) {
+    fn handle_snd_timer(&mut self, now: Instant) {
         self.snd_timer.reset(now);
         self.step = SenderAlgorithmStep::Step1;
     }
 
-    pub fn handle_packet(&mut self, packet: (Packet, SocketAddr), now: Instant) -> SenderResult {
-        let (packet, from) = packet;
-
+    pub fn handle_packet(
+        &mut self,
+        (packet, from): (Packet, SocketAddr),
+        now: Instant,
+    ) -> SenderResult {
         // TODO: record/report packets from invalid hosts?
         if from != self.settings.remote {
             return Ok(());
         }
+
+        trace!("Received packet {:?}", packet);
 
         match packet {
             Control(control) => self.handle_control_packet(control, now),
@@ -198,12 +202,16 @@ impl Sender {
             .map(move |packet| (packet, to))
     }
 
-    pub fn next_action(&mut self) -> SenderAlgorithmAction {
+    pub fn next_action(&mut self, now: Instant) -> SenderAlgorithmAction {
         use SenderAlgorithmAction::*;
         use SenderAlgorithmStep::*;
 
         if self.close {
             return Close;
+        }
+
+        if let Some(exp_time) = self.snd_timer.check_expired(now) {
+            self.handle_snd_timer(exp_time);
         }
 
         if self.step == Step6 {

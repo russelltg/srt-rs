@@ -120,22 +120,22 @@ where
         Ok(())
     }
 
-    fn check_snd_timer(&mut self, cx: &mut Context) -> bool {
-        if let Some(timer) = &mut self.snd_wait {
-            match Pin::new(timer).poll(cx) {
-                Poll::Pending => return false,
-                Poll::Ready(_) => {
-                    self.snd_wait = None;
-                    self.sender.handle_snd_timer(Instant::now());
-                }
-            }
-        }
-        true
-    }
+    // fn check_snd_timer(&mut self, cx: &mut Context) -> bool {
+    //     if let Some(timer) = &mut self.snd_wait {
+    //         match Pin::new(timer).poll(cx) {
+    //             Poll::Pending => return false,
+    //             Poll::Ready(_) => {
+    //                 self.snd_wait = None;
+    //                 self.sender.handle_snd_timer(Instant::now());
+    //             }
+    //         }
+    //     }
+    //     true
+    // }
 
     fn process_next_action(&mut self, cx: &mut Context) -> Poll<Result<(), Error>> {
         use SenderAlgorithmAction::*;
-        match self.sender.next_action() {
+        match self.sender.next_action(Instant::now()) {
             WaitForData | WaitUntilAck => {
                 cx.waker().wake_by_ref();
                 Poll::Pending
@@ -163,10 +163,6 @@ where
         self.receive_packets(cx)?;
 
         self.send_packets(cx)?;
-
-        if !self.check_snd_timer(cx) {
-            return Poll::Pending;
-        }
 
         self.process_next_action(cx)
     }
