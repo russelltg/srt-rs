@@ -330,8 +330,10 @@ impl Debug for ControlPacket {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "CTRL ts({}) dst({:X}) {:?}",
-            self.timestamp, self.dest_sockid.0, self.control_type
+            "{{{:?} ts={:.4}s dst={:X}}}",
+            self.control_type,
+            self.timestamp as f64 / 1e6,
+            self.dest_sockid.0,
         )
     }
 }
@@ -715,34 +717,35 @@ impl Debug for ControlTypes {
                 packet_recv_rate,
                 est_link_cap,
             } => {
-                write!(f, "Ack asn({}) an({})", ack_seq_num, ack_number,)?;
+                write!(f, "Ack(asn={} an={}", ack_seq_num, ack_number,)?;
                 if let Some(rtt) = rtt {
-                    write!(f, " rtt({})", rtt)?;
+                    write!(f, " rtt={}", rtt)?;
                 }
                 if let Some(rttvar) = rtt_variance {
-                    write!(f, " rttvar({})", rttvar)?;
+                    write!(f, " rttvar={}", rttvar)?;
                 }
                 if let Some(buf) = buffer_available {
-                    write!(f, " buf_av({})", buf)?;
+                    write!(f, " buf_av={}", buf)?;
                 }
                 if let Some(prr) = packet_recv_rate {
-                    write!(f, " pack_rr({})", prr)?;
+                    write!(f, " pack_rr={}", prr)?;
                 }
                 if let Some(link_cap) = est_link_cap {
-                    write!(f, " link_cap({})", link_cap)?;
+                    write!(f, " link_cap{}=", link_cap)?;
                 }
+                write!(f, ")")?;
                 Ok(())
             }
             ControlTypes::Nak(nak) => {
-                write!(f, "Nak {:?}", nak) // TODO could be better, show ranges
+                write!(f, "Nak({:?})", nak) // TODO could be better, show ranges
             }
             ControlTypes::Shutdown => write!(f, "Shutdown"),
-            ControlTypes::Ack2(ackno) => write!(f, "Ack2 {}", ackno),
+            ControlTypes::Ack2(ackno) => write!(f, "Ack2({})", ackno),
             ControlTypes::DropRequest {
                 msg_to_drop,
                 first,
                 last,
-            } => write!(f, "DropReq msg({}) {}-{}", msg_to_drop, first, last),
+            } => write!(f, "DropReq(msg={} {}-{})", msg_to_drop, first, last),
             ControlTypes::Srt(srt) => write!(f, "{:?}", srt),
         }
     }

@@ -2,6 +2,9 @@ use bitflags::bitflags;
 use bytes::{Buf, BufMut, Bytes};
 use failure::Error;
 
+use std::cmp::min;
+use std::fmt;
+
 use crate::{MsgNumber, SeqNumber, SocketID};
 
 /// A UDT packet carrying data
@@ -20,7 +23,7 @@ use crate::{MsgNumber, SeqNumber, SocketID};
 ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /// ```
 /// (from <https://tools.ietf.org/html/draft-gg-udt-03>)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct DataPacket {
     /// The sequence number is packet based, so if packet n has
     /// sequence number `i`, the next would have `i + 1`
@@ -58,6 +61,7 @@ bitflags! {
     /// FIRST means it's the beginning of a longer message
     /// 0 means it's the middle of a longer message
     pub struct PacketLocation: u8 {
+        const MIDDLE   = 0b0000_0000;
         const FIRST    = 0b1000_0000;
         const LAST     = 0b0100_0000;
     }
@@ -104,5 +108,21 @@ impl DataPacket {
         into.put_i32(self.timestamp);
         into.put_u32(self.dest_sockid.0);
         into.put(&self.payload[..]);
+    }
+}
+
+impl fmt::Debug for DataPacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "{{DATA sn={} loc={:?} msgno={} ts={:.4} dst={:X} payload=[len={}, start={:?}]}}",
+            self.seq_number.0,
+            self.message_loc,
+            self.message_number.0,
+            self.timestamp as f64 / 1e6,
+            self.dest_sockid.0,
+            self.payload.len(),
+            self.payload.slice(..min(8, self.payload.len())),
+        )
     }
 }
