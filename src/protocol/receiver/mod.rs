@@ -257,9 +257,8 @@ impl Receiver {
         if self.timers.nak.check_expired(now).is_some() {
             self.on_nak_event(now);
         }
-        if self.timers.exp.check_expired(now).is_some() && self.on_exp_event(now) {
-            self.shutdown_flag = true;
-            info!("16 consequtive exp events, timeout");
+        if self.timers.exp.check_expired(now).is_some() {
+            self.on_exp_event(now);
         }
 
         if let Some(data) = self.pop_data(now) {
@@ -629,10 +628,13 @@ impl Receiver {
     }
 
     // return if we should shutdown
-    fn on_exp_event(&mut self, _now: Instant) -> bool {
+    fn on_exp_event(&mut self, _now: Instant) {
         self.exp_count += 1;
         debug!("Exp! ct={}", self.exp_count);
-        self.exp_count > 16
+        if self.exp_count > 16 {
+            self.shutdown_flag = true;
+            info!("16 consequtive exp events, timeout");
+        }
     }
 
     fn next_timer(&self, now: Instant) -> Instant {
