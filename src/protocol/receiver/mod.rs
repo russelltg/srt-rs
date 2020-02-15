@@ -1,5 +1,5 @@
-use std::cmp;
 use std::cmp::Ordering;
+use std::cmp::{max, min};
 use std::collections::VecDeque;
 use std::iter::Iterator;
 use std::net::SocketAddr;
@@ -33,8 +33,6 @@ struct ReceiveTimers {
     ack: Timer,
     nak: Timer,
     exp: Timer,
-    //pub snd: Timer,
-    timeout: Timer,
 }
 
 impl ReceiveTimers {
@@ -45,7 +43,6 @@ impl ReceiveTimers {
             ack: Timer::new(syn, now),
             nak: Timer::new(syn, now),
             exp: Timer::new(syn, now),
-            timeout: Timer::new(syn, now),
         }
     }
 
@@ -54,16 +51,18 @@ impl ReceiveTimers {
         let rtt_var = Duration::from_micros(rtt_var as u64);
         self.nak.set_period(4 * rtt + rtt_var + self.syn.period());
         self.ack.set_period(4 * rtt + rtt_var + self.syn.period());
-        self.exp.set_period(4 * rtt + rtt_var + self.syn.period());
+        // 0.5s min, accordiding to page 9
+        self.exp.set_period(max(
+            4 * rtt + rtt_var + self.syn.period(),
+            Duration::from_millis(500),
+        ));
     }
 
     pub fn next_timer(&self, now: Instant) -> Instant {
-        use std::cmp::{max, min};
         let timer = now;
         let timer = min(timer, self.ack.next_instant());
         let timer = min(timer, self.nak.next_instant());
         let timer = min(timer, self.exp.next_instant());
-        let timer = min(timer, self.timeout.next_instant());
         max(timer, now)
     }
 }
@@ -170,7 +169,7 @@ impl Receiver {
 
         Receiver {
             settings,
-            timers: crate::protocol::receiver::ReceiveTimers::new(settings.socket_start_time),
+            timers: ReceiveTimers::new(settings.socket_start_time),
             control_packets: VecDeque::new(),
             data_release: VecDeque::new(),
             handshake,
@@ -199,7 +198,7 @@ impl Receiver {
         let (packet, from) = packet;
 
         self.exp_count = 1;
-        self.timers.timeout.reset(now);
+        self.timers.exp.reset(now);
 
         // We don't care about packets from elsewhere
         if from != self.settings.remote {
@@ -259,11 +258,7 @@ impl Receiver {
             self.on_nak_event(now);
         }
         if self.timers.exp.check_expired(now).is_some() {
-            // TODO: what about EXP?
             self.on_exp_event(now);
-        }
-        if self.timers.timeout.check_expired(now).is_some() {
-            self.on_timeout();
         }
 
         if let Some(data) = self.pop_data(now) {
@@ -586,7 +581,7 @@ impl Receiver {
         }
 
         // record that we got this packet
-        self.lrsn = cmp::max(data.seq_number + 1, self.lrsn);
+        self.lrsn = max(data.seq_number + 1, self.lrsn);
 
         // we've already gotten this packet, drop it
         if self.receive_buffer.next_release() > data.seq_number {
@@ -632,10 +627,14 @@ impl Receiver {
         self.control_packets.pop_front()
     }
 
-    fn on_exp_event(&mut self, _now: Instant) {}
-
-    fn on_timeout(&mut self) {
+    // return if we should shutdown
+    fn on_exp_event(&mut self, _now: Instant) {
         self.exp_count += 1;
+        debug!("Exp! ct={}", self.exp_count);
+        if self.exp_count > 16 {
+            self.shutdown_flag = true;
+            info!("16 consequtive exp events, timeout");
+        }
     }
 
     fn next_timer(&self, now: Instant) -> Instant {
