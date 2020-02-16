@@ -90,12 +90,8 @@ impl<T: Unpin + Debug> Stream for LossyConn<T> {
             let to_send = match ready!(Pin::new(&mut pin.receiver).poll_next(cx)) {
                 None => {
                     warn!("Connection ended");
-                    // There can't be any more packets AND there are no packets remaining
-                    if pin.delay_buffer.is_empty() {
-                        return Poll::Ready(None);
-                    } else {
-                        return Poll::Pending;
-                    }
+                    // just always return Pening--that's what UDP sockets do, they don't "end"
+                    return Poll::Pending;
                 }
                 Some(to_send) => to_send,
             };

@@ -7,7 +7,7 @@ use log::{debug, info};
 
 use crate::packet::PacketLocation;
 use crate::protocol::{TimeBase, TimeStamp};
-use crate::{ConnectionSettings, DataPacket, SeqNumber};
+use crate::{ConnectionSettings, DataPacket, SeqNumber, SocketID};
 
 pub struct RecvBuffer {
     // stores the incoming packets as they arrive
@@ -23,6 +23,8 @@ pub struct RecvBuffer {
     /// Not necessarily the actual decided on latency, which
     /// is the max of both side's respective latencies.
     tsbpd_latency: Duration,
+
+    local_sockid: SocketID,
 }
 
 impl RecvBuffer {
@@ -31,18 +33,25 @@ impl RecvBuffer {
             settings.init_seq_num,
             TimeBase::from_raw(settings.socket_start_time),
             settings.tsbpd_latency,
+            settings.local_sockid,
         )
     }
 
     /// Creates a `RecvBuffer`
     ///
     /// * `head` - The sequence number of the next packet
-    pub fn new(head: SeqNumber, time_base: TimeBase, tsbpd_latency: Duration) -> Self {
+    pub fn new(
+        head: SeqNumber,
+        time_base: TimeBase,
+        tsbpd_latency: Duration,
+        local_sockid: SocketID,
+    ) -> Self {
         Self {
             buffer: VecDeque::new(),
             head,
             time_base,
             tsbpd_latency,
+            local_sockid,
         }
     }
 
@@ -126,7 +135,8 @@ impl RecvBuffer {
 
         if self.time_base.instant_from(pack.timestamp) + self.tsbpd_latency <= now {
             debug!(
-                "Message was deemed ready for release, Now={:?}, Ts={:?}, dT={:?}, Latency={:?}, buf.len={}, sn={}, npackets={}",
+                "Message for {:X} was deemed ready for release, Now={:?}, Ts={:?}, dT={:?}, Latency={:?}, buf.len={}, sn={}, npackets={}",
+                self.local_sockid.0,
                 now - self.time_base.instant_from(0),
                 Duration::from_micros(pack.timestamp as u64),
                 now - self.time_base.instant_from(pack.timestamp),
@@ -255,7 +265,12 @@ mod test {
     }
 
     fn new_buffer(head: SeqNumber) -> RecvBuffer {
-        RecvBuffer::new(head, TimeBase::new(), Duration::from_millis(100))
+        RecvBuffer::new(
+            head,
+            TimeBase::new(),
+            Duration::from_millis(100),
+            rand::random(),
+        )
     }
 
     #[test]

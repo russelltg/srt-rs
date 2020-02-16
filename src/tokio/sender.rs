@@ -145,7 +145,7 @@ where
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            Close => Poll::Ready(Err(io::Error::new(
+            Timeout | Close => Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::ConnectionAborted,
                 "Connection received shutdown",
             )

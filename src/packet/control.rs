@@ -731,7 +731,7 @@ impl Debug for ControlTypes {
                     write!(f, " pack_rr={}", prr)?;
                 }
                 if let Some(link_cap) = est_link_cap {
-                    write!(f, " link_cap{}=", link_cap)?;
+                    write!(f, " link_cap={}", link_cap)?;
                 }
                 write!(f, ")")?;
                 Ok(())

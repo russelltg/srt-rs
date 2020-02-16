@@ -104,7 +104,7 @@ where
                 OutputData(data) => {
                     return Poll::Ready(Some(Ok(data)));
                 }
-                Close => {
+                Timeout | Close => {
                     info!("Shutdown received and all packets released, finishing up");
                     return Poll::Ready(None);
                 }

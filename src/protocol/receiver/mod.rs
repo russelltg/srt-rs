@@ -25,6 +25,7 @@ pub enum ReceiverAlgorithmAction {
     TimeBoundedReceive(Instant),
     SendControl(ControlPacket, SocketAddr),
     OutputData((Instant, Bytes)),
+    Timeout,
     Close,
 }
 
@@ -58,12 +59,15 @@ impl ReceiveTimers {
         ));
     }
 
-    pub fn next_timer(&self, now: Instant) -> Instant {
-        let timer = now;
-        let timer = min(timer, self.ack.next_instant());
-        let timer = min(timer, self.nak.next_instant());
-        let timer = min(timer, self.exp.next_instant());
-        max(timer, now)
+    pub fn next_timer(&self) -> Instant {
+        *[
+            self.ack.next_instant(),
+            self.nak.next_instant(),
+            self.exp.next_instant(),
+        ]
+        .iter()
+        .min()
+        .unwrap()
     }
 }
 
@@ -156,6 +160,9 @@ pub struct Receiver {
 
     /// Shutdown flag. This is set so when the buffer is flushed, it returns Async::Ready(None)
     shutdown_flag: bool,
+
+    /// Has this entity timed out?
+    timeout_flag: bool,
 }
 
 impl Receiver {
@@ -186,6 +193,7 @@ impl Receiver {
             lr_ack_acked: (0, init_seq_num),
             receive_buffer: RecvBuffer::with(&settings),
             shutdown_flag: false,
+            timeout_flag: false,
         }
     }
 
@@ -194,9 +202,7 @@ impl Receiver {
     }
 
     // handles an incoming a packet
-    pub fn handle_packet(&mut self, now: Instant, packet: (Packet, SocketAddr)) {
-        let (packet, from) = packet;
-
+    pub fn handle_packet(&mut self, now: Instant, (packet, from): (Packet, SocketAddr)) {
         self.exp_count = 1;
         self.timers.exp.reset(now);
 
@@ -261,19 +267,26 @@ impl Receiver {
             self.on_exp_event(now);
         }
 
-        if let Some(data) = self.pop_data(now) {
+        if self.timeout_flag {
+            Timeout
+        } else if let Some(data) = self.pop_data(now) {
             OutputData(data)
-        } else if self.shutdown_flag && self.receive_buffer.next_msg_ready().is_none() {
-            Close
         } else if let Some(Packet::Control(packet)) = self.pop_conotrol_packet() {
             SendControl(packet, self.settings.remote)
+        } else if self.shutdown_flag && self.is_flushed() {
+            Close
         } else {
             // 2) Start time bounded UDP receiving. If no packet arrives, go to 1).
-            TimeBoundedReceive(self.next_timer(now))
+            TimeBoundedReceive(self.next_timer())
         }
     }
 
+    pub fn is_flushed(&self) -> bool {
+        self.receive_buffer.next_msg_ready().is_none()
+    }
+
     fn on_ack_event(&mut self, now: Instant) {
+        trace!("Ack event hit {:X}", self.settings.local_sockid.0);
         // get largest inclusive received packet number
         let ack_number = match self.loss_list.first() {
             // There is an element in the loss list
@@ -590,13 +603,6 @@ impl Receiver {
         }
 
         self.receive_buffer.add(data.clone());
-
-        trace!(
-            "Received data packet seq_num={}, loc={:?}, buffer={:?}",
-            data.seq_number,
-            data.message_loc,
-            self.receive_buffer,
-        );
     }
 
     // send a NAK, and return the future
@@ -630,20 +636,21 @@ impl Receiver {
     // return if we should shutdown
     fn on_exp_event(&mut self, _now: Instant) {
         self.exp_count += 1;
-        debug!("Exp! ct={}", self.exp_count);
+        debug!(
+            "{:X} exp hit! ct={}",
+            self.settings.local_sockid.0, self.exp_count
+        );
         if self.exp_count > 16 {
-            self.shutdown_flag = true;
+            self.timeout_flag = true;
             info!("16 consequtive exp events, timeout");
         }
     }
 
-    fn next_timer(&self, now: Instant) -> Instant {
-        std::cmp::min(
-            self.timers.next_timer(now),
-            self.receive_buffer
-                .next_message_release_time()
-                .unwrap_or(now),
-        )
+    fn next_timer(&self) -> Instant {
+        let timer_t = self.timers.next_timer();
+        self.receive_buffer
+            .next_message_release_time()
+            .map_or(timer_t, |rel_t| min(rel_t, timer_t))
     }
 
     fn send_control(&mut self, now: Instant, control: ControlTypes) {

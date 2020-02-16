@@ -13,8 +13,6 @@ const PACKET_SIZE: usize = 1 << 19;
 async fn message_splitting() -> Result<(), Error> {
     env_logger::init();
 
-    info!("Hi");
-
     let sender = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:11124".parse().unwrap()))
         .connect();
 

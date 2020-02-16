@@ -17,7 +17,7 @@ use bytes::Bytes;
 use failure::{bail, format_err, Error};
 use futures::stream::BoxStream;
 use futures::{ready, Future, Sink, Stream, StreamExt};
-use log::{debug, warn};
+use log::{debug, trace, warn};
 use tokio::time::{delay_for, delay_until, Delay};
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
@@ -34,8 +34,7 @@ pub struct SrtSocket {
     stream: BoxStream<'static, Result<(Packet, SocketAddr), Error>>,
     sink: Pin<Box<dyn Sink<(Packet, SocketAddr), Error = Error> + Send>>,
 
-    release_pack: Option<(Instant, Bytes)>,
-
+    release_queue: VecDeque<(Instant, Bytes)>,
     send_queue: VecDeque<(Packet, SocketAddr)>,
 
     closed: bool,
@@ -63,8 +62,7 @@ where
         stream: stream.boxed(),
         sink: Box::pin(sink),
 
-        release_pack: None,
-
+        release_queue: VecDeque::new(),
         send_queue: VecDeque::new(),
 
         closed: false,
@@ -81,7 +79,12 @@ impl SrtSocket {
     fn handle_outgoing(&mut self, cx: &mut Context) -> Result<(), Error> {
         while let Poll::Ready(_) = self.sink.as_mut().poll_ready(cx)? {
             if let Some(p) = self.send_queue.pop_front() {
+                trace!("Sending {:?} to underlying socket", p.0);
                 self.sink.as_mut().start_send(p)?;
+
+                // TODO: remove this!!!!!!!
+                cx.waker().wake_by_ref();
+                break;
             } else {
                 break;
             }
@@ -124,42 +127,98 @@ impl SrtSocket {
         }
 
         loop {
-            let mut next_timeout = None;
+            let mut did_sender_timeout = false;
+
             // get each's next action
-            match self.sender.next_action(Instant::now()) {
-                SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {}
-                SenderAlgorithmAction::WaitUntil(t) => next_timeout = Some(t),
-                SenderAlgorithmAction::Close => self.closed = true,
-            }
+            let sender_timeout = match self.sender.next_action(Instant::now()) {
+                SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => None,
+                SenderAlgorithmAction::WaitUntil(t) => Some(t),
+                SenderAlgorithmAction::Timeout => {
+                    did_sender_timeout = true;
+                    None
+                }
+                SenderAlgorithmAction::Close => {
+                    trace!("Send returned close");
+                    self.closed = true;
+                    None
+                }
+            };
 
             while let Some(out) = self.sender.pop_output() {
                 self.send_queue.push_back(out);
             }
 
-            match self.receiver.next_algorithm_action(Instant::now()) {
-                ReceiverAlgorithmAction::TimeBoundedReceive(t2) => {
-                    next_timeout = Some(next_timeout.map_or(t2, |t1| min(t1, t2)));
-                }
-                ReceiverAlgorithmAction::SendControl(cp, addr) => {
-                    self.send_queue.push_back((Control(cp), addr))
-                }
-                ReceiverAlgorithmAction::OutputData(ib) => {
-                    if self.release_pack.is_some() {
-                        warn!("Dropping packet, receiver hasn't been polled")
+            let mut did_recvr_timeout = false;
+            let recvr_timeout = loop {
+                match self.receiver.next_algorithm_action(Instant::now()) {
+                    ReceiverAlgorithmAction::TimeBoundedReceive(t2) => {
+                        break Some(t2);
                     }
-                    self.release_pack = Some(ib);
-                }
-                ReceiverAlgorithmAction::Close => self.closed = true,
+                    ReceiverAlgorithmAction::SendControl(cp, addr) => {
+                        self.send_queue.push_back((Control(cp), addr))
+                    }
+                    ReceiverAlgorithmAction::OutputData(ib) => {
+                        self.release_queue.push_back(ib);
+                    }
+                    ReceiverAlgorithmAction::Timeout => {
+                        did_recvr_timeout = true;
+                        break None;
+                    }
+                    ReceiverAlgorithmAction::Close => {
+                        trace!("Recv returned close");
+                        self.closed = true;
+                        break None;
+                    }
+                };
             };
+
+            if did_recvr_timeout && did_recvr_timeout {
+                self.closed = true;
+            }
+
+            let timeout = match (sender_timeout, recvr_timeout) {
+                (Some(s), Some(r)) => Some(min(s, r)),
+                (Some(s), None) => Some(s),
+                (None, Some(r)) => Some(r),
+                (None, None) => None,
+            };
+
+            if self.closed {
+                break;
+            }
 
             self.handle_outgoing(cx)?;
 
-            if let Some(to) = next_timeout {
+            if let Some(to) = timeout {
                 self.timer = delay_until(to.into());
                 if let Poll::Ready(_) = Pin::new(&mut self.timer).poll(cx) {
                     continue;
+                } else {
+                    let now = Instant::now();
+                    trace!(
+                        "{:X} scheduling wakeup at {}{:?} from {}{}",
+                        self.sender.settings().local_sockid.0,
+                        if to > now { "+" } else { "-" },
+                        if to > now { to - now } else { now - to },
+                        if sender_timeout.is_some() {
+                            "sender "
+                        } else {
+                            ""
+                        },
+                        if recvr_timeout.is_some() {
+                            "receiver"
+                        } else {
+                            ""
+                        }
+                    );
+
+                    break;
                 }
-                break;
+            } else {
+                trace!(
+                    "{:X} not scheduling wakeup!!!",
+                    self.sender.settings().local_sockid.0
+                );
             }
         }
         Ok(())
@@ -173,13 +232,15 @@ impl Stream for SrtSocket {
         if self.closed {
             return Poll::Ready(None);
         }
-        if let Some(ib) = self.release_pack.take() {
+        if let Some(ib) = self.release_queue.pop_front() {
+            trace!("Releasing");
             return Poll::Ready(Some(Ok(ib)));
         }
 
         self.as_mut().tick(cx)?;
 
-        if let Some(ib) = self.release_pack.take() {
+        if let Some(ib) = self.release_queue.pop_front() {
+            trace!("Releasing");
             return Poll::Ready(Some(Ok(ib)));
         }
 
@@ -200,32 +261,30 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
         if self.closed {
             bail!("Sink is closed");
         }
-        debug!("start_send called");
         self.as_mut().sender.handle_data(item);
         Ok(())
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        self.as_mut().tick(cx)?;
-        if self.as_mut().sender.is_flushed() {
+        self.tick(cx)?;
+        if self.sender.is_flushed() && self.receiver.is_flushed() {
             return Poll::Ready(Ok(()));
         } else {
             return Poll::Pending;
         }
     }
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        if !self.closed {
+            self.sender.handle_close(Instant::now());
+            self.receiver.handle_shutdown();
+        }
+
         ready!(self.as_mut().poll_flush(cx))?;
 
-        let s = self.as_mut().get_mut();
+        self.as_mut().tick(cx)?;
 
-        if !s.closed {
-            s.sender.handle_close(Instant::now());
-            s.closed = true;
-        }
-        s.tick(cx)?;
-
-        if !s.send_queue.is_empty() {
+        if !self.send_queue.is_empty() {
             return Poll::Pending;
         }
-        return Poll::Ready(ready!(s.sink.as_mut().poll_flush(cx)));
+        return Poll::Ready(ready!(self.sink.as_mut().poll_flush(cx)));
     }
 }
