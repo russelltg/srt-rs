@@ -1,4 +1,3 @@
-
 use bytes::Bytes;
 use failure::Error;
 use futures::prelude::*;
