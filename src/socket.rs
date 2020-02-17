@@ -268,9 +268,9 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         self.tick(cx)?;
         if self.sender.is_flushed() && self.receiver.is_flushed() {
-            return Poll::Ready(Ok(()));
+            Poll::Ready(Ok(()))
         } else {
-            return Poll::Pending;
+            Poll::Pending
         }
     }
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
@@ -286,6 +286,6 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
         if !self.send_queue.is_empty() {
             return Poll::Pending;
         }
-        return Poll::Ready(ready!(self.sink.as_mut().poll_flush(cx)));
+        Poll::Ready(ready!(self.sink.as_mut().poll_flush(cx)))
     }
 }
