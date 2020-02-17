@@ -17,7 +17,7 @@ use bytes::Bytes;
 use failure::{bail, format_err, Error};
 use futures::stream::BoxStream;
 use futures::{ready, Future, Sink, Stream, StreamExt};
-use log::{debug, trace, warn};
+use log::trace;
 use tokio::time::{delay_for, delay_until, Delay};
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
@@ -128,6 +128,7 @@ impl SrtSocket {
 
         loop {
             let mut did_sender_timeout = false;
+            let mut does_sender_want_close = false;
 
             // get each's next action
             let sender_timeout = match self.sender.next_action(Instant::now()) {
@@ -139,7 +140,7 @@ impl SrtSocket {
                 }
                 SenderAlgorithmAction::Close => {
                     trace!("Send returned close");
-                    self.closed = true;
+                    does_sender_want_close = true;
                     None
                 }
             };
@@ -166,13 +167,13 @@ impl SrtSocket {
                     }
                     ReceiverAlgorithmAction::Close => {
                         trace!("Recv returned close");
-                        self.closed = true;
+                        self.closed = does_sender_want_close;
                         break None;
                     }
                 };
             };
 
-            if did_recvr_timeout && did_recvr_timeout {
+            if did_recvr_timeout && did_sender_timeout {
                 self.closed = true;
             }
 
@@ -229,12 +230,12 @@ impl Stream for SrtSocket {
     type Item = Result<(Instant, Bytes), Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        if self.closed {
-            return Poll::Ready(None);
-        }
         if let Some(ib) = self.release_queue.pop_front() {
             trace!("Releasing");
             return Poll::Ready(Some(Ok(ib)));
+        }
+        if self.closed {
+            return Poll::Ready(None);
         }
 
         self.as_mut().tick(cx)?;

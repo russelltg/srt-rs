@@ -520,8 +520,8 @@ impl ControlTypes {
             0x2 => {
                 // ACK
 
-                // make sure there are enough bytes -- 6 32-bit words
-                if buf.remaining() < 6 * 4 {
+                // make sure there are enough bytes -- only one required field
+                if buf.remaining() < 4 {
                     bail!("Not enough data for an ack packet");
                 }
 
@@ -1007,5 +1007,15 @@ mod test {
     fn raw_handshake_crypto_pt2() {
         let packet_data = hex::decode("8000000000000000000000000C110D94000000050000000374B7526E000005DC00002000FFFFFFFF18C1CED1F3819B720100007F00000000000000000000000000020003000103010000003F03E803E80004000E12202901000000000200020000000404D3B3D84BE1188A4EBDA4DA16EA65D522D82DE544E1BE06B6ED8128BF15AA4E18EC50EAA95546B101").unwrap();
         let _packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..])).unwrap();
+    }
+
+    #[test]
+    fn short_ack() {
+        // this is a packet received from the reference implementation that crashed the parser
+        let packet_data =
+            hex::decode("800200000000000e000246e5d96d5e1a389c24780000452900007bb000001fa9")
+                .unwrap();
+
+        let _cp = ControlPacket::parse(&mut Cursor::new(packet_data)).unwrap();
     }
 }
