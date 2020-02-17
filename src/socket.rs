@@ -81,10 +81,6 @@ impl SrtSocket {
             if let Some(p) = self.send_queue.pop_front() {
                 trace!("Sending {:?} to underlying socket", p.0);
                 self.sink.as_mut().start_send(p)?;
-
-                // TODO: remove this!!!!!!!
-                cx.waker().wake_by_ref();
-                break;
             } else {
                 break;
             }
