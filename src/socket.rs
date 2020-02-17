@@ -77,13 +77,15 @@ impl SrtSocket {
     }
 
     fn handle_outgoing(&mut self, cx: &mut Context) -> Result<(), Error> {
-        while let Poll::Ready(_) = self.sink.as_mut().poll_ready(cx)? {
-            if let Some(p) = self.send_queue.pop_front() {
+        if let Some(p) = self.send_queue.pop_front() {
+            if let Poll::Ready(_) = self.sink.as_mut().poll_ready(cx)? {
                 trace!("Sending {:?} to underlying socket", p.0);
                 self.sink.as_mut().start_send(p)?;
-            } else {
-                break;
             }
+        }
+        // rewake this thread if there are still more to send
+        if !self.send_queue.is_empty() {
+            cx.waker().wake_by_ref();
         }
         let _ = self.sink.as_mut().poll_flush(cx)?;
 
