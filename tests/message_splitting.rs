@@ -27,23 +27,23 @@ async fn message_splitting() -> Result<(), Error> {
     // send a really really long packet
     let long_message = Bytes::from(&[b'8'; PACKET_SIZE][..]);
 
-    let (_, data_vec) = futures::join!(
-        async {
-            sender.send((Instant::now(), long_message)).await?;
-            sender.close().await?;
-            Ok(()) as Result<_, Error>
-        },
-        recvr.collect::<Vec<_>>()
-    );
+    tokio::spawn(async move {
+        sender.send((Instant::now(), long_message)).await?;
+        sender.close().await?;
+        Ok(()) as Result<_, Error>
+    });
 
-    assert_eq!(
-        &data_vec
-            .iter()
-            .map(|r| r.as_ref().unwrap())
-            .map(|(_, b)| b)
-            .collect::<Vec<_>>(),
-        &[&Bytes::from(&[b'8'; PACKET_SIZE][..])]
-    );
+    tokio::spawn(async move {
+        let data_vec = recvr.collect::<Vec<_>>().await;
+        assert_eq!(
+            &data_vec
+                .iter()
+                .map(|r| r.as_ref().unwrap())
+                .map(|(_, b)| b)
+                .collect::<Vec<_>>(),
+            &[&Bytes::from(&[b'8'; PACKET_SIZE][..])]
+        );
+    });
 
     Ok(())
 }
