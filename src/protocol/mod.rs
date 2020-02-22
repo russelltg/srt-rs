@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+pub mod connection;
 pub mod handshake;
 pub mod receiver;
 pub mod sender;
@@ -15,7 +16,6 @@ impl TimeBase {
     }
 
     pub fn from_raw(start_time: Instant) -> Self {
-        let _ = Self::new();
         Self(start_time)
     }
 

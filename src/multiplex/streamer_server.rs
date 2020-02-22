@@ -11,7 +11,7 @@ use bytes::Bytes;
 
 use failure::Error;
 
-use crate::{Connection, PackChan, SenderSink, SrtCongestCtrl};
+use crate::{tokio::create_bidrectional_srt, Connection, PackChan};
 
 type BoxConnStream = Pin<Box<dyn Stream<Item = Result<(Connection, PackChan), Error>> + Send>>;
 pub struct StreamerServer {
@@ -71,7 +71,7 @@ impl Sink<(Instant, Bytes)> for StreamerServer {
                 .expect("Multiplexer stream ended, strange")
                 .expect("Multiplex server return Err");
 
-            let mut sender = SenderSink::new(chan, SrtCongestCtrl, conn.settings, conn.handshake);
+            let mut sender = create_bidrectional_srt(chan, conn);
 
             let (tx, rx) = mpsc::channel(100);
 

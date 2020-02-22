@@ -25,7 +25,6 @@ pub enum ReceiverAlgorithmAction {
     TimeBoundedReceive(Instant),
     SendControl(ControlPacket, SocketAddr),
     OutputData((Instant, Bytes)),
-    Timeout,
     Close,
 }
 
@@ -33,7 +32,6 @@ struct ReceiveTimers {
     syn: Timer,
     ack: Timer,
     nak: Timer,
-    exp: Timer,
 }
 
 impl ReceiveTimers {
@@ -43,7 +41,6 @@ impl ReceiveTimers {
             syn: Timer::new(syn, now),
             ack: Timer::new(syn, now),
             nak: Timer::new(syn, now),
-            exp: Timer::new(syn, now),
         }
     }
 
@@ -52,22 +49,10 @@ impl ReceiveTimers {
         let rtt_var = Duration::from_micros(rtt_var as u64);
         self.nak.set_period(4 * rtt + rtt_var + self.syn.period());
         self.ack.set_period(4 * rtt + rtt_var + self.syn.period());
-        // 0.5s min, accordiding to page 9
-        self.exp.set_period(max(
-            4 * rtt + rtt_var + self.syn.period(),
-            Duration::from_millis(500),
-        ));
     }
 
     pub fn next_timer(&self) -> Instant {
-        *[
-            self.ack.next_instant(),
-            self.nak.next_instant(),
-            self.exp.next_instant(),
-        ]
-        .iter()
-        .min()
-        .unwrap()
+        min(self.ack.next_instant(), self.nak.next_instant())
     }
 }
 
@@ -142,9 +127,6 @@ pub struct Receiver {
     /// the highest received packet sequence number + 1
     lrsn: SeqNumber,
 
-    /// The number of consecutive timeouts
-    exp_count: i32,
-
     /// The ID of the next ack packet
     next_ack: i32,
 
@@ -160,9 +142,6 @@ pub struct Receiver {
 
     /// Shutdown flag. This is set so when the buffer is flushed, it returns Async::Ready(None)
     shutdown_flag: bool,
-
-    /// Has this entity timed out?
-    timeout_flag: bool,
 }
 
 impl Receiver {
@@ -188,12 +167,10 @@ impl Receiver {
             packet_pair_window: Vec::new(),
             lrsn: init_seq_num, // at start, we have received everything until the first packet, exclusive (aka nothing)
             next_ack: 1,
-            exp_count: 1,
             probe_time: None,
             lr_ack_acked: (0, init_seq_num),
             receive_buffer: RecvBuffer::with(&settings),
             shutdown_flag: false,
-            timeout_flag: false,
         }
     }
 
@@ -203,9 +180,6 @@ impl Receiver {
 
     // handles an incoming a packet
     pub fn handle_packet(&mut self, now: Instant, (packet, from): (Packet, SocketAddr)) {
-        self.exp_count = 1;
-        self.timers.exp.reset(now);
-
         // We don't care about packets from elsewhere
         if from != self.settings.remote {
             info!("Packet received from unknown address: {:?}", from);
@@ -263,13 +237,8 @@ impl Receiver {
         if self.timers.nak.check_expired(now).is_some() {
             self.on_nak_event(now);
         }
-        if self.timers.exp.check_expired(now).is_some() {
-            self.on_exp_event(now);
-        }
 
-        if self.timeout_flag {
-            Timeout
-        } else if let Some(data) = self.pop_data(now) {
+        if let Some(data) = self.pop_data(now) {
             OutputData(data)
         } else if let Some(Packet::Control(packet)) = self.pop_conotrol_packet() {
             SendControl(packet, self.settings.remote)
@@ -528,11 +497,6 @@ impl Receiver {
     fn handle_data_packet(&mut self, data: &DataPacket, now: Instant) {
         let ts_now = self.receive_buffer.timestamp_from(now);
 
-        // 1) Reset the ExpCount to 1. If there is no unacknowledged data
-        //     packet, or if this is an ACK or NAK control packet, reset the EXP
-        //     timer.
-        self.exp_count = 1;
-
         // 2&3 don't apply
 
         // 4) If the sequence number of the current data packet is 16n + 1,
@@ -631,19 +595,6 @@ impl Receiver {
 
     fn pop_conotrol_packet(&mut self) -> Option<Packet> {
         self.control_packets.pop_front()
-    }
-
-    // return if we should shutdown
-    fn on_exp_event(&mut self, _now: Instant) {
-        self.exp_count += 1;
-        debug!(
-            "{:?} exp hit! ct={}",
-            self.settings.local_sockid, self.exp_count
-        );
-        if self.exp_count > 16 {
-            self.timeout_flag = true;
-            info!("16 consequtive exp events, timeout");
-        }
     }
 
     fn next_timer(&self) -> Instant {

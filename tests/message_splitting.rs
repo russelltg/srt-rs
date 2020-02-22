@@ -3,7 +3,6 @@ use std::time::Instant;
 use bytes::Bytes;
 use failure::Error;
 use futures::prelude::*;
-use log::info;
 
 use srt::{ConnInitMethod, SrtSocketBuilder};
 

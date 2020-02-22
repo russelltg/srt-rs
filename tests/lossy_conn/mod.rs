@@ -13,7 +13,7 @@ use futures::{ready, stream::Fuse, Future, Sink, Stream, StreamExt};
 
 use tokio::time::{self, delay_for, Delay};
 
-use log::{debug, info, trace, warn};
+use log::{debug, info, trace};
 
 use rand::distributions::Distribution;
 use rand::rngs::StdRng;
@@ -89,7 +89,7 @@ impl<T: Unpin + Debug> Stream for LossyConn<T> {
         loop {
             let to_send = match ready!(Pin::new(&mut pin.receiver).poll_next(cx)) {
                 None => {
-                    warn!("Connection ended");
+                    trace!("Connection ended");
                     // just always return Pening--that's what UDP sockets do, they don't "end"
                     return Poll::Pending;
                 }

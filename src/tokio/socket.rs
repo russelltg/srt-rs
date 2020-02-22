@@ -1,18 +1,19 @@
 use crate::packet::ControlTypes::*;
 
+use crate::protocol::connection::{Connection, ConnectionAction};
+use crate::protocol::handshake::Handshake;
 use crate::protocol::receiver::{Receiver, ReceiverAlgorithmAction};
 use crate::protocol::sender::{Sender, SenderAlgorithmAction};
+use crate::protocol::TimeBase;
 use crate::Packet::*;
-use crate::{Connection, ConnectionSettings, Packet, SrtCongestCtrl};
+use crate::{ConnectionSettings, ControlPacket, Packet, SrtCongestCtrl};
 
-use std::cmp::min;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use crate::protocol::handshake::Handshake;
 use bytes::Bytes;
 use failure::{bail, format_err, Error};
 use futures::stream::BoxStream;
@@ -28,6 +29,8 @@ use tokio::time::{delay_for, delay_until, Delay};
 /// The sockets yield and consume `(Instant, Bytes)`, representng the data and the origin instant. This instant
 /// defines when the packet will be released on the receiving side, at more or less one latency later.
 pub struct SrtSocket {
+    time_base: TimeBase,
+    connection: Connection,
     sender: Sender,
     receiver: Receiver,
 
@@ -46,7 +49,7 @@ pub struct SrtSocket {
 /// 1. Receive packets and send them to either the sender or the receiver through
 ///    a channel
 /// 2. Take outgoing packets and send them on the socket
-pub fn create_bidrectional_srt<T>(sock: T, conn: Connection) -> SrtSocket
+pub fn create_bidrectional_srt<T>(sock: T, conn: crate::Connection) -> SrtSocket
 where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
         + Sink<(Packet, SocketAddr), Error = Error>
@@ -57,6 +60,8 @@ where
 
     // Arbitrarilly make the sender responsible for returning handshakes
     SrtSocket {
+        time_base: TimeBase::from_raw(conn.settings.socket_start_time),
+        connection: Connection::new(conn.settings),
         sender: Sender::new(conn.settings, conn.handshake, SrtCongestCtrl),
         receiver: Receiver::new(conn.settings, Handshake::Connector),
         stream: stream.boxed(),
@@ -80,6 +85,7 @@ impl SrtSocket {
         while let Some(p) = self.send_queue.pop_front() {
             if let Poll::Ready(_) = self.sink.as_mut().poll_ready(cx)? {
                 trace!("Sending {:?} to underlying socket", p.0);
+                self.connection.on_send(Instant::now());
                 self.sink.as_mut().start_send(p)?;
             }
         }
@@ -94,44 +100,44 @@ impl SrtSocket {
         // handle incomming packet
         while let Poll::Ready(res) = self.stream.as_mut().poll_next(cx) {
             match res {
-                Some(Ok((pack, from))) => match &pack {
-                    Data(_) => self.receiver.handle_packet(Instant::now(), (pack, from)),
-                    Control(cp) => match &cp.control_type {
-                        // sender-responsble packets
-                        Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
-                            self.sender
-                                .handle_packet((pack, from), Instant::now())
-                                .unwrap();
-                        }
-                        // receiver-respnsible
-                        Ack2(_) => self.receiver.handle_packet(Instant::now(), (pack, from)),
-                        // both
-                        Shutdown | KeepAlive => {
-                            self.sender
-                                .handle_packet((pack.clone(), from), Instant::now())
-                                .unwrap();
-                            self.receiver.handle_packet(Instant::now(), (pack, from));
-                        }
-                        Srt(_) => unimplemented!(),
-                    },
-                },
+                Some(Ok((pack, from))) => {
+                    self.connection.on_packet(Instant::now());
+                    match &pack {
+                        Data(_) => self.receiver.handle_packet(Instant::now(), (pack, from)),
+                        Control(cp) => match &cp.control_type {
+                            // sender-responsble packets
+                            Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
+                                self.sender
+                                    .handle_packet((pack, from), Instant::now())
+                                    .unwrap();
+                            }
+                            // receiver-respnsible
+                            Ack2(_) => self.receiver.handle_packet(Instant::now(), (pack, from)),
+                            // both
+                            Shutdown => {
+                                self.sender
+                                    .handle_packet((pack.clone(), from), Instant::now())
+                                    .unwrap();
+                                self.receiver.handle_packet(Instant::now(), (pack, from));
+                            }
+                            // neither--this exists just to keep the connection alive
+                            KeepAlive => {}
+                            Srt(_) => unimplemented!(),
+                        },
+                    }
+                }
                 None => bail!("Underlying connection closed!"),
                 Some(Err(e)) => return Err(e),
             }
         }
 
         loop {
-            let mut did_sender_timeout = false;
             let mut does_sender_want_close = false;
 
             // get each's next action
             let sender_timeout = match self.sender.next_action(Instant::now()) {
                 SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => None,
                 SenderAlgorithmAction::WaitUntil(t) => Some(t),
-                SenderAlgorithmAction::Timeout => {
-                    did_sender_timeout = true;
-                    None
-                }
                 SenderAlgorithmAction::Close => {
                     trace!("Send returned close");
                     does_sender_want_close = true;
@@ -143,7 +149,6 @@ impl SrtSocket {
                 self.send_queue.push_back(out);
             }
 
-            let mut did_recvr_timeout = false;
             let recvr_timeout = loop {
                 match self.receiver.next_algorithm_action(Instant::now()) {
                     ReceiverAlgorithmAction::TimeBoundedReceive(t2) => {
@@ -155,10 +160,6 @@ impl SrtSocket {
                     ReceiverAlgorithmAction::OutputData(ib) => {
                         self.release_queue.push_back(ib);
                     }
-                    ReceiverAlgorithmAction::Timeout => {
-                        did_recvr_timeout = true;
-                        break None;
-                    }
                     ReceiverAlgorithmAction::Close => {
                         trace!("Recv returned close");
                         self.closed = does_sender_want_close;
@@ -167,16 +168,28 @@ impl SrtSocket {
                 };
             };
 
-            if did_recvr_timeout && did_sender_timeout {
-                self.closed = true;
-            }
-
-            let timeout = match (sender_timeout, recvr_timeout) {
-                (Some(s), Some(r)) => Some(min(s, r)),
-                (Some(s), None) => Some(s),
-                (None, Some(r)) => Some(r),
-                (None, None) => None,
+            let connection_timeout = loop {
+                match self.connection.next_action(Instant::now()) {
+                    ConnectionAction::ContinueUntil(timeout) => break Some(timeout),
+                    ConnectionAction::Close => {
+                        self.closed = true;
+                        break None;
+                    } // timeout
+                    ConnectionAction::SendKeepAlive => self.send_queue.push_back((
+                        Control(ControlPacket {
+                            timestamp: self.time_base.timestamp_from(Instant::now()),
+                            dest_sockid: self.settings().remote_sockid,
+                            control_type: KeepAlive,
+                        }),
+                        self.settings().remote,
+                    )),
+                }
             };
+
+            let timeout = [sender_timeout, recvr_timeout, connection_timeout]
+                .iter()
+                .filter_map(|&x| x) // Only take Some(x) timeouts
+                .min();
 
             if self.closed {
                 break;

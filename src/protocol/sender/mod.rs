@@ -68,7 +68,6 @@ pub enum SenderAlgorithmAction {
     WaitForData,
     WaitUntil(Instant),
     Close,
-    Timeout,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -112,10 +111,7 @@ pub struct Sender {
     step: SenderAlgorithmStep,
 
     snd_timer: Timer,
-    exp_timer: Timer,
-    exp_count: u32,
 
-    timeout: bool,
     close: bool,
 }
 
@@ -144,19 +140,12 @@ impl Sender {
             transmit_buffer: TransmitBuffer::new(&settings),
             step: SenderAlgorithmStep::Step1,
             snd_timer: Timer::new(Duration::from_millis(1), settings.socket_start_time),
-            exp_timer: Timer::new(Duration::from_millis(500), settings.socket_start_time),
-            exp_count: 1,
-            timeout: false,
             close: false,
         }
     }
 
     pub fn settings(&self) -> &ConnectionSettings {
         &self.settings
-    }
-
-    pub fn metrics(&self) -> SenderMetrics {
-        self.metrics
     }
 
     pub fn handle_close(&mut self, now: Instant) {
@@ -176,16 +165,6 @@ impl Sender {
         self.step = SenderAlgorithmStep::Step1;
     }
 
-    fn handle_exp_timer(&mut self, now: Instant) {
-        self.exp_timer.reset(now);
-        self.exp_count += 1;
-        debug!("exp occured! ct={}", self.exp_count);
-
-        if self.exp_count > 16 {
-            self.timeout = true;
-        }
-    }
-
     pub fn handle_packet(
         &mut self,
         (packet, from): (Packet, SocketAddr),
@@ -196,10 +175,7 @@ impl Sender {
             return Ok(());
         }
 
-        self.exp_count = 1;
-        self.exp_timer.reset(now);
-
-        trace!("Received packet {:?}", packet);
+        log::info!("Received packet {:?}", packet);
 
         match packet {
             Control(control) => self.handle_control_packet(control, now),
@@ -232,13 +208,6 @@ impl Sender {
 
         if let Some(exp_time) = self.snd_timer.check_expired(now) {
             self.handle_snd_timer(exp_time);
-        }
-        if let Some(exp_time) = self.exp_timer.check_expired(now) {
-            self.handle_exp_timer(exp_time);
-        }
-
-        if self.timeout {
-            return Timeout;
         }
 
         if self.step == Step6 {
