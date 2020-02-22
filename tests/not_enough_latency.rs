@@ -33,9 +33,8 @@ async fn not_enough_latency() {
     let recvr = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:0".parse().unwrap()))
         .connect_with_sock(recv);
 
-    let (mut sender, mut recvr) = futures::try_join!(sender, recvr).unwrap();
-
     tokio::spawn(async move {
+        let mut sender = sender.await.unwrap();
         let mut stream = counting_stream.map(|b| Ok((Instant::now(), b)));
         sender.send_all(&mut stream).await.unwrap();
         sender.close().await.unwrap();
@@ -44,6 +43,7 @@ async fn not_enough_latency() {
     });
 
     tokio::spawn(async move {
+        let mut recvr = recvr.await.unwrap();
         let mut last_seq_num = INIT_SEQ_NUM - 1;
 
         let mut total = 0;

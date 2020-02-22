@@ -330,10 +330,10 @@ impl Debug for ControlPacket {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{{{:?} ts={:.4}s dst={:X}}}",
+            "{{{:?} ts={:.4}s dst={:?}}}",
             self.control_type,
             self.timestamp as f64 / 1e6,
-            self.dest_sockid.0,
+            self.dest_sockid,
         )
     }
 }
@@ -779,7 +779,7 @@ impl Debug for ControlTypes {
 // pub info: HandshakeVSInfo,
 impl Debug for HandshakeControlInfo {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        write!(f, "HS {:?} from({:X})", self.shake_type, self.socket_id.0)
+        write!(f, "HS {:?} from({:?})", self.shake_type, self.socket_id)
     }
 }
 

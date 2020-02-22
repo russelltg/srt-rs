@@ -135,8 +135,8 @@ impl RecvBuffer {
 
         if self.time_base.instant_from(pack.timestamp) + self.tsbpd_latency <= now {
             debug!(
-                "Message for {:X} was deemed ready for release, Now={:?}, Ts={:?}, dT={:?}, Latency={:?}, buf.len={}, sn={}, npackets={}",
-                self.local_sockid.0,
+                "Message for {:?} was deemed ready for release, Now={:?}, Ts={:?}, dT={:?}, Latency={:?}, buf.len={}, sn={}, npackets={}",
+                self.local_sockid,
                 now - self.time_base.instant_from(0),
                 Duration::from_micros(pack.timestamp as u64),
                 now - self.time_base.instant_from(pack.timestamp),

@@ -10,14 +10,14 @@ async fn receiver_timeout() {
     let a = SrtSocketBuilder::new_listen().local_port(1872).connect();
     let b = SrtSocketBuilder::new_connect("127.0.0.1:1872").connect();
 
-    let (mut a, mut b) = futures::try_join!(a, b).unwrap();
-
     let sender = async move {
+        let mut a = a.await.unwrap();
         a.send((Instant::now(), b"asdf"[..].into())).await.unwrap();
         // just drop sender, don't close!
     };
 
     let recvr = async move {
+        let mut b = b.await.unwrap();
         assert_eq!(
             b.try_next().await.unwrap().as_ref().map(|t| &*t.1),
             Some(&b"asdf"[..])

@@ -286,7 +286,7 @@ impl Receiver {
     }
 
     fn on_ack_event(&mut self, now: Instant) {
-        trace!("Ack event hit {:X}", self.settings.local_sockid.0);
+        trace!("Ack event hit {:?}", self.settings.local_sockid);
         // get largest inclusive received packet number
         let ack_number = match self.loss_list.first() {
             // There is an element in the loss list
@@ -637,8 +637,8 @@ impl Receiver {
     fn on_exp_event(&mut self, _now: Instant) {
         self.exp_count += 1;
         debug!(
-            "{:X} exp hit! ct={}",
-            self.settings.local_sockid.0, self.exp_count
+            "{:?} exp hit! ct={}",
+            self.settings.local_sockid, self.exp_count
         );
         if self.exp_count > 16 {
             self.timeout_flag = true;

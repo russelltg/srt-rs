@@ -9,7 +9,7 @@ use futures::channel::oneshot;
 use futures::{join, select, FutureExt, SinkExt};
 
 use log::info;
-use srt::{ConnInitMethod, SrtSocket, SrtSocketBuilder};
+use srt::{SrtSocket, SrtSocketBuilder};
 
 use lossy_conn::LossyConn;
 
@@ -21,11 +21,10 @@ async fn connect() {
     let (send, recv) =
         LossyConn::channel(0.70, Duration::from_millis(20), Duration::from_millis(20));
 
-    let a = SrtSocketBuilder::new(ConnInitMethod::Listen)
+    let a = SrtSocketBuilder::new_listen()
         .local_port(1111)
         .connect_with_sock(send);
-    let b = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:1111".parse().unwrap()))
-        .connect_with_sock(recv);
+    let b = SrtSocketBuilder::new_connect("127.0.0.1:1111").connect_with_sock(recv);
 
     let (s1, r1) = oneshot::channel();
     let (s2, r2) = oneshot::channel();

@@ -191,8 +191,8 @@ impl SrtSocket {
                 } else {
                     let now = Instant::now();
                     trace!(
-                        "{:X} scheduling wakeup at {}{:?} from {}{}",
-                        self.sender.settings().local_sockid.0,
+                        "{:?} scheduling wakeup at {}{:?} from {}{}",
+                        self.sender.settings().local_sockid,
                         if to > now { "+" } else { "-" },
                         if to > now { to - now } else { now - to },
                         if sender_timeout.is_some() {
@@ -211,8 +211,8 @@ impl SrtSocket {
                 }
             } else {
                 trace!(
-                    "{:X} not scheduling wakeup!!!",
-                    self.sender.settings().local_sockid.0
+                    "{:?} not scheduling wakeup!!!",
+                    self.sender.settings().local_sockid
                 );
             }
         }

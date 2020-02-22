@@ -20,21 +20,18 @@ async fn message_splitting() -> Result<(), Error> {
         .local_port(11124)
         .connect();
 
-    let (mut sender, recvr) = futures::try_join!(sender, recvr)?;
-
-    info!("Connected!");
-
     // send a really really long packet
     let long_message = Bytes::from(&[b'8'; PACKET_SIZE][..]);
 
     tokio::spawn(async move {
+        let mut sender = sender.await?;
         sender.send((Instant::now(), long_message)).await?;
         sender.close().await?;
         Ok(()) as Result<_, Error>
     });
 
     tokio::spawn(async move {
-        let data_vec = recvr.collect::<Vec<_>>().await;
+        let data_vec = recvr.await.unwrap().collect::<Vec<_>>().await;
         assert_eq!(
             &data_vec
                 .iter()

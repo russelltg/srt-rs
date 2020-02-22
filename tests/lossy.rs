@@ -31,15 +31,15 @@ async fn lossy() {
     let recvr = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:1111".parse().unwrap()))
         .connect_with_sock(recv);
 
-    let (mut sender, mut recvr) = futures::try_join!(sender, recvr).unwrap();
-
     let sender = async move {
+        let mut sender = sender.await.unwrap();
         let mut stream = counting_stream.map(|b| Ok((Instant::now(), b)));
         sender.send_all(&mut stream).await.unwrap();
         sender.close().await.unwrap();
     };
 
     let receiver = async move {
+        let mut recvr = recvr.await.unwrap();
         let mut next_data = 0;
 
         while let Some(payload) = recvr.next().await {
