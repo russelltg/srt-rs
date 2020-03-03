@@ -689,13 +689,13 @@ impl ControlTypes {
                 }
             }
             ControlTypes::DropRequest { .. } => unimplemented!(),
-            ControlTypes::Ack2(_) => {
-                // The reference implementation appends one (4 byte) word at the end of the ack2 packet, which wireshark labels as 'Unused'
+            ControlTypes::Ack2(_) | ControlTypes::Shutdown | ControlTypes::KeepAlive => {
+                // The reference implementation appends one (4 byte) word at the end of these packets, which wireshark labels as 'Unused'
                 // I have no idea why, but wireshark reports it as a "malformed packet" without it. For the record,
                 // this is NOT in the UDT specification. I wonder if this was carried over from the original UDT implementation.
+                // https://github.com/Haivision/srt/blob/86013826b5e0c4d8e531cf18a30c6ad4b16c1b3b/srtcore/packet.cpp#L309
                 into.put_u32(0x0);
             }
-            ControlTypes::Shutdown | ControlTypes::KeepAlive => {}
             ControlTypes::Srt(srt) => {
                 srt.serialize(into);
             }

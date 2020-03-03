@@ -8,18 +8,18 @@ use crate::protocol::TimeBase;
 use crate::Packet::*;
 use crate::{ConnectionSettings, ControlPacket, Packet, SrtCongestCtrl};
 
-use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use bytes::Bytes;
-use failure::{bail, format_err, Error};
-use futures::stream::BoxStream;
-use futures::{ready, Future, Sink, Stream, StreamExt};
+use failure::Error;
+use futures::channel::{mpsc, oneshot};
+use futures::prelude::*;
+use futures::{future, ready, select};
 use log::trace;
-use tokio::time::{delay_for, delay_until, Delay};
+use tokio::time::delay_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
@@ -29,20 +29,12 @@ use tokio::time::{delay_for, delay_until, Delay};
 /// The sockets yield and consume `(Instant, Bytes)`, representng the data and the origin instant. This instant
 /// defines when the packet will be released on the receiving side, at more or less one latency later.
 pub struct SrtSocket {
-    time_base: TimeBase,
-    connection: Connection,
-    sender: Sender,
-    receiver: Receiver,
+    recvr: mpsc::Receiver<(Instant, Bytes)>,
+    sender: mpsc::Sender<(Instant, Bytes)>,
 
-    stream: BoxStream<'static, Result<(Packet, SocketAddr), Error>>,
-    sink: Pin<Box<dyn Sink<(Packet, SocketAddr), Error = Error> + Send>>,
+    settings: ConnectionSettings,
 
-    release_queue: VecDeque<(Instant, Bytes)>,
-    send_queue: VecDeque<(Packet, SocketAddr)>,
-
-    closed: bool,
-
-    timer: Delay,
+    _drop_oneshot: oneshot::Sender<()>,
 }
 
 /// This spawns two new tasks:
@@ -54,158 +46,88 @@ where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
         + Sink<(Packet, SocketAddr), Error = Error>
         + Send
+        + Unpin
         + 'static,
 {
-    let (sink, stream) = sock.split();
+    let (mut release, recvr) = mpsc::channel(128);
+    let (sender, new_data) = mpsc::channel(128);
+    let (_drop_oneshot, close_oneshot) = oneshot::channel();
+    let conn_copy = conn.clone();
 
-    // Arbitrarilly make the sender responsible for returning handshakes
-    SrtSocket {
-        time_base: TimeBase::from_raw(conn.settings.socket_start_time),
-        connection: Connection::new(conn.settings),
-        sender: Sender::new(conn.settings, conn.handshake, SrtCongestCtrl),
-        receiver: Receiver::new(conn.settings, Handshake::Connector),
-        stream: stream.boxed(),
-        sink: Box::pin(sink),
+    tokio::spawn(async move {
+        let mut close_oneshot = close_oneshot.fuse();
+        let mut new_data = new_data.fuse();
+        let mut sock = sock.fuse();
 
-        release_queue: VecDeque::new(),
-        send_queue: VecDeque::new(),
-
-        closed: false,
-
-        timer: delay_for(Duration::from_secs(0)),
-    }
-}
-
-impl SrtSocket {
-    pub fn settings(&self) -> &ConnectionSettings {
-        self.sender.settings()
-    }
-
-    fn handle_outgoing(&mut self, cx: &mut Context) -> Result<(), Error> {
-        while let Some(p) = self.send_queue.pop_front() {
-            if let Poll::Ready(_) = self.sink.as_mut().poll_ready(cx)? {
-                trace!("Sending {:?} to underlying socket", p.0);
-                self.connection.on_send(Instant::now());
-                self.sink.as_mut().start_send(p)?;
-            }
-        }
-        let _ = self.sink.as_mut().poll_flush(cx)?;
-
-        Ok(())
-    }
-
-    fn tick(&mut self, cx: &mut Context) -> Result<(), Error> {
-        self.handle_outgoing(cx)?;
-
-        // handle incomming packet
-        while let Poll::Ready(res) = self.stream.as_mut().poll_next(cx) {
-            match res {
-                Some(Ok((pack, from))) => {
-                    self.connection.on_packet(Instant::now());
-                    match &pack {
-                        Data(_) => self.receiver.handle_packet(Instant::now(), (pack, from)),
-                        Control(cp) => match &cp.control_type {
-                            // sender-responsble packets
-                            Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
-                                self.sender
-                                    .handle_packet((pack, from), Instant::now())
-                                    .unwrap();
-                            }
-                            // receiver-respnsible
-                            Ack2(_) => self.receiver.handle_packet(Instant::now(), (pack, from)),
-                            // both
-                            Shutdown => {
-                                self.sender
-                                    .handle_packet((pack.clone(), from), Instant::now())
-                                    .unwrap();
-                                self.receiver.handle_packet(Instant::now(), (pack, from));
-                            }
-                            // neither--this exists just to keep the connection alive
-                            KeepAlive => {}
-                            Srt(_) => unimplemented!(),
-                        },
-                    }
-                }
-                None => bail!("Underlying connection closed!"),
-                Some(Err(e)) => return Err(e),
-            }
-        }
+        let time_base = TimeBase::from_raw(conn_copy.settings.socket_start_time);
+        let mut connection = Connection::new(conn_copy.settings);
+        let mut sender = Sender::new(conn_copy.settings, conn_copy.handshake, SrtCongestCtrl);
+        let mut receiver = Receiver::new(conn_copy.settings, Handshake::Connector);
 
         loop {
             let mut does_sender_want_close = false;
+            let mut sender_closed = false;
 
-            // get each's next action
-            let sender_timeout = match self.sender.next_action(Instant::now()) {
+            let sender_timeout = match sender.next_action(Instant::now()) {
                 SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => None,
                 SenderAlgorithmAction::WaitUntil(t) => Some(t),
                 SenderAlgorithmAction::Close => {
                     trace!("Send returned close");
-                    does_sender_want_close = true;
-                    None
+                    return;
                 }
             };
-
-            while let Some(out) = self.sender.pop_output() {
-                self.send_queue.push_back(out);
+            while let Some(out) = sender.pop_output() {
+                sock.send(out).await; // TODO: error handling
             }
 
             let recvr_timeout = loop {
-                match self.receiver.next_algorithm_action(Instant::now()) {
+                match receiver.next_algorithm_action(Instant::now()) {
                     ReceiverAlgorithmAction::TimeBoundedReceive(t2) => {
                         break Some(t2);
                     }
                     ReceiverAlgorithmAction::SendControl(cp, addr) => {
-                        self.send_queue.push_back((Control(cp), addr))
+                        sock.send((Packet::Control(cp), addr)).await;
                     }
                     ReceiverAlgorithmAction::OutputData(ib) => {
-                        self.release_queue.push_back(ib);
+                        release.send(ib).await;
                     }
                     ReceiverAlgorithmAction::Close => {
                         trace!("Recv returned close");
-                        self.closed = does_sender_want_close;
-                        break None;
+                        return;
                     }
                 };
             };
-
             let connection_timeout = loop {
-                match self.connection.next_action(Instant::now()) {
+                match connection.next_action(Instant::now()) {
                     ConnectionAction::ContinueUntil(timeout) => break Some(timeout),
                     ConnectionAction::Close => {
-                        self.closed = true;
+                        return;
                         break None;
                     } // timeout
-                    ConnectionAction::SendKeepAlive => self.send_queue.push_back((
-                        Control(ControlPacket {
-                            timestamp: self.time_base.timestamp_from(Instant::now()),
-                            dest_sockid: self.settings().remote_sockid,
-                            control_type: KeepAlive,
-                        }),
-                        self.settings().remote,
-                    )),
+                    ConnectionAction::SendKeepAlive => sock
+                        .send((
+                            Control(ControlPacket {
+                                timestamp: time_base.timestamp_from(Instant::now()),
+                                dest_sockid: sender.settings().remote_sockid,
+                                control_type: KeepAlive,
+                            }),
+                            sender.settings().remote,
+                        ))
+                        .await
+                        .unwrap(), // todo
                 }
             };
-
             let timeout = [sender_timeout, recvr_timeout, connection_timeout]
                 .iter()
                 .filter_map(|&x| x) // Only take Some(x) timeouts
                 .min();
 
-            if self.closed {
-                break;
-            }
-
-            self.handle_outgoing(cx)?;
-
-            if let Some(to) = timeout {
-                self.timer = delay_until(to.into());
-                if let Poll::Ready(_) = Pin::new(&mut self.timer).poll(cx) {
-                    continue;
-                } else {
+            let timeout_fut = async {
+                if let Some(to) = timeout {
                     let now = Instant::now();
                     trace!(
                         "{:?} scheduling wakeup at {}{:?} from {}{}",
-                        self.sender.settings().local_sockid,
+                        sender.settings().local_sockid,
                         if to > now { "+" } else { "-" },
                         if to > now { to - now } else { now - to },
                         if sender_timeout.is_some() {
@@ -219,17 +141,82 @@ impl SrtSocket {
                             ""
                         }
                     );
-
-                    break;
+                    delay_until(to.into()).await
+                } else {
+                    trace!(
+                        "{:?} not scheduling wakeup!!!",
+                        sender.settings().local_sockid
+                    );
+                    future::pending().await
                 }
-            } else {
-                trace!(
-                    "{:?} not scheduling wakeup!!!",
-                    self.sender.settings().local_sockid
-                );
+            };
+
+            select! {
+                // one of the entities requested waketup
+                _ = timeout_fut.fuse() => {},
+                // new packet received
+                res = sock.next() => {
+                    match res {
+                        Some(Ok((pack, from))) => {
+                            connection.on_packet(Instant::now());
+                            match &pack {
+                                Data(_) => receiver.handle_packet(Instant::now(), (pack, from)),
+                                Control(cp) => match &cp.control_type {
+                                    // sender-responsble packets
+                                    Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
+                                        sender
+                                            .handle_packet((pack, from), Instant::now())
+                                            .unwrap();
+                                    }
+                                    // receiver-respnsible
+                                    Ack2(_) => receiver.handle_packet(Instant::now(), (pack, from)),
+                                    // both
+                                    Shutdown => {
+                                        sender
+                                            .handle_packet((pack.clone(), from), Instant::now())
+                                            .unwrap();
+                                        receiver.handle_packet(Instant::now(), (pack, from));
+                                    }
+                                    // neither--this exists just to keep the connection alive
+                                    KeepAlive => {}
+                                    Srt(_) => unimplemented!(),
+                                },
+                            }
+                        }
+                        None => break,
+                        Some(Err(_e)) => break, // TODO: propagate error back
+                        a => {},
+                    }
+                },
+                // new packet queued
+                res = new_data.next() => {
+                    match res {
+                        Some(item) => sender.handle_data(item),
+                        None => {
+                            sender.handle_close(Instant::now());
+                            self.closed = true;
+                        }
+                    }
+                }
+                // socket closed
+                _ = close_oneshot =>  {
+                    sender.handle_close(Instant::now())
+                }
             }
         }
-        Ok(())
+    });
+
+    SrtSocket {
+        recvr,
+        sender,
+        settings: conn.settings,
+        _drop_oneshot,
+    }
+}
+
+impl SrtSocket {
+    pub fn settings(&self) -> &ConnectionSettings {
+        &self.settings
     }
 }
 
@@ -237,62 +224,23 @@ impl Stream for SrtSocket {
     type Item = Result<(Instant, Bytes), Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        if let Some(ib) = self.release_queue.pop_front() {
-            trace!("Releasing");
-            return Poll::Ready(Some(Ok(ib)));
-        }
-        if self.closed {
-            return Poll::Ready(None);
-        }
-
-        self.as_mut().tick(cx)?;
-
-        if let Some(ib) = self.release_queue.pop_front() {
-            trace!("Releasing");
-            return Poll::Ready(Some(Ok(ib)));
-        }
-
-        Poll::Pending
+        Poll::Ready(ready!(Pin::new(&mut self.recvr).poll_next(cx)).map(Ok))
     }
 }
 
 impl Sink<(Instant, Bytes)> for SrtSocket {
     type Error = Error;
 
-    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        if self.closed {
-            return Poll::Ready(Err(format_err!("Sink is closed")));
-        }
-        Poll::Ready(Ok(()))
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_ready(cx))?))
     }
     fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Self::Error> {
-        if self.closed {
-            bail!("Sink is closed");
-        }
-        self.as_mut().sender.handle_data(item);
-        Ok(())
+        Ok(self.sender.start_send(item)?)
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        self.tick(cx)?;
-        if self.sender.is_flushed() && self.receiver.is_flushed() {
-            Poll::Ready(Ok(()))
-        } else {
-            Poll::Pending
-        }
+        Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_flush(cx))?))
     }
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        if !self.closed {
-            self.sender.handle_close(Instant::now());
-            self.receiver.handle_shutdown();
-        }
-
-        ready!(self.as_mut().poll_flush(cx))?;
-
-        self.as_mut().tick(cx)?;
-
-        if !self.send_queue.is_empty() {
-            return Poll::Pending;
-        }
-        Poll::Ready(ready!(self.sink.as_mut().poll_flush(cx)))
+        Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_close(cx))?))
     }
 }

@@ -6,6 +6,7 @@ use std::{
 use crate::protocol::handshake::Handshake;
 use crate::{SeqNumber, SocketID};
 
+#[derive(Clone, Debug)]
 pub struct Connection {
     pub settings: ConnectionSettings,
     pub handshake: Handshake,
