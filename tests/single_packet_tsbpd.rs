@@ -55,8 +55,15 @@ async fn single_packet_tsbpd() -> Result<(), Error> {
 
     assert_eq!(&packet, "Hello World!");
 
-    // the time from the packet should be close to `start`, less than 5ms
-    assert!(start - time < Duration::from_millis(5));
+    let expected_displacement = Duration::from_millis(1);
+    let displacement = if start > time {
+        start - time
+    } else {
+        time - start
+    };
+    assert!(displacement < expected_displacement,
+            "TsbPd time calculated for the packet should be close to `start` time\nExpected: < {:?}\nActual: {:?}\n",
+            expected_displacement, displacement);
 
     // the recvr should return None now
     assert!(recvr.next().await.is_none());
