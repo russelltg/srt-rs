@@ -1,25 +1,24 @@
+mod buffer;
+mod time;
+
+use std::cmp::max;
 use std::cmp::Ordering;
-use std::cmp::{max, min};
 use std::collections::VecDeque;
 use std::iter::Iterator;
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use bytes::Bytes;
 use log::{debug, info, trace, warn};
 
-use super::Timer;
 use crate::loss_compression::compress_loss_list;
-use crate::packet::{
-    ControlPacket, ControlTypes, DataPacket, HandshakeControlInfo, Packet, SrtControlPacket,
-};
+use crate::packet::{ControlTypes, HandshakeControlInfo, SrtControlPacket};
 use crate::protocol::handshake::Handshake;
-use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber};
-
-mod buffer;
-mod time;
+use crate::seq_number::seq_num_range;
+use crate::{ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
 
 use buffer::RecvBuffer;
+use time::{ReceiveTimers, RTT};
 
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
@@ -28,45 +27,6 @@ pub enum ReceiverAlgorithmAction {
     SendControl(ControlPacket, SocketAddr),
     OutputData((Instant, Bytes)),
     Close,
-}
-
-struct ReceiveTimers {
-    syn: Timer,
-    ack: Timer,
-    nak: Timer,
-    exp: Timer,
-}
-
-impl ReceiveTimers {
-    pub fn new(now: Instant) -> ReceiveTimers {
-        let syn = Duration::from_millis(10);
-        ReceiveTimers {
-            syn: Timer::new(syn, now),
-            ack: Timer::new(syn, now),
-            nak: Timer::new(syn, now),
-            exp: Timer::new(syn, now),
-        }
-    }
-
-    pub fn update_rtt(&mut self, rtt: i32, rtt_var: i32) {
-        let rtt = Duration::from_micros(rtt as u64);
-        let rtt_var = Duration::from_micros(rtt_var as u64);
-        self.nak.set_period(4 * rtt + rtt_var + self.syn.period());
-        self.ack.set_period(4 * rtt + rtt_var + self.syn.period());
-        // 0.5s min, accordiding to page 9
-        self.exp.set_period(max(
-            4 * rtt + rtt_var + self.syn.period(),
-            Duration::from_millis(500),
-        ));
-    }
-
-    pub fn next_timer(&self, now: Instant) -> Instant {
-        let timer = now;
-        let timer = min(timer, self.ack.next_instant());
-        let timer = min(timer, self.nak.next_instant());
-        let timer = min(timer, self.exp.next_instant());
-        max(timer, now)
-    }
 }
 
 struct LossListEntry {
@@ -101,13 +61,9 @@ pub struct Receiver {
 
     data_release: VecDeque<(Instant, Bytes)>,
 
-    /// the round trip time, in microseconds
+    /// the round trip time
     /// is calculated each ACK2
-    rtt: i32,
-
-    /// the round trip time variance, in microseconds
-    /// is calculated each ACK2
-    rtt_variance: i32,
+    rtt: RTT,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Receiver's Loss List: It is a list of tuples whose values include:
@@ -175,8 +131,7 @@ impl Receiver {
             control_packets: VecDeque::new(),
             data_release: VecDeque::new(),
             handshake,
-            rtt: 10_000,
-            rtt_variance: 1_000,
+            rtt: RTT::new(),
             loss_list: Vec::new(),
             ack_history_window: Vec::new(),
             packet_history_window: Vec::new(),
@@ -314,7 +269,7 @@ impl Receiver {
             if last_ack_number == ack_number &&
                 // and the time interval between this two ACK packets is
                 // less than 2 RTTs,
-                (self.receive_buffer.timestamp_from(now) - last_timestamp) < (self.rtt * 2)
+                (self.receive_buffer.timestamp_from(now) - last_timestamp) < (self.rtt.mean() * 2)
             {
                 // stop (do not send this ACK).
                 return;
@@ -396,8 +351,8 @@ impl Receiver {
             ControlTypes::Ack {
                 ack_seq_num,
                 ack_number,
-                rtt: Some(self.rtt),
-                rtt_variance: Some(self.rtt_variance),
+                rtt: Some(self.rtt.mean()),
+                rtt_variance: Some(self.rtt.variance()),
                 buffer_available: None, // TODO: add this
                 packet_recv_rate: Some(packet_recv_rate),
                 est_link_cap: Some(est_link_cap),
@@ -419,7 +374,7 @@ impl Receiver {
         // NAK is used to trigger a negative acknowledgement (NAK). Its period
         // is dynamically updated to 4 * RTT_+ RTTVar + SYN, where RTTVar is the
         // variance of RTT samples.
-        self.timers.update_rtt(self.rtt, self.rtt_variance);
+        self.timers.update_rtt(&self.rtt);
 
         // Search the receiver's loss list, find out all those sequence numbers
         // whose last feedback time is k*RTT before, where k is initialized as 2
@@ -433,7 +388,7 @@ impl Receiver {
         let seq_nums = {
             let mut ret = Vec::new();
 
-            let rtt = self.rtt;
+            let rtt = self.rtt.mean();
             for pak in self
                 .loss_list
                 .iter_mut()
@@ -498,15 +453,12 @@ impl Receiver {
             // 3) Calculate new rtt according to the ACK2 arrival time and the ACK
             //    departure time, and update the RTT value as: RTT = (RTT * 7 +
             //    rtt) / 8
-            let immediate_rtt = self.receive_buffer.timestamp_from(now) - send_timestamp;
-            self.rtt = (self.rtt * 7 + immediate_rtt) / 8;
-
             // 4) Update RTTVar by: RTTVar = (RTTVar * 3 + abs(RTT - rtt)) / 4.
-            self.rtt_variance =
-                (self.rtt_variance * 3 + (self.rtt_variance - immediate_rtt).abs()) / 4;
+            self.rtt
+                .update(self.receive_buffer.timestamp_from(now) - send_timestamp);
 
             // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
-            self.timers.update_rtt(self.rtt, self.rtt_variance);
+            self.timers.update_rtt(&self.rtt);
         } else {
             warn!(
                 "ACK sequence number in ACK2 packet not found in ACK history: {}",

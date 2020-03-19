@@ -2,16 +2,14 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Instant;
 
+use bytes::Bytes;
+use failure::Error;
 use futures::channel::mpsc;
 use futures::sink::Sink;
 use futures::stream::Stream;
 use futures::{ready, SinkExt, StreamExt};
 
-use bytes::Bytes;
-
-use failure::Error;
-
-use crate::{Connection, PackChan, SenderSink, SrtCongestCtrl};
+use crate::{Connection, PackChan, SenderSink};
 
 type BoxConnStream = Pin<Box<dyn Stream<Item = Result<(Connection, PackChan), Error>> + Send>>;
 pub struct StreamerServer {
@@ -71,7 +69,7 @@ impl Sink<(Instant, Bytes)> for StreamerServer {
                 .expect("Multiplexer stream ended, strange")
                 .expect("Multiplex server return Err");
 
-            let mut sender = SenderSink::new(chan, SrtCongestCtrl, conn.settings, conn.handshake);
+            let mut sender = SenderSink::new(chan, conn.settings, conn.handshake);
 
             let (tx, rx) = mpsc::channel(100);
 

@@ -4,7 +4,7 @@ use std::time::Instant;
 use bytes::Bytes;
 
 use crate::packet::PacketLocation;
-use crate::protocol::{TimeBase, TimeStamp};
+use crate::protocol::time::{TimeBase, TimeStamp};
 use crate::{ConnectionSettings, DataPacket, MsgNumber, SeqNumber, SocketID};
 
 pub struct TransmitBuffer {
@@ -36,17 +36,18 @@ impl TransmitBuffer {
 
     /// In the case of a message longer than the packet size,
     /// It will be split into multiple packets
-    pub fn push_data(&mut self, data: (Instant, Bytes)) {
+    pub fn push_data(&mut self, data: (Instant, Bytes)) -> usize {
         let (time, mut payload) = data;
         let mut location = PacketLocation::FIRST;
+        let mut packet_count = 0;
         let message_number = self.get_new_message_number();
         loop {
             if payload.len() > self.max_packet_size as usize {
                 let this_payload = payload.slice(0..self.max_packet_size as usize);
                 self.begin_transmit(time, message_number, this_payload, location);
-
                 payload = payload.slice(self.max_packet_size as usize..payload.len());
                 location = PacketLocation::empty();
+                packet_count += 1;
             } else {
                 self.begin_transmit(
                     time,
@@ -54,7 +55,7 @@ impl TransmitBuffer {
                     payload,
                     location | PacketLocation::LAST,
                 );
-                return;
+                return packet_count + 1;
             }
         }
     }

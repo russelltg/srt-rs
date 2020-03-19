@@ -1,29 +1,6 @@
 use crate::SeqNumber;
 use std::time::Duration;
 
-/// Congestion control trait, sender side
-///
-/// Used to define custom congestion control
-pub trait CongestCtrl {
-    fn init(&mut self, _init_seq_num: SeqNumber) {}
-
-    /// When an ACK packet is received
-    fn on_ack(&mut self, _data: &CCData) {}
-
-    /// When a NAK packet is received
-    fn on_nak(&mut self, _largest_seq_in_ll: SeqNumber, _data: &CCData) {}
-
-    /// On packet sent
-    fn on_packet_sent(&mut self, _data: &CCData) {}
-
-    /// Get the interval between sending packets
-    fn send_interval(&self) -> Duration;
-
-    /// Get the window size
-    /// This is the number of packets to wait for before ACK
-    fn window_size(&self) -> u32;
-}
-
 /// Defines all the data that CC algorithms need
 pub struct CCData {
     /// Round trip time

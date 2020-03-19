@@ -2,7 +2,7 @@ use crate::channel::Channel;
 use crate::packet::ControlTypes;
 use crate::tokio::receiver::ReceiverStream;
 use crate::tokio::sender::SenderSink;
-use crate::{Connection, ConnectionSettings, Packet, SrtCongestCtrl};
+use crate::{Connection, ConnectionSettings, Packet};
 
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -39,7 +39,7 @@ pub struct SrtSocket {
     // This isn't actually used as a sender, it is just used because when the
     // sender gets dropped the receiver gets notified immediately.
     _drop_oneshot: oneshot::Sender<()>,
-    sender: SenderSink<PackChan, SrtCongestCtrl>,
+    sender: SenderSink<PackChan>,
     receiver: ReceiverStream<PackChan>,
 }
 
@@ -115,7 +115,7 @@ where
     // Arbitrarilly make the sender responsible for returning handshakes
     SrtSocket {
         _drop_oneshot: drop_tx,
-        sender: SenderSink::new(sender_chan, SrtCongestCtrl, conn.settings, conn.handshake),
+        sender: SenderSink::new(sender_chan, conn.settings, conn.handshake),
         receiver: ReceiverStream::new(recvr_chan, conn.settings, Handshake::Connector),
     }
 }

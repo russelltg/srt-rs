@@ -15,15 +15,12 @@ use crate::packet::Packet;
 use crate::protocol::handshake::Handshake;
 use crate::protocol::sender;
 use crate::protocol::sender::{SenderAlgorithmAction, SenderMetrics};
-use crate::{CongestCtrl, ConnectionSettings, SrtCongestCtrl};
+use crate::ConnectionSettings;
 
-pub struct SenderSink<T, CC> {
+pub struct SenderSink<T> {
     sock: T,
 
     sender: sender::Sender,
-
-    /// The congestion control
-    _congest_ctrl: CC,
 
     /// The send timer
     snd_wait: Option<Delay>,
@@ -32,19 +29,13 @@ pub struct SenderSink<T, CC> {
     stats_interval: Interval,
 }
 
-impl<T, CC> SenderSink<T, CC>
+impl<T> SenderSink<T>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
         + Sink<(Packet, SocketAddr), Error = Error>
         + Unpin,
-    CC: CongestCtrl + Unpin,
 {
-    pub fn new(
-        sock: T,
-        congest_ctrl: CC,
-        settings: ConnectionSettings,
-        handshake: Handshake,
-    ) -> SenderSink<T, CC> {
+    pub fn new(sock: T, settings: ConnectionSettings, handshake: Handshake) -> SenderSink<T> {
         info!(
             "Sending started to {:?}, with latency={:?}",
             settings.remote, settings.tsbpd_latency
@@ -52,8 +43,7 @@ where
 
         SenderSink {
             sock,
-            sender: sender::Sender::new(settings, handshake, SrtCongestCtrl),
-            _congest_ctrl: congest_ctrl,
+            sender: sender::Sender::new(settings, handshake),
             snd_wait: None,
             stats_interval: interval(Duration::from_secs(1)),
         }
@@ -180,17 +170,16 @@ where
     }
 }
 
-impl<T, CC> Sink<(Instant, Bytes)> for SenderSink<T, CC>
+impl<T> Sink<(Instant, Bytes)> for SenderSink<T>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
         + Sink<(Packet, SocketAddr), Error = Error>
         + Unpin,
-    CC: CongestCtrl + Unpin,
 {
     type Error = Error;
 
     fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Error> {
-        self.sender.handle_data(item);
+        self.sender.handle_data(item, Instant::now());
 
         Ok(())
     }
@@ -210,12 +199,11 @@ where
 }
 
 // Stats streaming
-impl<T, CC> Stream for SenderSink<T, CC>
+impl<T> Stream for SenderSink<T>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), Error>>
         + Sink<(Packet, SocketAddr), Error = Error>
         + Unpin,
-    CC: CongestCtrl + Unpin,
 {
     type Item = Result<SenderMetrics, Error>;
 
