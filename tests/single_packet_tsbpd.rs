@@ -88,7 +88,7 @@ async fn single_packet_tsbpd() {
         time - start
     };
     assert!(displacement < expected_displacement,
-            "TsbPd time calculated for the packet should be close to `start` time\nExpected: < {:?}\nActual: {:?}\n",
+            "TsbPD time calculated for the packet should be close to `start` time\nExpected: < {:?}\nActual: {:?}\n",
             expected_displacement, displacement);
 
     // the recvr should return None now

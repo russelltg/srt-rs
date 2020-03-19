@@ -1,3 +1,6 @@
+mod buffers;
+mod congestion_control;
+
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -10,15 +13,11 @@ use super::TimeSpan;
 use crate::loss_compression::decompress_loss_list;
 use crate::packet::{AckControlInfo, ControlTypes, HandshakeControlInfo, SrtControlPacket};
 use crate::protocol::handshake::Handshake;
-use crate::protocol::sender::buffers::*;
 use crate::protocol::Timer;
-use crate::Packet::*;
-use crate::{
-    CCData, CongestCtrl, ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber,
-    SrtCongestCtrl,
-};
+use crate::{CCData, ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
 
-mod buffers;
+use buffers::*;
+use congestion_control::{LiveDataRate, SenderCongestionControl};
 
 #[derive(Debug)]
 pub enum SenderError {}
@@ -84,7 +83,7 @@ pub struct Sender {
     handshake: Handshake,
 
     /// The congestion control
-    congestion_control: SrtCongestCtrl,
+    congestion_control: SenderCongestionControl,
 
     metrics: SenderMetrics,
 
@@ -123,15 +122,11 @@ impl Default for SenderMetrics {
 }
 
 impl Sender {
-    pub fn new(
-        settings: ConnectionSettings,
-        handshake: Handshake,
-        congestion_control: SrtCongestCtrl,
-    ) -> Self {
+    pub fn new(settings: ConnectionSettings, handshake: Handshake) -> Self {
         Self {
             settings: settings.clone(),
             handshake,
-            congestion_control,
+            congestion_control: SenderCongestionControl::new(LiveDataRate::Unlimited, None),
             metrics: SenderMetrics::new(),
             send_buffer: SendBuffer::new(&settings),
             loss_list: LossList::new(&settings),
@@ -155,8 +150,11 @@ impl Sender {
         }
     }
 
-    pub fn handle_data(&mut self, data: (Instant, Bytes)) {
-        self.transmit_buffer.push_message(data);
+    pub fn handle_data(&mut self, data: (Instant, Bytes), now: Instant) {
+        let data_length = data.1.len();
+        let packet_count = self.transmit_buffer.push_message(data);
+        self.congestion_control
+            .on_input(now, packet_count, data_length);
     }
 
     fn handle_snd_timer(&mut self, now: Instant) {
@@ -177,8 +175,8 @@ impl Sender {
         log::info!("Received packet {:?}", packet);
 
         match packet {
-            Control(control) => self.handle_control_packet(control, now),
-            Data(data) => self.handle_data_packet(data, now),
+            Packet::Control(control) => self.handle_control_packet(control, now),
+            Packet::Data(data) => self.handle_data_packet(data, now),
         }
     }
 
@@ -278,8 +276,8 @@ impl Sender {
         //      updated by congestion control and t is the total time used by step
         //      1 to step 5. Go to 1).
         self.step = Step6;
-        let period = self.congestion_control.send_interval();
-        self.snd_timer.set_period(period);
+        self.snd_timer
+            .set_period(self.congestion_control.snd_period());
         WaitUntil(self.snd_timer.next_instant())
     }
 
