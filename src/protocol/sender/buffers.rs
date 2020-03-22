@@ -36,7 +36,7 @@ impl TransmitBuffer {
 
     /// In the case of a message longer than the packet size,
     /// It will be split into multiple packets
-    pub fn push_data(&mut self, data: (Instant, Bytes)) -> usize {
+    pub fn push_message(&mut self, data: (Instant, Bytes)) -> usize {
         let (time, mut payload) = data;
         let mut location = PacketLocation::FIRST;
         let mut packet_count = 0;
