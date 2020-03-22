@@ -151,7 +151,6 @@ impl Sender {
     pub fn handle_close(&mut self, now: Instant) {
         if !self.close {
             self.close = true;
-            self.send_control(ControlTypes::Shutdown, now);
         }
     }
 
@@ -202,7 +201,9 @@ impl Sender {
         use SenderAlgorithmAction::*;
         use SenderAlgorithmStep::*;
 
-        if self.close {
+        // don't return close until fully flushed
+        if self.close && self.is_flushed() {
+            self.send_control(ControlTypes::Shutdown, now); // TODO: could send more than one
             return Close;
         }
 

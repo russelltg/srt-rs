@@ -65,15 +65,19 @@ where
         let mut receiver = Receiver::new(conn_copy.settings, Handshake::Connector);
 
         loop {
-            let mut does_sender_want_close = false;
-            let mut sender_closed = false;
-
             let sender_timeout = match sender.next_action(Instant::now()) {
                 SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => None,
                 SenderAlgorithmAction::WaitUntil(t) => Some(t),
                 SenderAlgorithmAction::Close => {
-                    trace!("Send returned close");
-                    return;
+                    trace!("{:?} Send returned close", sender.settings().local_sockid);
+                    if receiver.is_flushed() {
+                        trace!(
+                            "{:?} Send returned close and receiver flushed",
+                            sender.settings().local_sockid
+                        );
+                        return;
+                    }
+                    None
                 }
             };
             while let Some(out) = sender.pop_output() {
@@ -101,7 +105,9 @@ where
                 match connection.next_action(Instant::now()) {
                     ConnectionAction::ContinueUntil(timeout) => break Some(timeout),
                     ConnectionAction::Close => {
-                        return;
+                        if receiver.is_flushed() {
+                            return;
+                        }
                         break None;
                     } // timeout
                     ConnectionAction::SendKeepAlive => sock
@@ -152,7 +158,7 @@ where
             };
 
             select! {
-                // one of the entities requested waketup
+                // one of the entities requested wakeup
                 _ = timeout_fut.fuse() => {},
                 // new packet received
                 res = sock.next() => {
@@ -194,7 +200,7 @@ where
                         Some(item) => sender.handle_data(item),
                         None => {
                             sender.handle_close(Instant::now());
-                            self.closed = true;
+                            // closed = true;
                         }
                     }
                 }
