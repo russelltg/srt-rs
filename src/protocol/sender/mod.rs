@@ -160,7 +160,7 @@ impl Sender {
     }
 
     pub fn handle_data(&mut self, data: (Instant, Bytes)) {
-        self.transmit_buffer.push_data(data);
+        self.transmit_buffer.push_message(data);
     }
 
     pub fn handle_snd_timer(&mut self, now: Instant) {

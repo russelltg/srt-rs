@@ -20,7 +20,7 @@ impl TimeBase {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn timestamp_from(&self, instant: Instant) -> TimeStamp {
         if self.0 > instant {
-            0 - (self.0 - instant).as_micros() as i32
+            -((self.0 - instant).as_micros() as i32)
         } else {
             (instant - self.0).as_micros() as i32
         }
