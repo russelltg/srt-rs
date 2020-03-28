@@ -260,7 +260,7 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
         Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_flush(cx))?))
     }
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        let _ = ready!(Pin::new(&mut self.sender).poll_close(cx))?;
+        ready!(Pin::new(&mut self.sender).poll_close(cx))?;
         // the sender side of this oneshot is dropped when the task returns, which returns Err here. This means it is closd.
         match Pin::new(&mut self.close).poll(cx) {
             Poll::Pending => Poll::Pending,
