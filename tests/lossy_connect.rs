@@ -42,10 +42,11 @@ async fn connect() {
         r: oneshot::Receiver<()>,
     ) {
         let mut sock = sr.await.unwrap();
+        sock.send((Instant::now(), Bytes::new())).await.unwrap();
         s.send(()).unwrap();
 
         select! {
-            _ = sock.send((Instant::now(), Bytes::new())).fuse() => {},
+            _ = sock.close().fuse() => {},
             _ = r.fuse() => {},
         };
     }

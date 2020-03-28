@@ -26,7 +26,6 @@ pub struct RecvBuffer {
     /// is the max of both side's respective latencies.
     tsbpd_latency: Duration,
 
-    local_sockid: SocketID,
 }
 
 impl RecvBuffer {
@@ -35,7 +34,6 @@ impl RecvBuffer {
             settings.init_seq_num,
             settings.socket_start_time,
             settings.tsbpd_latency,
-            settings.local_sockid,
         )
     }
 
@@ -49,7 +47,6 @@ impl RecvBuffer {
             time_base: TimeBase::new(start),
             remote_clock: SynchronizedRemoteClock::new(start),
             tsbpd_latency,
-            local_sockid,
         }
     }
 

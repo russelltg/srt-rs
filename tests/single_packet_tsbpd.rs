@@ -1,7 +1,7 @@
 use srt::SrtSocketBuilder;
 
 use bytes::Bytes;
-use futures::{SinkExt, StreamExt};
+use futures::prelude::*;
 use log::info;
 
 use std::time::{Duration, Instant};
@@ -26,10 +26,10 @@ async fn single_packet_tsbpd() {
         let mut recvr = recvr.await.unwrap();
         let start = Instant::now();
         let (time, packet) = recvr
-            .next()
+            .try_next()
             .await
-            .expect("The receiver should've yielded an object")
-            .unwrap();
+            .unwrap()
+            .expect("The receiver should've yielded an object");
 
         info!("Pack recvd");
 
@@ -40,13 +40,21 @@ async fn single_packet_tsbpd() {
             "Was not around 5s later, was {}ms",
             delay_ms
         );
+
         assert_eq!(&packet, "Hello World!");
+
+        let expected_displacement = Duration::from_millis(1);
+        let displacement = if start > time {
+            start - time
+        } else {
+            time - start
+        };
+        assert!(displacement < expected_displacement,
+            "TsbPd time calculated for the packet should be close to `start` time\nExpected: < {:?}\nActual: {:?}\n",
+            expected_displacement, displacement);
 
         // the recvr should return None now
         assert!(recvr.next().await.is_none());
-
-        // the time from the packet should be close to `start`, less than 5ms
-        assert!(start - time < Duration::from_millis(5));
     };
 
     let sendr_fut = async move {
@@ -58,34 +66,5 @@ async fn single_packet_tsbpd() {
         sender.close().await.unwrap();
     };
 
-    let (item, _) = futures::join!(recv_fut, send_fut);
-
-    info!("Pack recvd");
-
-    let (time, packet) = item.expect("The receiver should've yielded an object")?;
-
-    // should be around 5s later
-    let delay_ms = start.elapsed().as_millis();
-    assert!(
-        delay_ms < 5500 && delay_ms > 4900,
-        "Was not around 5s later, was {}ms",
-        delay_ms
-    );
-
-    assert_eq!(&packet, "Hello World!");
-
-    let expected_displacement = Duration::from_millis(1);
-    let displacement = if start > time {
-        start - time
-    } else {
-        time - start
-    };
-    assert!(displacement < expected_displacement,
-            "TsbPd time calculated for the packet should be close to `start` time\nExpected: < {:?}\nActual: {:?}\n",
-            expected_displacement, displacement);
-
-    // the recvr should return None now
-    assert!(recvr.next().await.is_none());
-
-    Ok(())
+    futures::join!(recvr_fut, sendr_fut);
 }

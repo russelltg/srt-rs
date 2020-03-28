@@ -18,7 +18,7 @@ use failure::Error;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::{future, ready, select};
-use log::trace;
+use log::{debug, trace};
 use tokio::time::delay_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
@@ -29,8 +29,14 @@ use tokio::time::delay_until;
 /// The sockets yield and consume `(Instant, Bytes)`, representng the data and the origin instant. This instant
 /// defines when the packet will be released on the receiving side, at more or less one latency later.
 pub struct SrtSocket {
+    // receiver datastructures
     recvr: mpsc::Receiver<(Instant, Bytes)>,
+
+    // sender datastructures
     sender: mpsc::Sender<(Instant, Bytes)>,
+
+    // agnostic
+    close: oneshot::Receiver<()>,
 
     settings: ConnectionSettings,
 
@@ -52,36 +58,41 @@ where
     let (mut release, recvr) = mpsc::channel(128);
     let (sender, new_data) = mpsc::channel(128);
     let (_drop_oneshot, close_oneshot) = oneshot::channel();
+    let (close_send, close_recv) = oneshot::channel();
     let conn_copy = conn.clone();
 
     tokio::spawn(async move {
-        let mut close_oneshot = close_oneshot.fuse();
+        let mut close_receiver = close_oneshot.fuse();
+        let mut close_sender = close_send;
         let mut new_data = new_data.fuse();
         let mut sock = sock.fuse();
 
-        let time_base = TimeBase::from_raw(conn_copy.settings.socket_start_time);
+        let time_base = TimeBase::new(conn_copy.settings.socket_start_time);
         let mut connection = Connection::new(conn_copy.settings);
         let mut sender = Sender::new(conn_copy.settings, conn_copy.handshake, SrtCongestCtrl);
         let mut receiver = Receiver::new(conn_copy.settings, Handshake::Connector);
 
         loop {
-            let sender_timeout = match sender.next_action(Instant::now()) {
-                SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => None,
-                SenderAlgorithmAction::WaitUntil(t) => Some(t),
+            let (sender_timeout, close) = match sender.next_action(Instant::now()) {
+                SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {
+                    (None, false)
+                }
+                SenderAlgorithmAction::WaitUntil(t) => (Some(t), false),
                 SenderAlgorithmAction::Close => {
                     trace!("{:?} Send returned close", sender.settings().local_sockid);
-                    if receiver.is_flushed() {
-                        trace!(
-                            "{:?} Send returned close and receiver flushed",
-                            sender.settings().local_sockid
-                        );
-                        return;
-                    }
-                    None
+                    (None, true)
                 }
             };
             while let Some(out) = sender.pop_output() {
                 sock.send(out).await; // TODO: error handling
+            }
+
+            if close && receiver.is_flushed() {
+                trace!(
+                    "{:?} Send returned close and receiver flushed",
+                    sender.settings().local_sockid
+                );
+                return;
             }
 
             let recvr_timeout = loop {
@@ -199,14 +210,15 @@ where
                     match res {
                         Some(item) => sender.handle_data(item),
                         None => {
-                            sender.handle_close(Instant::now());
+                            debug!("Incoming data stream closed");
+                            sender.handle_close();
                             // closed = true;
                         }
                     }
                 }
                 // socket closed
-                _ = close_oneshot =>  {
-                    sender.handle_close(Instant::now())
+                _ = close_receiver =>  {
+                    sender.handle_close()
                 }
             }
         }
@@ -215,6 +227,7 @@ where
     SrtSocket {
         recvr,
         sender,
+        close: close_recv,
         settings: conn.settings,
         _drop_oneshot,
     }
@@ -247,6 +260,12 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
         Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_flush(cx))?))
     }
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_close(cx))?))
+        let _ = ready!(Pin::new(&mut self.sender).poll_close(cx))?;
+        // the sender side of this oneshot is dropped when the task returns, which returns Err here. This means it is closd.
+        match Pin::new(&mut self.close).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(_)) => Poll::Ready(Ok(())),
+            Poll::Ready(Ok(_)) => unreachable!(),
+        }
     }
 }

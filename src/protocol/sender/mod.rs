@@ -148,7 +148,7 @@ impl Sender {
         &self.settings
     }
 
-    pub fn handle_close(&mut self, now: Instant) {
+    pub fn handle_close(&mut self) {
         if !self.close {
             self.close = true;
         }
@@ -202,6 +202,7 @@ impl Sender {
 
         // don't return close until fully flushed
         if self.close && self.is_flushed() {
+            debug!("{:?} sending shutdown", self.settings.local_sockid);
             self.send_control(ControlTypes::Shutdown, now); // TODO: could send more than one
             return Close;
         }
