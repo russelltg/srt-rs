@@ -18,7 +18,7 @@ use failure::Error;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::{future, ready, select};
-use log::{debug, trace};
+use log::{debug, error, trace};
 use tokio::time::delay_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
@@ -63,7 +63,7 @@ where
 
     tokio::spawn(async move {
         let mut close_receiver = close_oneshot.fuse();
-        let mut close_sender = close_send;
+        let _close_sender = close_send; // exists for drop
         let mut new_data = new_data.fuse();
         let mut sock = sock.fuse();
 
@@ -84,7 +84,9 @@ where
                 }
             };
             while let Some(out) = sender.pop_output() {
-                sock.send(out).await; // TODO: error handling
+                if let Err(e) = sock.send(out).await {
+                    error!("Error while seding packet: {:?}", e); // TODO: real error handling
+                }
             }
 
             if close && receiver.is_flushed() {
@@ -101,10 +103,14 @@ where
                         break Some(t2);
                     }
                     ReceiverAlgorithmAction::SendControl(cp, addr) => {
-                        sock.send((Packet::Control(cp), addr)).await;
+                        if let Err(e) = sock.send((Packet::Control(cp), addr)).await {
+                            error!("Error while sending packet {:?}", e);
+                        }
                     }
                     ReceiverAlgorithmAction::OutputData(ib) => {
-                        release.send(ib).await;
+                        if let Err(e) = release.send(ib).await {
+                            error!("Error while releasing packet {:?}", e);
+                        }
                     }
                     ReceiverAlgorithmAction::Close => {
                         trace!("Recv returned close");

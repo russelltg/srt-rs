@@ -8,7 +8,7 @@ use log::{debug, info};
 use crate::packet::PacketLocation;
 use crate::protocol::receiver::time::SynchronizedRemoteClock;
 use crate::protocol::{TimeBase, TimeStamp};
-use crate::{ConnectionSettings, DataPacket, SeqNumber, SocketID};
+use crate::{ConnectionSettings, DataPacket, SeqNumber};
 
 pub struct RecvBuffer {
     // stores the incoming packets as they arrive
