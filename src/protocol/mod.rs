@@ -64,11 +64,11 @@ mod timebase {
         }
 
         #[test]
-        fn timestamp_from(expected_ts: i32, n in -10i64..10) {
+        fn timestamp_from(expected_ts: i32, n in 0i64..10) {
             let now = Instant::now();
             let timebase = TimeBase::new(now);
             let delta = ((std::i32::MAX as i64 + 1) * 2 * n as i64) + expected_ts as i64;
-            let instant = if delta > 0 { now + Duration::from_micros(delta as u64) } else { now - Duration::from_micros(delta.abs() as u64) };
+            let instant = now + Duration::from_micros(delta as u64);
             let ts = timebase.timestamp_from(instant);
             assert_eq!(ts, expected_ts);
         }
