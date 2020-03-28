@@ -25,7 +25,6 @@ pub struct RecvBuffer {
     /// Not necessarily the actual decided on latency, which
     /// is the max of both side's respective latencies.
     tsbpd_latency: Duration,
-
 }
 
 impl RecvBuffer {
