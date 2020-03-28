@@ -27,7 +27,7 @@ impl TransmitBuffer {
         Self {
             remote_socket_id: settings.remote_sockid,
             max_packet_size: settings.max_packet_size as usize,
-            time_base: TimeBase::from_raw(settings.socket_start_time),
+            time_base: TimeBase::new(settings.socket_start_time),
             buffer: Default::default(),
             next_sequence_number: settings.init_seq_num,
             next_message_number: MsgNumber::new_truncate(0),
@@ -59,9 +59,24 @@ impl TransmitBuffer {
         }
     }
 
-    pub fn push_data(&mut self, data: (Bytes, Instant)) {
-        let (payload, time) = data;
-        self.push_message((time, payload));
+    pub fn pop_front(&mut self) -> Option<DataPacket> {
+        self.buffer.pop_front()
+    }
+
+    pub fn front(&self) -> Option<&DataPacket> {
+        self.buffer.front()
+    }
+
+    pub fn latest_seqence_number(&self) -> SeqNumber {
+        self.next_sequence_number - 1
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+
+    pub fn timestamp_from(&self, at: Instant) -> TimeStamp {
+        self.time_base.timestamp_from(at)
     }
 
     fn begin_transmit(
@@ -85,18 +100,6 @@ impl TransmitBuffer {
         self.buffer.push_back(packet)
     }
 
-    pub fn pop_front(&mut self) -> Option<DataPacket> {
-        self.buffer.pop_front()
-    }
-
-    pub fn front(&self) -> Option<&DataPacket> {
-        self.buffer.front()
-    }
-
-    pub fn latest_seqence_number(&self) -> SeqNumber {
-        self.next_sequence_number - 1
-    }
-
     /// Gets the next available message number
     fn get_new_message_number(&mut self) -> MsgNumber {
         self.next_message_number += 1;
@@ -108,14 +111,6 @@ impl TransmitBuffer {
         // this does looping for us
         self.next_sequence_number += 1;
         self.next_sequence_number - 1
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.buffer.is_empty()
-    }
-
-    pub fn timestamp_from(&self, at: Instant) -> TimeStamp {
-        self.time_base.timestamp_from(at)
     }
 }
 

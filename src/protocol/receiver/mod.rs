@@ -17,6 +17,8 @@ use crate::protocol::handshake::Handshake;
 use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber};
 
 mod buffer;
+mod time;
+
 use buffer::RecvBuffer;
 
 #[derive(Debug, Clone)]
@@ -200,8 +202,9 @@ impl Receiver {
 
         match packet {
             Packet::Control(ctrl) => {
-                // handle the control packet
+                self.receive_buffer.synchronize_clock(now, ctrl.timestamp);
 
+                // handle the control packet
                 match ctrl.control_type {
                     ControlTypes::Ack { .. } => warn!("Receiver received ACK packet, unusual"),
                     ControlTypes::Ack2(seq_num) => self.handle_ack2(seq_num, now),

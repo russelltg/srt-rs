@@ -8,26 +8,82 @@ pub mod sender;
 /// Timestamp in us
 pub type TimeStamp = i32;
 
+/// Duration in us, e.g. RTT
+pub type TimeSpan = i32;
+
 #[derive(Copy, Clone, Debug)]
 pub struct TimeBase(Instant);
 impl TimeBase {
-    pub fn new() -> Self {
-        Self(Instant::now())
-    }
-
-    pub fn from_raw(start_time: Instant) -> Self {
+    pub fn new(start_time: Instant) -> Self {
         Self(start_time)
     }
 
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn timestamp_from(&self, instant: Instant) -> TimeStamp {
-        let elapsed = instant - self.0;
-        elapsed.as_micros() as i32 // TODO: handle overflow here
+        if self.0 > instant {
+            -((self.0 - instant).as_micros() as i32)
+        } else {
+            (instant - self.0).as_micros() as i32
+        }
     }
 
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn instant_from(&self, timestamp: TimeStamp) -> Instant {
-        self.0 + Duration::from_micros(timestamp as u64)
+        if timestamp < 0 {
+            self.0 - Duration::from_micros(timestamp.abs() as u64)
+        } else {
+            self.0 + Duration::from_micros(timestamp as u64)
+        }
+    }
+
+    pub fn adjust(&mut self, delta: TimeSpan) {
+        match delta {
+            delta if delta > 0 => {
+                self.0 += Duration::from_micros(delta as u64);
+            }
+            delta if delta < 0 => {
+                self.0 -= Duration::from_micros(delta.abs() as u64);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod timebase {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn timestamp_roundtrip(expected_ts: i32) {
+            let timebase = TimeBase::new(Instant::now());
+
+            let ts = timebase.timestamp_from(timebase.instant_from(expected_ts));
+            assert_eq!(ts, expected_ts);
+        }
+
+        #[test]
+        fn timestamp_from(expected_ts: i32, n in -10i64..10) {
+            let now = Instant::now();
+            let timebase = TimeBase::new(now);
+            let delta = ((std::i32::MAX as i64 + 1) * 2 * n as i64) + expected_ts as i64;
+            let instant = if delta > 0 { now + Duration::from_micros(delta as u64) } else { now - Duration::from_micros(delta.abs() as u64) };
+            let ts = timebase.timestamp_from(instant);
+            assert_eq!(ts, expected_ts);
+        }
+
+        #[test]
+        fn adjust(drift: i16) {
+            let now = Instant::now();
+            let mut timebase = TimeBase::new(now);
+
+            let original_ts = timebase.timestamp_from(now);
+            timebase.adjust(drift as TimeSpan);
+            let ts = timebase.timestamp_from(now);
+
+            assert_eq!(ts, original_ts - drift as TimeSpan);
+        }
     }
 }
 

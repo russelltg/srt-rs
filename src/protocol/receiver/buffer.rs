@@ -6,6 +6,7 @@ use bytes::{Bytes, BytesMut};
 use log::{debug, info};
 
 use crate::packet::PacketLocation;
+use crate::protocol::receiver::time::SynchronizedRemoteClock;
 use crate::protocol::{TimeBase, TimeStamp};
 use crate::{ConnectionSettings, DataPacket, SeqNumber, SocketID};
 
@@ -17,6 +18,7 @@ pub struct RecvBuffer {
     // The next to be released sequence number
     head: SeqNumber,
 
+    remote_clock: SynchronizedRemoteClock,
     time_base: TimeBase,
 
     /// The TSBPD latency configured by the user.
@@ -31,7 +33,7 @@ impl RecvBuffer {
     pub fn with(settings: &ConnectionSettings) -> Self {
         Self::new(
             settings.init_seq_num,
-            TimeBase::from_raw(settings.socket_start_time),
+            settings.socket_start_time,
             settings.tsbpd_latency,
             settings.local_sockid,
         )
@@ -40,16 +42,12 @@ impl RecvBuffer {
     /// Creates a `RecvBuffer`
     ///
     /// * `head` - The sequence number of the next packet
-    pub fn new(
-        head: SeqNumber,
-        time_base: TimeBase,
-        tsbpd_latency: Duration,
-        local_sockid: SocketID,
-    ) -> Self {
+    pub fn new(head: SeqNumber, start: Instant, tsbpd_latency: Duration) -> Self {
         Self {
             buffer: VecDeque::new(),
             head,
-            time_base,
+            time_base: TimeBase::new(start),
+            remote_clock: SynchronizedRemoteClock::new(start),
             tsbpd_latency,
             local_sockid,
         }
@@ -74,7 +72,11 @@ impl RecvBuffer {
         }
 
         // add the new element
-        self.buffer[idx] = Some(pack)
+        self.buffer[idx] = Some(pack);
+    }
+
+    pub fn synchronize_clock(&mut self, now: Instant, ts: TimeStamp) {
+        self.remote_clock.synchronize(now, ts);
     }
 
     /// Drops the packets that are deemed to be too late
@@ -99,18 +101,14 @@ impl RecvBuffer {
         let first_pack_ts_us = self.buffer[first_non_none_idx].as_ref().unwrap().timestamp;
         // we are too late if that packet is ready
         // give a 2 ms buffer range, be ok with releasing them 2ms late
-        let too_late = self.time_base.instant_from(first_pack_ts_us)
-            + self.tsbpd_latency
-            + Duration::from_millis(2)
-            <= now;
+        let too_late = self.tsbpd_instant_from(first_pack_ts_us) + Duration::from_millis(2) <= now;
 
         if too_late {
             info!(
                 "Dropping packets [{},{}), {} ms too late",
                 self.head,
                 self.head + first_non_none_idx as u32,
-                (now - self.time_base.instant_from(first_pack_ts_us) - self.tsbpd_latency)
-                    .as_millis()
+                (now - self.tsbpd_instant_from(first_pack_ts_us)).as_millis()
             );
             // start dropping packets
             self.head += first_non_none_idx as u32;
@@ -133,13 +131,12 @@ impl RecvBuffer {
 
         let pack = self.buffer.front().unwrap().as_ref().unwrap();
 
-        if self.time_base.instant_from(pack.timestamp) + self.tsbpd_latency <= now {
+        if self.tsbpd_instant_from(pack.timestamp) <= now {
             debug!(
-                "Message for {:?} was deemed ready for release, Now={:?}, Ts={:?}, dT={:?}, Latency={:?}, buf.len={}, sn={}, npackets={}",
-                self.local_sockid,
-                now - self.time_base.instant_from(0),
+                "Message was deemed ready for release, Now={:?}, Ts={:?}, dT={:?}, Latency={:?}, buf.len={}, sn={}, npackets={}",
+                now - self.remote_clock.instant_from(0),
                 Duration::from_micros(pack.timestamp as u64),
-                now - self.time_base.instant_from(pack.timestamp),
+                now - self.remote_clock.instant_from(pack.timestamp),
                 self.tsbpd_latency,
                 self.buffer.len(),
                 pack.seq_number,
@@ -182,7 +179,7 @@ impl RecvBuffer {
     pub fn next_message_release_time(&self) -> Option<Instant> {
         let _msg_size = self.next_msg_ready()?;
         let timestamp = self.buffer.front()?.as_ref()?.timestamp;
-        Some(self.time_base.instant_from(timestamp) + self.tsbpd_latency)
+        Some(self.tsbpd_instant_from(timestamp))
     }
 
     /// A convenience function for
@@ -199,7 +196,7 @@ impl RecvBuffer {
         self.head += count as u32;
 
         let origin_time = self
-            .time_base
+            .remote_clock
             .instant_from(self.buffer[0].as_ref().unwrap().timestamp);
 
         // optimize for single packet messages
@@ -221,6 +218,10 @@ impl RecvBuffer {
                 })
                 .freeze(),
         ))
+    }
+
+    fn tsbpd_instant_from(&self, timestamp: i32) -> Instant {
+        self.remote_clock.instant_from(timestamp) + self.tsbpd_latency
     }
 
     pub fn timestamp_from(&self, at: Instant) -> TimeStamp {
@@ -247,10 +248,9 @@ impl fmt::Debug for RecvBuffer {
 mod test {
 
     use super::RecvBuffer;
-    use crate::protocol::TimeBase;
     use crate::{packet::PacketLocation, DataPacket, MsgNumber, SeqNumber, SocketID};
     use bytes::Bytes;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     fn basic_pack() -> DataPacket {
         DataPacket {
@@ -265,12 +265,7 @@ mod test {
     }
 
     fn new_buffer(head: SeqNumber) -> RecvBuffer {
-        RecvBuffer::new(
-            head,
-            TimeBase::new(),
-            Duration::from_millis(100),
-            rand::random(),
-        )
+        RecvBuffer::new(head, Instant::now(), Duration::from_millis(100))
     }
 
     #[test]
@@ -353,7 +348,7 @@ mod test {
         assert_eq!(buf.next_msg_ready(), Some(1));
         assert_eq!(
             buf.next_msg(),
-            Some((buf.time_base.instant_from(0), From::from(&b"hello"[..])))
+            Some((buf.remote_clock.instant_from(0), From::from(&b"hello"[..])))
         );
         assert_eq!(buf.next_release(), SeqNumber(6));
         assert_eq!(buf.buffer.len(), 1);
@@ -385,7 +380,7 @@ mod test {
         assert_eq!(
             buf.next_msg(),
             Some((
-                buf.time_base.instant_from(0),
+                buf.remote_clock.instant_from(0),
                 From::from(&b"helloyasnas"[..])
             ))
         );
