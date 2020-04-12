@@ -35,7 +35,6 @@ struct ReceiveTimers {
     syn: Timer,
     ack: Timer,
     nak: Timer,
-    exp: Timer,
 }
 
 impl ReceiveTimers {
@@ -45,7 +44,6 @@ impl ReceiveTimers {
             syn: Timer::new(syn, now),
             ack: Timer::new(syn, now),
             nak: Timer::new(syn, now),
-            exp: Timer::new(syn, now),
         }
     }
 
@@ -54,19 +52,10 @@ impl ReceiveTimers {
         let rtt_var = Duration::from_micros(rtt_var.as_micros() as u64);
         self.nak.set_period(4 * rtt + rtt_var + self.syn.period());
         self.ack.set_period(4 * rtt + rtt_var + self.syn.period());
-        // 0.5s min, accordiding to page 9
-        self.exp.set_period(max(
-            4 * rtt + rtt_var + self.syn.period(),
-            Duration::from_millis(500),
-        ));
     }
 
-    pub fn next_timer(&self, now: Instant) -> Instant {
-        let timer = now;
-        let timer = min(timer, self.ack.next_instant());
-        let timer = min(timer, self.nak.next_instant());
-        let timer = min(timer, self.exp.next_instant());
-        max(timer, now)
+    pub fn next_timer(&self) -> Instant {
+        min(self.ack.next_instant(), self.nak.next_instant())
     }
 }
 
@@ -141,9 +130,6 @@ pub struct Receiver {
     /// the highest received packet sequence number + 1
     lrsn: SeqNumber,
 
-    /// The number of consecutive timeouts
-    exp_count: i32,
-
     /// The ID of the next ack packet
     next_ack: i32,
 
@@ -184,7 +170,6 @@ impl Receiver {
             packet_pair_window: Vec::new(),
             lrsn: init_seq_num, // at start, we have received everything until the first packet, exclusive (aka nothing)
             next_ack: 1,
-            exp_count: 1,
             probe_time: None,
             lr_ack_acked: (0, init_seq_num),
             receive_buffer: RecvBuffer::with(&settings),
@@ -197,12 +182,7 @@ impl Receiver {
     }
 
     // handles an incoming a packet
-    pub fn handle_packet(&mut self, now: Instant, packet: (Packet, SocketAddr)) {
-        let (packet, from) = packet;
-
-        self.exp_count = 1;
-        self.timers.exp.reset(now);
-
+    pub fn handle_packet(&mut self, now: Instant, (packet, from): (Packet, SocketAddr)) {
         // We don't care about packets from elsewhere
         if from != self.settings.remote {
             info!("Packet received from unknown address: {:?}", from);
@@ -261,23 +241,25 @@ impl Receiver {
         if self.timers.nak.check_expired(now).is_some() {
             self.on_nak_event(now);
         }
-        if self.timers.exp.check_expired(now).is_some() {
-            self.on_exp_event(now);
-        }
 
         if let Some(data) = self.pop_data(now) {
             OutputData(data)
-        } else if self.shutdown_flag && self.receive_buffer.next_msg_ready().is_none() {
-            Close
         } else if let Some(Packet::Control(packet)) = self.pop_conotrol_packet() {
             SendControl(packet, self.settings.remote)
+        } else if self.shutdown_flag && self.is_flushed() {
+            Close
         } else {
             // 2) Start time bounded UDP receiving. If no packet arrives, go to 1).
             TimeBoundedReceive(self.next_timer(now))
         }
     }
 
+    pub fn is_flushed(&self) -> bool {
+        self.receive_buffer.next_msg_ready().is_none()
+    }
+
     fn on_ack_event(&mut self, now: Instant) {
+        trace!("Ack event hit {:?}", self.settings.local_sockid);
         // get largest inclusive received packet number
         let ack_number = match self.loss_list.first() {
             // There is an element in the loss list
@@ -519,11 +501,6 @@ impl Receiver {
     fn handle_data_packet(&mut self, data: &DataPacket, now: Instant) {
         let ts_now = self.receive_buffer.timestamp_from(now);
 
-        // 1) Reset the ExpCount to 1. If there is no unacknowledged data
-        //     packet, or if this is an ACK or NAK control packet, reset the EXP
-        //     timer.
-        self.exp_count = 1;
-
         // 2&3 don't apply
 
         // 4) If the sequence number of the current data packet is 16n + 1,
@@ -594,13 +571,6 @@ impl Receiver {
         }
 
         self.receive_buffer.add(data.clone());
-
-        trace!(
-            "Received data packet seq_num={}, loc={:?}, buffer={:?}",
-            data.seq_number,
-            data.message_loc,
-            self.receive_buffer,
-        );
     }
 
     // send a NAK, and return the future
@@ -631,19 +601,9 @@ impl Receiver {
         self.control_packets.pop_front()
     }
 
-    // return if we should shutdown
-    fn on_exp_event(&mut self, _now: Instant) {
-        self.exp_count += 1;
-        debug!("Exp! ct={}", self.exp_count);
-        if self.exp_count > 16 {
-            self.shutdown_flag = true;
-            info!("16 consequtive exp events, timeout");
-        }
-    }
-
     fn next_timer(&self, now: Instant) -> Instant {
         std::cmp::min(
-            self.timers.next_timer(now),
+            self.timers.next_timer(),
             self.receive_buffer
                 .next_message_release_time(now)
                 .unwrap_or(now),

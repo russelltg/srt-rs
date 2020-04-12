@@ -8,7 +8,7 @@ use tokio_util::udp::UdpFramed;
 
 use futures::{Sink, Stream};
 
-use crate::socket::create_bidrectional_srt;
+use crate::tokio::create_bidrectional_srt;
 use crate::{multiplex, pending_connection, Connection, PackChan, Packet, PacketCodec, SrtSocket};
 
 /// Struct to build sockets.

@@ -3,6 +3,8 @@ use srt::{ConnInitMethod, SrtSocketBuilder};
 use std::time::Duration;
 use tokio::time::delay_for;
 
+use futures::prelude::*;
+
 async fn test_latency_exchange(
     connecter_latency: Duration,
     listener_latency: Duration,
@@ -16,12 +18,25 @@ async fn test_latency_exchange(
         .latency(listener_latency)
         .connect();
 
-    let (connector, listener) = futures::try_join!(connecter, listener)?;
+    let (l1, l2) = futures::join!(
+        async move {
+            let mut c = connecter.await.unwrap();
+            let latency = c.settings().tsbpd_latency;
+            c.close().await.unwrap();
+            latency
+        },
+        async move {
+            let mut c = listener.await.unwrap();
+            let latency = c.settings().tsbpd_latency;
+            c.close().await.unwrap();
+            latency
+        },
+    );
 
     let expected = Duration::max(connecter_latency, listener_latency);
 
-    assert_eq!(connector.settings().tsbpd_latency, expected);
-    assert_eq!(listener.settings().tsbpd_latency, expected);
+    assert_eq!(l1, expected);
+    assert_eq!(l2, expected);
 
     Ok(())
 }

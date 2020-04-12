@@ -1,6 +1,7 @@
 use crate::packet::{ControlTypes, HandshakeControlInfo, ShakeType};
 
 #[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone)]
 pub enum Handshake {
     Connector,
     Listener(ControlTypes),

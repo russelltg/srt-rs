@@ -149,14 +149,9 @@ impl Sender {
         &self.settings
     }
 
-    pub fn metrics(&self) -> SenderMetrics {
-        self.metrics
-    }
-
-    pub fn handle_close(&mut self, now: Instant) {
+    pub fn handle_close(&mut self) {
         if !self.close {
             self.close = true;
-            self.send_control(ControlTypes::Shutdown, now);
         }
     }
 
@@ -164,18 +159,22 @@ impl Sender {
         self.transmit_buffer.push_message(data);
     }
 
-    pub fn handle_snd_timer(&mut self, now: Instant) {
+    fn handle_snd_timer(&mut self, now: Instant) {
         self.snd_timer.reset(now);
         self.step = SenderAlgorithmStep::Step1;
     }
 
-    pub fn handle_packet(&mut self, packet: (Packet, SocketAddr), now: Instant) -> SenderResult {
-        let (packet, from) = packet;
-
+    pub fn handle_packet(
+        &mut self,
+        (packet, from): (Packet, SocketAddr),
+        now: Instant,
+    ) -> SenderResult {
         // TODO: record/report packets from invalid hosts?
         if from != self.settings.remote {
             return Ok(());
         }
+
+        log::info!("Received packet {:?}", packet);
 
         match packet {
             Control(control) => self.handle_control_packet(control, now),
@@ -198,12 +197,19 @@ impl Sender {
             .map(move |packet| (packet, to))
     }
 
-    pub fn next_action(&mut self) -> SenderAlgorithmAction {
+    pub fn next_action(&mut self, now: Instant) -> SenderAlgorithmAction {
         use SenderAlgorithmAction::*;
         use SenderAlgorithmStep::*;
 
-        if self.close {
+        // don't return close until fully flushed
+        if self.close && self.is_flushed() {
+            debug!("{:?} sending shutdown", self.settings.local_sockid);
+            self.send_control(ControlTypes::Shutdown, now); // TODO: could send more than one
             return Close;
+        }
+
+        if let Some(exp_time) = self.snd_timer.check_expired(now) {
+            self.handle_snd_timer(exp_time);
         }
 
         if self.step == Step6 {
@@ -358,8 +364,8 @@ impl Sender {
         self.send_control(ControlTypes::Ack2(ack_seq_num), now);
 
         // 3) Update RTT and RTTVar.
-        self.metrics.rtt = rtt.unwrap_or(TimeSpan::from_micros(0));
-        self.metrics.rtt_var = rtt_variance.unwrap_or(TimeSpan::from_micros(0));
+        self.metrics.rtt = rtt.unwrap_or_else(|| TimeSpan::from_micros(0));
+        self.metrics.rtt_var = rtt_variance.unwrap_or_else(|| TimeSpan::from_micros(0));
 
         // 4) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
         // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.

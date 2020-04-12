@@ -1,6 +1,7 @@
 use srt::SrtSocketBuilder;
 
-use futures::try_join;
+use futures::join;
+use futures::prelude::*;
 
 #[tokio::test]
 async fn rendezvous() {
@@ -12,5 +13,12 @@ async fn rendezvous() {
         .local_port(5000)
         .connect();
 
-    let _ = try_join!(a, b).unwrap();
+    join!(
+        async move {
+            a.await.unwrap().close().await.unwrap();
+        },
+        async move {
+            b.await.unwrap().close().await.unwrap();
+        }
+    );
 }

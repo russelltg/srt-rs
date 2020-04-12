@@ -331,10 +331,10 @@ impl Debug for ControlPacket {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{{{:?} ts={:.4}s dst={:X}}}",
+            "{{{:?} ts={:.4}s dst={:?}}}",
             self.control_type,
             self.timestamp.as_secs_f64(),
-            self.dest_sockid.0,
+            self.dest_sockid,
         )
     }
 }
@@ -521,8 +521,8 @@ impl ControlTypes {
             0x2 => {
                 // ACK
 
-                // make sure there are enough bytes -- 6 32-bit words
-                if buf.remaining() < 6 * 4 {
+                // make sure there are enough bytes -- only one required field
+                if buf.remaining() < 4 {
                     bail!("Not enough data for an ack packet");
                 }
 
@@ -697,13 +697,13 @@ impl ControlTypes {
                 }
             }
             ControlTypes::DropRequest { .. } => unimplemented!(),
-            ControlTypes::Ack2(_) => {
-                // The reference implementation appends one (4 byte) word at the end of the ack2 packet, which wireshark labels as 'Unused'
+            ControlTypes::Ack2(_) | ControlTypes::Shutdown | ControlTypes::KeepAlive => {
+                // The reference implementation appends one (4 byte) word at the end of these packets, which wireshark labels as 'Unused'
                 // I have no idea why, but wireshark reports it as a "malformed packet" without it. For the record,
                 // this is NOT in the UDT specification. I wonder if this was carried over from the original UDT implementation.
+                // https://github.com/Haivision/srt/blob/86013826b5e0c4d8e531cf18a30c6ad4b16c1b3b/srtcore/packet.cpp#L309
                 into.put_u32(0x0);
             }
-            ControlTypes::Shutdown | ControlTypes::KeepAlive => {}
             ControlTypes::Srt(srt) => {
                 srt.serialize(into);
             }
@@ -739,7 +739,7 @@ impl Debug for ControlTypes {
                     write!(f, " pack_rr={}", prr)?;
                 }
                 if let Some(link_cap) = est_link_cap {
-                    write!(f, " link_cap{}=", link_cap)?;
+                    write!(f, " link_cap={}", link_cap)?;
                 }
                 write!(f, ")")?;
                 Ok(())
@@ -787,7 +787,7 @@ impl Debug for ControlTypes {
 // pub info: HandshakeVSInfo,
 impl Debug for HandshakeControlInfo {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        write!(f, "HS {:?} from({:X})", self.shake_type, self.socket_id.0)
+        write!(f, "HS {:?} from({:?})", self.shake_type, self.socket_id)
     }
 }
 
@@ -1015,5 +1015,15 @@ mod test {
     fn raw_handshake_crypto_pt2() {
         let packet_data = hex::decode("8000000000000000000000000C110D94000000050000000374B7526E000005DC00002000FFFFFFFF18C1CED1F3819B720100007F00000000000000000000000000020003000103010000003F03E803E80004000E12202901000000000200020000000404D3B3D84BE1188A4EBDA4DA16EA65D522D82DE544E1BE06B6ED8128BF15AA4E18EC50EAA95546B101").unwrap();
         let _packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..])).unwrap();
+    }
+
+    #[test]
+    fn short_ack() {
+        // this is a packet received from the reference implementation that crashed the parser
+        let packet_data =
+            hex::decode("800200000000000e000246e5d96d5e1a389c24780000452900007bb000001fa9")
+                .unwrap();
+
+        let _cp = ControlPacket::parse(&mut Cursor::new(packet_data)).unwrap();
     }
 }

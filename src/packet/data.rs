@@ -116,12 +116,12 @@ impl fmt::Debug for DataPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{{DATA sn={} loc={:?} msgno={} ts={:.4} dst={:X} payload=[len={}, start={:?}]}}",
+            "{{DATA sn={} loc={:?} msgno={} ts={:.4} dst={:?} payload=[len={}, start={:?}]}}",
             self.seq_number.0,
             self.message_loc,
             self.message_number.0,
             self.timestamp.as_secs_f64(),
-            self.dest_sockid.0,
+            self.dest_sockid,
             self.payload.len(),
             self.payload.slice(..min(8, self.payload.len())),
         )

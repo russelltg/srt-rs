@@ -1,6 +1,7 @@
 use std::time::Instant;
 
-use srt::{SenderSink, SrtCongestCtrl, SrtSocketBuilder};
+use srt::tokio::create_bidrectional_srt;
+use srt::SrtSocketBuilder;
 
 use bytes::Bytes;
 use failure::Error;
@@ -28,12 +29,7 @@ async fn multiplexer() -> Result<(), Error> {
         while let Some(Ok((settings, channel))) =
             futures::select!(res = server.next().fuse() => res, _ = fused_finish => None)
         {
-            let mut sender = SenderSink::new(
-                channel,
-                SrtCongestCtrl,
-                settings.settings,
-                settings.handshake,
-            );
+            let mut sender = create_bidrectional_srt(channel, settings);
 
             let mut stream =
                 stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());

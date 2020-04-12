@@ -1,2 +1,3 @@
-pub mod receiver;
-pub mod sender;
+mod socket;
+
+pub use socket::{create_bidrectional_srt, SrtSocket};
