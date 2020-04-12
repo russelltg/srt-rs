@@ -10,8 +10,12 @@ use crate::{ConnectionSettings, ControlPacket, Packet, SrtCongestCtrl};
 
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::time::Instant;
+use std::task::{Context, Poll, Waker};
+use std::{
+    mem,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use bytes::Bytes;
 use failure::Error;
@@ -39,6 +43,9 @@ pub struct SrtSocket {
     close: oneshot::Receiver<()>,
 
     settings: ConnectionSettings,
+
+    // shared state to wake up the
+    flush_wakeup: Arc<Mutex<(Option<Waker>, bool)>>,
 
     _drop_oneshot: oneshot::Sender<()>,
 }
@@ -69,6 +76,9 @@ where
     let (close_send, close_recv) = oneshot::channel();
     let conn_copy = conn.clone();
 
+    let fw = Arc::new(Mutex::new((None as Option<Waker>, true)));
+    let flush_wakeup = fw.clone();
+
     tokio::spawn(async move {
         let mut close_receiver = close_oneshot.fuse();
         let _close_sender = close_send; // exists for drop
@@ -80,6 +90,7 @@ where
         let mut sender = Sender::new(conn_copy.settings, conn_copy.handshake, SrtCongestCtrl);
         let mut receiver = Receiver::new(conn_copy.settings, Handshake::Connector);
 
+        let mut flushed = true;
         loop {
             let (sender_timeout, close) = match sender.next_action(Instant::now()) {
                 SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {
@@ -154,6 +165,18 @@ where
                         .unwrap(), // todo
                 }
             };
+            if sender.is_flushed() != flushed {
+                // wakeup
+                let mut l = fw.lock().unwrap();
+                flushed = sender.is_flushed();
+                l.1 = sender.is_flushed();
+                if sender.is_flushed() {
+                    if let Some(waker) = mem::replace(&mut l.0, None) {
+                        waker.wake();
+                    }
+                }
+            }
+
             let timeout = [sender_timeout, recvr_timeout, connection_timeout]
                 .iter()
                 .filter_map(|&x| x) // Only take Some(x) timeouts
@@ -267,6 +290,7 @@ where
         sender,
         close: close_recv,
         settings: conn.settings,
+        flush_wakeup,
         _drop_oneshot,
     }
 }
@@ -295,7 +319,17 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
         Ok(self.sender.start_send(item)?)
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_flush(cx))?))
+        ready!(Pin::new(&mut self.sender).poll_flush(cx))?;
+
+        let mut l = self.flush_wakeup.lock().unwrap();
+        if l.1 {
+            // already flushed
+            Poll::Ready(Ok(()))
+        } else {
+            // not flushed yet, register wakeup when flushed
+            l.0 = Some(cx.waker().clone());
+            Poll::Pending
+        }
     }
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         ready!(Pin::new(&mut self.sender).poll_close(cx))?;
