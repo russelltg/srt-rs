@@ -6,6 +6,7 @@ use bytes::{Buf, BufMut};
 use failure::{bail, format_err, Error};
 use log::warn;
 
+use crate::protocol::{TimeSpan, TimeStamp};
 use crate::{MsgNumber, SeqNumber, SocketID};
 
 mod srt;
@@ -34,8 +35,8 @@ pub use self::srt::{CipherType, SrtControlPacket, SrtHandshake, SrtKeyMessage, S
 /// (from <https://tools.ietf.org/html/draft-gg-udt-03#page-5>)
 #[derive(Clone, PartialEq)]
 pub struct ControlPacket {
-    /// The timestamp, relative to the socket start time
-    pub timestamp: i32,
+    /// The timestamp, relative to the socket start time (wrapping every 2^32 microseconds)
+    pub timestamp: TimeStamp,
 
     /// The dest socket ID, used for multiplexing
     pub dest_sockid: SocketID,
@@ -66,16 +67,16 @@ pub enum ControlTypes {
         ack_number: SeqNumber,
 
         /// Round trip time
-        rtt: Option<i32>,
+        rtt: Option<TimeSpan>,
 
         /// RTT variance
-        rtt_variance: Option<i32>,
+        rtt_variance: Option<TimeSpan>,
 
         /// available buffer
         buffer_available: Option<i32>,
 
         /// receive rate, in packets/sec
-        packet_recv_rate: Option<i32>,
+        packet_recv_rate: Option<u32>,
 
         /// Estimated Link capacity
         est_link_cap: Option<i32>,
@@ -294,7 +295,7 @@ impl ControlPacket {
         // get reserved data, which is the last two bytes of the first four bytes
         let reserved = buf.get_u16();
         let add_info = buf.get_i32();
-        let timestamp = buf.get_i32();
+        let timestamp = TimeStamp::from_micros(buf.get_u32());
         let dest_sockid = buf.get_u32();
 
         Ok(ControlPacket {
@@ -316,7 +317,7 @@ impl ControlPacket {
         into.put_i32(self.control_type.additional_info());
 
         // timestamp
-        into.put_i32(self.timestamp);
+        into.put_u32(self.timestamp.as_micros());
 
         // dest sock id
         into.put_u32(self.dest_sockid.0);
@@ -332,7 +333,7 @@ impl Debug for ControlPacket {
             f,
             "{{{:?} ts={:.4}s dst={:?}}}",
             self.control_type,
-            self.timestamp as f64 / 1e6,
+            self.timestamp.as_secs_f64(),
             self.dest_sockid,
         )
     }
@@ -529,18 +530,25 @@ impl ControlTypes {
                 let ack_number = SeqNumber::new_truncate(buf.get_u32());
 
                 // if there is more data, use it. However, it's optional
-                let mut opt_read_next = move || {
+                let opt_read_next_u32 = |buf: &mut T| {
+                    if buf.remaining() >= 4 {
+                        Some(buf.get_u32())
+                    } else {
+                        None
+                    }
+                };
+                let opt_read_next_i32 = |buf: &mut T| {
                     if buf.remaining() >= 4 {
                         Some(buf.get_i32())
                     } else {
                         None
                     }
                 };
-                let rtt = opt_read_next();
-                let rtt_variance = opt_read_next();
-                let buffer_available = opt_read_next();
-                let packet_recv_rate = opt_read_next();
-                let est_link_cap = opt_read_next();
+                let rtt = opt_read_next_i32(&mut buf).map(TimeSpan::from_micros);
+                let rtt_variance = opt_read_next_i32(&mut buf).map(TimeSpan::from_micros);
+                let buffer_available = opt_read_next_i32(&mut buf);
+                let packet_recv_rate = opt_read_next_u32(&mut buf);
+                let est_link_cap = opt_read_next_i32(&mut buf);
 
                 Ok(ControlTypes::Ack {
                     ack_seq_num: extra_info,
@@ -677,10 +685,10 @@ impl ControlTypes {
                 ..
             } => {
                 into.put_u32(ack_number.as_raw());
-                into.put_i32(rtt.unwrap_or(10_000));
-                into.put_i32(rtt_variance.unwrap_or(50_000));
+                into.put_i32(rtt.map(|t| t.as_micros()).unwrap_or(10_000));
+                into.put_i32(rtt_variance.map(|t| t.as_micros()).unwrap_or(50_000));
                 into.put_i32(buffer_available.unwrap_or(8175)); // TODO: better defaults
-                into.put_i32(packet_recv_rate.unwrap_or(10_000));
+                into.put_u32(packet_recv_rate.unwrap_or(10_000));
                 into.put_i32(est_link_cap.unwrap_or(1_000));
             }
             ControlTypes::Nak(ref n) => {
@@ -719,10 +727,10 @@ impl Debug for ControlTypes {
             } => {
                 write!(f, "Ack(asn={} an={}", ack_seq_num, ack_number,)?;
                 if let Some(rtt) = rtt {
-                    write!(f, " rtt={}", rtt)?;
+                    write!(f, " rtt={}", rtt.as_micros())?;
                 }
                 if let Some(rttvar) = rtt_variance {
-                    write!(f, " rttvar={}", rttvar)?;
+                    write!(f, " rttvar={}", rttvar.as_micros())?;
                 }
                 if let Some(buf) = buffer_available {
                     write!(f, " buf_av={}", buf)?;
@@ -807,7 +815,7 @@ mod test {
     #[test]
     fn handshake_ser_des_test() {
         let pack = ControlPacket {
-            timestamp: 0,
+            timestamp: TimeStamp::from_micros(0),
             dest_sockid: SocketID(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber::new_truncate(1_827_131),
@@ -842,13 +850,13 @@ mod test {
     #[test]
     fn ack_ser_des_test() {
         let pack = ControlPacket {
-            timestamp: 113_703,
+            timestamp: TimeStamp::from_micros(113_703),
             dest_sockid: SocketID(2_453_706_529),
             control_type: ControlTypes::Ack {
                 ack_seq_num: 1,
                 ack_number: SeqNumber::new_truncate(282_049_186),
-                rtt: Some(10_002),
-                rtt_variance: Some(1000),
+                rtt: Some(TimeSpan::from_micros(10_002)),
+                rtt_variance: Some(TimeSpan::from_micros(1000)),
                 buffer_available: Some(1314),
                 packet_recv_rate: Some(0),
                 est_link_cap: Some(0),
@@ -866,7 +874,7 @@ mod test {
     #[test]
     fn ack2_ser_des_test() {
         let pack = ControlPacket {
-            timestamp: 125_812,
+            timestamp: TimeStamp::from_micros(125_812),
             dest_sockid: SocketID(8313),
             control_type: ControlTypes::Ack2(831),
         };
@@ -895,7 +903,7 @@ mod test {
         assert_eq!(
             packet,
             ControlPacket {
-                timestamp: 100_720,
+                timestamp: TimeStamp::from_micros(100_720),
                 dest_sockid: SocketID(738_193_394),
                 control_type: ControlTypes::Srt(SrtControlPacket::Reject)
             }
@@ -910,7 +918,7 @@ mod test {
         assert_eq!(
             packet,
             ControlPacket {
-                timestamp: 1_023_684,
+                timestamp: TimeStamp::from_micros(1_023_684),
                 dest_sockid: SocketID(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: SeqNumber(1_153_345_037),
@@ -955,7 +963,7 @@ mod test {
         assert_eq!(
             packet,
             ControlPacket {
-                timestamp: 1_531_530,
+                timestamp: TimeStamp::from_micros(1_531_530),
                 dest_sockid: SocketID(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: SeqNumber(1_877_981_400),

@@ -40,5 +40,5 @@ pub struct CCData {
 
     /// The packet arrival rate, both sender and receiver, as
     /// the receiver sends this info to the sender in ACK packets
-    pub packet_arr_rate: i32,
+    pub packet_arr_rate: u32,
 }

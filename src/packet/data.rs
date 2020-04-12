@@ -5,6 +5,7 @@ use failure::Error;
 use std::cmp::min;
 use std::fmt;
 
+use crate::protocol::TimeStamp;
 use crate::{MsgNumber, SeqNumber, SocketID};
 
 /// A UDT packet carrying data
@@ -45,7 +46,7 @@ pub struct DataPacket {
     pub message_number: MsgNumber,
 
     /// The timestamp, relative to when the connection was created.
-    pub timestamp: i32,
+    pub timestamp: TimeStamp,
 
     /// The dest socket id, used for UDP multiplexing
     pub dest_sockid: SocketID,
@@ -79,7 +80,7 @@ impl DataPacket {
         let in_order_delivery = (buf.bytes()[0] & 0b0010_0000) != 0;
 
         let message_number = MsgNumber::new_truncate(buf.get_u32());
-        let timestamp = buf.get_i32();
+        let timestamp = TimeStamp::from_micros(buf.get_u32());
         let dest_sockid = SocketID(buf.get_u32());
 
         Ok(DataPacket {
@@ -105,7 +106,7 @@ impl DataPacket {
                 | ((u32::from(self.message_loc.bits() | (self.in_order_delivery as u8) << 5))
                     << 24),
         );
-        into.put_i32(self.timestamp);
+        into.put_u32(self.timestamp.as_micros());
         into.put_u32(self.dest_sockid.0);
         into.put(&self.payload[..]);
     }
@@ -119,7 +120,7 @@ impl fmt::Debug for DataPacket {
             self.seq_number.0,
             self.message_loc,
             self.message_number.0,
-            self.timestamp as f64 / 1e6,
+            self.timestamp.as_secs_f64(),
             self.dest_sockid,
             self.payload.len(),
             self.payload.slice(..min(8, self.payload.len())),

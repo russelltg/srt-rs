@@ -8,7 +8,7 @@ use log::warn;
 use tokio::time::interval;
 
 use crate::packet::{ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SocketType};
-use crate::protocol::handshake::Handshake;
+use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::util::get_packet;
 use crate::{
     Connection, ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber, SocketID,
@@ -94,7 +94,7 @@ impl Rendezvous {
     fn send_handwave(&mut self) -> RendezvousResult {
         let config = &self.config;
         self.send(ControlPacket {
-            timestamp: 0, // TODO: is this right?
+            timestamp: TimeStamp::from_micros(0), // TODO: is this right?
             dest_sockid: SocketID(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: self.seq_num,
@@ -117,7 +117,7 @@ impl Rendezvous {
             ShakeType::Waveahand => {
                 self.send(ControlPacket {
                     dest_sockid: info.socket_id,
-                    timestamp: 0, // TODO: deal with timestamp
+                    timestamp: TimeStamp::from_micros(0), // TODO: deal with timestamp
                     control_type: ControlTypes::Handshake(HandshakeControlInfo {
                         shake_type: ShakeType::Conclusion,
                         socket_id: config.local_socket_id,
@@ -133,7 +133,7 @@ impl Rendezvous {
 
                 let packet = ControlPacket {
                     dest_sockid: info.socket_id,
-                    timestamp: 0, // TODO: deal with timestamp,
+                    timestamp: TimeStamp::from_micros(0), // TODO: deal with timestamp,
                     control_type: ControlTypes::Handshake(HandshakeControlInfo {
                         shake_type: ShakeType::Agreement,
                         socket_id: config.local_socket_id,

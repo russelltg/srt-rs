@@ -17,6 +17,7 @@ pub use self::control::{
 };
 pub use self::data::{DataPacket, PacketLocation};
 
+use crate::protocol::TimeStamp;
 use crate::SocketID;
 
 /// Represents A UDT/SRT packet
@@ -27,8 +28,7 @@ pub enum Packet {
     Control(ControlPacket),
 }
 impl Packet {
-    // TODO: should this be u32?
-    pub fn timestamp(&self) -> i32 {
+    pub fn timestamp(&self) -> TimeStamp {
         match *self {
             Packet::Data(DataPacket { timestamp, .. })
             | Packet::Control(ControlPacket { timestamp, .. }) => timestamp,
