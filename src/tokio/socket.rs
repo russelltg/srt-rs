@@ -18,7 +18,7 @@ use failure::Error;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::{future, ready, select};
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 use tokio::time::delay_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
@@ -41,6 +41,13 @@ pub struct SrtSocket {
     settings: ConnectionSettings,
 
     _drop_oneshot: oneshot::Sender<()>,
+}
+
+enum Action {
+    Nothing,
+    CloseSender,
+    Send(Option<(Instant, Bytes)>),
+    DelegatePacket(Option<Result<(Packet, SocketAddr), Error>>),
 }
 
 /// This spawns two new tasks:
@@ -113,8 +120,10 @@ where
                         }
                     }
                     ReceiverAlgorithmAction::Close => {
-                        trace!("Recv returned close");
-                        return;
+                        if sender.is_flushed() {
+                            trace!("Recv returned close and sender flushed");
+                            return;
+                        }
                     }
                 };
             };
@@ -123,6 +132,10 @@ where
                     ConnectionAction::ContinueUntil(timeout) => break Some(timeout),
                     ConnectionAction::Close => {
                         if receiver.is_flushed() {
+                            info!(
+                                "{:?} Receiver flush and connectiont timeout",
+                                sender.settings().local_sockid
+                            );
                             return;
                         }
                         break None;
@@ -174,11 +187,24 @@ where
                 }
             };
 
-            select! {
+            let action = select! {
                 // one of the entities requested wakeup
-                _ = timeout_fut.fuse() => {},
+                _ = timeout_fut.fuse() => Action::Nothing,
                 // new packet received
-                res = sock.next() => {
+                res = sock.next() =>
+                    Action::DelegatePacket(res),
+                // new packet queued
+                res = new_data.next() => {
+                    Action::Send(res)
+                }
+                // socket closed
+                _ = close_receiver =>  {
+                    Action::CloseSender
+                }
+            };
+            match action {
+                Action::Nothing => {}
+                Action::DelegatePacket(res) => {
                     match res {
                         Some(Ok((pack, from))) => {
                             connection.on_packet(Instant::now());
@@ -187,9 +213,7 @@ where
                                 Control(cp) => match &cp.control_type {
                                     // sender-responsble packets
                                     Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
-                                        sender
-                                            .handle_packet((pack, from), Instant::now())
-                                            .unwrap();
+                                        sender.handle_packet((pack, from), Instant::now()).unwrap();
                                     }
                                     // receiver-respnsible
                                     Ack2(_) => receiver.handle_packet(Instant::now(), (pack, from)),
@@ -206,26 +230,34 @@ where
                                 },
                             }
                         }
-                        None => break,
-                        Some(Err(_e)) => break, // TODO: propagate error back
-                        a => {},
-                    }
-                },
-                // new packet queued
-                res = new_data.next() => {
-                    match res {
-                        Some(item) => sender.handle_data(item),
                         None => {
-                            debug!("Incoming data stream closed");
-                            sender.handle_close();
-                            // closed = true;
+                            info!(
+                                "{:?} Exiting because underlying stream ended",
+                                sender.settings().local_sockid
+                            );
+                            break;
+                        }
+                        Some(Err(e)) => {
+                            error!(
+                                "{:?} Exiting because error in underlying stream: {:?}",
+                                sender.settings().local_sockid,
+                                e
+                            );
+                            break; // TODO: propagate error back
                         }
                     }
                 }
-                // socket closed
-                _ = close_receiver =>  {
-                    sender.handle_close()
-                }
+                Action::Send(res) => match res {
+                    Some(item) => {
+                        trace!("{:?} queued packet to send", sender.settings().local_sockid);
+                        sender.handle_data(item);
+                    }
+                    None => {
+                        debug!("Incoming data stream closed");
+                        sender.handle_close();
+                    }
+                },
+                Action::CloseSender => sender.handle_close(),
             }
         }
     });
