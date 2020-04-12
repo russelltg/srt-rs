@@ -28,15 +28,15 @@ impl TimeSpan {
         Self(us)
     }
 
-    pub fn as_micros(&self) -> i32 {
+    pub fn as_micros(self) -> i32 {
         self.0
     }
 
-    pub fn abs(&self) -> Self {
+    pub fn abs(self) -> Self {
         Self(self.0.abs())
     }
 
-    pub fn as_secs_f64(&self) -> f64 {
+    pub fn as_secs_f64(self) -> f64 {
         self.0 as f64 / 1e6
     }
 }
@@ -46,15 +46,15 @@ impl TimeStamp {
         Self(Wrapping(us))
     }
 
-    pub fn as_micros(&self) -> u32 {
+    pub fn as_micros(self) -> u32 {
         (self.0).0
     }
 
-    pub fn as_secs_f64(&self) -> f64 {
+    pub fn as_secs_f64(self) -> f64 {
         (self.0).0 as f64 / 1e6
     }
 
-    pub fn as_duration(&self) -> Duration {
+    pub fn as_duration(self) -> Duration {
         Duration::from_micros(u64::from(self.as_micros()))
     }
 }
@@ -70,6 +70,7 @@ impl PartialOrd<TimeStamp> for TimeStamp {
 impl Add<TimeSpan> for TimeStamp {
     type Output = TimeStamp;
 
+    #[allow(clippy::suspicious_arithmetic_impl)]
     fn add(self, rhs: TimeSpan) -> Self::Output {
         TimeStamp(if rhs.0 > 0 {
             self.0 + Wrapping(rhs.0 as u32)
@@ -169,7 +170,7 @@ impl TimeBase {
     pub fn adjust(&mut self, delta: TimeSpan) {
         if delta.0 > 0 {
             self.0 += Duration::from_micros(delta.0 as u64);
-        } else if delta.0 < 0 {
+        } else {
             self.0 -= Duration::from_micros(delta.0.abs() as u64);
         }
     }
