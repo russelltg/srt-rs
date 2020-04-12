@@ -8,7 +8,7 @@ use futures::prelude::*;
 use log::warn;
 
 use crate::packet::*;
-use crate::protocol::handshake::Handshake;
+use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::util::get_packet;
 use crate::{Connection, ConnectionSettings, SocketID};
 
@@ -27,7 +27,7 @@ pub struct ListenConfiguration {
 
 #[derive(Clone)]
 pub struct ConclusionWaitState {
-    timestamp: i32,
+    timestamp: TimeStamp,
     from: (SocketAddr, SocketID),
     cookie: i32,
     induction_response: Packet,
@@ -73,7 +73,7 @@ impl Listen {
     fn wait_for_induction(
         &mut self,
         from: SocketAddr,
-        timestamp: i32,
+        timestamp: TimeStamp,
         shake: HandshakeControlInfo,
     ) -> ListenResult {
         match shake.shake_type {
@@ -127,7 +127,7 @@ impl Listen {
     fn wait_for_conclusion(
         &mut self,
         from: SocketAddr,
-        timestamp: i32,
+        timestamp: TimeStamp,
         state: ConclusionWaitState,
         shake: HandshakeControlInfo,
     ) -> ListenResult {

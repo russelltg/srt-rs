@@ -8,7 +8,7 @@ use log::warn;
 use tokio::time::interval;
 
 use crate::packet::*;
-use crate::protocol::handshake::Handshake;
+use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::util::get_packet;
 use crate::{Connection, ConnectionSettings, SeqNumber, SocketID, SrtVersion};
 
@@ -82,7 +82,7 @@ impl Connect {
         let config = &self.config;
         let packet = Packet::Control(ControlPacket {
             dest_sockid: SocketID(0),
-            timestamp: 0, // TODO: this is not zero in the reference implementation
+            timestamp: TimeStamp::from_micros(0), // TODO: this is not zero in the reference implementation
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num,
                 max_packet_size: 1500, // TODO: take as a parameter
@@ -101,7 +101,7 @@ impl Connect {
     pub fn wait_for_induction(
         &mut self,
         from: SocketAddr,
-        timestamp: i32,
+        timestamp: TimeStamp,
         info: HandshakeControlInfo,
     ) -> ConnectResult {
         let config = &self.config;

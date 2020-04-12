@@ -6,6 +6,7 @@ use bytes::Bytes;
 use log::debug;
 use log::{trace, warn};
 
+use super::TimeSpan;
 use crate::loss_compression::decompress_loss_list;
 use crate::packet::{ControlTypes, HandshakeControlInfo, SrtControlPacket};
 use crate::protocol::handshake::Handshake;
@@ -27,13 +28,13 @@ pub type SenderResult = Result<(), SenderError>;
 #[derive(Debug, Clone, Copy)]
 pub struct SenderMetrics {
     /// Round trip time, in microseconds
-    pub rtt: i32,
+    pub rtt: TimeSpan,
 
     /// Round trip time variance
-    pub rtt_var: i32,
+    pub rtt_var: TimeSpan,
 
     /// packet arrival rate
-    pub pkt_arr_rate: i32,
+    pub pkt_arr_rate: u32,
 
     /// estimated link capacity
     pub est_link_cap: i32,
@@ -51,8 +52,8 @@ pub struct SenderMetrics {
 impl SenderMetrics {
     pub fn new() -> Self {
         Self {
-            rtt: 10_000,
-            rtt_var: 0,
+            rtt: TimeSpan::from_micros(10_000),
+            rtt_var: TimeSpan::from_micros(0),
             pkt_arr_rate: 0,
             est_link_cap: 0,
             lost_packets: 0,
@@ -329,9 +330,9 @@ impl Sender {
         now: Instant,
         ack_seq_num: i32,
         ack_number: SeqNumber,
-        rtt: Option<i32>,
-        rtt_variance: Option<i32>,
-        packet_recv_rate: Option<i32>,
+        rtt: Option<TimeSpan>,
+        rtt_variance: Option<TimeSpan>,
+        packet_recv_rate: Option<u32>,
         est_link_cap: Option<i32>,
     ) -> SenderResult {
         // if this ack number is less than or equal to
@@ -357,8 +358,8 @@ impl Sender {
         self.send_control(ControlTypes::Ack2(ack_seq_num), now);
 
         // 3) Update RTT and RTTVar.
-        self.metrics.rtt = rtt.unwrap_or(0);
-        self.metrics.rtt_var = rtt_variance.unwrap_or(0);
+        self.metrics.rtt = rtt.unwrap_or(TimeSpan::from_micros(0));
+        self.metrics.rtt_var = rtt_variance.unwrap_or(TimeSpan::from_micros(0));
 
         // 4) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
         // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.
@@ -458,7 +459,7 @@ impl Sender {
             max_segment_size: self.settings.max_packet_size,
             latest_seq_num: Some(self.transmit_buffer.latest_seqence_number()),
             packet_arr_rate: self.metrics.pkt_arr_rate,
-            rtt: Duration::from_micros(self.metrics.rtt as u64),
+            rtt: Duration::from_micros(self.metrics.rtt.as_micros() as u64),
         }
     }
 

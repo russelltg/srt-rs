@@ -33,22 +33,27 @@ impl SynchronizedRemoteClock {
                 self.time_base.adjust(drift);
             }
             Some(stats) => {
-                stats.add(drift);
+                stats.add(drift.as_micros());
 
                 if stats.len() < Self::MAX_SAMPLES {
                     return;
                 }
 
                 if stats.stddev() < self.tolerance.as_micros() as f64 {
-                    self.time_base.adjust(stats.mean() as TimeSpan);
+                    self.time_base
+                        .adjust(TimeSpan::from_micros(stats.mean() as i32));
                 }
             }
         }
         self.stats = Some(OnlineStats::new());
     }
 
-    pub fn instant_from(&self, ts: TimeStamp) -> Instant {
-        self.time_base.instant_from(ts)
+    pub fn instant_from(&self, now: Instant, ts: TimeStamp) -> Instant {
+        self.time_base.instant_from(now, ts)
+    }
+
+    pub fn origin_time(&self) -> Instant {
+        self.time_base.origin_time()
     }
 }
 
@@ -66,22 +71,22 @@ mod synchronized_remote_clock {
 
             let drift = Duration::from_micros(drift_ts);
             let start = Instant::now();
-            let start_ts = 100_000_000 as TimeStamp;
+            let start_ts = TimeStamp::from_micros(100_000_000);
 
             let mut clock = SynchronizedRemoteClock::new(start);
 
             clock.synchronize(start, start_ts);
-            let instant = clock.instant_from(start_ts);
+            let instant = clock.instant_from(start, start_ts);
 
             assert_eq!(instant, start, "the clock should be adjusted on the first sample");
 
             for tick_ts in 1..1002 {
                 let tick = Duration::from_micros(tick_ts as u64);
                 let now = start + tick + drift;
-                let now_ts = start_ts + tick_ts;
+                let now_ts = start_ts + TimeSpan::from_micros(tick_ts);
 
                 clock.synchronize(now, now_ts);
-                let instant = clock.instant_from(now_ts);
+                let instant = clock.instant_from(start, now_ts);
 
                 if tick_ts < MAX_SAMPLES {
                     assert_eq!(instant, start + tick, "the clock should not be adjusted until {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts);
@@ -98,10 +103,10 @@ mod synchronized_remote_clock {
             for tick_ts in 1002..2002 {
                 let tick = Duration::from_micros(tick_ts as u64);
                 let now = start + tick + drift;
-                let now_ts = start_ts + tick_ts;
+                let now_ts = start_ts + TimeSpan::from_micros(tick_ts);
 
-                clock.synchronize(now, now_ts - ((tick_ts % 2) * 11000)); // constant 5ms drift variance
-                let instant = clock.instant_from(now_ts);
+                clock.synchronize(now, now_ts - TimeSpan::from_micros((tick_ts % 2) * 11000)); // constant 5ms drift variance
+                let instant = clock.instant_from(start, now_ts);
 
                 assert_eq!(instant, now, "the clock should not be adjusted: tick_ts = {}", tick_ts);
             }

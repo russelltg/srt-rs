@@ -8,12 +8,13 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use log::{debug, info, trace, warn};
 
-use super::Timer;
+use super::{TimeSpan, Timer};
 use crate::loss_compression::compress_loss_list;
 use crate::packet::{
     ControlPacket, ControlTypes, DataPacket, HandshakeControlInfo, Packet, SrtControlPacket,
 };
 use crate::protocol::handshake::Handshake;
+use crate::protocol::TimeStamp;
 use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber};
 
 mod buffer;
@@ -48,9 +49,9 @@ impl ReceiveTimers {
         }
     }
 
-    pub fn update_rtt(&mut self, rtt: i32, rtt_var: i32) {
-        let rtt = Duration::from_micros(rtt as u64);
-        let rtt_var = Duration::from_micros(rtt_var as u64);
+    pub fn update_rtt(&mut self, rtt: TimeSpan, rtt_var: TimeSpan) {
+        let rtt = Duration::from_micros(rtt.as_micros() as u64);
+        let rtt_var = Duration::from_micros(rtt_var.as_micros() as u64);
         self.nak.set_period(4 * rtt + rtt_var + self.syn.period());
         self.ack.set_period(4 * rtt + rtt_var + self.syn.period());
         // 0.5s min, accordiding to page 9
@@ -73,7 +74,7 @@ struct LossListEntry {
     seq_num: SeqNumber,
 
     // last time it was feed into NAK
-    feedback_time: i32,
+    feedback_time: TimeStamp,
 
     // the number of times this entry has been fed back into NAK
     k: i32,
@@ -87,7 +88,7 @@ struct AckHistoryEntry {
     ack_seq_num: i32,
 
     /// timestamp that it was sent at
-    timestamp: i32,
+    timestamp: TimeStamp,
 }
 
 pub struct Receiver {
@@ -103,11 +104,11 @@ pub struct Receiver {
 
     /// the round trip time, in microseconds
     /// is calculated each ACK2
-    rtt: i32,
+    rtt: TimeSpan,
 
     /// the round trip time variance, in microseconds
     /// is calculated each ACK2
-    rtt_variance: i32,
+    rtt_variance: TimeSpan,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Receiver's Loss List: It is a list of tuples whose values include:
@@ -128,14 +129,14 @@ pub struct Receiver {
     /// of each data packet.
     ///
     /// First is sequence number, second is timestamp
-    packet_history_window: Vec<(SeqNumber, i32)>,
+    packet_history_window: Vec<(SeqNumber, TimeStamp)>,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Packet Pair Window: A circular array that records the time
     /// interval between each probing packet pair.
     ///
     /// First is seq num, second is time
-    packet_pair_window: Vec<(SeqNumber, i32)>,
+    packet_pair_window: Vec<(SeqNumber, TimeSpan)>,
 
     /// the highest received packet sequence number + 1
     lrsn: SeqNumber,
@@ -148,7 +149,7 @@ pub struct Receiver {
 
     /// The timestamp of the probe time
     /// Used to see duration between packets
-    probe_time: Option<i32>,
+    probe_time: Option<TimeStamp>,
 
     /// The ACK sequence number of the largest ACK2 received, and the ack number
     lr_ack_acked: (i32, SeqNumber),
@@ -175,8 +176,8 @@ impl Receiver {
             control_packets: VecDeque::new(),
             data_release: VecDeque::new(),
             handshake,
-            rtt: 10_000,
-            rtt_variance: 1_000,
+            rtt: TimeSpan::from_micros(10_000),
+            rtt_variance: TimeSpan::from_micros(1_000),
             loss_list: Vec::new(),
             ack_history_window: Vec::new(),
             packet_history_window: Vec::new(),
@@ -327,41 +328,43 @@ impl Receiver {
 
         // 4) Calculate the packet arrival speed according to the following
         // algorithm:
-        let packet_recv_rate = {
-            if self.packet_history_window.len() < 16 {
-                0
+        let packet_recv_rate = if self.packet_history_window.len() < 16 {
+            0
+        } else {
+            // Calculate the median value of the last 16 packet arrival
+            // intervals (AI) using the values stored in PKT History Window.
+            let mut last_16: Vec<_> = self.packet_history_window
+                [self.packet_history_window.len() - 16..]
+                .windows(2)
+                .map(|w| w[1].1 - w[0].1) // delta time
+                .collect();
+            last_16.sort();
+
+            // the median AI
+            let ai = last_16[last_16.len() / 2];
+
+            // In these 16 values, remove those either greater than AI*8 or
+            // less than AI/8.
+            let filtered: Vec<TimeSpan> = last_16
+                .iter()
+                .filter(|&&n| n / 8 < ai && n > ai / 8)
+                .cloned()
+                .collect();
+
+            // If more than 8 values are left, calculate the
+            // average of the left values AI', and the packet arrival speed is
+            // 1/AI' (number of packets per second). Otherwise, return 0.
+            if filtered.len() > 8 {
+                // 1e6 / (sum / len) = len * 1e6 / sum
+                (1_000_000 * filtered.len()) as u64
+                    / filtered
+                        .iter()
+                        .map(|dt| i64::from(dt.as_micros()))
+                        .sum::<i64>() as u64 // all these dts are garunteed to be positive
             } else {
-                // Calculate the median value of the last 16 packet arrival
-                // intervals (AI) using the values stored in PKT History Window.
-                let mut last_16: Vec<_> = self.packet_history_window
-                    [self.packet_history_window.len() - 16..]
-                    .iter()
-                    .map(|&(_, ts)| ts)
-                    .collect();
-                last_16.sort();
-
-                // the median timestamp
-                let ai = last_16[last_16.len() / 2];
-
-                // In these 16 values, remove those either greater than AI*8 or
-                // less than AI/8.
-                let filtered: Vec<i32> = last_16
-                    .iter()
-                    .filter(|&&n| n / 8 < ai && n > ai / 8)
-                    .cloned()
-                    .collect();
-
-                // If more than 8 values are left, calculate the
-                // average of the left values AI', and the packet arrival speed is
-                // 1/AI' (number of packets per second). Otherwise, return 0.
-                if filtered.len() > 8 {
-                    (filtered.iter().fold(0i64, |sum, &val| sum + i64::from(val))
-                        / (filtered.len() as i64)) as i32
-                } else {
-                    0
-                }
+                0
             }
-        };
+        } as u32;
 
         // 5) Calculate the estimated link capacity according to the following algorithm:
         let est_link_cap = {
@@ -377,14 +380,12 @@ impl Receiver {
                         .iter()
                         .map(|&(_, time)| time)
                         .collect();
-                    last_16.sort();
+                    last_16.sort_unstable();
 
                     last_16[last_16.len() / 2]
                 };
 
-                // Multiply by 1M because pi is in microseconds
-                // pi is in us/packet
-                (1.0e6 / (pi as f32)) as i32
+                (1. / (pi.as_secs_f64())) as i32
             }
         };
 
@@ -437,7 +438,7 @@ impl Receiver {
             for pak in self
                 .loss_list
                 .iter_mut()
-                .filter(|lle| lle.feedback_time < ts_now - lle.k * rtt)
+                .filter(|lle| lle.feedback_time < ts_now - rtt * lle.k)
             {
                 pak.k += 1;
                 pak.feedback_time = ts_now;
@@ -536,7 +537,7 @@ impl Receiver {
                 self.packet_pair_window.push((data.seq_number, ts_now - pt));
 
                 // reset
-                self.probe_time = None;
+                self.probe_time = None
             }
         }
         // 5) Record the packet arrival time in PKT History Window.
@@ -644,7 +645,7 @@ impl Receiver {
         std::cmp::min(
             self.timers.next_timer(now),
             self.receive_buffer
-                .next_message_release_time()
+                .next_message_release_time(now)
                 .unwrap_or(now),
         )
     }
