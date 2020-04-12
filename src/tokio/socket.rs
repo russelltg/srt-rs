@@ -239,11 +239,10 @@ where
                         }
                         Some(Err(e)) => {
                             error!(
-                                "{:?} Exiting because error in underlying stream: {:?}",
+                                "{:?} Error in underlying stream: {:?}",
                                 sender.settings().local_sockid,
                                 e
                             );
-                            break; // TODO: propagate error back
                         }
                     }
                 }
