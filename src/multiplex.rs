@@ -99,6 +99,8 @@ impl MultiplexState {
         }
         if let ListenState::Connected(resp_handshake, settings) = listen.state().clone() {
             let (s, r) = Channel::channel(100);
+
+            self.pending.remove(&from); // remove from pending connections, it's been resolved
             self.conns.insert(settings.local_sockid, r);
             return Ok(Some((
                 Connection {
