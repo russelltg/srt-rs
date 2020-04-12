@@ -603,12 +603,10 @@ impl Receiver {
     }
 
     fn next_timer(&self, now: Instant) -> Instant {
-        std::cmp::min(
-            self.timers.next_timer(),
-            self.receive_buffer
-                .next_message_release_time(now)
-                .unwrap_or(now),
-        )
+        match self.receive_buffer.next_message_release_time(now) {
+            Some(next_rel_time) => min(self.timers.next_timer(), next_rel_time),
+            None => self.timers.next_timer(),
+        }
     }
 
     fn send_control(&mut self, now: Instant, control: ControlTypes) {
