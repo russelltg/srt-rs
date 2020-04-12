@@ -43,6 +43,7 @@ pub struct SrtSocket {
     _drop_oneshot: oneshot::Sender<()>,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Action {
     Nothing,
     CloseSender,
