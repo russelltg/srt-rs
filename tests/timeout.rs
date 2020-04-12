@@ -1,19 +1,58 @@
 use srt::SrtSocketBuilder;
-use std::time::Instant;
+use std::{
+    env,
+    io::Write,
+    path::PathBuf,
+    process::{Command, Stdio},
+};
 
 use futures::prelude::*;
+use tokio::time::{delay_for, Duration};
+
+#[cfg(target_os = "windows")]
+const STRANSMIT_NAME: &str = "stransmit-rs.exe";
+#[cfg(not(target_os = "windows"))]
+const STRANSMIT_NAME: &str = "stransmit-rs";
+
+fn find_stransmit_rs() -> PathBuf {
+    let mut stransmit_rs_path = env::current_exe().unwrap();
+    stransmit_rs_path.pop();
+
+    stransmit_rs_path.push(STRANSMIT_NAME);
+
+    if !stransmit_rs_path.exists() {
+        stransmit_rs_path.pop();
+        stransmit_rs_path.pop();
+        stransmit_rs_path.push(STRANSMIT_NAME);
+    }
+
+    assert!(
+        stransmit_rs_path.exists(),
+        "Could not find stransmit at {:?}",
+        stransmit_rs_path
+    );
+
+    stransmit_rs_path
+}
 
 #[tokio::test]
 async fn receiver_timeout() {
     let _ = env_logger::try_init();
 
-    let a = SrtSocketBuilder::new_listen().local_port(1872).connect();
     let b = SrtSocketBuilder::new_connect("127.0.0.1:1872").connect();
 
+    let stranmsit_rs = find_stransmit_rs();
+    let mut a = Command::new(&stranmsit_rs)
+        .args(&["-", "srt://:1872"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+
     let sender = async move {
-        let mut a = a.await.unwrap();
-        a.send((Instant::now(), b"asdf"[..].into())).await.unwrap();
-        // just drop sender, don't close!
+        a.stdin.as_mut().unwrap().write(b"asdf").unwrap();
+        delay_for(Duration::from_millis(2000)).await;
+
+        a.kill().unwrap();
     };
 
     let recvr = async move {
