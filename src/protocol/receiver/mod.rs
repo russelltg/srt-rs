@@ -11,7 +11,8 @@ use log::{debug, info, trace, warn};
 use super::{TimeSpan, Timer};
 use crate::loss_compression::compress_loss_list;
 use crate::packet::{
-    ControlPacket, ControlTypes, DataPacket, HandshakeControlInfo, Packet, SrtControlPacket,
+    AckControlInfo, ControlPacket, ControlTypes, DataPacket, HandshakeControlInfo, Packet,
+    SrtControlPacket,
 };
 use crate::protocol::handshake::Handshake;
 use crate::protocol::TimeStamp;
@@ -376,7 +377,7 @@ impl Receiver {
 
         self.send_control(
             now,
-            ControlTypes::Ack {
+            ControlTypes::Ack(AckControlInfo {
                 ack_seq_num,
                 ack_number,
                 rtt: Some(self.rtt),
@@ -384,7 +385,7 @@ impl Receiver {
                 buffer_available: None, // TODO: add this
                 packet_recv_rate: Some(packet_recv_rate),
                 est_link_cap: Some(est_link_cap),
-            },
+            }),
         );
 
         // add it to the ack history
