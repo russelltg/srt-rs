@@ -8,7 +8,7 @@ use log::{trace, warn};
 
 use super::TimeSpan;
 use crate::loss_compression::decompress_loss_list;
-use crate::packet::{ControlTypes, HandshakeControlInfo, SrtControlPacket};
+use crate::packet::{AckControlInfo, ControlTypes, HandshakeControlInfo, SrtControlPacket};
 use crate::protocol::handshake::Handshake;
 use crate::protocol::sender::buffers::*;
 use crate::protocol::Timer;
@@ -287,23 +287,7 @@ impl Sender {
 
     fn handle_control_packet(&mut self, packet: ControlPacket, now: Instant) -> SenderResult {
         match packet.control_type {
-            ControlTypes::Ack {
-                ack_seq_num,
-                ack_number,
-                rtt,
-                rtt_variance,
-                packet_recv_rate,
-                est_link_cap,
-                ..
-            } => self.handle_ack_packet(
-                now,
-                ack_seq_num,
-                ack_number,
-                rtt,
-                rtt_variance,
-                packet_recv_rate,
-                est_link_cap,
-            ),
+            ControlTypes::Ack(info) => self.handle_ack_packet(now, &info),
             ControlTypes::Ack2(_) => {
                 warn!("Sender received ACK2, unusual");
                 Ok(())
@@ -331,41 +315,34 @@ impl Sender {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn handle_ack_packet(
-        &mut self,
-        now: Instant,
-        ack_seq_num: i32,
-        ack_number: SeqNumber,
-        rtt: Option<TimeSpan>,
-        rtt_variance: Option<TimeSpan>,
-        packet_recv_rate: Option<u32>,
-        est_link_cap: Option<i32>,
-    ) -> SenderResult {
+    fn handle_ack_packet(&mut self, now: Instant, info: &AckControlInfo) -> SenderResult {
         // if this ack number is less than or equal to
         // the largest received ack number, than discard it
         // this can happen thorough packet reordering OR losing an ACK2 packet
-        if ack_number <= self.lr_acked_packet {
+        if info.ack_number <= self.lr_acked_packet {
             return Ok(());
         }
 
-        if ack_seq_num <= self.lr_acked_ack {
+        if info.ack_seq_num <= self.lr_acked_ack {
             // warn!("Ack sequence number '{}' less than or equal to the previous one recieved: '{}'", ack_seq_num, self.lr_acked_ack);
             return Ok(());
         }
-        self.lr_acked_ack = ack_seq_num;
+        self.lr_acked_ack = info.ack_seq_num;
 
         // update the packets received count
-        self.metrics.recvd_packets += ack_number - self.lr_acked_packet;
+        self.metrics.recvd_packets += info.ack_number - self.lr_acked_packet;
 
         // 1) Update the largest acknowledged sequence number, which is the ACK number
-        self.lr_acked_packet = ack_number;
+        self.lr_acked_packet = info.ack_number;
 
         // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
-        self.send_control(ControlTypes::Ack2(ack_seq_num), now);
+        self.send_control(ControlTypes::Ack2(info.ack_seq_num), now);
 
         // 3) Update RTT and RTTVar.
-        self.metrics.rtt = rtt.unwrap_or_else(|| TimeSpan::from_micros(0));
-        self.metrics.rtt_var = rtt_variance.unwrap_or_else(|| TimeSpan::from_micros(0));
+        self.metrics.rtt = info.rtt.unwrap_or_else(|| TimeSpan::from_micros(0));
+        self.metrics.rtt_var = info
+            .rtt_variance
+            .unwrap_or_else(|| TimeSpan::from_micros(0));
 
         // 4) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
         // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.
@@ -382,19 +359,21 @@ impl Sender {
         // 7) Update packet arrival rate: A = (A * 7 + a) / 8, where a is the
         //    value carried in the ACK.
         self.metrics.pkt_arr_rate =
-            self.metrics.pkt_arr_rate / 8 * 7 + packet_recv_rate.unwrap_or(0) / 8;
+            self.metrics.pkt_arr_rate / 8 * 7 + info.packet_recv_rate.unwrap_or(0) / 8;
 
         // 8) Update estimated link capacity: B = (B * 7 + b) / 8, where b is
         //    the value carried in the ACK.
-        self.metrics.est_link_cap = (self.metrics.est_link_cap * 7 + est_link_cap.unwrap_or(0)) / 8;
+        self.metrics.est_link_cap =
+            (self.metrics.est_link_cap * 7 + info.est_link_cap.unwrap_or(0)) / 8;
 
         // 9) Update sender's buffer (by releasing the buffer that has been
         //    acknowledged).
-        self.send_buffer.release_acknowledged_packets(ack_number);
+        self.send_buffer
+            .release_acknowledged_packets(info.ack_number);
 
         // 10) Update sender's loss list (by removing all those that has been
         //     acknowledged).
-        self.metrics.retrans_packets += self.loss_list.remove_acknowledged_packets(ack_number);
+        self.metrics.retrans_packets += self.loss_list.remove_acknowledged_packets(info.ack_number);
 
         Ok(())
     }

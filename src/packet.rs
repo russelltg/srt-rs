@@ -12,8 +12,8 @@ mod data;
 
 pub use self::codec::PacketCodec;
 pub use self::control::{
-    CipherType, ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType,
-    SocketType, SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags,
+    AckControlInfo, CipherType, ControlPacket, ControlTypes, HandshakeControlInfo, HandshakeVSInfo,
+    ShakeType, SocketType, SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags,
 };
 pub use self::data::{DataPacket, PacketLocation};
 

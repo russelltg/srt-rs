@@ -58,29 +58,7 @@ pub enum ControlTypes {
     KeepAlive,
 
     /// ACK packet, type 0x2
-    Ack {
-        /// The ack sequence number of this ack, increments for each ack sent.
-        /// Stored in additional info
-        ack_seq_num: i32,
-
-        /// The packet sequence number that all packets have been recieved until (excluding)
-        ack_number: SeqNumber,
-
-        /// Round trip time
-        rtt: Option<TimeSpan>,
-
-        /// RTT variance
-        rtt_variance: Option<TimeSpan>,
-
-        /// available buffer
-        buffer_available: Option<i32>,
-
-        /// receive rate, in packets/sec
-        packet_recv_rate: Option<u32>,
-
-        /// Estimated Link capacity
-        est_link_cap: Option<i32>,
-    },
+    Ack(AckControlInfo),
 
     /// NAK packet, type 0x3
     /// Additional Info isn't used
@@ -175,6 +153,31 @@ pub struct HandshakeControlInfo {
 
     /// The rest of the data, which is HS version specific
     pub info: HandshakeVSInfo,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct AckControlInfo {
+    /// The ack sequence number of this ack, increments for each ack sent.
+    /// Stored in additional info
+    pub ack_seq_num: i32,
+
+    /// The packet sequence number that all packets have been recieved until (excluding)
+    pub ack_number: SeqNumber,
+
+    /// Round trip time
+    pub rtt: Option<TimeSpan>,
+
+    /// RTT variance
+    pub rtt_variance: Option<TimeSpan>,
+
+    /// available buffer
+    pub buffer_available: Option<i32>,
+
+    /// receive rate, in packets/sec
+    pub packet_recv_rate: Option<u32>,
+
+    /// Estimated Link capacity
+    pub est_link_cap: Option<i32>,
 }
 
 /// The socket type for a handshake.
@@ -550,7 +553,7 @@ impl ControlTypes {
                 let packet_recv_rate = opt_read_next_u32(&mut buf);
                 let est_link_cap = opt_read_next_i32(&mut buf);
 
-                Ok(ControlTypes::Ack {
+                Ok(ControlTypes::Ack(AckControlInfo {
                     ack_seq_num: extra_info,
                     ack_number,
                     rtt,
@@ -558,7 +561,7 @@ impl ControlTypes {
                     buffer_available,
                     packet_recv_rate,
                     est_link_cap,
-                })
+                }))
             }
             0x3 => {
                 // NAK
@@ -614,7 +617,7 @@ impl ControlTypes {
         match self {
             // These types have additional info
             ControlTypes::DropRequest { msg_to_drop: a, .. } => a.as_raw() as i32,
-            ControlTypes::Ack2(a) | ControlTypes::Ack { ack_seq_num: a, .. } => *a,
+            ControlTypes::Ack2(a) | ControlTypes::Ack(AckControlInfo { ack_seq_num: a, .. }) => *a,
             // These do not, just use zero
             _ => 0,
         }
@@ -675,7 +678,7 @@ impl ControlTypes {
                     }
                 }
             }
-            ControlTypes::Ack {
+            ControlTypes::Ack(AckControlInfo {
                 ack_number,
                 rtt,
                 rtt_variance,
@@ -683,7 +686,7 @@ impl ControlTypes {
                 packet_recv_rate,
                 est_link_cap,
                 ..
-            } => {
+            }) => {
                 into.put_u32(ack_number.as_raw());
                 into.put_i32(rtt.map(|t| t.as_micros()).unwrap_or(10_000));
                 into.put_i32(rtt_variance.map(|t| t.as_micros()).unwrap_or(50_000));
@@ -716,7 +719,7 @@ impl Debug for ControlTypes {
         match self {
             ControlTypes::Handshake(hs) => write!(f, "{:?}", hs),
             ControlTypes::KeepAlive => write!(f, "KeepAlive"),
-            ControlTypes::Ack {
+            ControlTypes::Ack(AckControlInfo {
                 ack_seq_num,
                 ack_number,
                 rtt,
@@ -724,7 +727,7 @@ impl Debug for ControlTypes {
                 buffer_available,
                 packet_recv_rate,
                 est_link_cap,
-            } => {
+            }) => {
                 write!(f, "Ack(asn={} an={}", ack_seq_num, ack_number,)?;
                 if let Some(rtt) = rtt {
                     write!(f, " rtt={}", rtt.as_micros())?;
@@ -852,7 +855,7 @@ mod test {
         let pack = ControlPacket {
             timestamp: TimeStamp::from_micros(113_703),
             dest_sockid: SocketID(2_453_706_529),
-            control_type: ControlTypes::Ack {
+            control_type: ControlTypes::Ack(AckControlInfo {
                 ack_seq_num: 1,
                 ack_number: SeqNumber::new_truncate(282_049_186),
                 rtt: Some(TimeSpan::from_micros(10_002)),
@@ -860,7 +863,7 @@ mod test {
                 buffer_available: Some(1314),
                 packet_recv_rate: Some(0),
                 est_link_cap: Some(0),
-            },
+            }),
         };
 
         let mut buf = vec![];
