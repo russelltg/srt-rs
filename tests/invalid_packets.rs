@@ -10,6 +10,8 @@ use tokio::time::interval;
 // Send a bunch of invalid packets to the socket, making sure that it can handle it
 #[tokio::test]
 async fn invalid_packets() {
+    let _ = env_logger::try_init();
+
     let sender = async {
         let mut sender = SrtSocketBuilder::new_connect("127.0.0.1:8876")
             .local_port(8877)
@@ -41,7 +43,7 @@ async fn invalid_packets() {
 
     let garbage = async {
         let mut sock = UdpSocket::bind(&"127.0.0.1:0").await.unwrap();
-        loop {
+        while let Some(_) = interval(Duration::from_millis(10)).next().await {
             let mut rng = rand::thread_rng();
             let mut to_send = vec![0; rng.gen_range(1, 1024)];
             for i in &mut to_send {
