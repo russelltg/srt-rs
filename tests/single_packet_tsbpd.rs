@@ -21,9 +21,9 @@ async fn single_packet_tsbpd() {
         .connect();
 
     // init the connection
+    let (mut recvr, mut sender) = futures::try_join!(sender, recvr).unwrap();
 
     let recvr_fut = async move {
-        let mut recvr = recvr.await.unwrap();
         let start = Instant::now();
         let (time, packet) = recvr
             .try_next()
@@ -43,7 +43,7 @@ async fn single_packet_tsbpd() {
 
         assert_eq!(&packet, "Hello World!");
 
-        let expected_displacement = Duration::from_millis(1);
+        let expected_displacement = Duration::from_millis(5);
         let displacement = if start > time {
             start - time
         } else {
@@ -58,7 +58,6 @@ async fn single_packet_tsbpd() {
     };
 
     let sendr_fut = async move {
-        let mut sender = sender.await.unwrap();
         sender
             .send((Instant::now(), Bytes::from("Hello World!")))
             .await
