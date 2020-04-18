@@ -11,7 +11,7 @@ use tokio::time::{delay_for, interval};
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
-use failure::Error;
+use anyhow::Error;
 
 use futures::{stream, FutureExt, SinkExt, StreamExt, TryStreamExt};
 
@@ -150,7 +150,7 @@ fn ui_test(flags: &[&str], stderr: &str) {
 
 mod stransmit_rs_snd_rcv {
     use super::test_send;
-    use failure::Error;
+    use anyhow::Error;
 
     #[tokio::test]
     async fn basic() -> Result<(), Error> {

@@ -1,15 +1,18 @@
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-use std::time::Duration;
+use std::{io, time::Duration};
 
-use failure::{bail, Error};
 use rand;
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 
-use futures::{Sink, Stream};
+use futures::{future::ready, Sink, Stream, StreamExt};
 
 use crate::tokio::create_bidrectional_srt;
-use crate::{multiplex, pending_connection, Connection, PackChan, Packet, PacketCodec, SrtSocket};
+use crate::{
+    multiplex, pending_connection, Connection, PackChan, Packet, PacketCodec, PacketParseError,
+    SrtSocket,
+};
+use log::warn;
 
 /// Struct to build sockets.
 ///
@@ -21,8 +24,9 @@ use crate::{multiplex, pending_connection, Connection, PackChan, Packet, PacketC
 /// Simple:
 /// ```
 /// # use srt::SrtSocketBuilder;
+/// # use std::io;
 /// # #[tokio::main]
-/// # async fn main() -> Result<(), failure::Error> {
+/// # async fn main() -> Result<(), io::Error> {
 /// let (a, b) = futures::try_join!(
 ///     SrtSocketBuilder::new_listen().local_port(3333).connect(),
 ///     SrtSocketBuilder::new_connect("127.0.0.1:3333").connect(),
@@ -35,8 +39,9 @@ use crate::{multiplex, pending_connection, Connection, PackChan, Packet, PacketC
 ///
 /// ```
 /// # use srt::{SrtSocketBuilder, ConnInitMethod};
+/// # use std::io;
 /// # #[tokio::main]
-/// # async fn main() -> Result<(), failure::Error> {
+/// # async fn main() -> Result<(), io::Error> {
 /// let (a, b) = futures::try_join!(
 ///     SrtSocketBuilder::new_rendezvous("127.0.0.1:4444").local_port(5555).connect(),
 ///     SrtSocketBuilder::new_rendezvous("127.0.0.1:5555").local_port(4444).connect(),
@@ -146,32 +151,27 @@ impl SrtSocketBuilder {
     /// # Panics:
     /// * size is not 16, 24, or 32.
     pub fn crypto(mut self, size: u8, passphrase: String) -> Self {
+        match size {
+            // OK
+            16 | 24 | 32 => {}
+            // NOT
+            // TODO: size validation
+            size => panic!("Invaid crypto size {}", size),
+        }
         self.crypto = Some((size, passphrase));
 
         self
     }
 
     /// Connect with a custom socket. Not typically used, see [`connect`](SrtSocketBuilder::connect) instead.
-    pub async fn connect_with_sock<T>(self, mut socket: T) -> Result<SrtSocket, Error>
+    pub async fn connect_with_sock<T>(self, mut socket: T) -> Result<SrtSocket, io::Error>
     where
-        T: Stream<Item = Result<(Packet, SocketAddr), Error>>
-            + Sink<(Packet, SocketAddr), Error = Error>
+        T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
+            + Sink<(Packet, SocketAddr), Error = io::Error>
             + Unpin
             + Send
             + 'static,
     {
-        // validate crypto
-        match self.crypto {
-            // OK
-            None | Some((16, _)) | Some((24, _)) | Some((32, _)) => {
-                // TODO: Size validation
-            }
-            // not
-            Some((size, _)) => {
-                bail!("Invalid crypto size: {}. Expected 16, 24, or 32", size);
-            }
-        }
-
         let conn = match self.conn_type {
             ConnInitMethod::Listen => {
                 pending_connection::listen(&mut socket, rand::random(), self.latency).await?
@@ -199,11 +199,16 @@ impl SrtSocketBuilder {
             }
         };
 
-        Ok(create_bidrectional_srt(socket, conn))
+        Ok(create_bidrectional_srt(
+            socket.filter_map(|res| {
+                ready(res.map_err(|e| warn!("Error parsing packet: {}", e)).ok())
+            }),
+            conn,
+        ))
     }
 
     /// Connects to the remote socket. Resolves when it has been connected successfully.
-    pub async fn connect(self) -> Result<SrtSocket, Error> {
+    pub async fn connect(self) -> Result<SrtSocket, io::Error> {
         let la = self.local_addr;
         Ok(self
             .connect_with_sock(UdpFramed::new(UdpSocket::bind(&la).await?, PacketCodec {}))
@@ -211,12 +216,15 @@ impl SrtSocketBuilder {
     }
 
     /// Build a multiplexed connection. This acts as a sort of server, allowing many connections to this one socket.
+    ///
+    /// # Panics:
+    /// If this is built with a non-listen builder
     pub async fn build_multiplexed(
         self,
-    ) -> Result<impl Stream<Item = Result<(Connection, PackChan), Error>>, Error> {
+    ) -> Result<impl Stream<Item = Result<(Connection, PackChan), io::Error>>, io::Error> {
         match self.conn_type {
             ConnInitMethod::Listen => multiplex(self.local_addr, self.latency).await,
-            _ => bail!("Cannot bind multiplexed with any connection mode other than listen"),
+            _ => panic!("Cannot bind multiplexed with any connection mode other than listen"),
         }
     }
 }

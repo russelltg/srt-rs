@@ -1,4 +1,4 @@
-use failure::Error;
+use anyhow::Result;
 use srt::{ConnInitMethod, SrtSocketBuilder};
 use std::time::Duration;
 use tokio::time::delay_for;
@@ -8,7 +8,7 @@ use futures::prelude::*;
 async fn test_latency_exchange(
     connecter_latency: Duration,
     listener_latency: Duration,
-) -> Result<(), Error> {
+) -> Result<()> {
     let connecter = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:4000".parse()?))
         .latency(connecter_latency)
         .connect();
@@ -42,7 +42,7 @@ async fn test_latency_exchange(
 }
 
 #[tokio::test]
-async fn latency_exchange() -> Result<(), Error> {
+async fn latency_exchange() -> Result<()> {
     env_logger::init();
 
     test_latency_exchange(Duration::from_secs(3), Duration::from_secs(4)).await?;

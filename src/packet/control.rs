@@ -3,7 +3,6 @@ use std::net::{IpAddr, Ipv4Addr};
 
 use bitflags::bitflags;
 use bytes::{Buf, BufMut};
-use failure::{bail, format_err, Error};
 use log::warn;
 
 use crate::protocol::{TimeSpan, TimeStamp};
@@ -12,6 +11,7 @@ use crate::{MsgNumber, SeqNumber, SocketID};
 mod srt;
 
 pub use self::srt::{CipherType, SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags};
+use super::PacketParseError;
 
 /// A UDP packet carrying control information
 ///
@@ -292,7 +292,7 @@ impl SocketType {
 }
 
 impl ControlPacket {
-    pub fn parse(buf: &mut impl Buf) -> Result<ControlPacket, Error> {
+    pub fn parse(buf: &mut impl Buf) -> Result<ControlPacket, PacketParseError> {
         let control_type = buf.get_u16() << 1 >> 1; // clear first bit
 
         // get reserved data, which is the last two bytes of the first four bytes
@@ -356,18 +356,18 @@ impl ControlTypes {
         reserved: u16,
         extra_info: i32,
         mut buf: T,
-    ) -> Result<ControlTypes, Error> {
+    ) -> Result<ControlTypes, PacketParseError> {
         match packet_type {
             0x0 => {
                 // Handshake
                 // make sure the packet is large enough -- 8 32-bit words, 1 128 (ip)
                 if buf.remaining() < 8 * 4 + 16 {
-                    bail!("Packet not large enough to be a handshake");
+                    return Err(PacketParseError::NotEnoughData);
                 }
 
                 let udt_version = buf.get_i32();
                 if udt_version != 4 && udt_version != 5 {
-                    bail!("Incompatable UDT version: {}", udt_version);
+                    return Err(PacketParseError::BadUDTVersion(udt_version));
                 }
 
                 // the second 32 bit word is always socket type under UDT4
@@ -387,7 +387,7 @@ impl ControlTypes {
                 let max_flow_size = buf.get_u32();
                 let shake_type = match ShakeType::from_i32(buf.get_i32()) {
                     Ok(ct) => ct,
-                    Err(err_ct) => bail!("Invalid connection type {}", err_ct),
+                    Err(err_ct) => return Err(PacketParseError::BadConnectionType(err_ct)),
                 };
                 let socket_id = SocketID(buf.get_u32());
                 let syn_cookie = buf.get_i32();
@@ -406,9 +406,7 @@ impl ControlTypes {
                 let info = match udt_version {
                     4 => HandshakeVSInfo::V4(match SocketType::from_u16(type_ext_socket_type) {
                         Ok(t) => t,
-                        Err(e) => {
-                            bail!("Unrecognized socket type: {}", e);
-                        }
+                        Err(e) => return Err(PacketParseError::BadSocketType(e)),
                     }),
                     5 => {
                         // make sure crypto size is of a valid variant
@@ -452,48 +450,44 @@ impl ControlTypes {
                             // parse out extensions
                             let ext_hs = if extensions.contains(ExtFlags::HS) {
                                 if buf.remaining() < 4 {
-                                    bail!("Not enough room for declared exceptions")
+                                    return Err(PacketParseError::NotEnoughData);
                                 }
                                 let pack_type = buf.get_u16();
                                 let _pack_size = buf.get_u16(); // TODO: why exactly is this needed?
                                 match pack_type {
                                     // 1 and 2 are handshake response and requests
                                     1 | 2 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
-                                    e => bail!(
-                                    "Expected 1 or 2 (SRT handshake request or response), got {}",
-                                    e
-                                ),
+                                    e => return Err(PacketParseError::BadSRTHsExtensionType(e)),
                                 }
                             } else {
                                 None
                             };
                             let ext_km = if extensions.contains(ExtFlags::KM) {
                                 if buf.remaining() < 4 {
-                                    bail!("Not enough room for declared exceptions")
+                                    return Err(PacketParseError::NotEnoughData);
                                 }
                                 let pack_type = buf.get_u16();
                                 let _pack_size = buf.get_u16(); // TODO: why exactly is this needed?
                                 match pack_type {
                                     // 3 and 4 are km packets
                                     3 | 4 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
-                                    e => bail!(
-                                    "Exepcted 3 or 4 (SRT key manager request or response), got {}",
-                                    e
-                                ),
+                                    e => return Err(PacketParseError::BadSRTKmExtensionType(e)),
                                 }
                             } else {
                                 None
                             };
                             let ext_config = if extensions.contains(ExtFlags::CONFIG) {
                                 if buf.remaining() < 4 {
-                                    bail!("Not enough room for declared exceptions")
+                                    return Err(PacketParseError::NotEnoughData);
                                 }
                                 let pack_type = buf.get_u16();
                                 let _pack_size = buf.get_u16(); // TODO: why exactly is this needed?
                                 match pack_type {
                                     // 5 is sid 6 is smoother
                                     5 | 6 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
-                                    e => bail!("Expected 5 or 6 (SRT SID or smoother), got {}", e),
+                                    e => {
+                                        return Err(PacketParseError::BadSRTConfigExtensionType(e))
+                                    }
                                 }
                             } else {
                                 None
@@ -526,7 +520,7 @@ impl ControlTypes {
 
                 // make sure there are enough bytes -- only one required field
                 if buf.remaining() < 4 {
-                    bail!("Not enough data for an ack packet");
+                    return Err(PacketParseError::NotEnoughData);
                 }
 
                 // read control info
@@ -581,7 +575,7 @@ impl ControlTypes {
             0x7 => {
                 // Drop request
                 if buf.remaining() < 2 * 4 {
-                    bail!("Not enough data for a drop request");
+                    return Err(PacketParseError::NotEnoughData);
                 }
 
                 Ok(ControlTypes::DropRequest {
@@ -596,7 +590,7 @@ impl ControlTypes {
                     reserved, &mut buf,
                 )?))
             }
-            x => Err(format_err!("Unrecognized control packet type: {:?}", x)),
+            x => return Err(PacketParseError::BadControlType(x)),
         }
     }
 

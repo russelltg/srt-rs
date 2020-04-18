@@ -1,8 +1,10 @@
 use std::cmp;
 use std::net::{IpAddr, SocketAddr};
-use std::time::{Duration, Instant};
+use std::{
+    fmt, io,
+    time::{Duration, Instant},
+};
 
-use failure::Error;
 use futures::{select, FutureExt, Sink, SinkExt, Stream};
 use log::warn;
 use tokio::time::interval;
@@ -11,7 +13,8 @@ use crate::packet::{ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeTy
 use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::util::get_packet;
 use crate::{
-    Connection, ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber, SocketID,
+    Connection, ConnectionSettings, ControlPacket, DataPacket, Packet, PacketParseError, SeqNumber,
+    SocketID,
 };
 
 use RendezvousError::*;
@@ -51,16 +54,25 @@ impl Rendezvous {
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 pub enum RendezvousError {
-    //#[error("Expected Control packet, expected: {0} found: {1}")]
     ControlExpected(DataPacket),
-    //#[error("Expected Handshake packet, expected: {0} found: {1}")]
-    // warn!("Received non-handshake packet when negotiating rendezvous");
     HandshakeExpected(ControlTypes),
-    // #[error("Expected Rendezvous packet, found: {0}")]
-    // warn!("Received induction handshake while initiating a rendezvous connection. Maybe you tried to pair connect with rendezvous?");
     RendezvousExpected(HandshakeControlInfo),
-    // warn!("Received control packet from unrecognized location: {}", from_addr );
     UnrecognizedHost(SocketAddr, ControlPacket),
+}
+
+impl fmt::Display for RendezvousError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ControlExpected(pack) => write!(f, "Expected Control packet, found {:?}", pack),
+            HandshakeExpected(got) => write!(f, "Expected Handshake packet, found: {:?}", got),
+            RendezvousExpected(got) => write!(f, "Expected rendezvous packet, got {:?}", got),
+            UnrecognizedHost(from, packet) => write!(
+                f,
+                "Received control packet {:?} from unrecognized location: {}",
+                packet, from
+            ),
+        }
+    }
 }
 
 pub type RendezvousResult = Result<Option<(ControlPacket, SocketAddr)>, RendezvousError>;
@@ -182,10 +194,10 @@ pub async fn rendezvous<T>(
     local_addr: IpAddr,
     remote_public: SocketAddr,
     tsbpd_latency: Duration,
-) -> Result<Connection, Error>
+) -> Result<Connection, io::Error>
 where
-    T: Stream<Item = Result<(Packet, SocketAddr), Error>>
-        + Sink<(Packet, SocketAddr), Error = Error>
+    T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
+        + Sink<(Packet, SocketAddr), Error = io::Error>
         + Unpin,
 {
     let configuration = RendezvousConfiguration {

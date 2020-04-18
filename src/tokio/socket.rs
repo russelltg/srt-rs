@@ -12,13 +12,12 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 use std::{
-    mem,
+    io, mem,
     sync::{Arc, Mutex},
     time::Instant,
 };
 
 use bytes::Bytes;
-use failure::Error;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::{future, ready, select};
@@ -55,7 +54,7 @@ enum Action {
     Nothing,
     CloseSender,
     Send(Option<(Instant, Bytes)>),
-    DelegatePacket(Option<Result<(Packet, SocketAddr), Error>>),
+    DelegatePacket(Option<(Packet, SocketAddr)>),
 }
 
 /// This spawns two new tasks:
@@ -64,8 +63,8 @@ enum Action {
 /// 2. Take outgoing packets and send them on the socket
 pub fn create_bidrectional_srt<T>(sock: T, conn: crate::Connection) -> SrtSocket
 where
-    T: Stream<Item = Result<(Packet, SocketAddr), Error>>
-        + Sink<(Packet, SocketAddr), Error = Error>
+    T: Stream<Item = (Packet, SocketAddr)>
+        + Sink<(Packet, SocketAddr), Error = io::Error>
         + Send
         + Unpin
         + 'static,
@@ -230,7 +229,7 @@ where
                 Action::Nothing => {}
                 Action::DelegatePacket(res) => {
                     match res {
-                        Some(Ok((pack, from))) => {
+                        Some((pack, from)) => {
                             connection.on_packet(Instant::now());
                             match &pack {
                                 Data(_) => receiver.handle_packet(Instant::now(), (pack, from)),
@@ -260,13 +259,6 @@ where
                                 sender.settings().local_sockid
                             );
                             break;
-                        }
-                        Some(Err(e)) => {
-                            error!(
-                                "{:?} Error in underlying stream: {:?}",
-                                sender.settings().local_sockid,
-                                e
-                            );
                         }
                     }
                 }
@@ -302,7 +294,7 @@ impl SrtSocket {
 }
 
 impl Stream for SrtSocket {
-    type Item = Result<(Instant, Bytes), Error>;
+    type Item = Result<(Instant, Bytes), io::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         Poll::Ready(ready!(Pin::new(&mut self.recvr).poll_next(cx)).map(Ok))
@@ -310,16 +302,21 @@ impl Stream for SrtSocket {
 }
 
 impl Sink<(Instant, Bytes)> for SrtSocket {
-    type Error = Error;
+    type Error = io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_ready(cx))?))
+        Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_ready(cx))
+            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?))
     }
     fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Self::Error> {
-        Ok(self.sender.start_send(item)?)
+        Ok(self
+            .sender
+            .start_send(item)
+            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?)
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        ready!(Pin::new(&mut self.sender).poll_flush(cx))?;
+        ready!(Pin::new(&mut self.sender).poll_flush(cx))
+            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?;
 
         let mut l = self.flush_wakeup.lock().unwrap();
         if l.1 {
@@ -332,7 +329,8 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
         }
     }
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        ready!(Pin::new(&mut self.sender).poll_close(cx))?;
+        ready!(Pin::new(&mut self.sender).poll_close(cx))
+            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?;
         // the sender side of this oneshot is dropped when the task returns, which returns Err here. This means it is closd.
         match Pin::new(&mut self.close).poll(cx) {
             Poll::Pending => Poll::Pending,

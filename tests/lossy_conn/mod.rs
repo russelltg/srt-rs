@@ -4,14 +4,17 @@ use std::fmt::Debug;
 use std::marker::Unpin;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
-
-use failure::Error;
+use std::{
+    io,
+    time::{Duration, Instant},
+};
 
 use futures::channel::mpsc;
 use futures::{ready, stream::Fuse, Future, Sink, Stream, StreamExt};
 
 use tokio::time::{self, delay_for, Delay};
+
+use anyhow::Result;
 
 use log::{debug, info, trace};
 
@@ -19,6 +22,7 @@ use rand::distributions::Distribution;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rand_distr::Normal;
+use srt::PacketParseError;
 
 pub struct LossyConn<T> {
     sender: mpsc::Sender<T>,
@@ -61,7 +65,7 @@ impl<T> Eq for TTime<T> {}
 
 // Have the queue on the Stream impl so that way flushing doesn't act strangely.
 impl<T: Unpin + Debug> Stream for LossyConn<T> {
-    type Item = Result<T, Error>;
+    type Item = Result<T, PacketParseError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
@@ -130,25 +134,29 @@ impl<T: Unpin + Debug> Stream for LossyConn<T> {
 }
 
 impl<T: Sync + Send + Unpin + 'static> Sink<T> for LossyConn<T> {
-    type Error = Error;
+    type Error = io::Error;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         let _ = ready!(self.sender.poll_ready(cx));
         Poll::Ready(Ok(()))
     }
 
-    fn start_send(mut self: Pin<&mut Self>, to_send: T) -> Result<(), Error> {
+    fn start_send(mut self: Pin<&mut Self>, to_send: T) -> Result<(), Self::Error> {
         // just discard it, like a real UDP connection
         let _ = self.sender.start_send(to_send);
         Ok(())
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
-        Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_flush(cx))?))
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(
+            ready!(Pin::new(&mut self.sender).poll_flush(cx)).unwrap()
+        ))
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
-        Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_close(cx))?))
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(
+            ready!(Pin::new(&mut self.sender).poll_close(cx)).unwrap()
+        ))
     }
 }
 

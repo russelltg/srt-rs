@@ -1,25 +1,24 @@
-use crate::Packet;
+use crate::{Packet, PacketParseError};
 use bytes::BytesMut;
-use failure::Error;
-use std::io::Cursor;
+use std::io::{self, Cursor};
 use tokio_util::codec::{Decoder, Encoder};
 
 pub struct PacketCodec;
 
 impl Decoder for PacketCodec {
     type Item = Packet;
-    type Error = Error;
+    type Error = PacketParseError;
 
-    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Packet>, Error> {
+    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Packet>, Self::Error> {
         Packet::parse(&mut Cursor::new(buf)).map(Some)
     }
 }
 
 impl Encoder for PacketCodec {
     type Item = Packet;
-    type Error = Error;
+    type Error = io::Error;
 
-    fn encode(&mut self, packet: Packet, buf: &mut BytesMut) -> Result<(), Error> {
+    fn encode(&mut self, packet: Packet, buf: &mut BytesMut) -> Result<(), Self::Error> {
         packet.serialize(buf);
 
         Ok(())

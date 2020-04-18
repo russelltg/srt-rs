@@ -1,7 +1,10 @@
 use std::net::{IpAddr, SocketAddr};
-use std::time::{Duration, Instant};
+use std::{
+    error::Error,
+    fmt, io,
+    time::{Duration, Instant},
+};
 
-use failure::Error;
 use futures::prelude::*;
 use futures::select;
 use log::warn;
@@ -50,17 +53,11 @@ impl ConnectState {
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 pub enum ConnectError {
-    //#[error("Expected Control packet, expected: {0} found: {1}")]
     ControlExpected(ShakeType, DataPacket),
-    //#[error("Expected Handshake packet, expected: {0} found: {1}")]
     HandshakeExpected(ShakeType, ControlTypes),
-    //#[error("Expected Induction (1) packet, found: {0}")]
     InductionExpected(HandshakeControlInfo),
-    //#[error("Expected packets from different host, expected: {0} found: {1}")]
     UnexpectedHost(SocketAddr, SocketAddr),
-    //#[error("Expected Conclusion (-1) packet, found: {0}")]
     ConclusionExpected(HandshakeControlInfo),
-    //#[error("Unsupported protocol version, expected: v5 found v{0}")]
     UnsupportedProtocolVersion(u32),
     // TODO: why don't we validate the cookie on responses
     //#[error("Received invalid cookie handshake from [address], expected: {0} found {1}")]
@@ -69,6 +66,39 @@ pub enum ConnectError {
     //#[error("Expected SRT handshake request in conclusion handshake, found {0}")]
     //SrtHandshakeExpected(HandshakeControlInfo),
 }
+
+impl fmt::Display for ConnectError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ControlExpected(shake, pack) => write!(
+                f,
+                "Expected Control packet, expected {:?}, found {:?}",
+                shake, pack
+            ),
+            HandshakeExpected(expected, got) => write!(
+                f,
+                "Expected Handshake packet, expected: {:?} found: {:?}",
+                expected, got
+            ),
+            InductionExpected(got) => write!(f, "Expected Induction (1) packet, found: {:?}", got),
+            UnexpectedHost(host, got) => write!(
+                f,
+                "Expected packets from different host, expected: {} found: {}",
+                host, got
+            ),
+            ConclusionExpected(got) => {
+                write!(f, "Expected Conclusion (-1) packet, found: {:?}", got)
+            }
+            UnsupportedProtocolVersion(got) => write!(
+                f,
+                "Unsupported protocol version, expected: v5 found v{0}",
+                got
+            ),
+        }
+    }
+}
+
+impl Error for ConnectError {}
 
 pub struct Connect {
     config: ConnectConfiguration,
@@ -232,10 +262,10 @@ pub async fn connect<T>(
     local_addr: IpAddr,
     tsbpd_latency: Duration,
     _crypto: Option<(u8, String)>,
-) -> Result<Connection, Error>
+) -> Result<Connection, io::Error>
 where
-    T: Stream<Item = Result<(Packet, SocketAddr), Error>>
-        + Sink<(Packet, SocketAddr), Error = Error>
+    T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
+        + Sink<(Packet, SocketAddr), Error = io::Error>
         + Unpin,
 {
     let mut connect = Connect {

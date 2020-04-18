@@ -4,11 +4,11 @@
 use std::fmt::{self, Debug, Formatter};
 
 use bytes::{Buf, BufMut};
-use failure::{bail, Error};
 
 mod codec;
 mod control;
 mod data;
+mod error;
 
 pub use self::codec::PacketCodec;
 pub use self::control::{
@@ -16,6 +16,7 @@ pub use self::control::{
     ShakeType, SocketType, SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags,
 };
 pub use self::data::{DataPacket, PacketLocation};
+pub use error::PacketParseError;
 
 use crate::protocol::TimeStamp;
 use crate::SocketID;
@@ -42,11 +43,11 @@ impl Packet {
         }
     }
 
-    pub fn parse<T: Buf>(buf: &mut T) -> Result<Packet, Error> {
+    pub fn parse<T: Buf>(buf: &mut T) -> Result<Packet, PacketParseError> {
         // Buffer must be at least 16 bytes,
         // the length of a header packet
         if buf.remaining() < 16 {
-            bail!("Packet not long enough to have a header");
+            return Err(PacketParseError::NotEnoughData);
         }
 
         // peek at the first byte to check if it's data or control

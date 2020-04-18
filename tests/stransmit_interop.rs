@@ -4,8 +4,8 @@ use std::net::{SocketAddr, SocketAddrV4};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use anyhow::Error;
 use bytes::Bytes;
-use failure::Error;
 use futures::{join, stream, SinkExt, Stream, StreamExt};
 
 use tokio::net::UdpSocket;

@@ -1,9 +1,12 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::{
+    error::Error,
+    fmt, io,
+    time::{Duration, Instant},
+};
 
-use failure::Error;
 use futures::prelude::*;
 use log::warn;
 
@@ -45,21 +48,52 @@ pub enum ListenState {
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 pub enum ListenError {
-    //#[error("Expected Control packet, expected: {0} found: {1}")]
     ControlExpected(ShakeType, DataPacket),
-    //#[error("Expected Handshake packet, expected: {0} found: {1}")]
     HandshakeExpected(ShakeType, ControlTypes),
-    //#[error("Expected Induction (1) packet, found: {0}")]
     InductionExpected(HandshakeControlInfo),
-    //#[error("Expected Conclusion (-1) packet, found: {0}")]
     ConclusionExpected(HandshakeControlInfo),
-    //#[error("Unsupported protocol version, expected: v5 found v{0}")]
     UnsupportedProtocolVersion(u32),
-    //#[error("Received invalid cookie handshake from [address], expected: {0} found {1}")]
     InvalidHandshakeCookie(i32, i32),
-    //#[error("Expected SRT handshake request in conclusion handshake, found {0}")]
     SrtHandshakeExpected(HandshakeControlInfo),
 }
+
+impl fmt::Display for ListenError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ControlExpected(shake, pack) => write!(
+                f,
+                "Expected Control packet, expected {:?}, found {:?}",
+                shake, pack
+            ),
+            HandshakeExpected(expected, got) => write!(
+                f,
+                "Expected Handshake packet, expected: {:?} found: {:?}",
+                expected, got
+            ),
+            InductionExpected(got) => write!(f, "Expected Induction (1) packet, found: {:?}", got),
+            ConclusionExpected(got) => {
+                write!(f, "Expected Conclusion (-1) packet, found: {:?}", got)
+            }
+            UnsupportedProtocolVersion(got) => write!(
+                f,
+                "Unsupported protocol version, expected: v5 found v{0}",
+                got
+            ),
+            InvalidHandshakeCookie(expected, got) => write!(
+                f,
+                "Received invalid cookie, expected {}, got {}",
+                expected, got
+            ),
+            SrtHandshakeExpected(got) => write!(
+                f,
+                "Expected SRT handshake request in conclusion handshake, found {:?}",
+                got
+            ),
+        }
+    }
+}
+
+impl Error for ListenError {}
 
 type ListenResult = Result<Option<(Packet, SocketAddr)>, ListenError>;
 
@@ -244,10 +278,10 @@ pub async fn listen<T>(
     sock: &mut T,
     local_sockid: SocketID,
     tsbpd_latency: Duration,
-) -> Result<Connection, Error>
+) -> Result<Connection, io::Error>
 where
-    T: Stream<Item = Result<(Packet, SocketAddr), Error>>
-        + Sink<(Packet, SocketAddr), Error = Error>
+    T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
+        + Sink<(Packet, SocketAddr), Error = io::Error>
         + Unpin,
 {
     let mut listen = Listen {
@@ -261,9 +295,7 @@ where
     loop {
         let packet = get_packet(sock).await?;
         match listen.handle_packet(packet) {
-            Ok(Some(packet)) => {
-                sock.send(packet).await?;
-            }
+            Ok(Some(packet)) => sock.send(packet).await?,
             Err(e) => {
                 warn!("{:?}", e);
             }

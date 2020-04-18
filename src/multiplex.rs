@@ -4,14 +4,13 @@ pub use self::streamer_server::StreamerServer;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::{io, time::Duration};
 
 use futures::future::{pending, select_all};
 use futures::prelude::*;
 use futures::select;
 use futures::stream::unfold;
 
-use failure::Error;
 use log::warn;
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
@@ -30,8 +29,14 @@ struct MultiplexState {
     latency: Duration,
 }
 
+enum Action {
+    Delegate(Packet, SocketAddr),
+    Remove(SocketID),
+    Send((Packet, SocketAddr)),
+}
+
 impl MultiplexState {
-    async fn next_conn(&mut self) -> Result<Option<(Connection, PackChan)>, Error> {
+    async fn next_conn(&mut self) -> Result<Option<(Connection, PackChan)>, io::Error> {
         loop {
             // impl Future<Output = (Packet, SocketAddr)
             let conns = &mut self.conns;
@@ -48,26 +53,37 @@ impl MultiplexState {
                     .await
                 }
             };
-            select! {
+            let action = select! {
                 new_pack = self.sock.next().fuse() => {
                     match new_pack {
                         None => return Ok(None),
-                        Some(Err(e)) => return Err(e),
+                        Some(Err(e)) => return Err(io::Error::from(e)),
                         Some(Ok((pack, from))) => {
-                            if let Some(complete) = self.delegate_packet(pack, from).await? {
-                                return Ok(Some(complete));
-                            }
+                            Action::Delegate(pack, from)
                         }
                     }
                 },
-                ((&sockid, pack), _, _) = joined.fuse() => {
+                ((sockid, pack), _, _) = joined.fuse() => {
                     match pack {
-                        None => { self.conns.remove(&sockid); }
-                        Some(Ok(pack)) => { self.sock.send(pack).await?; }
-                        Some(Err(e)) => return Err(e),
+                        None  => { Action::Remove(*sockid) }
+                        Some(pack) => { Action::Send(pack)  }
                     }
                 },
             };
+
+            match action {
+                Action::Delegate(pack, from) => {
+                    if let Some(complete) = self.delegate_packet(pack, from).await? {
+                        return Ok(Some(complete));
+                    }
+                }
+                Action::Remove(sockid) => {
+                    self.conns.remove(&sockid);
+                }
+                Action::Send(pack) => {
+                    self.sock.send(pack).await?;
+                }
+            }
         }
     }
 
@@ -75,10 +91,13 @@ impl MultiplexState {
         &mut self,
         pack: Packet,
         from: SocketAddr,
-    ) -> Result<Option<(Connection, PackChan)>, Error> {
+    ) -> Result<Option<(Connection, PackChan)>, io::Error> {
         // fast path--an already established connection
         if let Some(chan) = self.conns.get_mut(&pack.dest_sockid()) {
-            chan.send((pack, from)).await?;
+            let dst_sockid = pack.dest_sockid();
+            if let Err(_send_err) = chan.send((pack, from)).await {
+                self.conns.remove(&dst_sockid);
+            }
             return Ok(None);
         }
 
@@ -117,7 +136,7 @@ impl MultiplexState {
 pub async fn multiplex(
     addr: SocketAddr,
     latency: Duration,
-) -> Result<impl Stream<Item = Result<(Connection, PackChan), Error>>, Error> {
+) -> Result<impl Stream<Item = Result<(Connection, PackChan), io::Error>>, io::Error> {
     Ok(unfold(
         MultiplexState {
             sock: UdpFramed::new(UdpSocket::bind(addr).await?, PacketCodec),

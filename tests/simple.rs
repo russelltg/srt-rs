@@ -1,5 +1,5 @@
+use anyhow::Error;
 use bytes::Bytes;
-use failure::Error;
 use futures::prelude::*;
 use srt::SrtSocketBuilder;
 use std::time::Instant;

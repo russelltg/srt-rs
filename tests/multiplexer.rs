@@ -3,8 +3,8 @@ use std::time::Instant;
 use srt::tokio::create_bidrectional_srt;
 use srt::SrtSocketBuilder;
 
+use anyhow::Result;
 use bytes::Bytes;
-use failure::Error;
 use futures::channel::oneshot;
 use futures::future::join_all;
 use futures::stream;
@@ -12,7 +12,7 @@ use futures::{FutureExt, SinkExt, StreamExt};
 use log::info;
 
 #[tokio::test]
-async fn multiplexer() -> Result<(), Error> {
+async fn multiplexer() -> Result<()> {
     let _ = env_logger::try_init();
 
     let (finished_send, finished_recv) = oneshot::channel();

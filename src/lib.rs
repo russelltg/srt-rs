@@ -12,7 +12,7 @@
 //! use futures::prelude::*;
 //! use bytes::Bytes;
 //! use std::time::Instant;
-//! use failure::Error;
+//! use std::io;
 //!
 //! #[tokio::main]
 //! async fn main()
@@ -28,7 +28,7 @@
 //!             .map(|b| Ok((Instant::now(), Bytes::from(*b))))).await?;
 //!         tx.close().await?;
 //!
-//!         Ok::<_, Error>(())
+//!         Ok::<_, io::Error>(())
 //!     };
 //!
 //!     let receiver_fut = async {
@@ -39,7 +39,7 @@
 //!         assert_eq!(rx.try_next().await?.map(|(_i, b)| b), Some(b"3"[..].into()));
 //!         assert_eq!(rx.try_next().await?, None);
 //!
-//!         Ok::<_, Error>(())
+//!         Ok::<_, io::Error>(())
 //!     };
 //!
 //!     futures::try_join!(sender_fut, receiver_fut).unwrap();
@@ -72,7 +72,7 @@ pub use crate::congest_ctrl::{CCData, CongestCtrl};
 pub use crate::connection::{Connection, ConnectionSettings};
 pub use crate::msg_number::MsgNumber;
 pub use crate::multiplex::{multiplex, PackChan, StreamerServer};
-pub use crate::packet::{ControlPacket, DataPacket, Packet, PacketCodec};
+pub use crate::packet::{ControlPacket, DataPacket, Packet, PacketCodec, PacketParseError};
 // TODO: remove
 pub use crate::seq_number::SeqNumber;
 pub use crate::socket_id::SocketID;

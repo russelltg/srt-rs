@@ -1,7 +1,7 @@
 use std::time::Instant;
 
+use anyhow::Result;
 use bytes::Bytes;
-use failure::Error;
 use futures::prelude::*;
 
 use srt::{ConnInitMethod, SrtSocketBuilder};
@@ -9,7 +9,7 @@ use srt::{ConnInitMethod, SrtSocketBuilder};
 const PACKET_SIZE: usize = 1 << 19;
 
 #[tokio::test]
-async fn message_splitting() -> Result<(), Error> {
+async fn message_splitting() -> Result<()> {
     env_logger::init();
 
     let sender = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:11124".parse().unwrap()))
@@ -26,7 +26,7 @@ async fn message_splitting() -> Result<(), Error> {
         let mut sender = sender.await?;
         sender.send((Instant::now(), long_message)).await?;
         sender.close().await?;
-        Ok(()) as Result<_, Error>
+        Ok(()) as Result<_>
     });
 
     tokio::spawn(async move {

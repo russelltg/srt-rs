@@ -1,10 +1,12 @@
 mod lossy_conn;
 
 use std::future::Future;
-use std::time::{Duration, Instant};
+use std::{
+    io,
+    time::{Duration, Instant},
+};
 
 use bytes::Bytes;
-use failure::Error;
 use futures::channel::oneshot;
 use futures::{join, select, FutureExt, SinkExt};
 
@@ -37,7 +39,7 @@ async fn connect() {
     //
     // There's probably a better way to do it.
     async fn conn_close(
-        sr: impl Future<Output = Result<SrtSocket, Error>>,
+        sr: impl Future<Output = std::result::Result<SrtSocket, io::Error>>,
         s: oneshot::Sender<()>,
         r: oneshot::Receiver<()>,
     ) {

@@ -7,9 +7,9 @@ use std::process::exit;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
+use anyhow::{bail, Error};
 use bytes::Bytes;
 use clap::{App, Arg};
-use failure::{bail, Error};
 use url::{Host, Url};
 
 use futures::future::BoxFuture;

@@ -1,10 +1,10 @@
 use bitflags::bitflags;
 use bytes::{Buf, BufMut, Bytes};
-use failure::Error;
 
 use std::cmp::min;
 use std::fmt;
 
+use super::PacketParseError;
 use crate::protocol::TimeStamp;
 use crate::{MsgNumber, SeqNumber, SocketID};
 
@@ -69,7 +69,7 @@ bitflags! {
 }
 
 impl DataPacket {
-    pub fn parse(buf: &mut impl Buf) -> Result<DataPacket, Error> {
+    pub fn parse(buf: &mut impl Buf) -> Result<DataPacket, PacketParseError> {
         // get the sequence number, which is the last 31 bits of the header
         let seq_number = SeqNumber::new_truncate(buf.get_u32());
 

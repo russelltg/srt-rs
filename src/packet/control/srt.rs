@@ -2,10 +2,9 @@ use std::time::Duration;
 
 use bitflags::bitflags;
 use bytes::{Buf, BufMut};
-use failure::{bail, Error};
 use log::warn;
 
-use crate::SrtVersion;
+use crate::{PacketParseError, SrtVersion};
 
 /// The SRT-specific control packets
 /// These are `Packet::Custom` types
@@ -140,7 +139,10 @@ bitflags! {
 }
 
 impl SrtControlPacket {
-    pub fn parse<T: Buf>(packet_type: u16, buf: &mut T) -> Result<SrtControlPacket, Error> {
+    pub fn parse<T: Buf>(
+        packet_type: u16,
+        buf: &mut T,
+    ) -> Result<SrtControlPacket, PacketParseError> {
         use self::SrtControlPacket::*;
 
         match packet_type {
@@ -149,7 +151,7 @@ impl SrtControlPacket {
             2 => Ok(HandshakeResponse(SrtHandshake::parse(buf)?)),
             3 => Ok(KeyManagerRequest(SrtKeyMessage::parse(buf)?)),
             4 => Ok(KeyManagerResponse(SrtKeyMessage::parse(buf)?)),
-            _ => bail!("Unrecognized custom packet type {}", packet_type),
+            _ => return Err(PacketParseError::BadSRTConfigExtensionType(packet_type)), // TODO: that's not really the right error...
         }
     }
 
@@ -200,9 +202,9 @@ impl SrtControlPacket {
 }
 
 impl SrtHandshake {
-    pub fn parse<T: Buf>(buf: &mut T) -> Result<SrtHandshake, Error> {
+    pub fn parse<T: Buf>(buf: &mut T) -> Result<SrtHandshake, PacketParseError> {
         if buf.remaining() < 12 {
-            bail!("Unexpected EOF in SRT handshake packet");
+            return Err(PacketParseError::NotEnoughData);
         }
 
         let version = SrtVersion::parse(buf.get_u32());
@@ -238,7 +240,7 @@ impl SrtHandshake {
 }
 
 impl SrtKeyMessage {
-    pub fn parse(buf: &mut impl Buf) -> Result<SrtKeyMessage, Error> {
+    pub fn parse(buf: &mut impl Buf) -> Result<SrtKeyMessage, PacketParseError> {
         // first 32-bit word:
         //
         //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -248,21 +250,21 @@ impl SrtKeyMessage {
         // make sure there is enough data left in the buffer to at least get to the key flags and length, which tells us how long the packet will be
         // that's 4x32bit words
         if buf.remaining() < 4 * 4 {
-            bail!("Not enough data for SrtKeyMessage");
+            return Err(PacketParseError::NotEnoughData);
         }
 
         let vers_pt = buf.get_u8();
 
         // make sure the first bit is zero
         if (vers_pt & 0b1000_0000) != 0 {
-            bail!("First bit of SRT key message must be zero");
+            return Err(PacketParseError::BadSRTExtensionMessage);
         }
 
         // upper 4 bits are version
         let version = vers_pt >> 4;
 
         if version != 1 {
-            bail!("Invalid SRT key message version: {} must be 1.", version);
+            return Err(PacketParseError::BadSRTExtensionMessage);
         }
 
         // lower 4 bits are pt
@@ -303,16 +305,14 @@ impl SrtKeyMessage {
             // OK
             16 | 24 | 32 => {}
             // not
-            e => {
-                bail!("Invalid key length: {}. Expected 16, 24, or 32", e);
-            }
+            e => return Err(PacketParseError::BadCryptoLength(e as u32)),
         }
 
         // get the size of the packet to make sure that there is enough space
 
         // salt + keys (there's a 1 for each in key flags, it's already been anded with 0b11 so max is 2), wrap data is 8 long
         if buf.remaining() < salt_len + key_len * (key_flags.count_ones() as usize) + 8 {
-            bail!("Not enough data for SrtKeyMessage");
+            return Err(PacketParseError::NotEnoughData);
         }
 
         // the reference implmentation converts the whole thing to network order (bit endian) (in 32-bit words)
@@ -474,16 +474,13 @@ mod tests {
 }
 
 impl CipherType {
-    fn from_u8(from: u8) -> Result<CipherType, Error> {
+    fn from_u8(from: u8) -> Result<CipherType, PacketParseError> {
         match from {
             0 => Ok(CipherType::None),
             1 => Ok(CipherType::ECB),
             2 => Ok(CipherType::CTR),
             3 => Ok(CipherType::CBC),
-            e => bail!(
-                "Unexpected cipher type in key message: {}. Must be 0, 1, 2, or 3",
-                e
-            ),
+            e => return Err(PacketParseError::BadCipherKind(e)),
         }
     }
 }
