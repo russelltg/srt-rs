@@ -29,6 +29,7 @@ struct MultiplexState {
     latency: Duration,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Action {
     Delegate(Packet, SocketAddr),
     Remove(SocketID),

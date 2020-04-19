@@ -34,7 +34,7 @@ impl Sink<(Instant, Bytes)> for StreamerServer {
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         let mut i = 0;
         while i != self.channels.len() {
-            if let Err(_) = ready!(Pin::new(&mut self.channels[i]).poll_ready(cx)) {
+            if ready!(Pin::new(&mut self.channels[i]).poll_ready(cx)).is_err() {
                 self.channels.remove(i);
             } else {
                 i += 1;
@@ -47,7 +47,7 @@ impl Sink<(Instant, Bytes)> for StreamerServer {
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         let mut i = 0;
         while i != self.channels.len() {
-            if let Err(_) = ready!(Pin::new(&mut self.channels[i]).poll_close(cx)) {
+            if ready!(Pin::new(&mut self.channels[i]).poll_close(cx)).is_err() {
                 self.channels.remove(i);
             } else {
                 i += 1;
@@ -60,7 +60,7 @@ impl Sink<(Instant, Bytes)> for StreamerServer {
     fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), io::Error> {
         let mut i = 0;
         while i != self.channels.len() {
-            if let Err(_) = self.channels[i].start_send(item.clone()) {
+            if self.channels[i].start_send(item.clone()).is_err() {
                 self.channels.remove(i);
             } else {
                 i += 1;

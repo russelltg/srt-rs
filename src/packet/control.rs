@@ -590,7 +590,7 @@ impl ControlTypes {
                     reserved, &mut buf,
                 )?))
             }
-            x => return Err(PacketParseError::BadControlType(x)),
+            x => Err(PacketParseError::BadControlType(x)),
         }
     }
 

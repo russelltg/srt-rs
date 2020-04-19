@@ -151,7 +151,7 @@ impl SrtControlPacket {
             2 => Ok(HandshakeResponse(SrtHandshake::parse(buf)?)),
             3 => Ok(KeyManagerRequest(SrtKeyMessage::parse(buf)?)),
             4 => Ok(KeyManagerResponse(SrtKeyMessage::parse(buf)?)),
-            _ => return Err(PacketParseError::BadSRTConfigExtensionType(packet_type)), // TODO: that's not really the right error...
+            _ => Err(PacketParseError::BadSRTConfigExtensionType(packet_type)), // TODO: that's not really the right error...
         }
     }
 
@@ -480,7 +480,7 @@ impl CipherType {
             1 => Ok(CipherType::ECB),
             2 => Ok(CipherType::CTR),
             3 => Ok(CipherType::CBC),
-            e => return Err(PacketParseError::BadCipherKind(e)),
+            e => Err(PacketParseError::BadCipherKind(e)),
         }
     }
 }
