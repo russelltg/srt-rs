@@ -24,7 +24,7 @@ use crate::{MsgNumber, SeqNumber, SocketID};
 ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /// ```
 /// (from <https://tools.ietf.org/html/draft-gg-udt-03>)
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DataPacket {
     /// The sequence number is packet based, so if packet n has
     /// sequence number `i`, the next would have `i + 1`
@@ -65,6 +65,7 @@ bitflags! {
         const MIDDLE   = 0b0000_0000;
         const FIRST    = 0b1000_0000;
         const LAST     = 0b0100_0000;
+        const ONLY = Self::FIRST.bits | Self::LAST.bits;
     }
 }
 

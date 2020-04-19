@@ -23,7 +23,7 @@ use crate::SocketID;
 
 /// Represents A UDT/SRT packet
 #[allow(clippy::large_enum_variant)]
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Packet {
     Data(DataPacket),
     Control(ControlPacket),

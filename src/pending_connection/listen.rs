@@ -44,7 +44,7 @@ pub enum ListenState {
     Connected(ControlPacket, ConnectionSettings),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 pub enum ListenError {
@@ -240,11 +240,7 @@ impl Listen {
         }
     }
 
-    pub fn handle_control_packets(
-        &mut self,
-        control: ControlPacket,
-        from: SocketAddr,
-    ) -> ListenResult {
+    fn handle_control_packets(&mut self, control: ControlPacket, from: SocketAddr) -> ListenResult {
         match (self.state.clone(), control.control_type) {
             (InductionWait, ControlTypes::Handshake(shake)) => {
                 self.wait_for_induction(from, control.timestamp, shake)
@@ -307,5 +303,144 @@ where
                 handshake: Handshake::Listener(resp_handshake.control_type),
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use std::net::IpAddr;
+
+    use bytes::Bytes;
+    use rand::random;
+
+    use crate::packet::{ControlPacket, DataPacket, HandshakeControlInfo, Packet, ShakeType};
+
+    fn test_listen() -> Listen {
+        Listen::new(ListenConfiguration {
+            local_socket_id: random(),
+            tsbpd_latency: Duration::from_secs(1),
+        })
+    }
+
+    fn test_induction() -> HandshakeControlInfo {
+        HandshakeControlInfo {
+            init_seq_num: random(),
+            max_packet_size: 1316,
+            max_flow_size: 256_000,
+            shake_type: ShakeType::Induction,
+            socket_id: random(),
+            syn_cookie: 0,
+            peer_addr: IpAddr::from([127, 0, 0, 1]),
+            info: HandshakeVSInfo::V5 {
+                crypto_size: 0,
+                ext_hs: None,
+                ext_km: None,
+                ext_config: None,
+            },
+        }
+    }
+
+    fn test_conclusion() -> HandshakeControlInfo {
+        HandshakeControlInfo {
+            init_seq_num: random(),
+            max_packet_size: 1316,
+            max_flow_size: 256_000,
+            shake_type: ShakeType::Conclusion,
+            socket_id: random(),
+            syn_cookie: 0,
+            peer_addr: IpAddr::from([127, 0, 0, 1]),
+            info: HandshakeVSInfo::V5 {
+                crypto_size: 0,
+                ext_hs: None,
+                ext_km: None,
+                ext_config: None,
+            },
+        }
+    }
+
+    fn build_hs_pack(i: HandshakeControlInfo) -> Packet {
+        Packet::Control(ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: random(),
+            control_type: ControlTypes::Handshake(i),
+        })
+    }
+
+    #[test]
+    fn send_data_packet() {
+        let mut l = test_listen();
+
+        let dp = DataPacket {
+            seq_number: random(),
+            message_loc: PacketLocation::ONLY,
+            in_order_delivery: false,
+            message_number: random(),
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: random(),
+            payload: Bytes::from(&b"asdf"[..]),
+        };
+        assert_eq!(
+            l.handle_packet((Packet::Data(dp.clone()), "127.0.0.1:8765".parse().unwrap())),
+            Err(ListenError::ControlExpected(ShakeType::Induction, dp))
+        );
+    }
+
+    #[test]
+    fn send_ack2() {
+        let mut l = test_listen();
+
+        let a2 = ControlTypes::Ack2(random());
+        assert_eq!(
+            l.handle_packet((
+                Packet::Control(ControlPacket {
+                    timestamp: TimeStamp::from_micros(0),
+                    dest_sockid: random(),
+                    control_type: a2.clone()
+                }),
+                "127.0.0.1:8765".parse().unwrap()
+            )),
+            Err(ListenError::HandshakeExpected(ShakeType::Induction, a2))
+        );
+    }
+
+    #[test]
+    fn send_wrong_handshake() {
+        let mut l = test_listen();
+
+        // listen expects an induction first, send a conclustion first
+
+        let shake = test_conclusion();
+        assert_eq!(
+            l.handle_packet((
+                build_hs_pack(shake.clone()),
+                "127.0.0.1:8765".parse().unwrap()
+            )),
+            Err(ListenError::InductionExpected(shake))
+        );
+    }
+
+    #[test]
+    fn send_induction_twice() {
+        let mut l = test_listen();
+
+        // send a rendezvous handshake after an induction
+        let resp = l.handle_packet((
+            build_hs_pack(test_induction()),
+            "127.0.0.1:8765".parse().unwrap(),
+        ));
+        assert!(resp.is_ok());
+        assert!(resp.unwrap().is_some());
+
+        let mut shake = test_induction();
+        shake.shake_type = ShakeType::Waveahand;
+        assert_eq!(
+            l.handle_packet((
+                build_hs_pack(shake.clone()),
+                "127.0.0.1:8765".parse().unwrap()
+            )),
+            Err(ListenError::ConclusionExpected(shake))
+        )
     }
 }
