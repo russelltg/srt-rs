@@ -1,3 +1,4 @@
+use std::str;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -13,7 +14,7 @@ use crate::lossy_conn::LossyConn;
 async fn lossy() {
     let _ = env_logger::try_init();
 
-    const ITERS: u32 = 1_000;
+    const ITERS: i32 = 1_000;
 
     // a stream of ascending stringified integers
     let counting_stream = stream::iter(0..ITERS)
@@ -41,6 +42,7 @@ async fn lossy() {
     let receiver = async move {
         let mut recvr = recvr.await.unwrap();
         let mut next_data = 0;
+        let mut dropped = 0;
 
         while let Some(payload) = recvr.next().await {
             let (ts, payload) = payload.unwrap();
@@ -52,12 +54,14 @@ async fn lossy() {
                 "Latency not in tolerance zone: {}ms",
                 diff_ms
             );
-            assert_eq!(&next_data.to_string(), &payload);
 
-            next_data += 1;
+            let actual: i32 = str::from_utf8(&payload[..]).unwrap().parse().unwrap();
+            dropped += actual - next_data;
+
+            next_data = actual + 1;
         }
 
-        assert_eq!(next_data, ITERS);
+        assert!(dropped < 5, "Expected less than 5 drops, got {}", dropped);
     };
 
     futures::join!(sender, receiver);
