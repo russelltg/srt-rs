@@ -155,7 +155,7 @@ pub struct HandshakeControlInfo {
     pub info: HandshakeVSInfo,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AckControlInfo {
     /// The ack sequence number of this ack, increments for each ack sent.
     /// Stored in additional info
