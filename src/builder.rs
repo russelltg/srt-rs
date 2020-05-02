@@ -1,7 +1,6 @@
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::{io, time::Duration};
 
-use rand;
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 
