@@ -19,7 +19,7 @@ rm -rf kcov-master master.tar.gz
 
 run_test() {
     testname=$1
-    for testexec in target/debug/${testname}-*; do
+    for testexec in target/release/${testname}-*; do
         if [ -x $testexec ]; then 
             echo Doing kcov for $testexec
             mkdir -p "target/cov/$(basename $testexec)"
