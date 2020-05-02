@@ -31,6 +31,7 @@ stages:
   - template: ci/cargo-test.yml
     parameters:
       extra_runner_flags: '--nocapture'
+      extra_test_flags: '--release'
       timeout: 10
       job_post-steps:
         template: codecov.yml
@@ -42,4 +43,5 @@ stages:
       job_name: cargo_test_nightly
       job_displayName: Cargo test (nightly)
       extra_runner_flags: '--nocapture'
+      extra_test_flags: '--release'
       timeout: 10
