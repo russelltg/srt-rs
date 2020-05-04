@@ -7,11 +7,16 @@ use std::{thread, time};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-  let mut srt_socket = SrtSocketBuilder::new_listen().local_port(3333).connect().await?;
+  let mut srt_socket = SrtSocketBuilder::new_listen()
+    .local_port(3333)
+    .connect()
+    .await?;
   let mut count = 0;
 
   loop {
-    srt_socket.send((Instant::now(), Bytes::from(vec![0; 1000]))).await?;
+    srt_socket
+      .send((Instant::now(), Bytes::from(vec![0; 1000])))
+      .await?;
     print!("\rSended {:?} packets", count);
     count += 1;
 
