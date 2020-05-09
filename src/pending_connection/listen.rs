@@ -1,5 +1,3 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use std::{
     error::Error,
@@ -15,6 +13,7 @@ use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::util::get_packet;
 use crate::{Connection, ConnectionSettings, SocketID};
 
+use super::cookie::gen_cookie;
 use ListenError::*;
 use ListenState::*;
 
@@ -118,13 +117,8 @@ impl Listen {
                 // secret key and sends it back to the client. The client must then send
                 // back the same cookie to the server.
 
-                // generate the cookie, which is just a hash of the address
-                // TODO: the reference impl uses the time, maybe we should here
-                let cookie = {
-                    let mut hasher = DefaultHasher::new();
-                    shake.peer_addr.hash(&mut hasher);
-                    hasher.finish() as i32 // this will truncate, which is fine
-                };
+                // generate the cookie, which is just a hash of the address + time
+                let cookie = gen_cookie(&from);
 
                 // we expect HSv5, so upgrade it
                 // construct a packet to send back

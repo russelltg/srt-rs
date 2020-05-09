@@ -190,7 +190,7 @@ impl SrtSocketBuilder {
                 pending_connection::rendezvous(
                     &mut socket,
                     rand::random(),
-                    self.local_addr.ip(),
+                    self.local_addr,
                     remote_public,
                     self.latency,
                 )
