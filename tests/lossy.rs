@@ -61,7 +61,7 @@ async fn lossy() {
             next_data = actual + 1;
         }
 
-        assert!(dropped < 5, "Expected less than 5 drops, got {}", dropped);
+        assert!(dropped < 15, "Expected less than 15 drops, got {}", dropped);
     };
 
     futures::join!(sender, receiver);
