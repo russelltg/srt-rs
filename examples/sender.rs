@@ -1,9 +1,11 @@
 use bytes::Bytes;
-use futures_util::sink::SinkExt;
+use futures::stream;
+use futures::{SinkExt, StreamExt};
+use tokio::time::delay_for;
+
 use srt::SrtSocketBuilder;
 use std::io::Error;
-use std::time::Instant;
-use std::{thread, time};
+use std::time::{Duration, Instant};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -11,16 +13,14 @@ async fn main() -> Result<(), Error> {
         .local_port(3333)
         .connect()
         .await?;
-    let mut count = 0;
 
-    loop {
-        srt_socket
-            .send((Instant::now(), Bytes::from(vec![0; 8000])))
-            .await?;
-        print!("\rSended {:?} packets", count);
-        count += 1;
+    let mut stream = stream::unfold(0, |count| async move {
+        print!("\rSent {:?} packets", count);
+        delay_for(Duration::from_millis(10)).await;
+        return Some((Ok((Instant::now(), Bytes::from(vec![0; 8000]))), count + 1));
+    })
+    .boxed();
 
-        let ten_millis = time::Duration::from_millis(10);
-        thread::sleep(ten_millis);
-    }
+    srt_socket.send_all(&mut stream).await?;
+    Ok(())
 }
