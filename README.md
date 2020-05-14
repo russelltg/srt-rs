@@ -38,7 +38,21 @@ Reference implementation is available at https://github.com/haivision/srt
 The reference implementation of SRT requires 3 threads per sender and 5 threads per receiver. 
 
 With srt-rs, you can assign as many connections to exactly as many threads as you want (usually as many as you have cores) using
-[tokio's][tokio] futures scheduling. This should allow for handing of many more connectinos.
+[tokio's][tokio] futures scheduling. This should allow for handing of many more connections.
+
+# Examples
+
+## Generate and send SRT packets
+
+```
+cargo run --example sender
+```
+
+## Receive SRT packets
+
+```
+cargo run --example receiver
+```
 
 [codecov]: https://codecov.io/gh/russelltg/srt-rs
 [codecov badge]: https://codecov.io/gh/russelltg/srt-rs/branch/master/graph/badge.svg
