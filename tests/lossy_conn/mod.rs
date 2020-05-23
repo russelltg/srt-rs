@@ -6,6 +6,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::{
     io,
+    net::{SocketAddr, ToSocketAddrs},
     time::{Duration, Instant},
 };
 
@@ -16,7 +17,7 @@ use tokio::time::{self, delay_for, Delay};
 
 use anyhow::Result;
 
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 
 use rand::distributions::Distribution;
 use rand::rngs::StdRng;
@@ -25,14 +26,17 @@ use rand_distr::Normal;
 use srt::PacketParseError;
 
 pub struct LossyConn<T> {
-    sender: mpsc::Sender<T>,
-    receiver: Fuse<mpsc::Receiver<T>>,
+    sender: mpsc::Sender<(T, SocketAddr)>,
+    receiver: Fuse<mpsc::Receiver<(T, SocketAddr)>>,
 
     loss_rate: f64,
     delay_avg: Duration,
     delay_stddev: Duration,
 
-    delay_buffer: BinaryHeap<TTime<T>>,
+    remote_addr: SocketAddr,
+    local_addr: SocketAddr,
+
+    delay_buffer: BinaryHeap<TTime<(T, SocketAddr)>>,
     delay: Delay,
 
     generator: StdRng,
@@ -65,7 +69,7 @@ impl<T> Eq for TTime<T> {}
 
 // Have the queue on the Stream impl so that way flushing doesn't act strangely.
 impl<T: Unpin + Debug> Stream for LossyConn<T> {
-    type Item = Result<T, PacketParseError>;
+    type Item = Result<(T, SocketAddr), PacketParseError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
@@ -133,7 +137,7 @@ impl<T: Unpin + Debug> Stream for LossyConn<T> {
     }
 }
 
-impl<T: Sync + Send + Unpin + 'static> Sink<T> for LossyConn<T> {
+impl<T: Sync + Send + Unpin + 'static> Sink<(T, SocketAddr)> for LossyConn<T> {
     type Error = io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
@@ -141,9 +145,20 @@ impl<T: Sync + Send + Unpin + 'static> Sink<T> for LossyConn<T> {
         Poll::Ready(Ok(()))
     }
 
-    fn start_send(mut self: Pin<&mut Self>, to_send: T) -> Result<(), Self::Error> {
+    fn start_send(
+        mut self: Pin<&mut Self>,
+        (val, addr): (T, SocketAddr),
+    ) -> Result<(), Self::Error> {
+        if addr != self.remote_addr {
+            warn!(
+                "Discarding packet not directed at remote. Remote is {}, was sent to {}",
+                self.remote_addr, addr
+            );
+            return Ok(());
+        }
         // just discard it, like a real UDP connection
-        let _ = self.sender.start_send(to_send);
+        let local = self.local_addr;
+        let _ = self.sender.start_send((val, local));
         Ok(())
     }
 
@@ -161,25 +176,24 @@ impl<T: Sync + Send + Unpin + 'static> Sink<T> for LossyConn<T> {
 }
 
 impl<T> LossyConn<T> {
-    pub fn channel(
+    pub fn with_seed(
         loss_rate: f64,
         delay_avg: Duration,
         delay_stddev: Duration,
-    ) -> (LossyConn<T>, LossyConn<T>) {
+        local_a: impl ToSocketAddrs,
+        local_b: impl ToSocketAddrs,
+        seed: u64,
+    ) -> (Self, Self) {
         let (a2b, bfroma) = mpsc::channel(10000);
         let (b2a, afromb) = mpsc::channel(10000);
 
-        let s = match std::env::var("LOSSY_CONN_SEED") {
-            Ok(s) => {
-                info!("Using seed from env");
-                s.parse().unwrap()
-            }
-            Err(_) => rand::random(),
-        };
-        let mut r1 = StdRng::seed_from_u64(s);
+        let mut r1 = StdRng::seed_from_u64(seed);
         let r2 = StdRng::seed_from_u64(r1.gen());
 
-        info!("Lossy seed is {}", s);
+        let local_a = local_a.to_socket_addrs().unwrap().next().unwrap();
+        let local_b = local_b.to_socket_addrs().unwrap().next().unwrap();
+
+        info!("Lossy seed is {}", seed);
         (
             LossyConn {
                 sender: a2b,
@@ -187,6 +201,9 @@ impl<T> LossyConn<T> {
                 loss_rate,
                 delay_avg,
                 delay_stddev,
+
+                local_addr: local_a,
+                remote_addr: local_b,
 
                 delay_buffer: BinaryHeap::new(),
                 delay: delay_for(Duration::from_secs(0)),
@@ -200,11 +217,30 @@ impl<T> LossyConn<T> {
                 delay_avg,
                 delay_stddev,
 
+                local_addr: local_b,
+                remote_addr: local_a,
+
                 delay_buffer: BinaryHeap::new(),
                 delay: delay_for(Duration::from_secs(0)),
 
                 generator: r2,
             },
         )
+    }
+    pub fn channel(
+        loss_rate: f64,
+        delay_avg: Duration,
+        delay_stddev: Duration,
+        local_a: impl ToSocketAddrs,
+        local_b: impl ToSocketAddrs,
+    ) -> (Self, Self) {
+        let s = match std::env::var("LOSSY_CONN_SEED") {
+            Ok(s) => {
+                info!("Using seed from env");
+                s.parse().unwrap()
+            }
+            Err(_) => rand::random(),
+        };
+        return Self::with_seed(loss_rate, delay_avg, delay_stddev, local_a, local_b, s);
     }
 }

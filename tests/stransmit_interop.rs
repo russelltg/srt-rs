@@ -192,6 +192,8 @@ async fn stransmit_rendezvous() -> Result<(), Error> {
             )
             .await
             .unwrap();
+
+        sender.close().await.unwrap();
     };
 
     let udp_recvr = async { udp_recvr(PACKETS * 2 / 3, 2006).await.unwrap() };
@@ -199,6 +201,7 @@ async fn stransmit_rendezvous() -> Result<(), Error> {
     let mut child = allow_not_found!(Command::new("srt-live-transmit")
         .arg("srt://127.0.0.1:2005?adapter=127.0.0.1&port=2004&mode=rendezvous")
         .arg("udp://127.0.0.1:2006")
+        .arg("-a:no") // don't auto-reconnect
         .spawn());
 
     join!(sender_fut, udp_recvr);

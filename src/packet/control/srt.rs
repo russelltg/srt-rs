@@ -5,10 +5,11 @@ use bytes::{Buf, BufMut};
 use log::warn;
 
 use crate::{PacketParseError, SrtVersion};
+use core::fmt;
 
 /// The SRT-specific control packets
 /// These are `Packet::Custom` types
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum SrtControlPacket {
     /// SRT handshake reject
     /// ID = 0
@@ -438,6 +439,20 @@ impl SrtKeyMessage {
         // put the wrap
         for num in self.wrap_data[..].chunks(4) {
             into.put_u32(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
+        }
+    }
+}
+
+impl fmt::Debug for SrtControlPacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SrtControlPacket::Reject => write!(f, "reject"),
+            SrtControlPacket::HandshakeRequest(req) => write!(f, "hsreq={:?}", req),
+            SrtControlPacket::HandshakeResponse(resp) => write!(f, "hsresp={:?}", resp),
+            SrtControlPacket::KeyManagerRequest(req) => write!(f, "kmreq={:?}", req),
+            SrtControlPacket::KeyManagerResponse(resp) => write!(f, "kmresp={:?}", resp),
+            SrtControlPacket::StreamId => write!(f, "streamid"),
+            SrtControlPacket::Smoother => write!(f, "smoother"),
         }
     }
 }

@@ -26,8 +26,9 @@ pub struct ConnectionSettings {
     /// The time that this socket started at, used to develop timestamps
     pub socket_start_time: Instant,
 
-    /// The first sequence number
-    pub init_seq_num: SeqNumber,
+    /// The first sequence number that will be sent/received
+    pub init_send_seq_num: SeqNumber,
+    pub init_recv_seq_num: SeqNumber,
 
     /// The maximum packet size
     pub max_packet_size: u32,

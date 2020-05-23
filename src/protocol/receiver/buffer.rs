@@ -30,7 +30,7 @@ pub struct RecvBuffer {
 impl RecvBuffer {
     pub fn with(settings: &ConnectionSettings) -> Self {
         Self::new(
-            settings.init_seq_num,
+            settings.init_recv_seq_num,
             settings.socket_start_time,
             settings.tsbpd_latency,
         )

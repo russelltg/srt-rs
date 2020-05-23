@@ -27,10 +27,18 @@ async fn not_enough_latency() {
         .map(|(b, _)| b);
 
     // 4% packet loss, 4 sec latency with 0.2 s variance
-    let (send, recv) = LossyConn::channel(0.04, Duration::from_secs(4), Duration::from_millis(200));
+    let (send, recv) = LossyConn::channel(
+        0.04,
+        Duration::from_secs(4),
+        Duration::from_millis(200),
+        "127.0.0.1:1000",
+        "127.0.0.1:1",
+    );
 
-    let sender = SrtSocketBuilder::new(ConnInitMethod::Listen).connect_with_sock(send);
-    let recvr = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:0".parse().unwrap()))
+    let sender = SrtSocketBuilder::new(ConnInitMethod::Listen)
+        .local_port(1000)
+        .connect_with_sock(send);
+    let recvr = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:1000".parse().unwrap()))
         .connect_with_sock(recv);
 
     tokio::spawn(async move {

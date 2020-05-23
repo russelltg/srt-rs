@@ -212,7 +212,8 @@ impl Listen {
 
                 // finish the connection
                 let settings = ConnectionSettings {
-                    init_seq_num: shake.init_seq_num,
+                    init_send_seq_num: shake.init_seq_num,
+                    init_recv_seq_num: shake.init_seq_num,
                     remote_sockid: shake.socket_id,
                     remote: from,
                     max_flow_size: 16000, // TODO: what is this?

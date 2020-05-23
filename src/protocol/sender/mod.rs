@@ -135,7 +135,7 @@ impl Sender {
             metrics: SenderMetrics::new(),
             send_buffer: SendBuffer::new(&settings),
             loss_list: LossList::new(&settings),
-            lr_acked_packet: settings.init_seq_num,
+            lr_acked_packet: settings.init_send_seq_num,
             lr_acked_ack: -1, // TODO: why magic number?
             output_buffer: VecDeque::new(),
             transmit_buffer: TransmitBuffer::new(&settings),
@@ -182,7 +182,7 @@ impl Sender {
         }
     }
 
-    pub fn is_flushed(&mut self) -> bool {
+    pub fn is_flushed(&self) -> bool {
         self.loss_list.is_empty()
             && self.transmit_buffer.is_empty()
             && self.lr_acked_packet == self.transmit_buffer.next_sequence_number
