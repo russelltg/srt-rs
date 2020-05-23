@@ -275,7 +275,7 @@ impl Rendezvous {
             ShakeType::Conclusion => {
                 self.state = match (role, extract_ext_info(info)?) {
                     (Responder, Some(SrtControlPacket::HandshakeRequest(hsreq))) => {
-                        FineResponder(info.clone(), hsreq.clone())
+                        FineResponder(info.clone(), *hsreq)
                     }
                     (Initiator, None) => FineInitiator,
                     (Responder, Some(_)) => {
@@ -332,9 +332,9 @@ impl Rendezvous {
                     "Rendezvous {:?} transitioning from {:?} to {:?}",
                     self.config.local_socket_id,
                     self.state,
-                    InitiatedResponder(info.clone(), request.clone()),
+                    InitiatedResponder(info.clone(), *request),
                 );
-                self.state = InitiatedResponder(info.clone(), request.clone());
+                self.state = InitiatedResponder(info.clone(), *request);
                 self.send_conclusion(info.socket_id, self.gen_flags(Responder))
             }
             _ => Ok(None), // todo: errors
