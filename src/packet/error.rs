@@ -14,6 +14,11 @@ pub enum PacketParseError {
     BadSRTExtensionMessage, // could be split
     BadCryptoLength(u32),
     BadCipherKind(u8),
+    BadKeyPacketType(u8),
+    BadKeySign(u16),
+    BadAuth(u8),
+    BadStreamEncapsulation(u8),
+    StreamEncapsulationNotSrt,
     Io(io::Error),
 }
 

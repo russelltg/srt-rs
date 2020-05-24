@@ -1,44 +1,96 @@
-use openssl::aes::{self, AesKey};
-use openssl::hash::MessageDigest;
-use openssl::pkcs5::pbkdf2_hmac;
-use openssl::rand::rand_bytes;
+use openssl::{
+    aes::{self, AesKey, KeyError},
+    error::ErrorStack,
+    hash::MessageDigest,
+    pkcs5::pbkdf2_hmac,
+    rand::rand_bytes,
+};
 
-use failure::{bail, Error};
+use crate::packet::{Auth, CipherType, PacketType, SrtKeyMessage};
+use fmt::Debug;
+use std::{error::Error, fmt};
+
+#[derive(Debug)]
+pub enum CryptoError {
+    Key(KeyError),
+    Ssl(ErrorStack),
+}
+
+impl fmt::Display for CryptoError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CryptoError::Key(ke) => ke.fmt(f),
+            CryptoError::Ssl(es) => <ErrorStack as fmt::Display>::fmt(es, f),
+        }
+    }
+}
+
+impl Error for CryptoError {}
+
+impl From<KeyError> for CryptoError {
+    fn from(ke: KeyError) -> Self {
+        CryptoError::Key(ke)
+    }
+}
+impl From<ErrorStack> for CryptoError {
+    fn from(es: ErrorStack) -> Self {
+        CryptoError::Ssl(es)
+    }
+}
 
 pub struct CryptoManager {
     size: u8,
     passphrase: String,
     salt: [u8; 16],
+    iv: [u8; 8],
     kek: Vec<u8>,
     key: Vec<u8>,
 }
 
 #[allow(dead_code)] // TODO: remove and flesh out this struct
 impl CryptoManager {
-    pub fn new(size: u8, passphrase: String) -> Self {
+    pub fn new_random(size: u8, passphrase: String) -> Self {
         let mut salt = [0; 16];
         rand_bytes(&mut salt[..]).unwrap();
 
         let mut key = vec![0; usize::from(size)];
         rand_bytes(&mut key[..]).unwrap();
 
+        let mut iv = [0; 8];
+        rand_bytes(&mut iv[..]);
+
         CryptoManager {
             size,
             passphrase,
             salt,
+            iv,
             kek: vec![],
             key,
         }
     }
 
-    pub fn new_with_salt(size: u8, passphrase: String, salt: &[u8; 16], key: Vec<u8>) -> Self {
+    pub fn new(size: u8, passphrase: String, salt: &[u8; 16], iv: &[u8; 8], key: Vec<u8>) -> Self {
         CryptoManager {
             size,
             passphrase,
             salt: *salt,
+            iv: *iv,
             kek: vec![],
             key,
         }
+    }
+
+    pub fn generate_kmreq(&self) -> Result<SrtKeyMessage, CryptoError> {
+        Ok(SrtKeyMessage {
+            pt: PacketType::KeyingMaterial,
+            keki: 0, // xxx
+            cipher: CipherType::CTR,
+            auth: Auth::None,
+            salt: self.salt[..].into(),
+            even_key: Some(self.key.clone()),
+            odd_key: None,
+            wrap_data: self.iv,
+        })
     }
 
     pub fn salt(&self) -> &[u8] {
@@ -48,7 +100,7 @@ impl CryptoManager {
     /// Generate the key encrypting key from the passphrase, caching it in the struct
     ///
     /// https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_sa.c#L69-L103
-    pub fn generate_kek(&mut self) -> Result<&[u8], Error> {
+    pub fn generate_kek(&mut self) -> Result<&[u8], ErrorStack> {
         if !self.kek.is_empty() {
             // already cached
             return Ok(&self.kek[..]);
@@ -73,37 +125,34 @@ impl CryptoManager {
     }
 
     /// Unwrap a key encrypted with the kek
-    pub fn unwrap_key(&mut self, input: &[u8]) -> Result<(), Error> {
+    pub fn unwrap_key(&mut self, input: &[u8]) -> Result<(), CryptoError> {
         self.generate_kek()?;
 
         self.key.resize(input.len() - 8, 0);
 
-        match aes::unwrap_key(
+        aes::unwrap_key(
             &AesKey::new_decrypt(&self.kek[..]).unwrap(),
             None,
             &mut self.key,
             input,
-        ) {
-            Err(_) => bail!("Failed to unwrap key"),
-            Ok(_) => Ok(()),
-        }
+        )?;
+        Ok(())
     }
 
-    pub fn wrap_key(&mut self) -> Result<Vec<u8>, Error> {
+    pub fn wrap_key(&mut self) -> Result<Vec<u8>, CryptoError> {
         self.generate_kek()?;
 
         let mut ret = Vec::new();
         ret.resize(self.key.len() + 8, 0);
 
-        match aes::wrap_key(
+        aes::wrap_key(
             &AesKey::new_encrypt(&self.kek[..]).unwrap(),
             None,
             &mut ret[..],
             &self.key[..],
-        ) {
-            Err(_) => bail!("Failed to wrap key"),
-            Ok(_) => Ok(ret),
-        }
+        )?;
+
+        Ok(ret)
     }
 
     pub fn key(&self) -> &[u8] {
@@ -124,7 +173,7 @@ mod test {
         let mut salt = [0; 16];
         salt.copy_from_slice(&hex::decode("7D59759C2B1A3F0B06C7028790C81C7D").unwrap());
 
-        let mut manager = CryptoManager::new_with_salt(16, password.into(), &salt, vec![]);
+        let mut manager = CryptoManager::new(16, password.into(), &salt, &[0; 8], vec![]);
         let buf = manager.generate_kek().unwrap();
 
         assert_eq!(buf, &kek[..]);
@@ -132,10 +181,11 @@ mod test {
 
     #[test]
     fn wrap_key() {
-        let mut manager = CryptoManager::new_with_salt(
+        let mut manager = CryptoManager::new(
             16,
             "password123".into(),
             &b"\x00\x00\x00\x00\x00\x00\x00\x00\x85\x2c\x3c\xcd\x02\x65\x1a\x22",
+            &[0; 8],
             b"\r\xab\xc8n/2\xb4\xa7\xb9\xbb\xa2\xf31*\xe4\"".to_vec(),
         );
         assert_eq!(
@@ -153,10 +203,11 @@ mod test {
 
         // manager.unwrap_key(&wrapped).unwrap();
         // assert_eq!(&prev_key[..], manager.key());
-        let mut manager = CryptoManager::new_with_salt(
+        let mut manager = CryptoManager::new(
             16,
             "password123".into(),
             &b"\x00\x00\x00\x00\x00\x00\x00\x00n\xd5+\x196\nq8",
+            &[0; 8],
             vec![],
         );
         assert_eq!(

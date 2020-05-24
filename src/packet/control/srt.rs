@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{convert::TryFrom, time::Duration};
 
 use bitflags::bitflags;
 use bytes::{Buf, BufMut};
@@ -66,12 +66,10 @@ pub enum SrtControlPacket {
 ///
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SrtKeyMessage {
-    pub pt: u8,
-    pub sign: u16,
+    pub pt: PacketType,
     pub keki: u32,
     pub cipher: CipherType,
-    pub auth: u8,
-    pub se: u8,
+    pub auth: Auth,
     pub salt: Vec<u8>,
     pub even_key: Option<Vec<u8>>,
     pub odd_key: Option<Vec<u8>>,
@@ -79,6 +77,56 @@ pub struct SrtKeyMessage {
     /// The data for unwrapping the key. TODO: research more
     /// RFC 3394
     pub wrap_data: [u8; 8],
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Auth {
+    None = 0,
+}
+
+impl TryFrom<u8> for Auth {
+    type Error = PacketParseError;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Auth::None),
+            e => Err(PacketParseError::BadAuth(e)),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum StreamEncapsulation {
+    Udp = 1,
+    Srt = 2,
+}
+
+impl TryFrom<u8> for StreamEncapsulation {
+    type Error = PacketParseError;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Ok(match value {
+            1 => StreamEncapsulation::Udp,
+            2 => StreamEncapsulation::Srt,
+            e => return Err(PacketParseError::BadStreamEncapsulation(e)),
+        })
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum PacketType {
+    MediaStream = 1,
+    KeyingMaterial = 2,
+    // see htcryp_msg.h:43...
+}
+
+impl TryFrom<u8> for PacketType {
+    type Error = PacketParseError;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(PacketType::MediaStream),
+            2 => Ok(PacketType::KeyingMaterial),
+            err => Err(PacketParseError::BadKeyPacketType(err)),
+        }
+    }
 }
 
 /// from https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_msg.h#L121-L124
@@ -241,6 +289,11 @@ impl SrtHandshake {
 }
 
 impl SrtKeyMessage {
+    // from hcrypt_msg.h:39
+    // also const traits aren't a thing yet, so u16::from can't be used
+    const SIGN: u16 =
+        ((b'H' - b'@') as u16) << 10 | ((b'A' - b'@') as u16) << 5 | (b'I' - b'@') as u16;
+
     pub fn parse(buf: &mut impl Buf) -> Result<SrtKeyMessage, PacketParseError> {
         // first 32-bit word:
         //
@@ -269,10 +322,14 @@ impl SrtKeyMessage {
         }
 
         // lower 4 bits are pt
-        let pt = vers_pt & 0b0000_1111;
+        let pt = PacketType::try_from(vers_pt & 0b0000_1111)?;
 
         // next 16 bis are sign
         let sign = buf.get_u16();
+
+        if sign != Self::SIGN {
+            return Err(PacketParseError::BadKeySign(sign));
+        }
 
         // next 6 bits is reserved, then two bits of KF
         let key_flags = buf.get_u8() & 0b0000_0011;
@@ -286,9 +343,13 @@ impl SrtKeyMessage {
         // +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
         // |    Cipher     |      Auth     |      SE       |     Resv1     |
 
-        let cipher = CipherType::from_u8(buf.get_u8())?;
-        let auth = buf.get_u8();
-        let se = buf.get_u8();
+        let cipher = CipherType::try_from(buf.get_u8())?;
+        let auth = Auth::try_from(buf.get_u8())?;
+        let se = StreamEncapsulation::try_from(buf.get_u8())?;
+        if se != StreamEncapsulation::Srt {
+            return Err(PacketParseError::StreamEncapsulationNotSrt);
+        }
+
         let _resv1 = buf.get_u8();
 
         // fourth 32-bit word:
@@ -357,11 +418,9 @@ impl SrtKeyMessage {
 
         Ok(SrtKeyMessage {
             pt,
-            sign,
             keki,
             cipher,
             auth,
-            se,
             salt,
             even_key,
             odd_key,
@@ -377,9 +436,9 @@ impl SrtKeyMessage {
         // |0|Vers |   PT  |             Sign              |    resv   |KF |
 
         // version is 1
-        into.put_u8(1 << 4 | self.pt);
+        into.put_u8(1 << 4 | self.pt as u8);
 
-        into.put_u16(self.sign);
+        into.put_u16(Self::SIGN);
 
         // rightmost bit of KF is even, other is odd
         into.put_u8(match (&self.odd_key, &self.even_key) {
@@ -398,8 +457,8 @@ impl SrtKeyMessage {
         // +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
         // |    Cipher     |      Auth     |      SE       |     Resv1     |
         into.put_u8(self.cipher as u8);
-        into.put_u8(self.auth);
-        into.put_u8(self.se);
+        into.put_u8(self.auth as u8);
+        into.put_u8(StreamEncapsulation::Srt as u8);
         into.put_u8(0); // resv1
 
         // fourth 32-bit word:
@@ -457,6 +516,19 @@ impl fmt::Debug for SrtControlPacket {
     }
 }
 
+impl TryFrom<u8> for CipherType {
+    type Error = PacketParseError;
+    fn try_from(from: u8) -> Result<CipherType, PacketParseError> {
+        match from {
+            0 => Ok(CipherType::None),
+            1 => Ok(CipherType::ECB),
+            2 => Ok(CipherType::CTR),
+            3 => Ok(CipherType::CBC),
+            e => Err(PacketParseError::BadCipherKind(e)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
@@ -485,17 +557,5 @@ mod tests {
         let deserialized = Packet::parse(&mut Cursor::new(buf)).unwrap();
 
         assert_eq!(handshake, deserialized);
-    }
-}
-
-impl CipherType {
-    fn from_u8(from: u8) -> Result<CipherType, PacketParseError> {
-        match from {
-            0 => Ok(CipherType::None),
-            1 => Ok(CipherType::ECB),
-            2 => Ok(CipherType::CTR),
-            3 => Ok(CipherType::CBC),
-            e => Err(PacketParseError::BadCipherKind(e)),
-        }
     }
 }

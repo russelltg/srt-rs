@@ -9,8 +9,8 @@ use crate::protocol::{TimeSpan, TimeStamp};
 use crate::{MsgNumber, SeqNumber, SocketID};
 
 mod srt;
+pub use self::srt::*;
 
-pub use self::srt::{CipherType, SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags};
 use super::PacketParseError;
 
 /// A UDP packet carrying control information
@@ -108,7 +108,7 @@ bitflags! {
 pub enum HandshakeVSInfo {
     V4(SocketType),
     V5 {
-        /// the crypto size in bytes, either 0 (no encryption), 16, 24, or 32
+        /// the crypto size in bytes, either 0 (no encryption), 16, 24, or 32 (stored /8)
         /// source: https://github.com/Haivision/srt/blob/master/docs/stransmit.md#medium-srt
         crypto_size: u8,
 
@@ -411,10 +411,10 @@ impl ControlTypes {
                     5 => {
                         // make sure crypto size is of a valid variant
                         let crypto_size = match crypto_size {
-                            0 | 16 | 24 | 32 => crypto_size as u8,
+                            0 | 2 | 3 | 4 => crypto_size as u8 * 8,
                             c => {
                                 warn!(
-                                    "Unrecognized crypto key length: {}, disabling encryption. Should be 16, 24, or 32 bytes",
+                                    "Unrecognized crypto key length: {}, disabling encryption. Should be 0, 16, 24, or 32 bytes. Disabling crypto.",
                                     c
                                 );
                                 0
@@ -1013,12 +1013,10 @@ mod test {
                             latency: Duration::from_millis(500)
                         })),
                         ext_km: Some(SrtControlPacket::KeyManagerRequest(SrtKeyMessage {
-                            pt: 2,
-                            sign: 8_233,
+                            pt: PacketType::KeyingMaterial,
                             keki: 0,
                             cipher: CipherType::CTR,
-                            auth: 0,
-                            se: 2,
+                            auth: Auth::None,
                             salt: hex::decode("9D75B0AC924C6E4C9EC40FEB4FE973DB").unwrap(),
                             even_key: Some(
                                 hex::decode("1D215D426C18A2871EBF77E2646D9BAB").unwrap()
