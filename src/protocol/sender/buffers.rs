@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use bytes::Bytes;
 
-use crate::packet::PacketLocation;
+use crate::packet::{DataEncryption, PacketLocation};
 use crate::protocol::{TimeBase, TimeStamp};
 use crate::{ConnectionSettings, DataPacket, MsgNumber, SeqNumber, SocketID};
 
@@ -43,7 +43,7 @@ impl TransmitBuffer {
         loop {
             if payload.len() > self.max_packet_size as usize {
                 let this_payload = payload.slice(0..self.max_packet_size as usize);
-                self.begin_transmit(time, message_number, this_payload, location);
+                self.begin_transmit(time, message_number, this_payload, location, false);
 
                 payload = payload.slice(self.max_packet_size as usize..payload.len());
                 location = PacketLocation::empty();
@@ -53,6 +53,7 @@ impl TransmitBuffer {
                     message_number,
                     payload,
                     location | PacketLocation::LAST,
+                    false,
                 );
                 return;
             }
@@ -85,11 +86,14 @@ impl TransmitBuffer {
         message_num: MsgNumber,
         payload: Bytes,
         location: PacketLocation,
+        retransmitted: bool,
     ) {
         let packet = DataPacket {
             dest_sockid: self.remote_socket_id,
             in_order_delivery: false, // TODO: research this
             message_loc: location,
+            encryption: DataEncryption::None,
+            retransmitted,
             // if this marks the beginning of the next message, get a new message number, else don't
             message_number: message_num,
             seq_number: self.get_new_sequence_number(),
@@ -170,7 +174,8 @@ impl LossList {
         }
     }
 
-    pub fn push_back(&mut self, packet: DataPacket) {
+    pub fn push_back(&mut self, mut packet: DataPacket) {
+        packet.retransmitted = true; // mark as retransmitted
         self.list.push_back(packet);
     }
 

@@ -371,6 +371,8 @@ mod test {
             seq_number: random(),
             message_loc: PacketLocation::ONLY,
             in_order_delivery: false,
+            encryption: DataEncryption::None,
+            retransmitted: false,
             message_number: random(),
             timestamp: TimeStamp::from_micros(0),
             dest_sockid: random(),

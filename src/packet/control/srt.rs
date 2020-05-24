@@ -168,6 +168,7 @@ bitflags! {
         const TSBPDRCV = 0x2;
 
         /// HaiCrypt AES-128/192/256-CTR
+        /// also represents if it supports the encryption flags in the data packet
         const HAICRYPT = 0x4;
 
         /// Drop real-time data packets too late to be processed in time
@@ -184,6 +185,9 @@ bitflags! {
 
         /// Again not sure... TODO:
         const FILTERCAP = 0x80;
+
+        // currently implemented flags
+        const SUPPORTED = Self::TSBPDSND.bits | Self::TSBPDRCV.bits | Self::HAICRYPT.bits | Self::REXMITFLG.bits;
     }
 }
 

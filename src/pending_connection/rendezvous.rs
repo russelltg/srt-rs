@@ -180,7 +180,7 @@ impl Rendezvous {
     fn gen_flags(&self, role: RendezvousRole) -> HandshakeVSInfo {
         let shake = SrtHandshake {
             version: SrtVersion::CURRENT,
-            flags: SrtShakeFlags::TSBPDSND | SrtShakeFlags::TSBPDRCV,
+            flags: SrtShakeFlags::SUPPORTED,
             peer_latency: Duration::from_secs(0),
             latency: self.config.tsbpd_latency,
         };

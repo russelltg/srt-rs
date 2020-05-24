@@ -246,7 +246,9 @@ mod test {
 
     use super::RecvBuffer;
     use crate::{
-        packet::PacketLocation, protocol::TimeStamp, DataPacket, MsgNumber, SeqNumber, SocketID,
+        packet::{DataEncryption, PacketLocation},
+        protocol::TimeStamp,
+        DataPacket, MsgNumber, SeqNumber, SocketID,
     };
     use bytes::Bytes;
     use std::time::{Duration, Instant};
@@ -256,6 +258,8 @@ mod test {
             seq_number: SeqNumber::new_truncate(5),
             message_loc: PacketLocation::FIRST,
             in_order_delivery: false,
+            encryption: DataEncryption::None,
+            retransmitted: false,
             message_number: MsgNumber(0),
             timestamp: TimeStamp::from_micros(0),
             dest_sockid: SocketID(4),

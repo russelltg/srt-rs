@@ -173,6 +173,7 @@ async fn stransmit_server() -> Result<(), Error> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn stransmit_rendezvous() -> Result<(), Error> {
     let _ = env_logger::try_init();
 

@@ -12,7 +12,7 @@ mod error;
 
 pub use self::codec::PacketCodec;
 pub use self::control::*;
-pub use self::data::{DataPacket, PacketLocation};
+pub use self::data::*;
 pub use error::PacketParseError;
 
 use crate::protocol::TimeStamp;

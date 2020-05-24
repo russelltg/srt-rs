@@ -19,6 +19,7 @@ pub enum PacketParseError {
     BadAuth(u8),
     BadStreamEncapsulation(u8),
     StreamEncapsulationNotSrt,
+    BadDataEncryption(u8),
     Io(io::Error),
 }
 

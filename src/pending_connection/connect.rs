@@ -151,7 +151,7 @@ impl Connect {
                                 // TODO: this is hyper bad, don't blindly set send flag
                                 // if you don't pass TSBPDRCV, it doens't set the latency correctly for some reason. Requires more research
                                 peer_latency: Duration::from_secs(0), // TODO: research
-                                flags: SrtShakeFlags::TSBPDSND | SrtShakeFlags::TSBPDRCV, // TODO: the reference implementation sets a lot more of these, research
+                                flags: SrtShakeFlags::SUPPORTED,
                                 latency: config.tsbpd_latency,
                             })),
                             ext_km: None,
