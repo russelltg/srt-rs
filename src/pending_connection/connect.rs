@@ -206,7 +206,8 @@ impl Connect {
                     remote: config.remote,
                     max_flow_size: info.max_flow_size,
                     max_packet_size: info.max_packet_size,
-                    init_seq_num: info.init_seq_num,
+                    init_send_seq_num: info.init_seq_num,
+                    init_recv_seq_num: info.init_seq_num,
                     // restamp the socket start time, so TSBPD works correctly.
                     // TODO: technically it would be 1 rtt off....
                     socket_start_time: Instant::now(),

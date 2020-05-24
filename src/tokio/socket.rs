@@ -134,6 +134,8 @@ where
                         if sender.is_flushed() {
                             trace!("Recv returned close and sender flushed");
                             return;
+                        } else {
+                            break None;
                         }
                     }
                 };

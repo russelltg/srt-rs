@@ -5,6 +5,8 @@ use futures::prelude::*;
 
 #[tokio::test]
 async fn rendezvous() {
+    let _ = env_logger::try_init();
+
     let a = SrtSocketBuilder::new_rendezvous("127.0.0.1:5000")
         .local_port(5001)
         .connect();

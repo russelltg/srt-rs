@@ -103,7 +103,7 @@ bitflags! {
 }
 
 /// HS-version dependenent data
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
 pub enum HandshakeVSInfo {
     V4(SocketType),
@@ -784,7 +784,37 @@ impl Debug for ControlTypes {
 // pub info: HandshakeVSInfo,
 impl Debug for HandshakeControlInfo {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        write!(f, "HS {:?} from({:?})", self.shake_type, self.socket_id)
+        write!(
+            f,
+            "HS {:?} from={:?} {:?}",
+            self.shake_type, self.socket_id, self.info
+        )
+    }
+}
+
+impl Debug for HandshakeVSInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            HandshakeVSInfo::V4(stype) => write!(f, "UDT: {:?}", stype),
+            HandshakeVSInfo::V5 {
+                crypto_size,
+                ext_hs,
+                ext_km,
+                ext_config,
+            } => {
+                write!(f, "SRT: crypto={:?}", crypto_size)?;
+                if let Some(pack) = ext_hs {
+                    write!(f, " hs={:?}", pack)?;
+                }
+                if let Some(pack) = ext_km {
+                    write!(f, " km={:?}", pack)?;
+                }
+                if let Some(pack) = ext_config {
+                    write!(f, " config={:?}", pack)?;
+                }
+                Ok(())
+            }
+        }
     }
 }
 

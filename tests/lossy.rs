@@ -22,8 +22,13 @@ async fn lossy() {
         .map(|(i, _)| Bytes::from(i.to_string()));
 
     // 5% packet loss, 20ms delay
-    let (send, recv) =
-        LossyConn::channel(0.05, Duration::from_millis(20), Duration::from_millis(4));
+    let (send, recv) = LossyConn::channel(
+        0.05,
+        Duration::from_millis(20),
+        Duration::from_millis(4),
+        "127.0.0.1:1111",
+        "127.0.0.1:0",
+    );
 
     let sender = SrtSocketBuilder::new(ConnInitMethod::Listen)
         .local_port(1111)
