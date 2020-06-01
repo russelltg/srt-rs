@@ -57,7 +57,6 @@ impl From<ErrorStack> for CryptoError {
 pub struct CryptoManager {
     options: CryptoOptions,
     salt: [u8; 16],
-    iv: [u8; 8],
     kek: Vec<u8>,
     even_key: Option<Vec<u8>>,
     odd_key: Option<Vec<u8>>,
@@ -75,16 +74,12 @@ impl CryptoManager {
         let mut odd_key = vec![0; usize::from(options.size)];
         rand_bytes(&mut odd_key[..]).unwrap();
 
-        let mut iv = [0; 8];
-        rand_bytes(&mut iv[..]).unwrap();
-
-        Self::new(options, &salt, &iv, Some(even_key), Some(odd_key)) // TODO: should this generate both??
+        Self::new(options, &salt, Some(even_key), Some(odd_key)) // TODO: should this generate both??
     }
 
     pub fn new(
         options: CryptoOptions,
         salt: &[u8; 16],
-        iv: &[u8; 8],
         even_key: Option<Vec<u8>>,
         odd_key: Option<Vec<u8>>,
     ) -> Result<Self, CryptoError> {
@@ -109,7 +104,6 @@ impl CryptoManager {
         Ok(CryptoManager {
             options,
             salt: *salt,
-            iv: *iv,
             kek,
             even_key,
             odd_key,
@@ -197,27 +191,35 @@ impl CryptoManager {
             &mut key,
             input,
         )?;
-        Ok(())
+        Ok(key)
     }
 
-    pub fn wrap_key(&mut self) -> Result<Vec<u8>, CryptoError> {
-        self.generate_kek()?;
+    fn wrap_keys(&self) -> Result<Vec<u8>, CryptoError> {
+        let mut keys = Vec::new();
 
-        let mut ret = Vec::new();
-        ret.resize(self.key.len() + 8, 0);
+        if let Some(k) = &self.even_key {
+            keys.extend(k.iter());
+        }
+        if let Some(k) = &self.odd_key {
+            keys.extend(k.iter());
+        }
 
+        let mut ret = vec![0; keys.len() + 8];
         aes::wrap_key(
             &AesKey::new_encrypt(&self.kek[..]).unwrap(),
             None,
             &mut ret[..],
-            &self.key[..],
+            &keys[..],
         )?;
 
         Ok(ret)
     }
+}
 
-    pub fn key(&self) -> &[u8] {
-        &self.key
+// don't print sensetive info
+impl Debug for CryptoManager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CryptoManager {{ size={} }}", self.options.size)
     }
 }
 
@@ -234,29 +236,38 @@ mod test {
         let mut salt = [0; 16];
         salt.copy_from_slice(&hex::decode("7D59759C2B1A3F0B06C7028790C81C7D").unwrap());
 
-        let mut manager = CryptoManager::new(16, password.into(), &salt, &[0; 8], vec![]);
-        let buf = manager.generate_kek().unwrap();
+        let manager = CryptoManager::new(
+            CryptoOptions {
+                size: 16,
+                passphrase: password.into(),
+            },
+            &salt,
+            None,
+            None,
+        )
+        .unwrap();
 
-        assert_eq!(buf, &kek[..]);
+        assert_eq!(manager.kek, &kek[..]);
     }
 
     #[test]
     fn wrap_key() {
-        let mut manager = CryptoManager::new(
-            16,
-            "password123".into(),
+        let manager = CryptoManager::new(
+            CryptoOptions {
+                size: 16,
+                passphrase: "password123".into(),
+            },
             &b"\x00\x00\x00\x00\x00\x00\x00\x00\x85\x2c\x3c\xcd\x02\x65\x1a\x22",
-            &[0; 8],
-            b"\r\xab\xc8n/2\xb4\xa7\xb9\xbb\xa2\xf31*\xe4\"".to_vec(),
-        );
+            None,
+            Some(b"\r\xab\xc8n/2\xb4\xa7\xb9\xbb\xa2\xf31*\xe4\"".to_vec()),
+        )
+        .unwrap();
         assert_eq!(
-            manager.generate_kek().unwrap(),
+            manager.kek,
             &b"\xe9\xa0\xa4\x30\x2f\x59\xd0\x63\xc8\x83\x32\xbe\x35\x88\x82\x08"[..]
         );
 
-        let _prev_key = Vec::from(manager.key());
-
-        let wrapped = manager.wrap_key().unwrap();
+        let wrapped = manager.wrap_keys().unwrap();
         assert_eq!(
             wrapped,
             &b"31ea\x11\xe8\xb0P\xfe\x99\x9f\xd5h\xc2b\xfb\x1a3\xcc\xc8\x9cNw\xca"[..]
@@ -264,20 +275,23 @@ mod test {
 
         // manager.unwrap_key(&wrapped).unwrap();
         // assert_eq!(&prev_key[..], manager.key());
-        let mut manager = CryptoManager::new(
-            16,
-            "password123".into(),
+        let manager = CryptoManager::new(
+            CryptoOptions {
+                size: 16,
+                passphrase: "password123".into(),
+            },
             &b"\x00\x00\x00\x00\x00\x00\x00\x00n\xd5+\x196\nq8",
-            &[0; 8],
-            vec![],
-        );
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(
-            manager.generate_kek().unwrap(),
+            manager.kek,
             &b"\xde#\x1b\xfd9\x93z\xfb\xc3w\xa7\x80\xee\x80'\xa3"[..]
         );
 
-        manager
-            .unwrap_key(&b"U\x06\xe9\xfd\xdfd\xf1'nr\xf4\xe9f\x81#(\xb7\xb5D\x19{\x9b\xcdx"[..])
-            .unwrap();
+        // manager
+        //     .unwrap_key(&b"U\x06\xe9\xfd\xdfd\xf1'nr\xf4\xe9f\x81#(\xb7\xb5D\x19{\x9b\xcdx"[..])
+        //     .unwrap();
     }
 }
