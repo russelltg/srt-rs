@@ -8,8 +8,8 @@ use futures::{future::ready, Sink, Stream, StreamExt};
 
 use crate::tokio::create_bidrectional_srt;
 use crate::{
-    multiplex, pending_connection, Connection, PackChan, Packet, PacketCodec, PacketParseError,
-    SrtSocket,
+    crypto::CryptoOptions, multiplex, pending_connection, Connection, PackChan, Packet,
+    PacketCodec, PacketParseError, SrtSocket,
 };
 use log::warn;
 
@@ -57,7 +57,7 @@ pub struct SrtSocketBuilder {
     local_addr: SocketAddr,
     conn_type: ConnInitMethod,
     latency: Duration,
-    crypto: Option<(u8, String)>,
+    crypto: Option<CryptoOptions>,
 }
 
 /// Describes how this SRT entity will connect to the other.
@@ -149,7 +149,7 @@ impl SrtSocketBuilder {
     ///
     /// # Panics:
     /// * size is not 16, 24, or 32.
-    pub fn crypto(mut self, size: u8, passphrase: String) -> Self {
+    pub fn crypto(mut self, size: u8, passphrase: impl Into<String>) -> Self {
         match size {
             // OK
             16 | 24 | 32 => {}
@@ -157,7 +157,10 @@ impl SrtSocketBuilder {
             // TODO: size validation
             size => panic!("Invaid crypto size {}", size),
         }
-        self.crypto = Some((size, passphrase));
+        self.crypto = Some(CryptoOptions {
+            size,
+            passphrase: passphrase.into(),
+        });
 
         self
     }

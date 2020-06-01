@@ -6,9 +6,23 @@ use openssl::{
     rand::rand_bytes,
 };
 
-use crate::packet::{Auth, CipherType, PacketType, SrtKeyMessage};
+use aes_ctr::{
+    stream_cipher::{NewStreamCipher, SyncStreamCipher},
+    Aes128Ctr,
+};
+
+use crate::{
+    packet::{Auth, CipherType, DataEncryption, KeyFlags, PacketType, SrtKeyMessage},
+    SeqNumber,
+};
 use fmt::Debug;
 use std::{error::Error, fmt};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CryptoOptions {
+    pub size: u8,
+    pub passphrase: String,
+}
 
 #[derive(Debug)]
 pub enum CryptoError {
@@ -38,102 +52,149 @@ impl From<ErrorStack> for CryptoError {
     }
 }
 
+// i would love for this to be not clone, maybe someday
+#[derive(Clone)]
 pub struct CryptoManager {
-    size: u8,
-    passphrase: String,
+    options: CryptoOptions,
     salt: [u8; 16],
     iv: [u8; 8],
     kek: Vec<u8>,
-    key: Vec<u8>,
+    even_key: Option<Vec<u8>>,
+    odd_key: Option<Vec<u8>>,
 }
 
 #[allow(dead_code)] // TODO: remove and flesh out this struct
 impl CryptoManager {
-    pub fn new_random(size: u8, passphrase: String) -> Self {
+    pub fn new_random(options: CryptoOptions) -> Result<Self, CryptoError> {
         let mut salt = [0; 16];
         rand_bytes(&mut salt[..]).unwrap();
 
-        let mut key = vec![0; usize::from(size)];
-        rand_bytes(&mut key[..]).unwrap();
+        let mut even_key = vec![0; usize::from(options.size)];
+        rand_bytes(&mut even_key[..]).unwrap();
+
+        let mut odd_key = vec![0; usize::from(options.size)];
+        rand_bytes(&mut odd_key[..]).unwrap();
 
         let mut iv = [0; 8];
-        rand_bytes(&mut iv[..]);
+        rand_bytes(&mut iv[..]).unwrap();
 
-        CryptoManager {
-            size,
-            passphrase,
-            salt,
-            iv,
-            kek: vec![],
-            key,
-        }
+        Self::new(options, &salt, &iv, Some(even_key), Some(odd_key)) // TODO: should this generate both??
     }
 
-    pub fn new(size: u8, passphrase: String, salt: &[u8; 16], iv: &[u8; 8], key: Vec<u8>) -> Self {
-        CryptoManager {
-            size,
-            passphrase,
+    pub fn new(
+        options: CryptoOptions,
+        salt: &[u8; 16],
+        iv: &[u8; 8],
+        even_key: Option<Vec<u8>>,
+        odd_key: Option<Vec<u8>>,
+    ) -> Result<Self, CryptoError> {
+        // Generate the key encrypting key from the passphrase, caching it in the struct
+        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_sa.c#L69-L103
+
+        // the reference implementation uses the last 8 (at max) bytes of the salt. Sources:
+        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/haicrypt.h#L72
+        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_sa.c#L77-L85
+        let salt_len = usize::min(8, salt.len());
+
+        let mut kek = vec![0; usize::from(options.size)];
+
+        pbkdf2_hmac(
+            options.passphrase.as_bytes(),
+            &salt[salt.len() - salt_len..], // last salt_len bytes
+            2048, // is what the reference implementation uses.https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/haicrypt.h#L73
+            MessageDigest::sha1(),
+            &mut kek[..],
+        )?;
+
+        Ok(CryptoManager {
+            options,
             salt: *salt,
             iv: *iv,
-            kek: vec![],
-            key,
-        }
+            kek,
+            even_key,
+            odd_key,
+        })
     }
 
-    pub fn generate_kmreq(&self) -> Result<SrtKeyMessage, CryptoError> {
+    pub fn generate_km(&self) -> Result<SrtKeyMessage, CryptoError> {
         Ok(SrtKeyMessage {
             pt: PacketType::KeyingMaterial,
+            key_flags: match (&self.even_key, &self.odd_key) {
+                (Some(_), Some(_)) => KeyFlags::EVEN | KeyFlags::ODD,
+                (Some(_), None) => KeyFlags::EVEN,
+                (None, Some(_)) => KeyFlags::ODD,
+                (None, None) => panic!("No keys!"),
+            },
             keki: 0, // xxx
             cipher: CipherType::CTR,
             auth: Auth::None,
             salt: self.salt[..].into(),
-            even_key: Some(self.key.clone()),
-            odd_key: None,
-            wrap_data: self.iv,
+            wrapped_keys: self.wrap_keys()?,
         })
+    }
+
+    /* HaiCrypt-TP CTR mode IV (128-bit): (all these are in bytes)
+     *    0   1   2   3   4   5  6   7   8   9   10  11  12  13  14  15
+     * +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+     * |                   0s                  |      pki      |  ctr  |
+     * +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+     *                            XOR
+     * +---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+     * |                         nonce                         +
+     * +---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+     *
+     * pki    (32-bit): packet index (sequence number)
+     * ctr    (16-bit): block counter
+     * nonce (112-bit): number used once (first 12 bytes of salt)
+     */
+    fn gen_iv(&self, pki: SeqNumber) -> [u8; 16] {
+        let mut out = [0; 16];
+        out[0..12].copy_from_slice(&self.salt[..12]);
+
+        for (i, b) in pki.0.to_be_bytes().iter().enumerate() {
+            out[i + 10] ^= b;
+        }
+
+        // TODO: the ref impl doesn't put ctr in here....
+        // https://github.com/Haivision/srt/blob/9f7068d4f45eb3276e30fcc6e920f82b387c6852/haicrypt/hcrypt.h#L136-L136
+
+        out
+    }
+
+    pub fn decrypt(&self, seq: SeqNumber, enc: DataEncryption, data: &mut [u8]) {
+        let iv = self.gen_iv(seq).into();
+
+        let key = if enc == DataEncryption::Even {
+            &self.even_key
+        } else {
+            &self.odd_key
+        }
+        .as_ref()
+        .expect("Tried to decrypt but key was none");
+
+        match key.len() {
+            16 => {
+                let mut cipher = Aes128Ctr::new(key[..].into(), &iv);
+                cipher.apply_keystream(data);
+            }
+            24 => unimplemented!(),
+            32 => unimplemented!(),
+            _ => panic!("inavlid cipher size"),
+        }
     }
 
     pub fn salt(&self) -> &[u8] {
         &self.salt
     }
 
-    /// Generate the key encrypting key from the passphrase, caching it in the struct
-    ///
-    /// https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_sa.c#L69-L103
-    pub fn generate_kek(&mut self) -> Result<&[u8], ErrorStack> {
-        if !self.kek.is_empty() {
-            // already cached
-            return Ok(&self.kek[..]);
-        }
-
-        // the reference implementation uses the last 8 (at max) bytes of the salt. Sources:
-        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/haicrypt.h#L72
-        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_sa.c#L77-L85
-        let salt_len = usize::min(8, self.salt.len());
-
-        self.kek.resize(usize::from(self.size), 0);
-
-        pbkdf2_hmac(
-            self.passphrase.as_bytes(),
-            &self.salt[self.salt.len() - salt_len..], // last salt_len bytes
-            2048, // is what the reference implementation uses.https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/haicrypt.h#L73
-            MessageDigest::sha1(),
-            &mut self.kek[..],
-        )?;
-
-        Ok(&self.kek[..])
-    }
-
     /// Unwrap a key encrypted with the kek
-    pub fn unwrap_key(&mut self, input: &[u8]) -> Result<(), CryptoError> {
-        self.generate_kek()?;
-
-        self.key.resize(input.len() - 8, 0);
+    pub fn unwrap_key(&self, input: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let mut key = vec![0; input.len() - 8];
 
         aes::unwrap_key(
             &AesKey::new_decrypt(&self.kek[..]).unwrap(),
             None,
-            &mut self.key,
+            &mut key,
             input,
         )?;
         Ok(())

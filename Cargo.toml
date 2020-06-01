@@ -20,6 +20,8 @@ url = { version = "=2.1.0", optional = true } # https://github.com/servo/rust-ur
 bytes = "0.5"
 streaming-stats = "0.2.3"
 anyhow = {version = "1", optional = true }
+openssl = "0.10"
+aes-ctr = "0.3"
 
 [dependencies.env_logger]
 version = "0.7"

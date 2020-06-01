@@ -85,8 +85,12 @@ where
         let mut sock = sock.fuse();
 
         let time_base = TimeBase::new(conn_copy.settings.socket_start_time);
-        let mut connection = Connection::new(conn_copy.settings);
-        let mut sender = Sender::new(conn_copy.settings, conn_copy.handshake, SrtCongestCtrl);
+        let mut connection = Connection::new(conn_copy.settings.clone());
+        let mut sender = Sender::new(
+            conn_copy.settings.clone(),
+            conn_copy.handshake,
+            SrtCongestCtrl,
+        );
         let mut receiver = Receiver::new(conn_copy.settings, Handshake::Connector);
 
         let mut flushed = true;

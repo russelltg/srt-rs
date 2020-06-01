@@ -12,12 +12,12 @@ use tokio::spawn;
 #[ignore]
 async fn crypto_exchange() {
     let sender = SrtSocketBuilder::new_listen()
-        .crypto(24, "password123".into())
+        .crypto(24, "password123")
         .local_port(2000)
         .connect();
 
     let recvr = SrtSocketBuilder::new_connect("127.0.0.1:2000")
-        .crypto(24, "password123".into())
+        .crypto(24, "password123")
         .connect();
 
     spawn(async move {

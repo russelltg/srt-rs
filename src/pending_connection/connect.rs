@@ -13,7 +13,10 @@ use tokio::time::interval;
 use crate::packet::*;
 use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::util::get_packet;
-use crate::{Connection, ConnectionSettings, SeqNumber, SocketID, SrtVersion};
+use crate::{
+    crypto::{CryptoError, CryptoManager, CryptoOptions},
+    Connection, ConnectionSettings, SeqNumber, SocketID, SrtVersion,
+};
 
 use ConnectError::*;
 use ConnectState::*;
@@ -23,17 +26,18 @@ pub struct ConnectConfiguration {
     pub local_sockid: SocketID,
     pub local_addr: IpAddr,
     pub tsbpd_latency: Duration,
+    pub crypto_options: Option<CryptoOptions>,
 }
 
-#[derive(Clone)]
 #[allow(clippy::large_enum_variant)]
+#[derive(Clone)]
 pub enum ConnectState {
     /// initial sequence number
     Configured(SeqNumber),
     /// keep induction packet around for retransmit
     InductionResponseWait(Packet),
     /// keep conclusion packet around for retransmit
-    ConclusionResponseWait(Packet),
+    ConclusionResponseWait(Packet, Option<CryptoManager>),
     Connected(ConnectionSettings),
 }
 
@@ -59,12 +63,12 @@ pub enum ConnectError {
     UnexpectedHost(SocketAddr, SocketAddr),
     ConclusionExpected(HandshakeControlInfo),
     UnsupportedProtocolVersion(u32),
-    // TODO: why don't we validate the cookie on responses
-    //#[error("Received invalid cookie handshake from [address], expected: {0} found {1}")]
-    //InvalidHandshakeCookie(i32, i32),
-    // TODO: why don't we validate we have an SRT response
-    //#[error("Expected SRT handshake request in conclusion handshake, found {0}")]
-    //SrtHandshakeExpected(HandshakeControlInfo),
+    Crypto(CryptoError), // TODO: why don't we validate the cookie on responses
+                         //#[error("Received invalid cookie handshake from [address], expected: {0} found {1}")]
+                         //InvalidHandshakeCookie(i32, i32),
+                         // TODO: why don't we validate we have an SRT response
+                         //#[error("Expected SRT handshake request in conclusion handshake, found {0}")]
+                         //SrtHandshakeExpected(HandshakeControlInfo)
 }
 
 impl fmt::Display for ConnectError {
@@ -94,7 +98,14 @@ impl fmt::Display for ConnectError {
                 "Unsupported protocol version, expected: v5 found v{0}",
                 got
             ),
+            Crypto(ce) => ce.fmt(f),
         }
+    }
+}
+
+impl From<CryptoError> for ConnectError {
+    fn from(ce: CryptoError) -> Self {
+        Crypto(ce)
     }
 }
 
@@ -135,8 +146,24 @@ impl Connect {
         info: HandshakeControlInfo,
     ) -> ConnectResult {
         let config = &self.config;
-        match (info.shake_type, info.info.version(), from) {
-            (ShakeType::Induction, 5, from) if from == config.remote => {
+        match (info.shake_type, &info.info, from) {
+            (ShakeType::Induction, HandshakeVSInfo::V5 { crypto_size, .. }, from)
+                if from == config.remote =>
+            {
+                let self_crypto_size = config.crypto_options.as_ref().map(|o| o.size).unwrap_or(0);
+                if *crypto_size != self_crypto_size {
+                    unimplemented!("Unimplemted crypto mismatch!");
+                }
+
+                let (crypto_manager, ext_km) = if let Some(co) = &config.crypto_options {
+                    let cm = CryptoManager::new_random(co.clone())?;
+                    let kmreq = SrtControlPacket::KeyManagerRequest(cm.generate_km()?);
+
+                    (Some(cm), Some(kmreq))
+                } else {
+                    (None, None)
+                };
+
                 // send back a packet with the same syn cookie
                 let packet = Packet::Control(ControlPacket {
                     timestamp,
@@ -145,40 +172,28 @@ impl Connect {
                         shake_type: ShakeType::Conclusion,
                         socket_id: config.local_sockid,
                         info: HandshakeVSInfo::V5 {
-                            crypto_size: 0, // TODO: implement
+                            crypto_size: self_crypto_size,
                             ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                                 version: SrtVersion::CURRENT,
-                                // TODO: this is hyper bad, don't blindly set send flag
-                                // if you don't pass TSBPDRCV, it doens't set the latency correctly for some reason. Requires more research
                                 peer_latency: Duration::from_secs(0), // TODO: research
                                 flags: SrtShakeFlags::SUPPORTED,
                                 latency: config.tsbpd_latency,
                             })),
-                            ext_km: None,
-                            // ext_km: self.crypto.as_mut().map(|manager| {
-                            //     SrtControlPacket::KeyManagerRequest(SrtKeyMessage {
-                            //         pt: 2,       // TODO: what is this
-                            //         sign: 8_233, // TODO: again
-                            //         keki: 0,
-                            //         cipher: CipherType::CTR,
-                            //         auth: 0,
-                            //         se: 2,
-                            //         salt: Vec::from(manager.salt()),
-                            //         even_key: Some(manager.wrap_key().unwrap()),
-                            //         odd_key: None,
-                            //         wrap_data: [0; 8],
-                            //     })
-                            // }),
+                            ext_km,
                             ext_config: None,
                         },
                         ..info
                     }),
                 });
-                self.state = ConclusionResponseWait(packet.clone());
+                self.state = ConclusionResponseWait(packet.clone(), crypto_manager);
                 Ok(Some((packet, from)))
             }
-            (ShakeType::Induction, 5, from) => Err(UnexpectedHost(config.remote, from)),
-            (ShakeType::Induction, version, _) => Err(UnsupportedProtocolVersion(version)),
+            (ShakeType::Induction, HandshakeVSInfo::V5 { .. }, from) => {
+                Err(UnexpectedHost(config.remote, from))
+            }
+            (ShakeType::Induction, version, _) => {
+                Err(UnsupportedProtocolVersion(version.version()))
+            }
             (_, _, _) => Err(InductionExpected(info)),
         }
     }
@@ -187,6 +202,7 @@ impl Connect {
         &mut self,
         from: SocketAddr,
         info: HandshakeControlInfo,
+        crypto_manager: Option<CryptoManager>,
     ) -> ConnectResult {
         let config = &self.config;
         match (info.shake_type, info.info.version(), from) {
@@ -214,6 +230,7 @@ impl Connect {
                     local_sockid: config.local_sockid,
                     remote_sockid: info.socket_id,
                     tsbpd_latency: latency,
+                    crypto_manager,
                 });
                 // TODO: no handshake retransmit packet needed? is this right? Needs testing.
 
@@ -235,21 +252,28 @@ impl Connect {
                 }
                 control_type => Err(HandshakeExpected(ShakeType::Induction, control_type)),
             },
-            (ConclusionResponseWait(_), Packet::Control(control)) => match control.control_type {
-                ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, shake),
-                control_type => Err(HandshakeExpected(ShakeType::Conclusion, control_type)),
-            },
+            (ConclusionResponseWait(_, cm), Packet::Control(control)) => {
+                match control.control_type {
+                    ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, shake, cm),
+                    control_type => Err(HandshakeExpected(ShakeType::Conclusion, control_type)),
+                }
+            }
             (_, Packet::Data(data)) => Err(ControlExpected(ShakeType::Induction, data)),
             (_, _) => Ok(None),
         }
     }
 
     pub fn handle_tick(&mut self, _now: Instant) -> ConnectResult {
-        match self.state.clone() {
-            Configured(init_seq_num) => self.on_start(init_seq_num),
-            InductionResponseWait(request_packet) => Ok(Some((request_packet, self.config.remote))),
-            ConclusionResponseWait(request_packet) => {
-                Ok(Some((request_packet, self.config.remote)))
+        match &self.state {
+            Configured(init_seq_num) => {
+                let sn = *init_seq_num; // make borrowck happy
+                self.on_start(sn)
+            }
+            InductionResponseWait(request_packet) => {
+                Ok(Some((request_packet.clone(), self.config.remote)))
+            }
+            ConclusionResponseWait(request_packet, _) => {
+                Ok(Some((request_packet.clone(), self.config.remote)))
             }
             _ => Ok(None),
         }
@@ -262,7 +286,7 @@ pub async fn connect<T>(
     local_sockid: SocketID,
     local_addr: IpAddr,
     tsbpd_latency: Duration,
-    _crypto: Option<(u8, String)>,
+    crypto_options: Option<CryptoOptions>,
 ) -> Result<Connection, io::Error>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
@@ -275,6 +299,7 @@ where
             local_sockid,
             local_addr,
             tsbpd_latency,
+            crypto_options,
         },
         state: ConnectState::new(),
     };
@@ -295,7 +320,7 @@ where
             }
             _ => {}
         }
-        if let Connected(settings) = connect.state.clone() {
+        if let Connected(settings) = connect.state {
             return Ok(Connection {
                 settings,
                 handshake: Handshake::Connector,

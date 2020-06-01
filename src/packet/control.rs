@@ -411,7 +411,7 @@ impl ControlTypes {
                     5 => {
                         // make sure crypto size is of a valid variant
                         let crypto_size = match crypto_size {
-                            0 | 2 | 3 | 4 => crypto_size as u8 * 8,
+                            0 | 16 | 24 | 32 => crypto_size as u8,
                             c => {
                                 warn!(
                                     "Unrecognized crypto key length: {}, disabling encryption. Should be 0, 16, 24, or 32 bytes. Disabling crypto.",
@@ -1014,15 +1014,15 @@ mod test {
                         })),
                         ext_km: Some(SrtControlPacket::KeyManagerRequest(SrtKeyMessage {
                             pt: PacketType::KeyingMaterial,
+                            key_flags: KeyFlags::EVEN,
                             keki: 0,
                             cipher: CipherType::CTR,
                             auth: Auth::None,
                             salt: hex::decode("9D75B0AC924C6E4C9EC40FEB4FE973DB").unwrap(),
-                            even_key: Some(
-                                hex::decode("1D215D426C18A2871EBF77E2646D9BAB").unwrap()
-                            ),
-                            odd_key: None,
-                            wrap_data: *b"\x15\xDB\xD7\x68\x9A\xEF\x60\xEC",
+                            wrapped_keys: hex::decode(
+                                "1D215D426C18A2871EBF77E2646D9BAB15DBD7689AEF60EC"
+                            )
+                            .unwrap()
                         })),
                         ext_config: None
                     }
@@ -1040,6 +1040,7 @@ mod test {
     fn raw_handshake_crypto_pt2() {
         let packet_data = hex::decode("8000000000000000000000000C110D94000000050000000374B7526E000005DC00002000FFFFFFFF18C1CED1F3819B720100007F00000000000000000000000000020003000103010000003F03E803E80004000E12202901000000000200020000000404D3B3D84BE1188A4EBDA4DA16EA65D522D82DE544E1BE06B6ED8128BF15AA4E18EC50EAA95546B101").unwrap();
         let _packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..])).unwrap();
+        dbg!(&_packet);
     }
 
     #[test]
@@ -1050,5 +1051,35 @@ mod test {
                 .unwrap();
 
         let _cp = ControlPacket::parse(&mut Cursor::new(packet_data)).unwrap();
+    }
+
+    #[test]
+    fn test_enc_size() {
+        let pack = ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: SocketID(0),
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                init_seq_num: SeqNumber(0),
+                max_packet_size: 1816,
+                max_flow_size: 0,
+                shake_type: ShakeType::Conclusion,
+                socket_id: SocketID(0),
+                syn_cookie: 0,
+                peer_addr: [127, 0, 0, 1].into(),
+                info: HandshakeVSInfo::V5 {
+                    crypto_size: 16,
+                    ext_config: None,
+                    ext_hs: None,
+                    ext_km: None,
+                },
+            }),
+        };
+
+        let mut ser = vec![];
+        pack.serialize(&mut ser);
+
+        let pack_deser = ControlPacket::parse(&mut Cursor::new(&ser)).unwrap();
+
+        assert_eq!(pack, pack_deser);
     }
 }

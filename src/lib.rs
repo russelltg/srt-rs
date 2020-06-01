@@ -52,7 +52,7 @@ mod builder;
 mod channel;
 mod congest_ctrl;
 mod connection;
-// mod crypto;
+mod crypto;
 mod loss_compression;
 mod modular_num;
 mod msg_number;

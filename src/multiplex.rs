@@ -120,15 +120,14 @@ impl MultiplexState {
         if let ListenState::Connected(resp_handshake, settings) = listen.state().clone() {
             let (s, r) = Channel::channel(100);
 
-            self.pending.remove(&from); // remove from pending connections, it's been resolved
             self.conns.insert(settings.local_sockid, r);
-            return Ok(Some((
-                Connection {
-                    settings,
-                    handshake: Handshake::Listener(resp_handshake.control_type),
-                },
-                s,
-            )));
+
+            let conn = Connection {
+                settings: settings.clone(),
+                handshake: Handshake::Listener(resp_handshake.control_type.clone()),
+            };
+            self.pending.remove(&from); // remove from pending connections, it's been resolved
+            return Ok(Some((conn, s)));
         }
         Ok(None)
     }

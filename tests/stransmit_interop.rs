@@ -41,7 +41,7 @@ fn counting_stream(packets: u32, delay: Duration) -> impl Stream<Item = Bytes> {
 
 async fn udp_recvr(packets: u32, port: u16) -> Result<(), Error> {
     // start udp listener
-    let mut socket = UdpFramed::new(
+    let socket = UdpFramed::new(
         UdpSocket::bind(&SocketAddr::V4(SocketAddrV4::new(
             "127.0.0.1".parse().unwrap(),
             port,
@@ -51,10 +51,14 @@ async fn udp_recvr(packets: u32, port: u16) -> Result<(), Error> {
         BytesCodec::new(),
     );
 
-    let mut i = 0;
-    while let Some(a) = socket.next().await {
-        let (a, _) = a?;
+    receiver(packets, socket.map(|i| i.unwrap().0.freeze())).await;
 
+    Ok(())
+}
+
+async fn receiver(packets: u32, mut stream: impl Stream<Item = Bytes> + Unpin) {
+    let mut i = 0;
+    while let Some(a) = stream.next().await {
         assert_eq!(&a, &i.to_string());
 
         i += 1;
@@ -66,6 +70,16 @@ async fn udp_recvr(packets: u32, port: u16) -> Result<(), Error> {
         }
     }
     assert!(i >= packets * 2 / 3);
+}
+
+async fn udp_sender(packets: u32, port: u16) -> Result<(), Error> {
+    let mut sock = UdpFramed::new(UdpSocket::bind("127.0.0.1:0").await?, BytesCodec::new());
+
+    let mut stream = counting_stream(packets, Duration::from_millis(1))
+        .map(|b| Ok((b, ([127, 0, 0, 1], port).into())));
+
+    sock.send_all(&mut stream).await?;
+    sock.close().await?;
 
     Ok(())
 }
@@ -96,34 +110,21 @@ async fn stransmit_client() -> Result<(), Error> {
         let mut i = 0;
 
         // start the data generation process
-        join!(
-            async {
-                let mut sock = UdpFramed::new(
-                    UdpSocket::bind("127.0.0.1:0").await.unwrap(),
-                    BytesCodec::new(),
-                );
-                let mut stream = counting_stream(PACKETS, Duration::from_millis(1))
-                    .map(|b| Ok((b, "127.0.0.1:2002".parse().unwrap())));
+        join!(async { udp_sender(PACKETS, 2002).await.unwrap() }, async {
+            // receive
+            while let Some(p) = conn.next().await {
+                let (_, b) = p.unwrap();
 
-                sock.send_all(&mut stream).await.unwrap();
-                sock.close().await.unwrap();
-            },
-            async {
-                // receive
-                while let Some(p) = conn.next().await {
-                    let (_, b) = p.unwrap();
+                assert_eq!(&i.to_string(), &b);
 
-                    assert_eq!(&i.to_string(), &b);
+                i += 1;
 
-                    i += 1;
-
-                    if i > PACKETS * 2 / 3 {
-                        break;
-                    }
+                if i > PACKETS * 2 / 3 {
+                    break;
                 }
-                assert!(i > PACKETS * 2 / 3);
             }
-        );
+            assert!(i > PACKETS * 2 / 3);
+        });
     };
 
     listener.await;
@@ -208,6 +209,39 @@ async fn stransmit_rendezvous() -> Result<(), Error> {
     join!(sender_fut, udp_recvr);
 
     child.wait()?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn stransmit_encrypt() -> Result<(), Error> {
+    let _ = env_logger::try_init();
+
+    const PACKETS: u32 = 1_000;
+
+    let udp_sendr = async move {
+        udp_sender(PACKETS, 2007).await.unwrap();
+    };
+
+    // let mut child = allow_not_found!(Command::new("srt-live-transmit")
+    //     .arg("udp://:2007")
+    //     .arg("srt://:2008?passphrase=password123&pbkeylen=16")
+    //     .arg("-a:no")
+    //     .arg("-loglevel:debug")
+    //     .spawn());
+
+    let recvr_fut = async move {
+        let recv = SrtSocketBuilder::new_connect("127.0.0.1:2008")
+            .crypto(16, "password123")
+            .connect()
+            .await
+            .unwrap();
+
+        receiver(PACKETS, recv.map(|f| f.unwrap().1)).await;
+    };
+
+    join!(udp_sendr, recvr_fut);
+    // child.wait().unwrap();
 
     Ok(())
 }

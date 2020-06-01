@@ -242,6 +242,7 @@ impl Rendezvous {
                 max_packet_size: info.max_packet_size,
                 max_flow_size: info.max_flow_size,
                 tsbpd_latency: max(srt_exts.latency, self.config.tsbpd_latency),
+                crypto_manager: None, // todo: implement
             },
             handshake: Handshake::Rendezvous(resp),
         });

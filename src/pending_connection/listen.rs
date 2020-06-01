@@ -221,6 +221,7 @@ impl Listen {
                     local_sockid: self.config.local_socket_id,
                     socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
                     tsbpd_latency: latency,
+                    crypto_manager: None, // TODO: implement
                 };
 
                 self.state = Connected(resp_handshake.clone(), settings);

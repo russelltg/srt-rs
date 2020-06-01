@@ -14,7 +14,7 @@ use crate::{MsgNumber, SeqNumber, SocketID};
 ///  0                   1                   2                   3
 ///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///  |0|                     Packet Sequence N{ seq_number: (), message_loc: (), in_order_delivery: (), encryption: (), retransmitted: (), message_number: (), timestamp: (), dest_sockid: (), payload: ()}seq_number: (), message_loc: (), in_order_delivery: (), encryption: (), retransmitted: (), message_number: (), timestamp: (), dest_sockid: (), payload: ()}seq_number: (), message_loc: (), in_order_delivery: (), encryption: (), retransmitted: (), message_number: (), timestamp: (), dest_sockid: (), payload: ()}seq_number: (), message_loc: (), in_order_delivery: (), encryption: (), retransmitted: (), message_number: (), timestamp: (), dest_sockid: (), payload: ()}ber                  |
+///  |0|                     Packet Sequence Number                  |
 ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ///  |FF |O|K K|R|               Message Number                      |
 ///  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -48,7 +48,7 @@ pub struct DataPacket {
 
     /// The message number, is the ID of the message being passed
     /// Represented by the final 26 bits of the third row
-    /// It's only 26 bits long, so it's wrapped after 2^29 - 1
+    /// It's only 26 bits long, so it's wrapped after 2^26 - 1
     pub message_number: MsgNumber,
 
     /// The timestamp, relative to when the connection was created.
