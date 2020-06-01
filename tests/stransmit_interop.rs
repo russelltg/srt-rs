@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Error;
 use bytes::Bytes;
-use futures::{join, stream, SinkExt, Stream, StreamExt};
+use futures::{future::try_join, join, stream, SinkExt, Stream, StreamExt};
 
 use tokio::net::UdpSocket;
 use tokio::time::interval;
@@ -51,12 +51,13 @@ async fn udp_recvr(packets: u32, port: u16) -> Result<(), Error> {
         BytesCodec::new(),
     );
 
-    receiver(packets, socket.map(|i| i.unwrap().0.freeze())).await;
-
-    Ok(())
+    receiver(packets, socket.map(|i| i.unwrap().0.freeze())).await
 }
 
-async fn receiver(packets: u32, mut stream: impl Stream<Item = Bytes> + Unpin) {
+async fn receiver(
+    packets: u32,
+    mut stream: impl Stream<Item = Bytes> + Unpin,
+) -> Result<(), Error> {
     let mut i = 0;
     while let Some(a) = stream.next().await {
         assert_eq!(&a, &i.to_string());
@@ -70,6 +71,8 @@ async fn receiver(packets: u32, mut stream: impl Stream<Item = Bytes> + Unpin) {
         }
     }
     assert!(i >= packets * 2 / 3);
+
+    Ok(())
 }
 
 async fn udp_sender(packets: u32, port: u16) -> Result<(), Error> {
@@ -157,7 +160,7 @@ async fn stransmit_server() -> Result<(), Error> {
         sender.close().await.unwrap();
     };
 
-    let udp_recv = async { udp_recvr(PACKETS * 2 / 3, 2001).await.unwrap() };
+    let udp_recv = async { udp_recvr(PACKETS, 2001).await.unwrap() };
 
     // start stransmit process
     let mut child = allow_not_found!(Command::new("srt-live-transmit")
@@ -198,7 +201,7 @@ async fn stransmit_rendezvous() -> Result<(), Error> {
         sender.close().await.unwrap();
     };
 
-    let udp_recvr = async { udp_recvr(PACKETS * 2 / 3, 2006).await.unwrap() };
+    let udp_recvr = async { udp_recvr(PACKETS, 2006).await.unwrap() };
 
     let mut child = allow_not_found!(Command::new("srt-live-transmit")
         .arg("srt://127.0.0.1:2005?adapter=127.0.0.1&port=2004&mode=rendezvous")
@@ -219,16 +222,12 @@ async fn stransmit_encrypt() -> Result<(), Error> {
 
     const PACKETS: u32 = 1_000;
 
-    let udp_sendr = async move {
-        udp_sender(PACKETS, 2007).await.unwrap();
-    };
-
-    // let mut child = allow_not_found!(Command::new("srt-live-transmit")
-    //     .arg("udp://:2007")
-    //     .arg("srt://:2008?passphrase=password123&pbkeylen=16")
-    //     .arg("-a:no")
-    //     .arg("-loglevel:debug")
-    //     .spawn());
+    let mut child = allow_not_found!(Command::new("srt-live-transmit")
+        .arg("udp://:2007")
+        .arg("srt://:2008?passphrase=password123&pbkeylen=16")
+        .arg("-a:no")
+        .arg("-loglevel:debug")
+        .spawn());
 
     let recvr_fut = async move {
         let recv = SrtSocketBuilder::new_connect("127.0.0.1:2008")
@@ -237,11 +236,50 @@ async fn stransmit_encrypt() -> Result<(), Error> {
             .await
             .unwrap();
 
-        receiver(PACKETS, recv.map(|f| f.unwrap().1)).await;
+        try_join(
+            receiver(PACKETS, recv.map(|f| f.unwrap().1)),
+            udp_sender(PACKETS, 2007),
+        )
+        .await
+        .unwrap();
     };
 
-    join!(udp_sendr, recvr_fut);
-    // child.wait().unwrap();
+    recvr_fut.await;
+    child.wait().unwrap();
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn stransmit_decrypt() -> Result<(), Error> {
+    let _ = env_logger::try_init();
+
+    const PACKETS: u32 = 1_000;
+
+    let sender_fut = async move {
+        let mut snd = SrtSocketBuilder::new_listen()
+            .local_port(2009)
+            .connect()
+            .await
+            .unwrap();
+
+        snd.send_all(
+            &mut counting_stream(PACKETS, Duration::from_millis(1))
+                .map(|b| Ok((Instant::now(), b))),
+        )
+        .await
+        .unwrap();
+    };
+
+    let mut child = allow_not_found!(Command::new("srt-live-transmit")
+        .arg("srt://127.0.0.1:2009")
+        .arg("udp://127.0.0.1:2010")
+        .spawn());
+
+    join!(sender_fut, async {
+        udp_recvr(PACKETS, 2010).await.unwrap()
+    });
+    child.wait().unwrap();
 
     Ok(())
 }
