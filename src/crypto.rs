@@ -58,31 +58,35 @@ pub struct CryptoManager {
     options: CryptoOptions,
     salt: [u8; 16],
     kek: Vec<u8>,
-    even_key: Option<Vec<u8>>,
-    odd_key: Option<Vec<u8>>,
+    even_sek: Option<Vec<u8>>,
+    odd_sek: Option<Vec<u8>>,
 }
 
 #[allow(dead_code)] // TODO: remove and flesh out this struct
 impl CryptoManager {
-    pub fn new_random(options: CryptoOptions) -> Result<Self, CryptoError> {
+    pub fn new_random(options: CryptoOptions) -> Self {
         let mut salt = [0; 16];
         rand_bytes(&mut salt[..]).unwrap();
 
         let mut even_key = vec![0; usize::from(options.size)];
         rand_bytes(&mut even_key[..]).unwrap();
 
-        let mut odd_key = vec![0; usize::from(options.size)];
-        rand_bytes(&mut odd_key[..]).unwrap();
+        // let mut odd_key = vec![0; usize::from(options.size)];
+        // rand_bytes(&mut odd_key[..]).unwrap();
 
-        Self::new(options, &salt, Some(even_key), Some(odd_key)) // TODO: should this generate both??
+        Self::new(options, &salt, Some(even_key), None) // TODO: should this generate both??
     }
 
-    pub fn new(
+    pub fn new_empty(options: CryptoOptions) -> Self {
+        Self::new(options, &[0; 16], None, None)
+    }
+
+    fn new(
         options: CryptoOptions,
         salt: &[u8; 16],
-        even_key: Option<Vec<u8>>,
-        odd_key: Option<Vec<u8>>,
-    ) -> Result<Self, CryptoError> {
+        even_sek: Option<Vec<u8>>,
+        odd_sek: Option<Vec<u8>>,
+    ) -> Self {
         // Generate the key encrypting key from the passphrase, caching it in the struct
         // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_sa.c#L69-L103
 
@@ -99,21 +103,26 @@ impl CryptoManager {
             2048, // is what the reference implementation uses.https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/haicrypt.h#L73
             MessageDigest::sha1(),
             &mut kek[..],
-        )?;
+        )
+        .unwrap();
 
-        Ok(CryptoManager {
+        CryptoManager {
             options,
             salt: *salt,
             kek,
-            even_key,
-            odd_key,
-        })
+            even_sek,
+            odd_sek,
+        }
+    }
+
+    pub fn key_length(&self) -> u8 {
+        self.options.size
     }
 
     pub fn generate_km(&self) -> Result<SrtKeyMessage, CryptoError> {
         Ok(SrtKeyMessage {
             pt: PacketType::KeyingMaterial,
-            key_flags: match (&self.even_key, &self.odd_key) {
+            key_flags: match (&self.even_sek, &self.odd_sek) {
                 (Some(_), Some(_)) => KeyFlags::EVEN | KeyFlags::ODD,
                 (Some(_), None) => KeyFlags::EVEN,
                 (None, Some(_)) => KeyFlags::ODD,
@@ -143,10 +152,10 @@ impl CryptoManager {
      */
     fn gen_iv(&self, pki: SeqNumber) -> [u8; 16] {
         let mut out = [0; 16];
-        out[0..12].copy_from_slice(&self.salt[..12]);
+        out[0..14].copy_from_slice(&self.salt[..14]);
 
         for (i, b) in pki.0.to_be_bytes().iter().enumerate() {
-            out[i + 10] ^= b;
+            out[i + 10] ^= *b;
         }
 
         // TODO: the ref impl doesn't put ctr in here....
@@ -159,9 +168,9 @@ impl CryptoManager {
         let iv = self.gen_iv(seq).into();
 
         let key = if enc == DataEncryption::Even {
-            &self.even_key
+            &self.even_sek
         } else {
-            &self.odd_key
+            &self.odd_sek
         }
         .as_ref()
         .expect("Tried to decrypt but key was none");
@@ -182,25 +191,38 @@ impl CryptoManager {
     }
 
     /// Unwrap a key encrypted with the kek
-    pub fn unwrap_key(&self, input: &[u8]) -> Result<Vec<u8>, CryptoError> {
-        let mut key = vec![0; input.len() - 8];
+    pub fn unwrap_keys(&mut self, key_flags: KeyFlags, input: &[u8]) -> Result<(), CryptoError> {
+        assert_eq!(
+            input.len(),
+            key_flags.bits().count_ones() as usize * usize::from(self.key_length()) + 8
+        );
+
+        let mut keys = vec![0; input.len() - 8];
 
         aes::unwrap_key(
             &AesKey::new_decrypt(&self.kek[..]).unwrap(),
             None,
-            &mut key,
+            &mut keys,
             input,
         )?;
-        Ok(key)
+
+        if key_flags.contains(KeyFlags::EVEN) {
+            self.even_sek = Some((keys[0..usize::from(self.key_length())]).into());
+        }
+        if key_flags.contains(KeyFlags::ODD) {
+            self.odd_sek = Some((keys[keys.len() - usize::from(self.key_length())..]).into());
+        }
+
+        Ok(())
     }
 
     fn wrap_keys(&self) -> Result<Vec<u8>, CryptoError> {
         let mut keys = Vec::new();
 
-        if let Some(k) = &self.even_key {
+        if let Some(k) = &self.even_sek {
             keys.extend(k.iter());
         }
-        if let Some(k) = &self.odd_key {
+        if let Some(k) = &self.odd_sek {
             keys.extend(k.iter());
         }
 
@@ -227,6 +249,7 @@ impl Debug for CryptoManager {
 mod test {
 
     use super::*;
+    use std::convert::TryInto;
 
     #[test]
     fn kek_generate() {
@@ -244,8 +267,7 @@ mod test {
             &salt,
             None,
             None,
-        )
-        .unwrap();
+        );
 
         assert_eq!(manager.kek, &kek[..]);
     }
@@ -260,8 +282,8 @@ mod test {
             &b"\x00\x00\x00\x00\x00\x00\x00\x00\x85\x2c\x3c\xcd\x02\x65\x1a\x22",
             None,
             Some(b"\r\xab\xc8n/2\xb4\xa7\xb9\xbb\xa2\xf31*\xe4\"".to_vec()),
-        )
-        .unwrap();
+        );
+
         assert_eq!(
             manager.kek,
             &b"\xe9\xa0\xa4\x30\x2f\x59\xd0\x63\xc8\x83\x32\xbe\x35\x88\x82\x08"[..]
@@ -283,8 +305,8 @@ mod test {
             &b"\x00\x00\x00\x00\x00\x00\x00\x00n\xd5+\x196\nq8",
             None,
             None,
-        )
-        .unwrap();
+        );
+
         assert_eq!(
             manager.kek,
             &b"\xde#\x1b\xfd9\x93z\xfb\xc3w\xa7\x80\xee\x80'\xa3"[..]
@@ -293,5 +315,26 @@ mod test {
         // manager
         //     .unwrap_key(&b"U\x06\xe9\xfd\xdfd\xf1'nr\xf4\xe9f\x81#(\xb7\xb5D\x19{\x9b\xcdx"[..])
         //     .unwrap();
+    }
+
+    #[test]
+    fn gen_iv() {
+        // example from the reference implementation
+        let manager = CryptoManager::new(
+            CryptoOptions {
+                size: 16,
+                passphrase: "password123".into(),
+            },
+            &hex::decode("87647f8a2361fb1a9e692de576985949").unwrap()[..]
+                .try_into()
+                .unwrap(),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            manager.gen_iv(SeqNumber(709520665)),
+            &hex::decode("87647f8a2361fb1a9e6907af1b810000").unwrap()[..]
+        );
     }
 }

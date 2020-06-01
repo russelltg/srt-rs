@@ -14,10 +14,11 @@ use crate::packet::*;
 use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::util::get_packet;
 use crate::{
-    crypto::{CryptoError, CryptoManager, CryptoOptions},
-    Connection, ConnectionSettings, SeqNumber, SocketID, SrtVersion,
+    crypto::{CryptoError, CryptoOptions},
+    Connection, ConnectionSettings, SeqNumber, SocketID,
 };
 
+use super::hsv5::HSV5Initiator;
 use ConnectError::*;
 use ConnectState::*;
 
@@ -26,7 +27,6 @@ pub struct ConnectConfiguration {
     pub local_sockid: SocketID,
     pub local_addr: IpAddr,
     pub tsbpd_latency: Duration,
-    pub crypto_options: Option<CryptoOptions>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -37,7 +37,7 @@ pub enum ConnectState {
     /// keep induction packet around for retransmit
     InductionResponseWait(Packet),
     /// keep conclusion packet around for retransmit
-    ConclusionResponseWait(Packet, Option<CryptoManager>),
+    ConclusionResponseWait(Packet),
     Connected(ConnectionSettings),
 }
 
@@ -114,6 +114,7 @@ impl Error for ConnectError {}
 pub struct Connect {
     config: ConnectConfiguration,
     state: ConnectState,
+    hsv5: HSV5Initiator,
 }
 
 pub type ConnectResult = Result<Option<(Packet, SocketAddr)>, ConnectError>;
@@ -150,20 +151,6 @@ impl Connect {
             (ShakeType::Induction, HandshakeVSInfo::V5 { crypto_size, .. }, from)
                 if from == config.remote =>
             {
-                let self_crypto_size = config.crypto_options.as_ref().map(|o| o.size).unwrap_or(0);
-                if *crypto_size != self_crypto_size {
-                    unimplemented!("Unimplemted crypto mismatch!");
-                }
-
-                let (crypto_manager, ext_km) = if let Some(co) = &config.crypto_options {
-                    let cm = CryptoManager::new_random(co.clone())?;
-                    let kmreq = SrtControlPacket::KeyManagerRequest(cm.generate_km()?);
-
-                    (Some(cm), Some(kmreq))
-                } else {
-                    (None, None)
-                };
-
                 // send back a packet with the same syn cookie
                 let packet = Packet::Control(ControlPacket {
                     timestamp,
@@ -171,21 +158,11 @@ impl Connect {
                     control_type: ControlTypes::Handshake(HandshakeControlInfo {
                         shake_type: ShakeType::Conclusion,
                         socket_id: config.local_sockid,
-                        info: HandshakeVSInfo::V5 {
-                            crypto_size: self_crypto_size,
-                            ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
-                                version: SrtVersion::CURRENT,
-                                peer_latency: Duration::from_secs(0), // TODO: research
-                                flags: SrtShakeFlags::SUPPORTED,
-                                latency: config.tsbpd_latency,
-                            })),
-                            ext_km,
-                            ext_config: None,
-                        },
+                        info: self.hsv5.gen_vs_info(*crypto_size)?,
                         ..info
                     }),
                 });
-                self.state = ConclusionResponseWait(packet.clone(), crypto_manager);
+                self.state = ConclusionResponseWait(packet.clone());
                 Ok(Some((packet, from)))
             }
             (ShakeType::Induction, HandshakeVSInfo::V5 { .. }, from) => {
@@ -202,7 +179,6 @@ impl Connect {
         &mut self,
         from: SocketAddr,
         info: HandshakeControlInfo,
-        crypto_manager: Option<CryptoManager>,
     ) -> ConnectResult {
         let config = &self.config;
         match (info.shake_type, info.info.version(), from) {
@@ -230,7 +206,7 @@ impl Connect {
                     local_sockid: config.local_sockid,
                     remote_sockid: info.socket_id,
                     tsbpd_latency: latency,
-                    crypto_manager,
+                    crypto_manager: self.hsv5.take_crypto(),
                 });
                 // TODO: no handshake retransmit packet needed? is this right? Needs testing.
 
@@ -252,12 +228,10 @@ impl Connect {
                 }
                 control_type => Err(HandshakeExpected(ShakeType::Induction, control_type)),
             },
-            (ConclusionResponseWait(_, cm), Packet::Control(control)) => {
-                match control.control_type {
-                    ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, shake, cm),
-                    control_type => Err(HandshakeExpected(ShakeType::Conclusion, control_type)),
-                }
-            }
+            (ConclusionResponseWait(_), Packet::Control(control)) => match control.control_type {
+                ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, shake),
+                control_type => Err(HandshakeExpected(ShakeType::Conclusion, control_type)),
+            },
             (_, Packet::Data(data)) => Err(ControlExpected(ShakeType::Induction, data)),
             (_, _) => Ok(None),
         }
@@ -272,7 +246,7 @@ impl Connect {
             InductionResponseWait(request_packet) => {
                 Ok(Some((request_packet.clone(), self.config.remote)))
             }
-            ConclusionResponseWait(request_packet, _) => {
+            ConclusionResponseWait(request_packet) => {
                 Ok(Some((request_packet.clone(), self.config.remote)))
             }
             _ => Ok(None),
@@ -299,9 +273,9 @@ where
             local_sockid,
             local_addr,
             tsbpd_latency,
-            crypto_options,
         },
         state: ConnectState::new(),
+        hsv5: HSV5Initiator::new(crypto_options, tsbpd_latency),
     };
 
     let mut tick_interval = interval(Duration::from_millis(100));

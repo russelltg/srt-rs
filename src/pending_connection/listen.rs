@@ -11,20 +11,23 @@ use log::warn;
 use crate::packet::*;
 use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::util::get_packet;
-use crate::{Connection, ConnectionSettings, SocketID};
+use crate::{
+    crypto::{CryptoError, CryptoOptions},
+    Connection, ConnectionSettings, SocketID,
+};
 
-use super::cookie::gen_cookie;
+use super::{cookie::gen_cookie, hsv5::HSV5Responder};
 use ListenError::*;
 use ListenState::*;
 
 pub struct Listen {
     config: ListenConfiguration,
     state: ListenState,
+    hsv5: HSV5Responder,
 }
 
 pub struct ListenConfiguration {
     pub local_socket_id: SocketID,
-    pub tsbpd_latency: Duration,
 }
 
 #[derive(Clone)]
@@ -43,7 +46,7 @@ pub enum ListenState {
     Connected(ControlPacket, ConnectionSettings),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug)]
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 pub enum ListenError {
@@ -54,6 +57,7 @@ pub enum ListenError {
     UnsupportedProtocolVersion(u32),
     InvalidHandshakeCookie(i32, i32),
     SrtHandshakeExpected(HandshakeControlInfo),
+    Crypto(CryptoError),
 }
 
 impl fmt::Display for ListenError {
@@ -88,19 +92,31 @@ impl fmt::Display for ListenError {
                 "Expected SRT handshake request in conclusion handshake, found {:?}",
                 got
             ),
+            Crypto(ge) => write!(f, "{}", ge),
         }
     }
 }
 
 impl Error for ListenError {}
 
+impl From<CryptoError> for ListenError {
+    fn from(ce: CryptoError) -> Self {
+        Crypto(ce)
+    }
+}
+
 type ListenResult = Result<Option<(Packet, SocketAddr)>, ListenError>;
 
 impl Listen {
-    pub fn new(config: ListenConfiguration) -> Listen {
+    pub fn new(
+        config: ListenConfiguration,
+        crypto_options: Option<CryptoOptions>,
+        latency: Duration,
+    ) -> Listen {
         Listen {
             config,
             state: InductionWait,
+            hsv5: HSV5Responder::new(crypto_options, latency),
         }
     }
     fn wait_for_induction(
@@ -184,8 +200,6 @@ impl Listen {
                     _ => Err(SrtHandshakeExpected(shake.clone())),
                 }?;
 
-                let latency = Duration::max(srt_handshake.latency, self.config.tsbpd_latency);
-
                 // construct a packet to send back
                 let resp_handshake = ControlPacket {
                     timestamp,
@@ -193,15 +207,7 @@ impl Listen {
                     control_type: ControlTypes::Handshake(HandshakeControlInfo {
                         syn_cookie: state.cookie,
                         socket_id: self.config.local_socket_id,
-                        info: HandshakeVSInfo::V5 {
-                            ext_hs: Some(SrtControlPacket::HandshakeResponse(SrtHandshake {
-                                latency,
-                                ..*srt_handshake
-                            })),
-                            ext_km: None,
-                            ext_config: None,
-                            crypto_size,
-                        },
+                        info: self.hsv5.gen_vs_info(&shake.info)?,
                         ..shake
                     }),
                 };
@@ -220,7 +226,7 @@ impl Listen {
                     max_packet_size: shake.max_packet_size,
                     local_sockid: self.config.local_socket_id,
                     socket_start_time: Instant::now(), // restamp the socket start time, so TSBPD works correctly
-                    tsbpd_latency: latency,
+                    tsbpd_latency: self.hsv5.latency(),
                     crypto_manager: None, // TODO: implement
                 };
 
@@ -270,6 +276,7 @@ pub async fn listen<T>(
     sock: &mut T,
     local_sockid: SocketID,
     tsbpd_latency: Duration,
+    crypto_options: Option<CryptoOptions>,
 ) -> Result<Connection, io::Error>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
@@ -279,9 +286,9 @@ where
     let mut listen = Listen {
         config: ListenConfiguration {
             local_socket_id: local_sockid,
-            tsbpd_latency,
         },
         state: InductionWait,
+        hsv5: HSV5Responder::new(crypto_options, tsbpd_latency),
     };
 
     loop {
@@ -314,10 +321,13 @@ mod test {
     use crate::packet::{ControlPacket, DataPacket, HandshakeControlInfo, Packet, ShakeType};
 
     fn test_listen() -> Listen {
-        Listen::new(ListenConfiguration {
-            local_socket_id: random(),
-            tsbpd_latency: Duration::from_secs(1),
-        })
+        Listen::new(
+            ListenConfiguration {
+                local_socket_id: random(),
+            },
+            None,
+            Duration::from_secs(1),
+        )
     }
 
     fn test_induction() -> HandshakeControlInfo {
@@ -379,10 +389,10 @@ mod test {
             dest_sockid: random(),
             payload: Bytes::from(&b"asdf"[..]),
         };
-        assert_eq!(
+        assert!(matches!(
             l.handle_packet((Packet::Data(dp.clone()), "127.0.0.1:8765".parse().unwrap())),
             Err(ListenError::ControlExpected(ShakeType::Induction, dp))
-        );
+        ));
     }
 
     #[test]
@@ -390,7 +400,7 @@ mod test {
         let mut l = test_listen();
 
         let a2 = ControlTypes::Ack2(random());
-        assert_eq!(
+        assert!(matches!(
             l.handle_packet((
                 Packet::Control(ControlPacket {
                     timestamp: TimeStamp::from_micros(0),
@@ -400,7 +410,7 @@ mod test {
                 "127.0.0.1:8765".parse().unwrap()
             )),
             Err(ListenError::HandshakeExpected(ShakeType::Induction, a2))
-        );
+        ));
     }
 
     #[test]
@@ -410,13 +420,13 @@ mod test {
         // listen expects an induction first, send a conclustion first
 
         let shake = test_conclusion();
-        assert_eq!(
+        assert!(matches!(
             l.handle_packet((
                 build_hs_pack(shake.clone()),
                 "127.0.0.1:8765".parse().unwrap()
             )),
             Err(ListenError::InductionExpected(shake))
-        );
+        ));
     }
 
     #[test]
@@ -433,12 +443,12 @@ mod test {
 
         let mut shake = test_induction();
         shake.shake_type = ShakeType::Waveahand;
-        assert_eq!(
+        assert!(matches!(
             l.handle_packet((
                 build_hs_pack(shake.clone()),
                 "127.0.0.1:8765".parse().unwrap()
             )),
             Err(ListenError::ConclusionExpected(shake))
-        )
+        ))
     }
 }

@@ -255,7 +255,10 @@ where
                                     }
                                     // neither--this exists just to keep the connection alive
                                     KeepAlive => {}
-                                    Srt(_) => unimplemented!(),
+                                    Srt(s) => {
+                                        dbg!(s);
+                                        // unimplemented!("{:?}", s);
+                                    }
                                 },
                             }
                         }

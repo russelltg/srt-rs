@@ -154,7 +154,6 @@ impl SrtSocketBuilder {
             // OK
             16 | 24 | 32 => {}
             // NOT
-            // TODO: size validation
             size => panic!("Invaid crypto size {}", size),
         }
         self.crypto = Some(CryptoOptions {
@@ -176,7 +175,8 @@ impl SrtSocketBuilder {
     {
         let conn = match self.conn_type {
             ConnInitMethod::Listen => {
-                pending_connection::listen(&mut socket, rand::random(), self.latency).await?
+                pending_connection::listen(&mut socket, rand::random(), self.latency, self.crypto)
+                    .await?
             }
             ConnInitMethod::Connect(addr) => {
                 pending_connection::connect(
@@ -196,6 +196,7 @@ impl SrtSocketBuilder {
                     self.local_addr,
                     remote_public,
                     self.latency,
+                    self.crypto,
                 )
                 .await?
             }

@@ -105,10 +105,13 @@ impl MultiplexState {
         // new connection?
         let tsbpd_latency = self.latency;
         let listen = self.pending.entry(from).or_insert_with(|| {
-            Listen::new(ListenConfiguration {
-                local_socket_id: rand::random(),
+            Listen::new(
+                ListenConfiguration {
+                    local_socket_id: rand::random(),
+                },
+                None,
                 tsbpd_latency,
-            })
+            )
         });
 
         // already started connection?

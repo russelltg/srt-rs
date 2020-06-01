@@ -5,7 +5,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::cookie::gen_cookie;
+use super::{
+    cookie::gen_cookie,
+    hsv5::{HSV5Initiator, HSV5Responder},
+};
 
 use futures::{select, FutureExt, Sink, SinkExt, Stream};
 use log::{debug, trace, warn};
@@ -18,6 +21,7 @@ use crate::packet::{
 use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::util::get_packet;
 use crate::{
+    crypto::{CryptoError, CryptoOptions},
     Connection, ConnectionSettings, ControlPacket, DataPacket, Packet, PacketParseError, SeqNumber,
     SocketID, SrtVersion,
 };
@@ -39,6 +43,7 @@ pub struct RendezvousConfiguration {
     pub local_addr: SocketAddr,
     pub remote_public: SocketAddr,
     pub tsbpd_latency: Duration,
+    pub crypto_options: Option<CryptoOptions>,
 }
 
 // see haivision/srt/docs/handshake.md for documentation
@@ -47,11 +52,11 @@ pub struct RendezvousConfiguration {
 #[allow(clippy::large_enum_variant)]
 enum RendezvousState {
     Waving,
-    Attention(RendezvousRole),
+    Attention(RendezvousHSV5),
     InitiatedResponder(HandshakeControlInfo, SrtHandshake), // responders always have the handshake when they transition to initiated
     InitiatedInitiator,
     FineResponder(HandshakeControlInfo, SrtHandshake),
-    FineInitiator,
+    FineInitiator(HSV5Initiator),
 }
 
 impl Rendezvous {
@@ -97,6 +102,7 @@ pub enum RendezvousError {
     ExpectedHSResp,
     ExpectedExtFlags,
     ExpectedNoExtFlags,
+    Crypto(CryptoError),
 }
 
 impl fmt::Display for RendezvousError {
@@ -132,18 +138,25 @@ impl fmt::Display for RendezvousError {
             ExpectedNoExtFlags => {
                 write!(f, "Initiator did not expect handshake flags, but got some")
             }
+            Crypto(ce) => write!(f, "{}", ce),
         }
+    }
+}
+
+impl From<CryptoError> for RendezvousError {
+    fn from(ce: CryptoError) -> Self {
+        Crypto(ce)
     }
 }
 
 pub type RendezvousResult = Result<Option<(ControlPacket, SocketAddr)>, RendezvousError>;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum RendezvousRole {
-    Initiator,
-    Responder,
+#[derive(Debug, Clone)]
+enum RendezvousHSV5 {
+    Initiator(HSV5Initiator),
+    Responder(HSV5Responder),
 }
-use RendezvousRole::*;
+use RendezvousHSV5::*;
 
 fn get_handshake(packet: &Packet) -> Result<&HandshakeControlInfo, RendezvousError> {
     match packet {
@@ -177,23 +190,23 @@ impl Rendezvous {
         }
     }
 
-    fn gen_flags(&self, role: RendezvousRole) -> HandshakeVSInfo {
-        let shake = SrtHandshake {
-            version: SrtVersion::CURRENT,
-            flags: SrtShakeFlags::SUPPORTED,
-            peer_latency: Duration::from_secs(0),
-            latency: self.config.tsbpd_latency,
-        };
-        HandshakeVSInfo::V5 {
-            crypto_size: 0,
-            ext_hs: Some(match role {
-                Responder => SrtControlPacket::HandshakeResponse(shake),
-                Initiator => SrtControlPacket::HandshakeRequest(shake),
-            }),
-            ext_km: None,
-            ext_config: None,
-        }
-    }
+    // fn gen_flags(&self, role: RendezvousHSV5) -> HandshakeVSInfo {
+    //     let shake = SrtHandshake {
+    //         version: SrtVersion::CURRENT,
+    //         flags: SrtShakeFlags::SUPPORTED,
+    //         peer_latency: Duration::from_secs(0),
+    //         latency: self.config.tsbpd_latency,
+    //     };
+    //     HandshakeVSInfo::V5 {
+    //         crypto_size: 0,
+    //         ext_hs: Some(match role {
+    //             Responder => SrtControlPacket::HandshakeResponse(shake),
+    //             Initiator => SrtControlPacket::HandshakeRequest(shake),
+    //         }),
+    //         ext_km: None,
+    //         ext_config: None,
+    //     }
+    // }
 
     fn gen_packet(&self, shake_type: ShakeType, info: HandshakeVSInfo) -> HandshakeControlInfo {
         self.config
@@ -253,43 +266,53 @@ impl Rendezvous {
 
         // NOTE: the cookie comparsion behavior is not correctly documented. See haivision/srt#1267
         let role = match self.cookie.wrapping_sub(info.syn_cookie).cmp(&0) {
-            Ordering::Greater => Initiator,
-            Ordering::Less => Responder,
+            Ordering::Greater => Initiator(HSV5Initiator::new(
+                self.config.crypto_options.clone(),
+                self.config.tsbpd_latency,
+            )),
+            Ordering::Less => Responder(HSV5Responder::new(
+                self.config.crypto_options.clone(),
+                self.config.tsbpd_latency,
+            )),
             Ordering::Equal => return Err(RendezvousError::CookiesMatched(self.cookie)),
         };
 
         match info.shake_type {
             ShakeType::Waveahand => {
-                self.state = Attention(role);
+                self.state = Attention(role.clone());
                 debug!(
                     "Rendezvous {:?} transitioning from Wavahand to {:?}",
                     self.config.local_socket_id, self.state
                 );
                 self.send_conclusion(
                     info.socket_id,
-                    match role {
-                        Initiator => self.gen_flags(role),
-                        Responder => Rendezvous::empty_flags(),
+                    match &role {
+                        Initiator(i) => i.gen_vs_info(todo!())?,
+                        Responder(_) => Rendezvous::empty_flags(),
                     },
                 )
             }
             ShakeType::Conclusion => {
-                self.state = match (role, extract_ext_info(info)?) {
-                    (Responder, Some(SrtControlPacket::HandshakeRequest(hsreq))) => {
-                        FineResponder(info.clone(), *hsreq)
+                let hsv5_shake = match (&role, extract_ext_info(info)?) {
+                    (Responder(resp), Some(SrtControlPacket::HandshakeRequest(hsreq))) => {
+                        self.state = FineResponder(info.clone(), *hsreq);
+                        resp.gen_vs_info(&info.info)?
                     }
-                    (Initiator, None) => FineInitiator,
-                    (Responder, Some(_)) => {
+                    (Initiator(init), None) => {
+                        self.state = FineInitiator(init.clone());
+                        init.gen_vs_info(todo!())?
+                    }
+                    (Responder(_), Some(_)) => {
                         return Err(RendezvousError::ExpectedHSReq);
                     }
-                    (Initiator, Some(_)) => return Err(RendezvousError::ExpectedNoExtFlags),
-                    (Responder, None) => return Err(RendezvousError::ExpectedExtFlags),
+                    (Initiator(_), Some(_)) => return Err(RendezvousError::ExpectedNoExtFlags),
+                    (Responder(_), None) => return Err(RendezvousError::ExpectedExtFlags),
                 };
                 debug!(
                     "Rendezvous {:?} transitioning from Wavahand to {:?}",
                     self.config.local_socket_id, self.state
                 );
-                self.send_conclusion(info.socket_id, self.gen_flags(role))
+                self.send_conclusion(info.socket_id, hsv5_shake)
             }
             ShakeType::Agreement => Ok(None),
             ShakeType::Induction => Err(RendezvousError::RendezvousExpected(info.clone())),
@@ -298,11 +321,11 @@ impl Rendezvous {
 
     fn handle_attention(
         &mut self,
-        role: RendezvousRole,
+        role: RendezvousHSV5,
         info: &HandshakeControlInfo,
     ) -> RendezvousResult {
         match (info.shake_type, role) {
-            (ShakeType::Conclusion, Initiator) => match extract_ext_info(info)? {
+            (ShakeType::Conclusion, Initiator(initiator)) => match extract_ext_info(info)? {
                 Some(SrtControlPacket::HandshakeResponse(request)) => {
                     let agreement =
                         self.gen_packet(ShakeType::Agreement, Rendezvous::empty_flags());
@@ -320,10 +343,10 @@ impl Rendezvous {
                         self.config.local_socket_id, self.state, InitiatedInitiator,
                     );
                     self.state = InitiatedInitiator;
-                    self.send_conclusion(info.socket_id, self.gen_flags(role))
+                    self.send_conclusion(info.socket_id, initiator.gen_vs_info(todo!())?)
                 }
             },
-            (ShakeType::Conclusion, Responder) => {
+            (ShakeType::Conclusion, Responder(responder)) => {
                 let request = match extract_ext_info(info)? {
                     Some(SrtControlPacket::HandshakeRequest(request)) => request,
                     Some(_) => return Err(ExpectedHSReq),
@@ -336,18 +359,22 @@ impl Rendezvous {
                     InitiatedResponder(info.clone(), *request),
                 );
                 self.state = InitiatedResponder(info.clone(), *request);
-                self.send_conclusion(info.socket_id, self.gen_flags(Responder))
+                self.send_conclusion(info.socket_id, responder.gen_vs_info(&info.info)?)
             }
             _ => Ok(None), // todo: errors
         }
     }
 
-    fn handle_fine_initiator(&mut self, info: &HandshakeControlInfo) -> RendezvousResult {
+    fn handle_fine_initiator(
+        &mut self,
+        info: &HandshakeControlInfo,
+        initiator: HSV5Initiator,
+    ) -> RendezvousResult {
         match info.shake_type {
             ShakeType::Conclusion => match extract_ext_info(info)? {
                 Some(SrtControlPacket::HandshakeResponse(response)) => {
                     let agreement =
-                        self.gen_packet(ShakeType::Agreement, self.gen_flags(Initiator));
+                        self.gen_packet(ShakeType::Agreement, initiator.gen_vs_info(todo!())?);
 
                     self.set_connected(
                         info,
@@ -436,7 +463,7 @@ impl Rendezvous {
             InitiatedResponder(info, request) => {
                 self.handle_initiated_responder(&request, &info, &packet)
             }
-            FineInitiator => self.handle_fine_initiator(hs?),
+            FineInitiator(initiator) => self.handle_fine_initiator(hs?, initiator),
             FineResponder(prev_info, request) => {
                 self.handle_fine_responder(&prev_info, &request, &packet)
             }
@@ -475,6 +502,7 @@ pub async fn rendezvous<T>(
     local_addr: SocketAddr,
     remote_public: SocketAddr,
     tsbpd_latency: Duration,
+    crypto_options: Option<CryptoOptions>,
 ) -> Result<Connection, io::Error>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
@@ -486,6 +514,7 @@ where
         local_addr,
         remote_public,
         tsbpd_latency,
+        crypto_options,
     };
 
     let mut rendezvous = Rendezvous::new(configuration);
