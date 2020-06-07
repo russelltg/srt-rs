@@ -29,8 +29,9 @@ Reference implementation is available at https://github.com/haivision/srt
 - [x] Sending
 - [x] Special SRT packets (partial)
 - [x] Actual SRT (TSBPD)
-- [ ] Timestamp drift recovery
-- [ ] Encryption
+- [x] Timestamp drift recovery (not throughly tested)
+- [ ] Congestion control
+- [x] Encryption
 - [x] Bidirectional
 
 # Thread Efficiency
