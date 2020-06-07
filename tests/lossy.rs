@@ -18,7 +18,7 @@ async fn lossy() {
 
     // a stream of ascending stringified integers
     let counting_stream = stream::iter(0..ITERS)
-        .zip(interval(Duration::from_millis(1)))
+        .zip(interval(Duration::from_millis(10)))
         .map(|(i, _)| Bytes::from(i.to_string()));
 
     // 5% packet loss, 20ms delay

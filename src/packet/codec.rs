@@ -14,8 +14,7 @@ impl Decoder for PacketCodec {
     }
 }
 
-impl Encoder for PacketCodec {
-    type Item = Packet;
+impl Encoder<Packet> for PacketCodec {
     type Error = io::Error;
 
     fn encode(&mut self, packet: Packet, buf: &mut BytesMut) -> Result<(), Self::Error> {
