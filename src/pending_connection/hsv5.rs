@@ -18,16 +18,16 @@ pub fn gen_hsv5_response(
     with_hsv5: &HandshakeControlInfo,
     from: SocketAddr,
 ) -> Result<(HandshakeVSInfo, ConnectionSettings), ConnectError> {
-    let (crypto_size, incoming_ext_hs, incoming_ext_km, incoming_ext_config) = match &with_hsv5.info
-    {
-        HandshakeVSInfo::V5 {
-            crypto_size,
-            ext_hs,
-            ext_km,
-            ext_config,
-        } => (crypto_size, ext_hs, ext_km, ext_config),
-        i => return Err(ConnectError::UnsupportedProtocolVersion(i.version())),
-    };
+    let (crypto_size, incoming_ext_hs, incoming_ext_km, _incoming_ext_config) =
+        match &with_hsv5.info {
+            HandshakeVSInfo::V5 {
+                crypto_size,
+                ext_hs,
+                ext_km,
+                ext_config,
+            } => (crypto_size, ext_hs, ext_km, ext_config),
+            i => return Err(ConnectError::UnsupportedProtocolVersion(i.version())),
+        };
 
     let hs = match incoming_ext_hs {
         Some(SrtControlPacket::HandshakeRequest(hs)) => hs,
@@ -131,7 +131,7 @@ impl StartedInitiator {
         from: SocketAddr,
     ) -> Result<ConnectionSettings, ConnectError> {
         // TODO: factor this out with above...
-        let (crypto_size, incoming_ext_hs, incoming_ext_km, incoming_ext_config) =
+        let (_crypto_size, incoming_ext_hs, _incoming_ext_km, _incoming_ext_config) =
             match &response.info {
                 HandshakeVSInfo::V5 {
                     crypto_size,
