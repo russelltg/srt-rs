@@ -40,6 +40,22 @@ impl Packet {
         }
     }
 
+    pub fn data(&self) -> Option<&DataPacket> {
+        if let Packet::Data(d) = self {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    pub fn control(&self) -> Option<&ControlPacket> {
+        if let Packet::Control(c) = self {
+            Some(c)
+        } else {
+            None
+        }
+    }
+
     pub fn parse<T: Buf>(buf: &mut T) -> Result<Packet, PacketParseError> {
         // Buffer must be at least 16 bytes,
         // the length of a header packet

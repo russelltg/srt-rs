@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use srt::SrtSocketBuilder;
 
@@ -6,18 +6,18 @@ use futures::{SinkExt, TryStreamExt};
 
 use bytes::Bytes;
 
-use tokio::spawn;
+use tokio::{spawn, time::delay_for};
 
-#[tokio::test]
-#[ignore]
-async fn crypto_exchange() {
+async fn test_crypto(size: u8) {
+    let _ = env_logger::try_init();
+
     let sender = SrtSocketBuilder::new_listen()
-        .crypto(24, "password123".into())
+        .crypto(size, "password123")
         .local_port(2000)
         .connect();
 
     let recvr = SrtSocketBuilder::new_connect("127.0.0.1:2000")
-        .crypto(24, "password123".into())
+        .crypto(size, "password123")
         .connect();
 
     spawn(async move {
@@ -26,11 +26,23 @@ async fn crypto_exchange() {
             .send((Instant::now(), Bytes::from("Hello")))
             .await
             .unwrap();
+        sender.close().await.unwrap();
     });
 
-    spawn(async move {
-        let mut recvr = recvr.await.unwrap();
-        let (_, by) = recvr.try_next().await.unwrap().unwrap();
-        assert_eq!(&by[..], b"Hello");
-    });
+    let mut recvr = recvr.await.unwrap();
+    let (_, by) = recvr.try_next().await.unwrap().unwrap();
+    assert_eq!(&by[..], b"Hello");
+    recvr.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn crypto_exchange() {
+    test_crypto(16).await;
+    delay_for(Duration::from_millis(100)).await;
+    test_crypto(24).await;
+    delay_for(Duration::from_millis(100)).await;
+    test_crypto(32).await;
+}
+
+// TODO: bad password
+// TODO: mismatch

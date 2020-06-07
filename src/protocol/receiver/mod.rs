@@ -5,14 +5,14 @@ use std::iter::Iterator;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
-use log::{debug, info, trace, warn};
+use bytes::{Bytes, BytesMut};
+use log::{debug, error, info, trace, warn};
 
 use super::{TimeSpan, Timer};
 use crate::loss_compression::compress_loss_list;
 use crate::packet::{
-    AckControlInfo, ControlPacket, ControlTypes, DataPacket, HandshakeControlInfo, Packet,
-    SrtControlPacket,
+    AckControlInfo, ControlPacket, ControlTypes, DataEncryption, DataPacket, HandshakeControlInfo,
+    Packet, SrtControlPacket,
 };
 use crate::protocol::handshake::Handshake;
 use crate::protocol::TimeStamp;
@@ -154,11 +154,11 @@ impl Receiver {
 
         info!(
             "Receiving started from {:?}, with latency={:?}",
-            settings.remote, settings.tsbpd_latency
+            settings.remote, settings.recv_tsbpd_latency
         );
 
         Receiver {
-            settings,
+            settings: settings.clone(),
             timers: ReceiveTimers::new(settings.socket_start_time),
             control_packets: VecDeque::new(),
             data_release: VecDeque::new(),
@@ -193,9 +193,9 @@ impl Receiver {
         if self.settings.local_sockid != packet.dest_sockid() {
             // packet isn't applicable
             info!(
-                "Packet send to socket id ({}) that does not match local ({})",
-                packet.dest_sockid().0,
-                self.settings.local_sockid.0
+                "Packet send to socket id ({:?}) that does not match local ({:?})",
+                packet.dest_sockid(),
+                self.settings.local_sockid
             );
             return;
         }
@@ -223,7 +223,7 @@ impl Receiver {
                     }
                 }
             }
-            Packet::Data(data) => self.handle_data_packet(&data, now),
+            Packet::Data(data) => self.handle_data_packet(data, now),
         };
     }
 
@@ -499,7 +499,7 @@ impl Receiver {
         }
     }
 
-    fn handle_data_packet(&mut self, data: &DataPacket, now: Instant) {
+    fn handle_data_packet(&mut self, mut data: DataPacket, now: Instant) {
         let ts_now = self.receive_buffer.timestamp_from(now);
 
         // 2&3 don't apply
@@ -571,7 +571,29 @@ impl Receiver {
             return;
         }
 
-        self.receive_buffer.add(data.clone());
+        // decrypt the packet if it's encrypted
+        if data.encryption != DataEncryption::None {
+            self.decrypt_packet(&mut data);
+        }
+
+        self.receive_buffer.add(data);
+    }
+
+    fn decrypt_packet(&self, data: &mut DataPacket) {
+        let cm = match &self.settings.crypto_manager {
+            None => {
+                error!("Unexpcted encrypted packet!");
+                return;
+            }
+            Some(cm) => cm,
+        };
+
+        // this requies an extra copy here...maybe DataPacket should have a BytesMut in it instead...
+        let mut bm = BytesMut::with_capacity(data.payload.len());
+        bm.extend_from_slice(&data.payload[..]);
+        cm.decrypt(data.seq_number, data.encryption, &mut bm);
+
+        data.payload = bm.freeze();
     }
 
     // send a NAK, and return the future

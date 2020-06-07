@@ -129,7 +129,7 @@ impl Sender {
         congestion_control: SrtCongestCtrl,
     ) -> Self {
         Self {
-            settings,
+            settings: settings.clone(),
             handshake,
             congestion_control,
             metrics: SenderMetrics::new(),

@@ -1,7 +1,6 @@
 use std::net::{IpAddr, SocketAddr};
 use std::{
-    error::Error,
-    fmt, io,
+    io,
     time::{Duration, Instant},
 };
 
@@ -13,27 +12,23 @@ use tokio::time::interval;
 use crate::packet::*;
 use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::util::get_packet;
-use crate::{Connection, ConnectionSettings, SeqNumber, SocketID, SrtVersion};
+use crate::{Connection, ConnectionSettings, SocketID};
 
+use super::{
+    hsv5::{start_hsv5_initiation, StartedInitiator},
+    ConnInitSettings, ConnectError,
+};
 use ConnectError::*;
 use ConnectState::*;
 
-pub struct ConnectConfiguration {
-    pub remote: SocketAddr,
-    pub local_sockid: SocketID,
-    pub local_addr: IpAddr,
-    pub tsbpd_latency: Duration,
-}
-
-#[derive(Clone)]
 #[allow(clippy::large_enum_variant)]
+#[derive(Clone)]
 pub enum ConnectState {
-    /// initial sequence number
-    Configured(SeqNumber),
+    Configured,
     /// keep induction packet around for retransmit
     InductionResponseWait(Packet),
     /// keep conclusion packet around for retransmit
-    ConclusionResponseWait(Packet),
+    ConclusionResponseWait(Packet, StartedInitiator),
     Connected(ConnectionSettings),
 }
 
@@ -45,87 +40,37 @@ impl Default for ConnectState {
 
 impl ConnectState {
     pub fn new() -> ConnectState {
-        Configured(rand::random())
+        Configured
     }
 }
-
-#[derive(Debug)]
-#[non_exhaustive]
-#[allow(clippy::large_enum_variant)]
-pub enum ConnectError {
-    ControlExpected(ShakeType, DataPacket),
-    HandshakeExpected(ShakeType, ControlTypes),
-    InductionExpected(HandshakeControlInfo),
-    UnexpectedHost(SocketAddr, SocketAddr),
-    ConclusionExpected(HandshakeControlInfo),
-    UnsupportedProtocolVersion(u32),
-    // TODO: why don't we validate the cookie on responses
-    //#[error("Received invalid cookie handshake from [address], expected: {0} found {1}")]
-    //InvalidHandshakeCookie(i32, i32),
-    // TODO: why don't we validate we have an SRT response
-    //#[error("Expected SRT handshake request in conclusion handshake, found {0}")]
-    //SrtHandshakeExpected(HandshakeControlInfo),
-}
-
-impl fmt::Display for ConnectError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ControlExpected(shake, pack) => write!(
-                f,
-                "Expected Control packet, expected {:?}, found {:?}",
-                shake, pack
-            ),
-            HandshakeExpected(expected, got) => write!(
-                f,
-                "Expected Handshake packet, expected: {:?} found: {:?}",
-                expected, got
-            ),
-            InductionExpected(got) => write!(f, "Expected Induction (1) packet, found: {:?}", got),
-            UnexpectedHost(host, got) => write!(
-                f,
-                "Expected packets from different host, expected: {} found: {}",
-                host, got
-            ),
-            ConclusionExpected(got) => {
-                write!(f, "Expected Conclusion (-1) packet, found: {:?}", got)
-            }
-            UnsupportedProtocolVersion(got) => write!(
-                f,
-                "Unsupported protocol version, expected: v5 found v{0}",
-                got
-            ),
-        }
-    }
-}
-
-impl Error for ConnectError {}
 
 pub struct Connect {
-    config: ConnectConfiguration,
+    remote: SocketAddr,
+    local_addr: IpAddr,
+    init_settings: ConnInitSettings,
     state: ConnectState,
 }
 
 pub type ConnectResult = Result<Option<(Packet, SocketAddr)>, ConnectError>;
 
 impl Connect {
-    fn on_start(&mut self, init_seq_num: SeqNumber) -> ConnectResult {
-        let config = &self.config;
+    fn on_start(&mut self) -> ConnectResult {
         let packet = Packet::Control(ControlPacket {
             dest_sockid: SocketID(0),
             timestamp: TimeStamp::from_micros(0), // TODO: this is not zero in the reference implementation
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                init_seq_num,
+                init_seq_num: self.init_settings.starting_send_seqnum,
                 max_packet_size: 1500, // TODO: take as a parameter
                 max_flow_size: 8192,   // TODO: take as a parameter
-                socket_id: config.local_sockid,
+                socket_id: self.init_settings.local_sockid,
                 shake_type: ShakeType::Induction,
-                peer_addr: config.local_addr,
+                peer_addr: self.local_addr,
                 syn_cookie: 0,
                 info: HandshakeVSInfo::V4(SocketType::Datagram),
             }),
         });
         self.state = InductionResponseWait(packet.clone());
-        Ok(Some((packet, config.remote)))
+        Ok(Some((packet, self.remote)))
     }
 
     pub fn wait_for_induction(
@@ -134,51 +79,31 @@ impl Connect {
         timestamp: TimeStamp,
         info: HandshakeControlInfo,
     ) -> ConnectResult {
-        let config = &self.config;
-        match (info.shake_type, info.info.version(), from) {
-            (ShakeType::Induction, 5, from) if from == config.remote => {
+        match (info.shake_type, &info.info, from) {
+            (ShakeType::Induction, HandshakeVSInfo::V5 { .. }, from) if from == self.remote => {
+                let (hsv5, cm) = start_hsv5_initiation(self.init_settings.clone())?;
+
                 // send back a packet with the same syn cookie
                 let packet = Packet::Control(ControlPacket {
                     timestamp,
                     dest_sockid: SocketID(0),
                     control_type: ControlTypes::Handshake(HandshakeControlInfo {
                         shake_type: ShakeType::Conclusion,
-                        socket_id: config.local_sockid,
-                        info: HandshakeVSInfo::V5 {
-                            crypto_size: 0, // TODO: implement
-                            ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
-                                version: SrtVersion::CURRENT,
-                                // TODO: this is hyper bad, don't blindly set send flag
-                                // if you don't pass TSBPDRCV, it doens't set the latency correctly for some reason. Requires more research
-                                peer_latency: Duration::from_secs(0), // TODO: research
-                                flags: SrtShakeFlags::SUPPORTED,
-                                latency: config.tsbpd_latency,
-                            })),
-                            ext_km: None,
-                            // ext_km: self.crypto.as_mut().map(|manager| {
-                            //     SrtControlPacket::KeyManagerRequest(SrtKeyMessage {
-                            //         pt: 2,       // TODO: what is this
-                            //         sign: 8_233, // TODO: again
-                            //         keki: 0,
-                            //         cipher: CipherType::CTR,
-                            //         auth: 0,
-                            //         se: 2,
-                            //         salt: Vec::from(manager.salt()),
-                            //         even_key: Some(manager.wrap_key().unwrap()),
-                            //         odd_key: None,
-                            //         wrap_data: [0; 8],
-                            //     })
-                            // }),
-                            ext_config: None,
-                        },
+                        socket_id: self.init_settings.local_sockid,
+                        info: hsv5,
+                        init_seq_num: self.init_settings.starting_send_seqnum,
                         ..info
                     }),
                 });
-                self.state = ConclusionResponseWait(packet.clone());
+                self.state = ConclusionResponseWait(packet.clone(), cm);
                 Ok(Some((packet, from)))
             }
-            (ShakeType::Induction, 5, from) => Err(UnexpectedHost(config.remote, from)),
-            (ShakeType::Induction, version, _) => Err(UnsupportedProtocolVersion(version)),
+            (ShakeType::Induction, HandshakeVSInfo::V5 { .. }, from) => {
+                Err(UnexpectedHost(self.remote, from))
+            }
+            (ShakeType::Induction, version, _) => {
+                Err(UnsupportedProtocolVersion(version.version()))
+            }
             (_, _, _) => Err(InductionExpected(info)),
         }
     }
@@ -187,39 +112,19 @@ impl Connect {
         &mut self,
         from: SocketAddr,
         info: HandshakeControlInfo,
+        initiator: StartedInitiator,
     ) -> ConnectResult {
-        let config = &self.config;
         match (info.shake_type, info.info.version(), from) {
-            (ShakeType::Conclusion, 5, from) if from == config.remote => {
-                let latency = match info.info {
-                    HandshakeVSInfo::V5 {
-                        ext_hs: Some(SrtControlPacket::HandshakeResponse(hs)),
-                        ..
-                    } => hs.latency,
-                    _ => {
-                        warn!("Did not get SRT handhsake in conclusion handshake packet, using latency from connector's end");
-                        config.tsbpd_latency
-                    }
-                };
+            (ShakeType::Conclusion, 5, from) if from == self.remote => {
+                let settings = initiator.finish_hsv5_initiation(&info, from)?;
 
-                self.state = Connected(ConnectionSettings {
-                    remote: config.remote,
-                    max_flow_size: info.max_flow_size,
-                    max_packet_size: info.max_packet_size,
-                    init_send_seq_num: info.init_seq_num,
-                    init_recv_seq_num: info.init_seq_num,
-                    // restamp the socket start time, so TSBPD works correctly.
-                    // TODO: technically it would be 1 rtt off....
-                    socket_start_time: Instant::now(),
-                    local_sockid: config.local_sockid,
-                    remote_sockid: info.socket_id,
-                    tsbpd_latency: latency,
-                });
+                self.state = Connected(settings);
+
                 // TODO: no handshake retransmit packet needed? is this right? Needs testing.
 
                 Ok(None)
             }
-            (ShakeType::Conclusion, 5, from) => Err(UnexpectedHost(config.remote, from)),
+            (ShakeType::Conclusion, 5, from) => Err(UnexpectedHost(self.remote, from)),
             (ShakeType::Conclusion, version, _) => Err(UnsupportedProtocolVersion(version)),
             (ShakeType::Induction, _, _) => Ok(None),
             (_, _, _) => Err(ConclusionExpected(info)),
@@ -233,23 +138,26 @@ impl Connect {
                 ControlTypes::Handshake(shake) => {
                     self.wait_for_induction(from, control.timestamp, shake)
                 }
-                control_type => Err(HandshakeExpected(ShakeType::Induction, control_type)),
+                control_type => Err(HandshakeExpected(control_type)),
             },
-            (ConclusionResponseWait(_), Packet::Control(control)) => match control.control_type {
-                ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, shake),
-                control_type => Err(HandshakeExpected(ShakeType::Conclusion, control_type)),
+            (ConclusionResponseWait(_, cm), Packet::Control(control)) => match control.control_type
+            {
+                ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, shake, cm),
+                control_type => Err(HandshakeExpected(control_type)),
             },
-            (_, Packet::Data(data)) => Err(ControlExpected(ShakeType::Induction, data)),
+            (_, Packet::Data(data)) => Err(ControlExpected(data)),
             (_, _) => Ok(None),
         }
     }
 
     pub fn handle_tick(&mut self, _now: Instant) -> ConnectResult {
-        match self.state.clone() {
-            Configured(init_seq_num) => self.on_start(init_seq_num),
-            InductionResponseWait(request_packet) => Ok(Some((request_packet, self.config.remote))),
-            ConclusionResponseWait(request_packet) => {
-                Ok(Some((request_packet, self.config.remote)))
+        match &self.state {
+            Configured => self.on_start(),
+            InductionResponseWait(request_packet) => {
+                Ok(Some((request_packet.clone(), self.remote)))
+            }
+            ConclusionResponseWait(request_packet, _) => {
+                Ok(Some((request_packet.clone(), self.remote)))
             }
             _ => Ok(None),
         }
@@ -259,10 +167,8 @@ impl Connect {
 pub async fn connect<T>(
     sock: &mut T,
     remote: SocketAddr,
-    local_sockid: SocketID,
     local_addr: IpAddr,
-    tsbpd_latency: Duration,
-    _crypto: Option<(u8, String)>,
+    init_settings: ConnInitSettings,
 ) -> Result<Connection, io::Error>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
@@ -270,12 +176,9 @@ where
         + Unpin,
 {
     let mut connect = Connect {
-        config: ConnectConfiguration {
-            remote,
-            local_sockid,
-            local_addr,
-            tsbpd_latency,
-        },
+        remote,
+        local_addr,
+        init_settings,
         state: ConnectState::new(),
     };
 
@@ -295,7 +198,7 @@ where
             }
             _ => {}
         }
-        if let Connected(settings) = connect.state.clone() {
+        if let Connected(settings) = connect.state {
             return Ok(Connection {
                 settings,
                 handshake: Handshake::Connector,

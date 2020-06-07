@@ -163,15 +163,13 @@ impl<T: Sync + Send + Unpin + 'static> Sink<(T, SocketAddr)> for LossyConn<T> {
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(
-            ready!(Pin::new(&mut self.sender).poll_flush(cx)).unwrap()
-        ))
+        ready!(Pin::new(&mut self.sender).poll_flush(cx)).unwrap();
+        Poll::Ready(Ok(()))
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(
-            ready!(Pin::new(&mut self.sender).poll_close(cx)).unwrap()
-        ))
+        ready!(Pin::new(&mut self.sender).poll_close(cx)).unwrap();
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -241,6 +239,6 @@ impl<T> LossyConn<T> {
             }
             Err(_) => rand::random(),
         };
-        return Self::with_seed(loss_rate, delay_avg, delay_stddev, local_a, local_b, s);
+        Self::with_seed(loss_rate, delay_avg, delay_stddev, local_a, local_b, s)
     }
 }

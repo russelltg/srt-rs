@@ -4,3 +4,5 @@ steps:
       scriptPath: ./ci/codecov.sh
     displayName: 'Run codecov'
     condition: eq(variables['Agent.OS'], 'Linux')
+    env:
+      CODECOV_TOKEN: $(codecov_token)

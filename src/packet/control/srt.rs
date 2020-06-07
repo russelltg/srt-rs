@@ -66,17 +66,13 @@ pub enum SrtControlPacket {
 ///
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SrtKeyMessage {
-    pub pt: PacketType,
+    pub pt: PacketType, // TODO: i think this is always KeyingMaterial....
+    pub key_flags: KeyFlags,
     pub keki: u32,
     pub cipher: CipherType,
     pub auth: Auth,
     pub salt: Vec<u8>,
-    pub even_key: Option<Vec<u8>>,
-    pub odd_key: Option<Vec<u8>>,
-
-    /// The data for unwrapping the key. TODO: research more
-    /// RFC 3394
-    pub wrap_data: [u8; 8],
+    pub wrapped_keys: Vec<u8>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -118,6 +114,13 @@ pub enum PacketType {
     // see htcryp_msg.h:43...
 }
 
+bitflags! {
+    pub struct KeyFlags : u8 {
+        const EVEN = 0b01;
+        const ODD = 0b10;
+    }
+}
+
 impl TryFrom<u8> for PacketType {
     type Error = PacketParseError;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
@@ -148,15 +151,15 @@ pub struct SrtHandshake {
     /// SRT connection init flags
     pub flags: SrtShakeFlags,
 
-    /// The peer's TSBPD latency
+    /// The peer's TSBPD latency (latency to send at)
     /// This is serialized as the upper 16 bits of the third 32-bit word
     /// source: https://github.com/Haivision/srt/blob/4f7f2beb2e1e306111b9b11402049a90cb6d3787/srtcore/core.cpp#L1341-L1353
-    pub peer_latency: Duration,
+    pub send_latency: Duration,
 
-    /// The TSBPD latency
+    /// The TSBPD latency (latency to recv at)
     /// This is serialized as the lower 16 bits of the third 32-bit word
     /// see csrtcc.cpp:132 in the reference implementation
-    pub latency: Duration,
+    pub recv_latency: Duration,
 }
 
 bitflags! {
@@ -244,10 +247,7 @@ impl SrtControlPacket {
             HandshakeRequest(_) | HandshakeResponse(_) => 3,
             // 4 32-bit words + salt + key + wrap [2]
             KeyManagerRequest(ref k) | KeyManagerResponse(ref k) => {
-                4 + k.salt.len() as u16 / 4
-                    + k.odd_key.as_ref().map(Vec::len).unwrap_or(0) as u16 / 4
-                    + k.even_key.as_ref().map(Vec::len).unwrap_or(0) as u16 / 4
-                    + 2
+                4 + k.salt.len() as u16 / 4 + k.wrapped_keys.len() as u16 / 4
             }
             _ => unimplemented!(),
         }
@@ -276,8 +276,8 @@ impl SrtHandshake {
         Ok(SrtHandshake {
             version,
             flags,
-            peer_latency: Duration::from_millis(u64::from(peer_latency)),
-            latency: Duration::from_millis(u64::from(latency)),
+            send_latency: Duration::from_millis(u64::from(peer_latency)),
+            recv_latency: Duration::from_millis(u64::from(latency)),
         })
     }
 
@@ -285,10 +285,10 @@ impl SrtHandshake {
         into.put_u32(self.version.to_u32());
         into.put_u32(self.flags.bits());
         // upper 16 bits are peer latency
-        into.put_u16(self.peer_latency.as_millis() as u16); // TODO: handle overflow
+        into.put_u16(self.send_latency.as_millis() as u16); // TODO: handle overflow
 
         // lower 16 is latency
-        into.put_u16(self.latency.as_millis() as u16); // TODO: handle overflow
+        into.put_u16(self.recv_latency.as_millis() as u16); // TODO: handle overflow
     }
 }
 
@@ -336,7 +336,7 @@ impl SrtKeyMessage {
         }
 
         // next 6 bits is reserved, then two bits of KF
-        let key_flags = buf.get_u8() & 0b0000_0011;
+        let key_flags = KeyFlags::from_bits_truncate(buf.get_u8() & 0b0000_0011);
 
         // second 32-bit word: keki
         let keki = buf.get_u32();
@@ -377,7 +377,7 @@ impl SrtKeyMessage {
         // get the size of the packet to make sure that there is enough space
 
         // salt + keys (there's a 1 for each in key flags, it's already been anded with 0b11 so max is 2), wrap data is 8 long
-        if buf.remaining() < salt_len + key_len * (key_flags.count_ones() as usize) + 8 {
+        if buf.remaining() < salt_len + key_len * (key_flags.bits.count_ones() as usize) + 8 {
             return Err(PacketParseError::NotEnoughData);
         }
 
@@ -392,43 +392,20 @@ impl SrtKeyMessage {
         }
 
         // then key[s]
-        let even_key = if key_flags & 0b01 == 0b01 {
-            let mut even_key = vec![];
+        let mut wrapped_keys = vec![];
 
-            for _ in 0..key_len / 4 {
-                even_key.extend_from_slice(&buf.get_u32().to_be_bytes()[..]);
-            }
-            Some(even_key)
-        } else {
-            None
-        };
-
-        let odd_key = if key_flags & 0b10 == 0b10 {
-            let mut odd_key = vec![];
-
-            for _ in 0..key_len / 4 {
-                odd_key.extend_from_slice(&buf.get_u32().to_be_bytes()[..]);
-            }
-            Some(odd_key)
-        } else {
-            None
-        };
-
-        // finally, is the wrap data. it's 8 bytes. make sure to swap bytes correctly
-        let mut wrap_data = [0; 8];
-
-        wrap_data[..4].clone_from_slice(&buf.get_u32().to_be_bytes()[..]);
-        wrap_data[4..].clone_from_slice(&buf.get_u32().to_be_bytes()[..]);
+        for _ in 0..(key_len * key_flags.bits.count_ones() as usize + 8) / 4 {
+            wrapped_keys.extend_from_slice(&buf.get_u32().to_be_bytes()[..]);
+        }
 
         Ok(SrtKeyMessage {
             pt,
+            key_flags,
             keki,
             cipher,
             auth,
             salt,
-            even_key,
-            odd_key,
-            wrap_data,
+            wrapped_keys,
         })
     }
 
@@ -445,12 +422,7 @@ impl SrtKeyMessage {
         into.put_u16(Self::SIGN);
 
         // rightmost bit of KF is even, other is odd
-        into.put_u8(match (&self.odd_key, &self.even_key) {
-            (Some(_), Some(_)) => 0b11,
-            (Some(_), None) => 0b10,
-            (None, Some(_)) => 0b01,
-            (None, None) => panic!("Invalid key message: either even or odd key MUST be set"),
-        });
+        into.put_u8(self.key_flags.bits);
 
         // second 32-bit word: keki
         into.put_u32(self.keki);
@@ -474,12 +446,7 @@ impl SrtKeyMessage {
         into.put_u8((self.salt.len() / 4) as u8);
 
         // this unwrap is okay because we already panic above if both are None
-        let key_len = [&self.odd_key, &self.even_key]
-            .iter()
-            .filter_map(|&a| a.as_ref())
-            .next()
-            .unwrap()
-            .len();
+        let key_len = (self.wrapped_keys.len() - 8) / self.key_flags.bits.count_ones() as usize;
         into.put_u8((key_len / 4) as u8);
 
         // put the salt then key[s]
@@ -489,18 +456,7 @@ impl SrtKeyMessage {
         // so we need to make sure to do the same. Source:
         // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/srtcore/crypto.cpp#L115
 
-        if let Some(ref even) = self.even_key {
-            for num in even[..].chunks(4) {
-                into.put_u32(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
-            }
-        }
-        if let Some(ref odd) = self.odd_key {
-            for num in odd[..].chunks(4) {
-                into.put_u32(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
-            }
-        }
-        // put the wrap
-        for num in self.wrap_data[..].chunks(4) {
+        for num in self.wrapped_keys[..].chunks(4) {
             into.put_u32(u32::from_be_bytes([num[0], num[1], num[2], num[3]]));
         }
     }
@@ -550,8 +506,8 @@ mod tests {
             control_type: ControlTypes::Srt(SrtControlPacket::HandshakeRequest(SrtHandshake {
                 version: SrtVersion::CURRENT,
                 flags: SrtShakeFlags::empty(),
-                peer_latency: Duration::from_millis(4000),
-                latency: Duration::from_millis(3000),
+                send_latency: Duration::from_millis(4000),
+                recv_latency: Duration::from_millis(3000),
             })),
         });
 

@@ -59,7 +59,7 @@ impl SynchronizedRemoteClock {
 
 #[cfg(test)]
 mod synchronized_remote_clock {
-    use std::time::Duration;
+    use std::{cmp::Ordering, time::Duration};
 
     use super::*;
     use proptest::prelude::*;
@@ -88,14 +88,10 @@ mod synchronized_remote_clock {
                 clock.synchronize(now, now_ts);
                 let instant = clock.instant_from(start, now_ts);
 
-                if tick_ts < MAX_SAMPLES {
-                    assert_eq!(instant, start + tick, "the clock should not be adjusted until {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts);
-                }
-                else if tick_ts == MAX_SAMPLES {
-                    assert_eq!(instant, now, "the clock should be adjusted after {} samples", MAX_SAMPLES);
-                }
-                else {
-                    assert_eq!(instant, now, "the clock should not be adjusted until the next {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts);
+                match tick_ts.cmp(&MAX_SAMPLES) {
+                    Ordering::Less => assert_eq!(instant, start + tick, "the clock should not be adjusted until {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts),
+                    Ordering::Equal => assert_eq!(instant, now, "the clock should be adjusted after {} samples", MAX_SAMPLES),
+                    Ordering::Greater => assert_eq!(instant, now, "the clock should not be adjusted until the next {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts),
                 }
             }
 

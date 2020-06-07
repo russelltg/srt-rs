@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::protocol::handshake::Handshake;
-use crate::{SeqNumber, SocketID};
+use crate::{crypto::CryptoManager, SeqNumber, SocketID};
 
 #[derive(Clone, Debug)]
 pub struct Connection {
@@ -12,7 +12,7 @@ pub struct Connection {
     pub handshake: Handshake,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ConnectionSettings {
     /// The remote socket to send & receive to
     pub remote: SocketAddr,
@@ -36,10 +36,12 @@ pub struct ConnectionSettings {
     /// The maxiumum flow size
     pub max_flow_size: u32,
 
-    /// The TSBPD latency configured by the user.
-    /// Not necessarily the actual decided on latency, which
-    /// is the max of both side's respective latencies.
-    pub tsbpd_latency: Duration,
+    /// The TSBPD of the connection--the max of each side's repspective latencies
+    pub send_tsbpd_latency: Duration,
+    pub recv_tsbpd_latency: Duration,
+
+    // if this stream is encrypted, it needs a crypto manager
+    pub crypto_manager: Option<CryptoManager>,
 }
 
 impl ConnectionSettings {
