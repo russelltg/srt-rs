@@ -57,7 +57,7 @@ async fn invalid_packets() {
         let mut rng = StdRng::seed_from_u64(s);
 
         let mut sock = UdpSocket::bind(&"127.0.0.1:0").await.unwrap();
-        while let Some(_) = interval(Duration::from_millis(1)).next().await {
+        while interval(Duration::from_millis(1)).next().await.is_some() {
             let mut to_send = vec![0; rng.gen_range(1, 1024)];
             for i in &mut to_send {
                 *i = rng.gen();

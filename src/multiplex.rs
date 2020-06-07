@@ -124,8 +124,8 @@ impl MultiplexState {
             self.conns.insert(settings.local_sockid, r);
 
             let conn = Connection {
-                settings: settings.clone(),
-                handshake: Handshake::Listener(resp_handshake.control_type.clone()),
+                settings,
+                handshake: Handshake::Listener(resp_handshake.control_type),
             };
             self.pending.remove(&from); // remove from pending connections, it's been resolved
             return Ok(Some((conn, s)));

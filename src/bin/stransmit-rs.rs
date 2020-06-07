@@ -239,8 +239,7 @@ fn resolve_input<'a>(
                             input_url
                                 .query_pairs()
                                 .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None })
-                                .as_ref()
-                                .map(|a| &**a),
+                                .as_deref()
                         )?).local_port(input_local_port);
 
                         builder = add_srt_args(input_url.query_pairs(), builder)?;
@@ -306,8 +305,7 @@ fn resolve_output<'a>(
                             output_url
                                 .query_pairs()
                                 .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None })
-                                .as_ref()
-                                .map(|a| &**a),
+                                .as_deref()
                         )?).local_port(output_local_port);
 
                         let is_multiplex = match (

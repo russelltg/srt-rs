@@ -49,7 +49,7 @@ async fn receiver_timeout() {
         .unwrap();
 
     let sender = async move {
-        a.stdin.as_mut().unwrap().write(b"asdf").unwrap();
+        a.stdin.as_mut().unwrap().write_all(b"asdf").unwrap();
         delay_for(Duration::from_millis(2000)).await;
 
         a.kill().unwrap();

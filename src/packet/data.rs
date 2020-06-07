@@ -169,6 +169,7 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use std::io::Cursor;
+
     proptest! {
         #[test]
         fn data_enc(i: u8) {

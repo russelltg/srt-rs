@@ -226,6 +226,7 @@ mod timestamp {
     use super::*;
 
     #[test]
+    #[allow(clippy::eq_op)]
     fn subtract_timestamp() {
         let a = TimeStamp::from_micros(10);
         let max = a - TimeSpan(11);
