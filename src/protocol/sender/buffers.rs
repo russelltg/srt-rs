@@ -1,11 +1,13 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 
 use crate::packet::{DataEncryption, PacketLocation};
 use crate::protocol::{TimeBase, TimeStamp};
-use crate::{ConnectionSettings, DataPacket, MsgNumber, SeqNumber, SocketID};
+use crate::{
+    crypto::CryptoManager, ConnectionSettings, DataPacket, MsgNumber, SeqNumber, SocketID,
+};
 
 pub struct TransmitBuffer {
     remote_socket_id: SocketID,
@@ -14,6 +16,8 @@ pub struct TransmitBuffer {
 
     /// The list of packets to transmit
     buffer: VecDeque<DataPacket>,
+
+    crypto: Option<CryptoManager>,
 
     /// The sequence number for the next data packet
     pub next_sequence_number: SeqNumber,
@@ -29,6 +33,7 @@ impl TransmitBuffer {
             max_packet_size: settings.max_packet_size as usize,
             time_base: TimeBase::new(settings.socket_start_time),
             buffer: Default::default(),
+            crypto: settings.crypto_manager.clone(),
             next_sequence_number: settings.init_send_seq_num,
             next_message_number: MsgNumber::new_truncate(0),
         }
@@ -88,7 +93,7 @@ impl TransmitBuffer {
         location: PacketLocation,
         retransmitted: bool,
     ) {
-        let packet = DataPacket {
+        let mut packet = DataPacket {
             dest_sockid: self.remote_socket_id,
             in_order_delivery: false, // TODO: research this
             message_loc: location,
@@ -100,6 +105,16 @@ impl TransmitBuffer {
             timestamp: self.timestamp_from(time),
             payload,
         };
+
+        // encrypt if required
+        if let Some(cm) = &self.crypto {
+            let mut p = BytesMut::with_capacity(packet.payload.len());
+            p.extend_from_slice(&packet.payload[..]);
+            let enc = cm.encrypt(packet.seq_number, &mut p[..]);
+
+            packet.encryption = enc;
+            packet.payload = p.freeze();
+        }
 
         self.buffer.push_back(packet)
     }

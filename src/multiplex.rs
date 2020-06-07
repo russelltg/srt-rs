@@ -3,8 +3,8 @@ mod streamer_server;
 pub use self::streamer_server::StreamerServer;
 
 use std::collections::HashMap;
+use std::io;
 use std::net::SocketAddr;
-use std::{io, time::Duration};
 
 use futures::future::{pending, select_all};
 use futures::prelude::*;
@@ -16,7 +16,10 @@ use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 
 use crate::channel::Channel;
-use crate::pending_connection::listen::{Listen, ListenConfiguration, ListenState};
+use crate::pending_connection::{
+    listen::{Listen, ListenState},
+    ConnInitSettings,
+};
 use crate::protocol::handshake::Handshake;
 use crate::{Connection, Packet, PacketCodec, SocketID};
 
@@ -26,7 +29,7 @@ struct MultiplexState {
     sock: UdpFramed<PacketCodec>,
     pending: HashMap<SocketAddr, Listen>,
     conns: HashMap<SocketID, PackChan>,
-    latency: Duration,
+    init_settings: ConnInitSettings,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -103,16 +106,11 @@ impl MultiplexState {
         }
 
         // new connection?
-        let tsbpd_latency = self.latency;
-        let listen = self.pending.entry(from).or_insert_with(|| {
-            Listen::new(
-                ListenConfiguration {
-                    local_socket_id: rand::random(),
-                },
-                None,
-                tsbpd_latency,
-            )
-        });
+        let this_conn_settings = self.init_settings.clone();
+        let listen = self
+            .pending
+            .entry(from)
+            .or_insert_with(|| Listen::new(this_conn_settings.copy_randomize()));
 
         // already started connection?
         match listen.handle_packet((pack, from)) {
@@ -138,14 +136,14 @@ impl MultiplexState {
 
 pub async fn multiplex(
     addr: SocketAddr,
-    latency: Duration,
+    init_settings: ConnInitSettings,
 ) -> Result<impl Stream<Item = Result<(Connection, PackChan), io::Error>>, io::Error> {
     Ok(unfold(
         MultiplexState {
             sock: UdpFramed::new(UdpSocket::bind(addr).await?, PacketCodec),
             pending: HashMap::new(),
             conns: HashMap::new(),
-            latency,
+            init_settings,
         },
         |mut state| async move {
             match state.next_conn().await {

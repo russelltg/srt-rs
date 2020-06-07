@@ -5,7 +5,7 @@ use srt::SrtSocketBuilder;
 use std::time::Instant;
 
 #[tokio::test]
-async fn main() {
+async fn test() {
     let _ = env_logger::try_init();
 
     let sender_fut = async {

@@ -36,10 +36,9 @@ pub struct ConnectionSettings {
     /// The maxiumum flow size
     pub max_flow_size: u32,
 
-    /// The TSBPD latency configured by the user.
-    /// Not necessarily the actual decided on latency, which
-    /// is the max of both side's respective latencies.
-    pub tsbpd_latency: Duration,
+    /// The TSBPD of the connection--the max of each side's repspective latencies
+    pub send_tsbpd_latency: Duration,
+    pub recv_tsbpd_latency: Duration,
 
     // if this stream is encrypted, it needs a crypto manager
     pub crypto_manager: Option<CryptoManager>,

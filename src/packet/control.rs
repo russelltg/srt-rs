@@ -328,6 +328,14 @@ impl ControlPacket {
         // the rest of the info
         self.control_type.serialize(into);
     }
+
+    pub fn handshake(&self) -> Option<&HandshakeControlInfo> {
+        if let ControlTypes::Handshake(hs) = &self.control_type {
+            Some(hs)
+        } else {
+            None
+        }
+    }
 }
 
 impl Debug for ControlPacket {
@@ -857,8 +865,8 @@ mod test {
                     ext_hs: Some(SrtControlPacket::HandshakeResponse(SrtHandshake {
                         version: SrtVersion::CURRENT,
                         flags: SrtShakeFlags::NAKREPORT | SrtShakeFlags::TSBPDSND,
-                        peer_latency: Duration::from_millis(3000),
-                        latency: Duration::from_millis(12345),
+                        send_latency: Duration::from_millis(3000),
+                        recv_latency: Duration::from_millis(12345),
                     })),
                     ext_km: None,
                     ext_config: None,
@@ -964,8 +972,8 @@ mod test {
                                 | SrtShakeFlags::HAICRYPT
                                 | SrtShakeFlags::TLPKTDROP
                                 | SrtShakeFlags::REXMITFLG,
-                            peer_latency: Duration::from_millis(120),
-                            latency: Duration::new(0, 0)
+                            send_latency: Duration::from_millis(120),
+                            recv_latency: Duration::new(0, 0)
                         })),
                         ext_km: None,
                         ext_config: None
@@ -1009,8 +1017,8 @@ mod test {
                                 | SrtShakeFlags::HAICRYPT
                                 | SrtShakeFlags::TLPKTDROP
                                 | SrtShakeFlags::REXMITFLG,
-                            peer_latency: Duration::from_millis(500),
-                            latency: Duration::from_millis(500)
+                            send_latency: Duration::from_millis(500),
+                            recv_latency: Duration::from_millis(500)
                         })),
                         ext_km: Some(SrtControlPacket::KeyManagerRequest(SrtKeyMessage {
                             pt: PacketType::KeyingMaterial,

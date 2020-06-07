@@ -154,7 +154,7 @@ impl Receiver {
 
         info!(
             "Receiving started from {:?}, with latency={:?}",
-            settings.remote, settings.tsbpd_latency
+            settings.remote, settings.recv_tsbpd_latency
         );
 
         Receiver {
@@ -193,9 +193,9 @@ impl Receiver {
         if self.settings.local_sockid != packet.dest_sockid() {
             // packet isn't applicable
             info!(
-                "Packet send to socket id ({}) that does not match local ({})",
-                packet.dest_sockid().0,
-                self.settings.local_sockid.0
+                "Packet send to socket id ({:?}) that does not match local ({:?})",
+                packet.dest_sockid(),
+                self.settings.local_sockid
             );
             return;
         }

@@ -1,7 +1,8 @@
 use bytes::Bytes;
 use futures::prelude::*;
 use futures::stream;
-use rand::Rng;
+use log::info;
+use rand::{prelude::StdRng, Rng, SeedableRng};
 use srt::SrtSocketBuilder;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
@@ -34,6 +35,8 @@ async fn invalid_packets() {
             .await
             .unwrap();
 
+        info!("Receiver initialised");
+
         for _ in 0..100 {
             recvr.try_next().await.unwrap().unwrap();
         }
@@ -41,10 +44,20 @@ async fn invalid_packets() {
         assert_eq!(recvr.try_next().await.unwrap(), None);
     };
 
-    let garbage = async {
+    let garbage = tokio::spawn(async move {
+        // seed the rng
+        let s = match std::env::var("INVALID_PACKETS_SEED") {
+            Ok(s) => {
+                info!("Using seed from env");
+                s.parse().unwrap()
+            }
+            Err(_) => rand::random(),
+        };
+        info!("Seed is {}", s);
+        let mut rng = StdRng::seed_from_u64(s);
+
         let mut sock = UdpSocket::bind(&"127.0.0.1:0").await.unwrap();
-        while let Some(_) = interval(Duration::from_millis(10)).next().await {
-            let mut rng = rand::thread_rng();
+        while let Some(_) = interval(Duration::from_millis(1)).next().await {
             let mut to_send = vec![0; rng.gen_range(1, 1024)];
             for i in &mut to_send {
                 *i = rng.gen();
@@ -53,7 +66,7 @@ async fn invalid_packets() {
             sock.send_to(&to_send[..], "127.0.0.1:8876").await.unwrap();
             sock.send_to(&to_send[..], "127.0.0.1:8877").await.unwrap();
         }
-    };
+    });
 
     futures::select! {
         _ = futures::future::join(sender, recvr).fuse() => {},

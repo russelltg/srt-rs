@@ -32,7 +32,7 @@ impl RecvBuffer {
         Self::new(
             settings.init_recv_seq_num,
             settings.socket_start_time,
-            settings.tsbpd_latency,
+            settings.recv_tsbpd_latency,
         )
     }
 

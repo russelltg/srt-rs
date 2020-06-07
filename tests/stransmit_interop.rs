@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::Error;
 use bytes::Bytes;
 use futures::{future::try_join, join, stream, SinkExt, Stream, StreamExt};
+use log::info;
 
 use tokio::net::UdpSocket;
 use tokio::time::interval;
@@ -64,9 +65,12 @@ async fn receiver(
 
         i += 1;
 
+        info!("Got pack!");
+
         // stransmit does not totally care if it sends 100% of it's packets
         // (which is prob fair), just make sure that we got at least 2/3s of it
         if i >= packets * 2 / 3 {
+            info!("Got enough packs! Exiting!");
             break;
         }
     }
@@ -108,7 +112,14 @@ async fn stransmit_client() -> Result<(), Error> {
             .connect()
             .await
             .unwrap();
-        assert_eq!(conn.settings().tsbpd_latency, Duration::from_millis(827));
+        assert_eq!(
+            conn.settings().send_tsbpd_latency,
+            Duration::from_millis(827)
+        );
+        assert_eq!(
+            conn.settings().recv_tsbpd_latency,
+            Duration::from_millis(827)
+        );
 
         let mut i = 0;
 
@@ -152,7 +163,14 @@ async fn stransmit_server() -> Result<(), Error> {
                 .await
                 .unwrap();
 
-        assert_eq!(sender.settings().tsbpd_latency, Duration::from_millis(123));
+        assert_eq!(
+            sender.settings().send_tsbpd_latency,
+            Duration::from_millis(123)
+        );
+        assert_eq!(
+            sender.settings().recv_tsbpd_latency,
+            Duration::from_millis(123)
+        );
 
         let mut stream =
             counting_stream(PACKETS, Duration::from_millis(1)).map(|b| Ok((Instant::now(), b)));
@@ -258,6 +276,7 @@ async fn stransmit_decrypt() -> Result<(), Error> {
 
     let sender_fut = async move {
         let mut snd = SrtSocketBuilder::new_listen()
+            .crypto(16, "password123")
             .local_port(2009)
             .connect()
             .await
@@ -269,16 +288,22 @@ async fn stransmit_decrypt() -> Result<(), Error> {
         )
         .await
         .unwrap();
+        info!("Send finished!");
+        snd.close().await.unwrap();
+        info!("Closed!");
     };
 
     let mut child = allow_not_found!(Command::new("srt-live-transmit")
-        .arg("srt://127.0.0.1:2009")
+        .arg("srt://127.0.0.1:2009?passphrase=password123&pbkeylen=16")
         .arg("udp://127.0.0.1:2010")
+        .arg("-a:no")
+        .arg("-loglevel:debug")
         .spawn());
 
     join!(sender_fut, async {
         udp_recvr(PACKETS, 2010).await.unwrap()
     });
+    info!("Futures finished!");
     child.wait().unwrap();
 
     Ok(())

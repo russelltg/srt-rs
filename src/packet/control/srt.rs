@@ -151,15 +151,15 @@ pub struct SrtHandshake {
     /// SRT connection init flags
     pub flags: SrtShakeFlags,
 
-    /// The peer's TSBPD latency
+    /// The peer's TSBPD latency (latency to send at)
     /// This is serialized as the upper 16 bits of the third 32-bit word
     /// source: https://github.com/Haivision/srt/blob/4f7f2beb2e1e306111b9b11402049a90cb6d3787/srtcore/core.cpp#L1341-L1353
-    pub peer_latency: Duration,
+    pub send_latency: Duration,
 
-    /// The TSBPD latency
+    /// The TSBPD latency (latency to recv at)
     /// This is serialized as the lower 16 bits of the third 32-bit word
     /// see csrtcc.cpp:132 in the reference implementation
-    pub latency: Duration,
+    pub recv_latency: Duration,
 }
 
 bitflags! {
@@ -276,8 +276,8 @@ impl SrtHandshake {
         Ok(SrtHandshake {
             version,
             flags,
-            peer_latency: Duration::from_millis(u64::from(peer_latency)),
-            latency: Duration::from_millis(u64::from(latency)),
+            send_latency: Duration::from_millis(u64::from(peer_latency)),
+            recv_latency: Duration::from_millis(u64::from(latency)),
         })
     }
 
@@ -285,10 +285,10 @@ impl SrtHandshake {
         into.put_u32(self.version.to_u32());
         into.put_u32(self.flags.bits());
         // upper 16 bits are peer latency
-        into.put_u16(self.peer_latency.as_millis() as u16); // TODO: handle overflow
+        into.put_u16(self.send_latency.as_millis() as u16); // TODO: handle overflow
 
         // lower 16 is latency
-        into.put_u16(self.latency.as_millis() as u16); // TODO: handle overflow
+        into.put_u16(self.recv_latency.as_millis() as u16); // TODO: handle overflow
     }
 }
 
@@ -506,8 +506,8 @@ mod tests {
             control_type: ControlTypes::Srt(SrtControlPacket::HandshakeRequest(SrtHandshake {
                 version: SrtVersion::CURRENT,
                 flags: SrtShakeFlags::empty(),
-                peer_latency: Duration::from_millis(4000),
-                latency: Duration::from_millis(3000),
+                send_latency: Duration::from_millis(4000),
+                recv_latency: Duration::from_millis(3000),
             })),
         });
 

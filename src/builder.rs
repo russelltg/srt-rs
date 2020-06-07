@@ -12,6 +12,7 @@ use crate::{
     PacketCodec, PacketParseError, SrtSocket,
 };
 use log::warn;
+use pending_connection::ConnInitSettings;
 
 /// Struct to build sockets.
 ///
@@ -56,8 +57,7 @@ use log::warn;
 pub struct SrtSocketBuilder {
     local_addr: SocketAddr,
     conn_type: ConnInitMethod,
-    latency: Duration,
-    crypto: Option<CryptoOptions>,
+    init_settings: ConnInitSettings,
 }
 
 /// Describes how this SRT entity will connect to the other.
@@ -83,8 +83,7 @@ impl SrtSocketBuilder {
         SrtSocketBuilder {
             local_addr: "0.0.0.0:0".parse().unwrap(),
             conn_type,
-            latency: Duration::from_millis(50),
-            crypto: None,
+            init_settings: ConnInitSettings::default(),
         }
     }
 
@@ -139,9 +138,23 @@ impl SrtSocketBuilder {
     }
 
     /// Set the latency of the connection. The more latency, the more time SRT has to recover lost packets.
+    /// This sets both the send and receive latency
     pub fn latency(mut self, latency: Duration) -> Self {
-        self.latency = latency;
+        self.init_settings.send_latency = latency;
+        self.init_settings.recv_latency = latency;
 
+        self
+    }
+
+    // the minimum latency to receive at
+    pub fn receive_latency(mut self, latency: Duration) -> Self {
+        self.init_settings.recv_latency = latency;
+        self
+    }
+
+    // the minimum latency to send at
+    pub fn send_latency(mut self, latency: Duration) -> Self {
+        self.init_settings.send_latency = latency;
         self
     }
 
@@ -156,7 +169,7 @@ impl SrtSocketBuilder {
             // NOT
             size => panic!("Invaid crypto size {}", size),
         }
-        self.crypto = Some(CryptoOptions {
+        self.init_settings.crypto = Some(CryptoOptions {
             size,
             passphrase: passphrase.into(),
         });
@@ -175,28 +188,23 @@ impl SrtSocketBuilder {
     {
         let conn = match self.conn_type {
             ConnInitMethod::Listen => {
-                pending_connection::listen(&mut socket, rand::random(), self.latency, self.crypto)
-                    .await?
+                pending_connection::listen(&mut socket, self.init_settings).await?
             }
             ConnInitMethod::Connect(addr) => {
                 pending_connection::connect(
                     &mut socket,
                     addr,
-                    rand::random(),
                     self.local_addr.ip(),
-                    self.latency,
-                    self.crypto.clone(),
+                    self.init_settings,
                 )
                 .await?
             }
             ConnInitMethod::Rendezvous(remote_public) => {
                 pending_connection::rendezvous(
                     &mut socket,
-                    rand::random(),
                     self.local_addr,
                     remote_public,
-                    self.latency,
-                    self.crypto,
+                    self.init_settings,
                 )
                 .await?
             }
@@ -226,7 +234,7 @@ impl SrtSocketBuilder {
         self,
     ) -> Result<impl Stream<Item = Result<(Connection, PackChan), io::Error>>, io::Error> {
         match self.conn_type {
-            ConnInitMethod::Listen => multiplex(self.local_addr, self.latency).await,
+            ConnInitMethod::Listen => multiplex(self.local_addr, self.init_settings).await,
             _ => panic!("Cannot bind multiplexed with any connection mode other than listen"),
         }
     }
