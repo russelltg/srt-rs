@@ -17,6 +17,8 @@ export PATH=~/.local/bin:$PATH
 cd ../..
 rm -rf kcov-master master.tar.gz
 
+# disable logs for codecov
+export RUST_LOG=
 run_test() {
     testname=$1
     for testexec in target/release/deps/${testname}-*; do
