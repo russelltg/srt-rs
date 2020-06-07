@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use srt::SrtSocketBuilder;
 
@@ -6,7 +6,7 @@ use futures::{SinkExt, TryStreamExt};
 
 use bytes::Bytes;
 
-use tokio::spawn;
+use tokio::{spawn, time::delay_for};
 
 async fn test_crypto(size: u8) {
     let _ = env_logger::try_init();
@@ -38,7 +38,9 @@ async fn test_crypto(size: u8) {
 #[tokio::test]
 async fn crypto_exchange() {
     test_crypto(16).await;
+    delay_for(Duration::from_millis(100)).await;
     test_crypto(24).await;
+    delay_for(Duration::from_millis(100)).await;
     test_crypto(32).await;
 }
 
