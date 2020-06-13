@@ -53,6 +53,7 @@ mod channel;
 mod congest_ctrl;
 mod connection;
 mod crypto;
+pub mod event;
 mod loss_compression;
 mod modular_num;
 mod msg_number;

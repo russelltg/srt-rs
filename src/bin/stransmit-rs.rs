@@ -5,7 +5,10 @@ use std::path::Path;
 use std::pin::Pin;
 use std::process::exit;
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{bail, Error};
 use bytes::Bytes;
@@ -22,7 +25,16 @@ use tokio::prelude::AsyncRead;
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
-use srt::{ConnInitMethod, SrtSocketBuilder, StreamerServer};
+use srt::{
+    event::{Event, EventReceiver},
+    ConnInitMethod, SrtSocketBuilder, StreamerServer,
+};
+
+use prometheus::{Counter, Encoder, IntCounter, Opts, Registry, TextEncoder};
+use warp::{
+    http::{header::CONTENT_TYPE, Response},
+    Filter, Rejection, Reply,
+};
 
 const AFTER_HELPTEXT: &str = include_str!("helptext.txt");
 
@@ -193,6 +205,34 @@ enum UdpKind {
     Listen(u16),
 }
 
+struct PrometheusEventReceiver {
+    retrans: IntCounter,
+    sent: IntCounter,
+}
+
+impl PrometheusEventReceiver {
+    fn new() -> Self {
+        PrometheusEventReceiver {
+            retrans: prometheus::register_int_counter!(
+                "retransmitted",
+                "number of packets retransmitted"
+            )
+            .unwrap(),
+            sent: prometheus::register_int_counter!("sent", "number of packets sent").unwrap(),
+        }
+    }
+}
+
+impl EventReceiver for PrometheusEventReceiver {
+    fn on_event(&mut self, event: &srt::event::Event, _timestamp: Instant) {
+        match event {
+            Event::SentRetrans(_) => self.retrans.inc(),
+            Event::Sent(_) => self.sent.inc(),
+            _ => {}
+        }
+    }
+}
+
 fn parse_udp_options<C>(
     args: impl Iterator<Item = (C, C)>,
     kind: UdpKind,
@@ -272,6 +312,9 @@ fn resolve_input<'a>(
                             bail!("multiplex is not a valid option for input urls");
                         }
 
+                        // prometheus
+                        builder = builder.event_receiver(Box::new(PrometheusEventReceiver::new()));
+
                         Ok(builder.connect().await?.map(Result::unwrap).map(|(_, b)| b).boxed())
 
                         }.boxed()
@@ -350,7 +393,10 @@ fn resolve_output<'a>(
                             (Some(a), _) => bail!("Unexpected value for multiplex: {}", a),
                         };
 
-                        let  builder = add_srt_args(output_url.query_pairs(), builder)?;
+                        let mut builder = add_srt_args(output_url.query_pairs(), builder)?;
+
+                        // prometheus
+                        builder = builder.event_receiver(Box::new(PrometheusEventReceiver::new()));
 
                         if is_multiplex {
                             async move {
@@ -411,6 +457,11 @@ async fn run() -> Result<(), Error> {
         .author("Russell Greene")
         .about("SRT sender and receiver written in rust")
         .arg(
+            Arg::with_name("prometheus")
+                .long("prometheus")
+                .value_name("PORT"),
+        )
+        .arg(
             Arg::with_name("FROM")
                 .help("Sets the input url")
                 .required(true),
@@ -446,6 +497,38 @@ async fn run() -> Result<(), Error> {
     let mut to_vec = vec![];
     for to in output_urls_iter.map(resolve_output) {
         to_vec.push(to?);
+    }
+
+    if let Some(val) = matches.value_of("prometheus") {
+        let port = val.parse().unwrap();
+
+        // prometheus
+        // TODO: this does not belong here
+
+        let retrans_counter = Counter::with_opts(Opts::new(
+            "retransmitted_counter",
+            "Number of packets retransmitted",
+        ))
+        .unwrap();
+
+        // warp
+        let c = warp::path("metrics")
+            .and(warp::path::tail())
+            .and_then(|_| async move {
+                let encoder = TextEncoder::new();
+
+                let metric_familes = prometheus::gather();
+                let mut buf = vec![];
+                encoder.encode(&metric_familes, &mut buf).unwrap();
+
+                Ok::<_, Rejection>(
+                    Response::builder()
+                        .header(CONTENT_TYPE, encoder.format_type())
+                        .body(buf),
+                )
+            });
+
+        tokio::spawn(warp::serve(c).run(([0, 0, 0, 0], port)));
     }
 
     let (from, mut to_sinks) = futures::try_join!(from, future::try_join_all(to_vec.iter_mut()))?;

@@ -27,6 +27,10 @@ pbkdf2 = { version = "0.3", default-features = false }
 hmac = "0.7"
 sha-1 = "0.8"
 
+# xxx keep? def optional
+prometheus = "0.9"
+warp = "0.2"
+
 [dependencies.env_logger]
 version = "0.7"
 default-features = false

@@ -6,7 +6,7 @@ use crate::protocol::receiver::{Receiver, ReceiverAlgorithmAction};
 use crate::protocol::sender::{Sender, SenderAlgorithmAction};
 use crate::protocol::TimeBase;
 use crate::Packet::*;
-use crate::{ConnectionSettings, ControlPacket, Packet, SrtCongestCtrl};
+use crate::{event::EventReceiver, ConnectionSettings, ControlPacket, Packet, SrtCongestCtrl};
 
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -61,7 +61,11 @@ enum Action {
 /// 1. Receive packets and send them to either the sender or the receiver through
 ///    a channel
 /// 2. Take outgoing packets and send them on the socket
-pub fn create_bidrectional_srt<T>(sock: T, conn: crate::Connection) -> SrtSocket
+pub fn create_bidrectional_srt<T>(
+    sock: T,
+    conn: crate::Connection,
+    mut event_receiver: Option<Box<impl EventReceiver + Send + ?Sized + 'static>>,
+) -> SrtSocket
 where
     T: Stream<Item = (Packet, SocketAddr)>
         + Sink<(Packet, SocketAddr), Error = io::Error>
@@ -95,16 +99,17 @@ where
 
         let mut flushed = true;
         loop {
-            let (sender_timeout, close) = match sender.next_action(Instant::now()) {
-                SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {
-                    (None, false)
-                }
-                SenderAlgorithmAction::WaitUntil(t) => (Some(t), false),
-                SenderAlgorithmAction::Close => {
-                    trace!("{:?} Send returned close", sender.settings().local_sockid);
-                    (None, true)
-                }
-            };
+            let (sender_timeout, close) =
+                match sender.next_action(Instant::now(), event_receiver.as_mut()) {
+                    SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {
+                        (None, false)
+                    }
+                    SenderAlgorithmAction::WaitUntil(t) => (Some(t), false),
+                    SenderAlgorithmAction::Close => {
+                        trace!("{:?} Send returned close", sender.settings().local_sockid);
+                        (None, true)
+                    }
+                };
             while let Some(out) = sender.pop_output() {
                 if let Err(e) = sock.send(out).await {
                     error!("Error while seding packet: {:?}", e); // TODO: real error handling

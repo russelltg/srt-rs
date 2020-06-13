@@ -8,8 +8,8 @@ use futures::{future::ready, Sink, Stream, StreamExt};
 
 use crate::tokio::create_bidrectional_srt;
 use crate::{
-    crypto::CryptoOptions, multiplex, pending_connection, Connection, PackChan, Packet,
-    PacketCodec, PacketParseError, SrtSocket,
+    crypto::CryptoOptions, event::EventReceiver, multiplex, pending_connection, Connection,
+    PackChan, Packet, PacketCodec, PacketParseError, SrtSocket,
 };
 use log::warn;
 use pending_connection::ConnInitSettings;
@@ -52,12 +52,12 @@ use pending_connection::ConnInitSettings;
 ///
 /// # Panics:
 /// * There is no tokio runtime
-#[derive(Debug, Clone)]
 #[must_use]
 pub struct SrtSocketBuilder {
     local_addr: SocketAddr,
     conn_type: ConnInitMethod,
     init_settings: ConnInitSettings,
+    event_receiver: Option<Box<dyn EventReceiver + Send>>,
 }
 
 /// Describes how this SRT entity will connect to the other.
@@ -84,6 +84,7 @@ impl SrtSocketBuilder {
             local_addr: "0.0.0.0:0".parse().unwrap(),
             conn_type,
             init_settings: ConnInitSettings::default(),
+            event_receiver: None,
         }
     }
 
@@ -158,7 +159,7 @@ impl SrtSocketBuilder {
         self
     }
 
-    /// Se the crypto paramters. However, this is currently unimplemented.
+    /// Set the crypto paramters.
     ///
     /// # Panics:
     /// * size is not 16, 24, or 32.
@@ -174,6 +175,12 @@ impl SrtSocketBuilder {
             passphrase: passphrase.into(),
         });
 
+        self
+    }
+
+    /// Set the event receiver, used for receiving statistics
+    pub fn event_receiver(mut self, event_receiver: Box<dyn EventReceiver + Send>) -> Self {
+        self.event_receiver = Some(event_receiver);
         self
     }
 
@@ -215,6 +222,7 @@ impl SrtSocketBuilder {
                 ready(res.map_err(|e| warn!("Error parsing packet: {}", e)).ok())
             }),
             conn,
+            self.event_receiver,
         ))
     }
 

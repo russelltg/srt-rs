@@ -85,7 +85,7 @@ impl Sink<(Instant, Bytes)> for StreamerServer {
                 .expect("Multiplexer stream ended, strange")
                 .expect("Multiplex server return Err");
 
-            let mut sender = create_bidrectional_srt(chan, conn);
+            let mut sender = create_bidrectional_srt(chan, conn, None); // TODO: stats for this!
 
             let (tx, rx) = mpsc::channel(100);
 

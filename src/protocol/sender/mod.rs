@@ -14,6 +14,7 @@ use crate::protocol::sender::buffers::*;
 use crate::protocol::Timer;
 use crate::Packet::*;
 use crate::{
+    event::{Event, EventReceiver},
     CCData, CongestCtrl, ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber,
     SrtCongestCtrl,
 };
@@ -197,7 +198,11 @@ impl Sender {
             .map(move |packet| (packet, to))
     }
 
-    pub fn next_action(&mut self, now: Instant) -> SenderAlgorithmAction {
+    pub fn next_action(
+        &mut self,
+        now: Instant,
+        mut er: Option<&mut impl EventReceiver>,
+    ) -> SenderAlgorithmAction {
         use SenderAlgorithmAction::*;
         use SenderAlgorithmStep::*;
 
@@ -220,6 +225,9 @@ impl Sender {
         //      packet in the list and remove it from the list. Go to 5).
         if let Some(p) = self.loss_list.pop_front() {
             debug!("Sending packet in loss list, seq={:?}", p.seq_number);
+            if let Some(er) = &mut er {
+                er.on_event(&Event::SentRetrans(p.payload.len()), now);
+            }
             self.send_data(p);
 
             // TODO: returning here will result in sending all the packets in the loss
@@ -261,6 +269,9 @@ impl Sender {
 
             return WaitUntilAck;
         } else if let Some(p) = self.pop_transmit_buffer() {
+            if let Some(er) = &mut er {
+                er.on_event(&Event::Sent(p.payload.len()), now);
+            }
             self.send_data(p);
         }
 
@@ -269,6 +280,9 @@ impl Sender {
         if let Some(p) = self.pop_transmit_buffer_16n() {
             //      NOTE: to get the closest timing, we ignore congestion control
             //      and send the 16th packet immediately, instead of proceeding to step 2
+            if let Some(er) = &mut er {
+                er.on_event(&Event::Sent(p.payload.len()), now);
+            }
             self.send_data(p);
         }
 
