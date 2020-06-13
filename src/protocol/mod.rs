@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{max, Ordering};
 use std::num::Wrapping;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::time::{Duration, Instant};
@@ -291,8 +291,13 @@ pub struct Timer {
 }
 
 impl Timer {
+    const MIN_PERIOD: Duration = Duration::from_micros(1);
+
     pub fn new(period: Duration, now: Instant) -> Timer {
-        Timer { period, last: now }
+        Timer {
+            period: max(period, Self::MIN_PERIOD),
+            last: now,
+        }
     }
 
     pub fn period(&mut self) -> Duration {
