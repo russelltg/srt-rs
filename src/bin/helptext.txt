@@ -25,7 +25,8 @@ UDP - send over a UDP port.
             #    with 2 seconds of TSBPD latency \ srt://127.0.0.1:1235 \
             # ^- bind to interface 0.0.0.0:0 (any port, unless local_port is #    specified) and try to connect to 127.0.0.1:1235
 
-    Connection modes: * listen: listen for a connecter. Can be used for either sending or
+    Connection modes: 
+    * listen: listen for a connecter. Can be used for either sending or
       receiving data. Is specified by leaving out host in the URL: srt://:1234
           ^- bind to port 1234, waiting for a connector. Uses the connecter's latency
           
@@ -34,7 +35,9 @@ UDP - send over a UDP port.
     * connect: connect to a listener. Can be used for either sending or receiving data. Is specified by including a host in the URL:
           srt://127.0.0.1:1234?latency_ms=1000     ^- bind to port 0 (an ephemeral port), and connect to 127.0.0.1:1234,
              advertising a 1s latency srt://127.0.0.1:1234?local_port=3000  
-          ^- bind to port 3000 and connect to 127.0.0.1:123 * rendezvous: connect to another rendezvous connecter. This is useful if 
+          ^- bind to port 3000 and connect to 127.0.0.1:123 
+    
+    * rendezvous: connect to another rendezvous connecter. This is useful if 
       both sides are behind a NAT, in which case the host needs to be the public IP and port. Is specified by including the rendezvous flag:
           srt://example.com:1234?rendezvous ^- bind to port 1234 and connect to example.com:1234
 
@@ -46,6 +49,8 @@ UDP - send over a UDP port.
     * rendezvous              use the rendezvous connection method * local_port=<number>     the local port to bind to. Only applicable for 
                               rendezvous and connect connection modes * multiplex               allow multiple connections on the single port, only
                               applicable for listen connection mode, in the sender position
+    * passphrase              the passphrase to use for encryption/decryption. Must match the other side.
+    * pbkeylen                the key length to use for encryption. Defaults to 0, unless passphrse is passed, in which case 16 is the default. Must be 16, 24, or 32
  FILE - save or send a file
     example:
         stransmit-rs \

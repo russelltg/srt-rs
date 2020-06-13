@@ -82,6 +82,7 @@ fn add_srt_args<C>(
 where
     C: Deref<Target = str>,
 {
+    let mut crypto: Option<(u8, String)> = None;
     for (k, v) in args {
         match &*k {
             "latency_ms" => {
@@ -110,11 +111,33 @@ where
                     })
                 }
             },
+            "passphrase" => match &mut crypto {
+                Some((_, ref mut pw)) => *pw = (&*v).into(),
+                None => crypto = Some((16, (&*v).into())),
+            },
+            "pbkeylen" => {
+                let kl = match v.parse() {
+                    Ok(i @ 16) | Ok(i @ 24) | Ok(i @ 32) => i,
+                    Ok(invalid) => bail!("Invalid key length {}, must be 16, 24, or 32", invalid),
+                    Err(e) => bail!("Failed to parse key length: {}", e),
+                };
+                match &mut crypto {
+                    Some((ref mut sz, _)) => *sz = kl,
+                    None => crypto = Some((kl, "".into())),
+                }
+            }
             // this has already been handled, ignore
             "rendezvous" | "multiplex" => (),
             unrecog => bail!("Unrecgonized parameter '{}' for srt", unrecog),
         };
     }
+    if let Some((sz, pw)) = crypto {
+        if pw.is_empty() {
+            bail!("pbkeylen specified with no passphrase");
+        }
+        builder = builder.crypto(sz, pw);
+    }
+
     Ok(builder)
 }
 

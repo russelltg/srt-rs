@@ -128,6 +128,14 @@ fn ui_test(flags: &[&str], stderr: &str) {
             let mut string = String::new();
             child.stderr.unwrap().read_to_string(&mut string).unwrap();
 
+            assert_eq!(
+                stderr.lines().count(),
+                string.lines().count(),
+                "Line counnt differed. \nExpected: \n{}\nActual:\n{}",
+                stderr,
+                string
+            );
+
             // windows puts stranmsit-rs.exe instead of stranmsit-rs, this isn't a real failure so just remove all .exe
             let string = string.replace(".exe", "");
 
@@ -257,6 +265,37 @@ mod stransmit_rs_snd_rcv {
         )
         .await
     }
+
+    #[tokio::test]
+    async fn encryption() -> Result<(), Error> {
+        test_send(
+            2028,
+            &["udp://:2028", "srt://:2029?passphrase=passwordhello"],
+            &[
+                "srt://127.0.0.1:2029?passphrase=passwordhello",
+                "udp://127.0.0.1:2030",
+            ],
+            2030,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn encryption_pbkeylen() -> Result<(), Error> {
+        test_send(
+            2031,
+            &[
+                "udp://:2031",
+                "srt://:2032?passphrase=passwordhello&pbkeylen=32",
+            ],
+            &[
+                "srt://127.0.0.1:2032?passphrase=passwordhello&pbkeylen=32",
+                "udp://127.0.0.1:2033",
+            ],
+            2033,
+        )
+        .await
+    }
 }
 
 macro_rules! ui_tests {
@@ -283,6 +322,9 @@ mod stransmit_rs_ui {
         local_port_srt_listen,
         multiplex_connect,
         multiplex_recv,
-        multiplex_parameter
+        multiplex_parameter,
+        bad_pbkeylen,
+        bad_pbkeylen_str,
+        pbkeylen_no_pw
     );
 }
