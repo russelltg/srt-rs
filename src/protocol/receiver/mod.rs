@@ -215,7 +215,10 @@ impl Receiver {
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
                     ControlTypes::Nak { .. } => warn!("Receiver received NAK packet, unusual"),
                     ControlTypes::Shutdown => {
-                        info!("Shutdown packet received, flushing receiver...");
+                        info!(
+                            "{:?}: Shutdown packet received, flushing receiver...",
+                            self.settings.local_sockid
+                        );
                         self.shutdown_flag = true;
                     } // end of stream
                     ControlTypes::Srt(srt_packet) => {
@@ -257,6 +260,7 @@ impl Receiver {
 
     pub fn is_flushed(&self) -> bool {
         self.receive_buffer.next_msg_ready().is_none()
+            && self.lr_ack_acked.1 == self.receive_buffer.next_release() // packets have been acked and all acks have been acked (ack2)
     }
 
     fn on_ack_event(&mut self, now: Instant) {

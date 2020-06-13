@@ -2,9 +2,9 @@ use std::time::{Duration, Instant};
 
 use srt::SrtSocketBuilder;
 
-use futures::{SinkExt, TryStreamExt};
-
 use bytes::Bytes;
+use futures::{SinkExt, TryStreamExt};
+use log::info;
 
 use tokio::{spawn, time::delay_for};
 
@@ -20,19 +20,24 @@ async fn test_crypto(size: u8) {
         .crypto(size, "password123")
         .connect();
 
-    spawn(async move {
+    let t = spawn(async move {
         let mut sender = sender.await.unwrap();
         sender
             .send((Instant::now(), Bytes::from("Hello")))
             .await
             .unwrap();
+        info!("Sent!");
         sender.close().await.unwrap();
+        info!("Sender closed");
     });
 
     let mut recvr = recvr.await.unwrap();
     let (_, by) = recvr.try_next().await.unwrap().unwrap();
+    info!("Got data");
     assert_eq!(&by[..], b"Hello");
     recvr.close().await.unwrap();
+    info!("Receiver closed");
+    t.await.unwrap();
 }
 
 #[tokio::test]

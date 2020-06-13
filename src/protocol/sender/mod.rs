@@ -183,6 +183,8 @@ impl Sender {
     }
 
     pub fn is_flushed(&self) -> bool {
+        trace!("{:?} Checking is flushed: ll.len()={}, tb.len()={}, lrap={}, nsn={}, sb.len()={}, ob.len()={}", self.settings.local_sockid, self.loss_list.len(), 
+            self.transmit_buffer.len(), self.lr_acked_packet, self.transmit_buffer.next_sequence_number, self.send_buffer.len(), self.output_buffer.len());
         self.loss_list.is_empty()
             && self.transmit_buffer.is_empty()
             && self.lr_acked_packet == self.transmit_buffer.next_sequence_number

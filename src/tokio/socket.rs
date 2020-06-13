@@ -117,6 +117,11 @@ where
                     sender.settings().local_sockid
                 );
                 return;
+            } else if close {
+                trace!(
+                    "{:?} Sender closed, but receiver not flushed",
+                    sender.settings().local_sockid
+                );
             }
 
             let recvr_timeout = loop {
@@ -139,6 +144,10 @@ where
                             trace!("Recv returned close and sender flushed");
                             return;
                         } else {
+                            trace!(
+                                "{:?}: receiver closed but not closing as sender is not flushed",
+                                sender.settings().local_sockid
+                            );
                             break None;
                         }
                     }
@@ -155,6 +164,12 @@ where
                             );
                             return;
                         }
+
+                        trace!(
+                            "{:?} connection closed but waiting for receiver to flush",
+                            sender.settings().local_sockid
+                        );
+
                         break None;
                     } // timeout
                     ConnectionAction::SendKeepAlive => sock

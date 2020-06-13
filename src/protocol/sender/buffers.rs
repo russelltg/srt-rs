@@ -81,6 +81,10 @@ impl TransmitBuffer {
         self.buffer.is_empty()
     }
 
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
+
     pub fn timestamp_from(&self, at: Instant) -> TimeStamp {
         self.time_base.timestamp_from(at)
     }
@@ -176,6 +180,10 @@ impl SendBuffer {
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
     }
+
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
 }
 
 pub struct LossList {
@@ -218,5 +226,9 @@ impl LossList {
 
     pub fn is_empty(&self) -> bool {
         self.list.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.list.len()
     }
 }
