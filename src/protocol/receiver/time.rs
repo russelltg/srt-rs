@@ -119,31 +119,36 @@ pub(crate) struct RTT {
 impl RTT {
     pub fn new() -> Self {
         Self {
-            mean: 10_000,
-            variance: 1_000,
+            mean: TimeSpan::from_micros(10_000),
+            variance: TimeSpan::from_micros(1_000),
         }
     }
 
     pub fn update(&mut self, rtt: TimeSpan) {
-        self.mean = ((self.mean as i64 * 7 + rtt as i64) / 8) as i32;
-        self.variance =
-            ((self.variance as i64 * 3 + (self.mean as i64 - rtt as i64).abs() as i64) / 4) as i32;
+        self.mean = TimeSpan::from_micros(
+            ((self.mean.as_micros() as i64 * 7 + rtt.as_micros() as i64) / 8) as i32,
+        );
+        self.variance = TimeSpan::from_micros(
+            ((self.variance.as_micros() as i64 * 3
+                + (self.mean.as_micros() as i64 - rtt.as_micros() as i64).abs() as i64)
+                / 4) as i32,
+        );
     }
 
-    pub fn mean(&self) -> i32 {
+    pub fn mean(&self) -> TimeSpan {
         self.mean
     }
 
-    pub fn variance(&self) -> i32 {
+    pub fn variance(&self) -> TimeSpan {
         self.variance
     }
 
     pub fn mean_as_duration(&self) -> Duration {
-        Duration::from_micros(self.mean as u64)
+        Duration::from_micros(self.mean.as_micros() as u64)
     }
 
     pub fn variance_as_duration(&self) -> Duration {
-        Duration::from_micros(self.variance as u64)
+        Duration::from_micros(self.variance.as_micros() as u64)
     }
 }
 
@@ -268,7 +273,7 @@ mod receive_timers {
             prop_assume!(simulated_rtt >= 0);
             let mut rtt = RTT::new();
             for _ in 0..1000 {
-                rtt.update(simulated_rtt);
+                rtt.update(TimeSpan::from_micros(simulated_rtt));
             }
 
             let ms = Duration::from_millis;
@@ -299,7 +304,7 @@ mod receive_timers {
             prop_assume!(simulated_rtt >= 0);
             let mut rtt = RTT::new();
             for _ in 0..1000 {
-                rtt.update(simulated_rtt);
+                rtt.update(TimeSpan::from_micros(simulated_rtt));
             }
 
             let ms = Duration::from_millis;

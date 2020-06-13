@@ -8,6 +8,7 @@ pub mod connection;
 pub mod handshake;
 pub mod receiver;
 pub mod sender;
+pub mod stats;
 
 /// Timestamp in us after creation
 /// These wrap every 2^32 microseconds

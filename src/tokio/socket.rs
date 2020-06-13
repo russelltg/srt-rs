@@ -6,7 +6,7 @@ use crate::protocol::receiver::{Receiver, ReceiverAlgorithmAction};
 use crate::protocol::sender::{Sender, SenderAlgorithmAction};
 use crate::protocol::TimeBase;
 use crate::Packet::*;
-use crate::{ConnectionSettings, ControlPacket, Packet, SrtCongestCtrl};
+use crate::{ConnectionSettings, ControlPacket, Packet};
 
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -86,11 +86,7 @@ where
 
         let time_base = TimeBase::new(conn_copy.settings.socket_start_time);
         let mut connection = Connection::new(conn_copy.settings.clone());
-        let mut sender = Sender::new(
-            conn_copy.settings.clone(),
-            conn_copy.handshake,
-            SrtCongestCtrl,
-        );
+        let mut sender = Sender::new(conn_copy.settings.clone(), conn_copy.handshake);
         let mut receiver = Receiver::new(conn_copy.settings, Handshake::Connector);
 
         let mut flushed = true;
@@ -289,7 +285,7 @@ where
                 Action::Send(res) => match res {
                     Some(item) => {
                         trace!("{:?} queued packet to send", sender.settings().local_sockid);
-                        sender.handle_data(item);
+                        sender.handle_data(item, Instant::now());
                     }
                     None => {
                         debug!("Incoming data stream closed");
