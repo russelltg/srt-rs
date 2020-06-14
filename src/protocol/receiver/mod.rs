@@ -425,7 +425,7 @@ impl Receiver {
             for pak in self
                 .loss_list
                 .iter_mut()
-                .filter(|lle| lle.feedback_time < ts_now - rtt * lle.k)
+                .filter(|lle| ts_now - lle.feedback_time > rtt * lle.k)
             {
                 pak.k += 1;
                 pak.feedback_time = ts_now;
@@ -467,7 +467,7 @@ impl Receiver {
         let id_in_wnd = match self
             .ack_history_window
             .as_slice()
-            .binary_search_by(|entry| entry.ack_seq_num.cmp(&seq_num))
+            .binary_search_by_key(&seq_num, |entry| entry.ack_seq_num)
         {
             Ok(i) => Some(i),
             Err(_) => None,

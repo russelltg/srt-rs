@@ -188,7 +188,6 @@ impl Sender {
         self.loss_list.is_empty()
             && self.transmit_buffer.is_empty()
             && self.lr_acked_packet == self.transmit_buffer.next_sequence_number
-            && self.send_buffer.is_empty()
             && self.output_buffer.is_empty()
     }
 
@@ -239,7 +238,7 @@ impl Sender {
         //      1).
 
         //   3) Wait until there is application data to be sent.
-        else if self.transmit_buffer.is_empty() {
+        else if self.transmit_buffer.is_empty() && !self.close {
             // TODO: the spec for 3) seems to suggest waiting at here for data,
             //       but if execution doesn't jump back to Step1, then many of
             //       the tests don't pass... WAT?
@@ -264,6 +263,11 @@ impl Sender {
             return WaitUntilAck;
         } else if let Some(p) = self.pop_transmit_buffer() {
             self.send_data(p);
+        } else if self.close {
+            // this covers the niche case of dropping the last packet(s)
+            if let Some(dp) = self.send_buffer.front().cloned() {
+                self.send_data(dp);
+            }
         }
 
         //   5) If the sequence number of the current packet is 16n, where n is an
@@ -316,12 +320,11 @@ impl Sender {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn handle_ack_packet(&mut self, now: Instant, info: &AckControlInfo) -> SenderResult {
-        // if this ack number is less than or equal to
+        // if this ack number is less than (but NOT equal--equal could just mean lost ACK2 that needs to be retransmitted)
         // the largest received ack number, than discard it
         // this can happen thorough packet reordering OR losing an ACK2 packet
-        if info.ack_number <= self.lr_acked_packet {
+        if info.ack_number < self.lr_acked_packet {
             return Ok(());
         }
 
@@ -401,6 +404,11 @@ impl Sender {
                     return Ok(());
                 }
             };
+
+            // this has already been ack'd
+            if packet.seq_number < self.lr_acked_packet {
+                continue;
+            }
 
             self.loss_list.push_back(packet.clone());
         }
