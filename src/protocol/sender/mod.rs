@@ -186,7 +186,6 @@ impl Sender {
         self.loss_list.is_empty()
             && self.transmit_buffer.is_empty()
             && self.lr_acked_packet == self.transmit_buffer.next_sequence_number
-            && self.send_buffer.is_empty()
             && self.output_buffer.is_empty()
     }
 
@@ -322,12 +321,11 @@ impl Sender {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn handle_ack_packet(&mut self, now: Instant, info: &AckControlInfo) -> SenderResult {
-        // if this ack number is less than or equal to
+        // if this ack number is less than (but NOT equal--equal could just mean lost ACK2 that needs to be retransmitted)
         // the largest received ack number, than discard it
         // this can happen thorough packet reordering OR losing an ACK2 packet
-        if info.ack_number <= self.lr_acked_packet {
+        if info.ack_number < self.lr_acked_packet {
             return Ok(());
         }
 
@@ -404,6 +402,11 @@ impl Sender {
                     return Ok(());
                 }
             };
+
+            // this has already been ack'd
+            if packet.seq_number < self.lr_acked_packet {
+                continue;
+            }
 
             self.loss_list.push_back(packet.clone());
         }
