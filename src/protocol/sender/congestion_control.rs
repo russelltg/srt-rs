@@ -22,8 +22,7 @@ impl Default for MessageStats {
 impl Stats for MessageStats {
     type Measure = (usize, usize);
 
-    fn add(&mut self, measure: Self::Measure) {
-        let (packets, bytes) = measure;
+    fn add(&mut self, (packets, bytes): Self::Measure) {
         self.message_count += 1;
         self.packet_count += packets;
         self.bytes_total += bytes;
@@ -96,11 +95,12 @@ impl SenderCongestionControl {
         }
     }
 
+    // from https://github.com/Haivision/srt/blob/580d8992c20ba4ff48d58b29fddf5fd5e7037f9d/srtcore/congctl.cpp#L166-L166
     pub fn snd_period(&self) -> Duration {
         if self.current_data_rate > 0 {
-            const UMP_HEADER_SIZE: usize = 28;
+            const UDP_HEADER_SIZE: usize = 28; // 20 bytes for IPv4 header, 8 bytes for UDP header
             const HEADER_SIZE: usize = 16;
-            const SRT_DATA_HEADER_SIZE: usize = UMP_HEADER_SIZE + HEADER_SIZE;
+            const SRT_DATA_HEADER_SIZE: usize = UDP_HEADER_SIZE + HEADER_SIZE;
 
             let mean_packet_size = self.message_stats.mean_payload_size() + SRT_DATA_HEADER_SIZE;
             // multiply packet size to adjust data rate to microseconds (i.e. x 1,000,000)
