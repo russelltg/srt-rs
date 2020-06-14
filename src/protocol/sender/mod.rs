@@ -112,7 +112,8 @@ pub struct Sender {
 
     snd_timer: Timer,
 
-    close: bool,
+    close_requested: bool,
+    shutdown_sent: bool,
 }
 
 impl Default for SenderMetrics {
@@ -136,7 +137,8 @@ impl Sender {
             transmit_buffer: TransmitBuffer::new(&settings),
             step: SenderAlgorithmStep::Step1,
             snd_timer: Timer::new(Duration::from_millis(1), settings.socket_start_time),
-            close: false,
+            close_requested: false,
+            shutdown_sent: false,
         }
     }
 
@@ -145,9 +147,7 @@ impl Sender {
     }
 
     pub fn handle_close(&mut self) {
-        if !self.close {
-            self.close = true;
-        }
+        self.close_requested = true;
     }
 
     pub fn handle_data(&mut self, data: (Instant, Bytes), now: Instant) {
@@ -202,9 +202,12 @@ impl Sender {
         use SenderAlgorithmStep::*;
 
         // don't return close until fully flushed
-        if self.close && self.is_flushed() {
-            debug!("{:?} sending shutdown", self.settings.local_sockid);
-            self.send_control(ControlTypes::Shutdown, now); // TODO: could send more than one
+        if self.close_requested && self.is_flushed() {
+            if !self.shutdown_sent {
+                debug!("{:?} sending shutdown", self.settings.local_sockid);
+                self.send_control(ControlTypes::Shutdown, now);
+                self.shutdown_sent = true;
+            }
             return Close;
         }
 
@@ -237,7 +240,7 @@ impl Sender {
         //      1).
 
         //   3) Wait until there is application data to be sent.
-        else if self.transmit_buffer.is_empty() {
+        else if self.transmit_buffer.is_empty() && !self.close_requested {
             // TODO: the spec for 3) seems to suggest waiting at here for data,
             //       but if execution doesn't jump back to Step1, then many of
             //       the tests don't pass... WAT?
@@ -262,6 +265,11 @@ impl Sender {
             return WaitUntilAck;
         } else if let Some(p) = self.pop_transmit_buffer() {
             self.send_data(p);
+        } else if self.close_requested {
+            // this covers the niche case of dropping the last packet(s)
+            if let Some(dp) = self.send_buffer.front().cloned() {
+                self.send_data(dp);
+            }
         }
 
         //   5) If the sequence number of the current packet is 16n, where n is an
@@ -376,7 +384,7 @@ impl Sender {
     }
 
     fn handle_shutdown_packet(&mut self) -> SenderResult {
-        self.close = true;
+        self.close_requested = true;
         Ok(())
     }
 

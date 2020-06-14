@@ -155,40 +155,30 @@ impl RTT {
 pub(crate) struct ReceiveTimers {
     pub(crate) ack: Timer,
     pub(crate) nak: Timer,
-    pub(crate) exp: Timer,
 }
 
 impl ReceiveTimers {
     const SYN: Duration = Duration::from_millis(10);
 
     pub fn new(now: Instant) -> ReceiveTimers {
-        let (ack, nak, exp) = Self::calculate_periods(&RTT::new());
+        let (ack, nak) = Self::calculate_periods(&RTT::new());
         ReceiveTimers {
             ack: Timer::new(ack, now),
             nak: Timer::new(nak, now),
-            exp: Timer::new(exp, now),
         }
     }
 
     pub fn next_timer(&self, now: Instant) -> Instant {
-        max(
-            now,
-            min(
-                self.nak.next_instant(),
-                min(self.ack.next_instant(), self.exp.next_instant()),
-            ),
-        )
+        max(now, min(self.nak.next_instant(), self.ack.next_instant()))
     }
 
     pub fn update_rtt(&mut self, rtt: &RTT) {
-        let (ack, nak, exp) = Self::calculate_periods(rtt);
+        let (ack, nak) = Self::calculate_periods(rtt);
         self.ack.set_period(ack);
         self.nak.set_period(nak);
-        self.exp.set_period(exp);
     }
 
-    fn calculate_periods(rtt: &RTT) -> (Duration, Duration, Duration) {
-        let ms = Duration::from_millis;
+    fn calculate_periods(rtt: &RTT) -> (Duration, Duration) {
         let rtt_period = 4 * rtt.mean_as_duration() + rtt.variance_as_duration() + Self::SYN;
 
         let ack_period = rtt_period;
@@ -196,10 +186,7 @@ impl ReceiveTimers {
         let nak_report_period_accelerator: u32 = 2;
         let nak_period = nak_report_period_accelerator * rtt_period;
 
-        // 0.5s min, according to page 9
-        let exp_period = max(rtt_period, ms(500));
-
-        (ack_period, nak_period, exp_period)
+        (ack_period, nak_period)
     }
 }
 
@@ -235,7 +222,6 @@ mod receive_timers {
         // only ack timer should fire
         assert!(timers.ack.check_expired(actual_timer).is_some());
         assert!(timers.nak.check_expired(actual_timer).is_none());
-        assert!(timers.exp.check_expired(actual_timer).is_none());
 
         // next timer should be nak
         // NAK accelerator * 4 * RTT + RTTVar + SYN
@@ -247,7 +233,6 @@ mod receive_timers {
         // both ack and nak should fire because their periods overlap
         assert!(timers.ack.check_expired(actual_timer).is_some());
         assert!(timers.nak.check_expired(actual_timer).is_some());
-        assert!(timers.exp.check_expired(actual_timer).is_none());
 
         // exp will have a lower bound period of 500ms
         let exp = ms(500);
@@ -256,15 +241,6 @@ mod receive_timers {
         // push time forward for ack and nak first
         assert!(timers.ack.check_expired(now).is_some());
         assert!(timers.nak.check_expired(now).is_some());
-
-        // next timer should be exp
-        let actual_timer = timers.next_timer(now);
-        assert_eq!(diff(actual_timer, start), exp);
-
-        // exp timer should fire
-        assert!(timers.ack.check_expired(actual_timer).is_none());
-        assert!(timers.nak.check_expired(actual_timer).is_none());
-        assert!(timers.exp.check_expired(actual_timer).is_some());
     }
 
     proptest! {
@@ -294,9 +270,6 @@ mod receive_timers {
 
             // NAK accelerator * 4 * RTT + RTTVar + SYN
             assert_eq!(timers.nak.next_instant() - start, 2 * (4 * rtt_mean + rtt_variance + syn));
-
-            // 4 * RTT + RTTVar + SYN
-            assert_eq!(timers.exp.next_instant() - start, 4 * rtt_mean + rtt_variance + syn);
         }
 
         #[test]
@@ -325,9 +298,6 @@ mod receive_timers {
 
             // NAK accelerator * 4 * RTT + RTTVar + SYN
             assert_eq!(timers.nak.next_instant() - start, 2 * (4 * rtt_mean + rtt_variance + syn));
-
-            // exp has a lower bound period of 500ms
-            assert_eq!(timers.exp.next_instant() - start, ms(500));
         }
     }
 }

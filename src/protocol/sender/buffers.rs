@@ -75,10 +75,6 @@ impl TransmitBuffer {
         self.buffer.front()
     }
 
-    pub fn latest_seqence_number(&self) -> SeqNumber {
-        self.next_sequence_number - 1
-    }
-
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
     }
@@ -173,6 +169,10 @@ impl SendBuffer {
                 None => Err(number),
             },
         )
+    }
+
+    pub fn front(&self) -> Option<&DataPacket> {
+        self.buffer.front()
     }
 
     pub fn push_back(&mut self, data: DataPacket) {
