@@ -41,9 +41,10 @@ impl TransmitBuffer {
 
     /// In the case of a message longer than the packet size,
     /// It will be split into multiple packets
-    pub fn push_message(&mut self, data: (Instant, Bytes)) {
+    pub fn push_message(&mut self, data: (Instant, Bytes)) -> usize {
         let (time, mut payload) = data;
         let mut location = PacketLocation::FIRST;
+        let mut packet_count = 0;
         let message_number = self.get_new_message_number();
         loop {
             if payload.len() > self.max_packet_size as usize {
@@ -52,6 +53,7 @@ impl TransmitBuffer {
 
                 payload = payload.slice(self.max_packet_size as usize..payload.len());
                 location = PacketLocation::empty();
+                packet_count += 1;
             } else {
                 self.begin_transmit(
                     time,
@@ -60,7 +62,7 @@ impl TransmitBuffer {
                     location | PacketLocation::LAST,
                     false,
                 );
-                return;
+                return packet_count + 1;
             }
         }
     }
@@ -71,10 +73,6 @@ impl TransmitBuffer {
 
     pub fn front(&self) -> Option<&DataPacket> {
         self.buffer.front()
-    }
-
-    pub fn latest_seqence_number(&self) -> SeqNumber {
-        self.next_sequence_number - 1
     }
 
     pub fn is_empty(&self) -> bool {
@@ -171,6 +169,10 @@ impl SendBuffer {
                 None => Err(number),
             },
         )
+    }
+
+    pub fn front(&self) -> Option<&DataPacket> {
+        self.buffer.front()
     }
 
     pub fn push_back(&mut self, data: DataPacket) {

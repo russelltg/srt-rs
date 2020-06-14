@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{max, Ordering};
 use std::num::Wrapping;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::time::{Duration, Instant};
@@ -8,6 +8,7 @@ pub mod connection;
 pub mod handshake;
 pub mod receiver;
 pub mod sender;
+pub mod stats;
 
 /// Timestamp in us after creation
 /// These wrap every 2^32 microseconds
@@ -290,8 +291,13 @@ pub struct Timer {
 }
 
 impl Timer {
+    const MIN_PERIOD: Duration = Duration::from_micros(1);
+
     pub fn new(period: Duration, now: Instant) -> Timer {
-        Timer { period, last: now }
+        Timer {
+            period: max(period, Self::MIN_PERIOD),
+            last: now,
+        }
     }
 
     pub fn period(&mut self) -> Duration {
@@ -311,8 +317,10 @@ impl Timer {
     }
 
     pub fn check_expired(&mut self, now: Instant) -> Option<Instant> {
-        if now > self.next_instant() {
-            self.last = self.next_instant();
+        if now >= self.next_instant() {
+            let elapsed = now - self.last;
+            let elapsed_periods = elapsed.as_nanos() / self.period.as_nanos();
+            self.last += self.period * elapsed_periods as u32;
             Some(self.last)
         } else {
             None

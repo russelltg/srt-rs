@@ -50,7 +50,6 @@
 
 mod builder;
 mod channel;
-mod congest_ctrl;
 mod connection;
 mod crypto;
 mod loss_compression;
@@ -62,13 +61,11 @@ mod pending_connection;
 pub mod protocol;
 mod seq_number;
 mod socket_id;
-mod srt_congest_ctrl;
 mod srt_version;
 pub mod tokio;
 mod util;
 
 pub use crate::builder::{ConnInitMethod, SrtSocketBuilder};
-pub use crate::congest_ctrl::{CCData, CongestCtrl};
 pub use crate::connection::{Connection, ConnectionSettings};
 pub use crate::msg_number::MsgNumber;
 pub use crate::multiplex::{multiplex, PackChan, StreamerServer};
@@ -76,6 +73,5 @@ pub use crate::packet::{ControlPacket, DataPacket, Packet, PacketCodec, PacketPa
 // TODO: remove
 pub use crate::seq_number::SeqNumber;
 pub use crate::socket_id::SocketID;
-pub use crate::srt_congest_ctrl::SrtCongestCtrl;
 pub use crate::srt_version::SrtVersion;
 pub use crate::tokio::SrtSocket;

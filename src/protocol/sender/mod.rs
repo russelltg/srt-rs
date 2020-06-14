@@ -1,3 +1,6 @@
+mod buffers;
+mod congestion_control;
+
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -10,15 +13,11 @@ use super::TimeSpan;
 use crate::loss_compression::decompress_loss_list;
 use crate::packet::{AckControlInfo, ControlTypes, HandshakeControlInfo, SrtControlPacket};
 use crate::protocol::handshake::Handshake;
-use crate::protocol::sender::buffers::*;
 use crate::protocol::Timer;
-use crate::Packet::*;
-use crate::{
-    CCData, CongestCtrl, ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber,
-    SrtCongestCtrl,
-};
+use crate::{ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
 
-mod buffers;
+use buffers::*;
+use congestion_control::{LiveDataRate, SenderCongestionControl};
 
 #[derive(Debug)]
 pub enum SenderError {}
@@ -84,7 +83,7 @@ pub struct Sender {
     handshake: Handshake,
 
     /// The congestion control
-    congestion_control: SrtCongestCtrl,
+    congestion_control: SenderCongestionControl,
 
     metrics: SenderMetrics,
 
@@ -113,7 +112,8 @@ pub struct Sender {
 
     snd_timer: Timer,
 
-    close: bool,
+    close_requested: bool,
+    shutdown_sent: bool,
 }
 
 impl Default for SenderMetrics {
@@ -123,15 +123,11 @@ impl Default for SenderMetrics {
 }
 
 impl Sender {
-    pub fn new(
-        settings: ConnectionSettings,
-        handshake: Handshake,
-        congestion_control: SrtCongestCtrl,
-    ) -> Self {
+    pub fn new(settings: ConnectionSettings, handshake: Handshake) -> Self {
         Self {
             settings: settings.clone(),
             handshake,
-            congestion_control,
+            congestion_control: SenderCongestionControl::new(LiveDataRate::Unlimited, None),
             metrics: SenderMetrics::new(),
             send_buffer: SendBuffer::new(&settings),
             loss_list: LossList::new(&settings),
@@ -141,7 +137,8 @@ impl Sender {
             transmit_buffer: TransmitBuffer::new(&settings),
             step: SenderAlgorithmStep::Step1,
             snd_timer: Timer::new(Duration::from_millis(1), settings.socket_start_time),
-            close: false,
+            close_requested: false,
+            shutdown_sent: false,
         }
     }
 
@@ -150,13 +147,14 @@ impl Sender {
     }
 
     pub fn handle_close(&mut self) {
-        if !self.close {
-            self.close = true;
-        }
+        self.close_requested = true;
     }
 
-    pub fn handle_data(&mut self, data: (Instant, Bytes)) {
-        self.transmit_buffer.push_message(data);
+    pub fn handle_data(&mut self, data: (Instant, Bytes), now: Instant) {
+        let data_length = data.1.len();
+        let packet_count = self.transmit_buffer.push_message(data);
+        self.congestion_control
+            .on_input(now, packet_count, data_length);
     }
 
     fn handle_snd_timer(&mut self, now: Instant) {
@@ -177,8 +175,8 @@ impl Sender {
         log::info!("Received packet {:?}", packet);
 
         match packet {
-            Control(control) => self.handle_control_packet(control, now),
-            Data(data) => self.handle_data_packet(data, now),
+            Packet::Control(control) => self.handle_control_packet(control, now),
+            Packet::Data(data) => self.handle_data_packet(data, now),
         }
     }
 
@@ -204,9 +202,12 @@ impl Sender {
         use SenderAlgorithmStep::*;
 
         // don't return close until fully flushed
-        if self.close && self.is_flushed() {
-            debug!("{:?} sending shutdown", self.settings.local_sockid);
-            self.send_control(ControlTypes::Shutdown, now); // TODO: could send more than one
+        if self.close_requested && self.is_flushed() {
+            if !self.shutdown_sent {
+                debug!("{:?} sending shutdown", self.settings.local_sockid);
+                self.send_control(ControlTypes::Shutdown, now);
+                self.shutdown_sent = true;
+            }
             return Close;
         }
 
@@ -239,7 +240,7 @@ impl Sender {
         //      1).
 
         //   3) Wait until there is application data to be sent.
-        else if self.transmit_buffer.is_empty() {
+        else if self.transmit_buffer.is_empty() && !self.close_requested {
             // TODO: the spec for 3) seems to suggest waiting at here for data,
             //       but if execution doesn't jump back to Step1, then many of
             //       the tests don't pass... WAT?
@@ -264,6 +265,11 @@ impl Sender {
             return WaitUntilAck;
         } else if let Some(p) = self.pop_transmit_buffer() {
             self.send_data(p);
+        } else if self.close_requested {
+            // this covers the niche case of dropping the last packet(s)
+            if let Some(dp) = self.send_buffer.front().cloned() {
+                self.send_data(dp);
+            }
         }
 
         //   5) If the sequence number of the current packet is 16n, where n is an
@@ -278,8 +284,8 @@ impl Sender {
         //      updated by congestion control and t is the total time used by step
         //      1 to step 5. Go to 1).
         self.step = Step6;
-        let period = self.congestion_control.send_interval();
-        self.snd_timer.set_period(period);
+        self.snd_timer
+            .set_period(self.congestion_control.snd_period());
         WaitUntil(self.snd_timer.next_instant())
     }
 
@@ -350,10 +356,7 @@ impl Sender {
         // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.
 
         // 5) Update flow window size.
-        {
-            let cc_info = self.make_cc_info();
-            self.congestion_control.on_ack(&cc_info);
-        }
+        self.congestion_control.on_ack();
 
         // 6) If this is a Light ACK, stop.
         // TODO: wat
@@ -381,7 +384,7 @@ impl Sender {
     }
 
     fn handle_shutdown_packet(&mut self) -> SenderResult {
-        self.close = true;
+        self.close_requested = true;
         Ok(())
     }
 
@@ -407,9 +410,7 @@ impl Sender {
 
         // update CC
         if let Some(last_packet) = self.loss_list.back() {
-            let cc_info = self.make_cc_info();
-            self.congestion_control
-                .on_nak(last_packet.seq_number, &cc_info);
+            self.congestion_control.on_nak(last_packet.seq_number);
         }
 
         // TODO: reset EXP
@@ -440,19 +441,9 @@ impl Sender {
         Ok(())
     }
 
-    fn make_cc_info(&self) -> CCData {
-        CCData {
-            est_bandwidth: self.metrics.est_link_cap,
-            max_segment_size: self.settings.max_packet_size,
-            latest_seq_num: Some(self.transmit_buffer.latest_seqence_number()),
-            packet_arr_rate: self.metrics.pkt_arr_rate,
-            rtt: Duration::from_micros(self.metrics.rtt.as_micros() as u64),
-        }
-    }
-
     fn pop_transmit_buffer(&mut self) -> Option<DataPacket> {
         let packet = self.transmit_buffer.pop_front()?;
-        self.congestion_control.on_packet_sent(&self.make_cc_info());
+        self.congestion_control.on_packet_sent();
         self.send_buffer.push_back(packet.clone());
         Some(packet)
     }
