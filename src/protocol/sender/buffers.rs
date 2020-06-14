@@ -177,12 +177,12 @@ impl SendBuffer {
         self.buffer.push_back(data);
     }
 
-    pub fn len(&self) -> usize {
-        self.buffer.len()
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
     }
 
-    pub fn front(&self) -> Option<&DataPacket> {
-        self.buffer.front()
+    pub fn len(&self) -> usize {
+        self.buffer.len()
     }
 }
 

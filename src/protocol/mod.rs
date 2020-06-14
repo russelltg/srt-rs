@@ -311,13 +311,8 @@ impl Timer {
     }
 
     pub fn check_expired(&mut self, now: Instant) -> Option<Instant> {
-        if self.period.as_nanos() == 0 {
-            return Some(now);
-        }
-        if now >= self.next_instant() {
-            let elapsed = now - self.last;
-            let elapsed_periods = elapsed.as_nanos() / self.period.as_nanos();
-            self.last += self.period * elapsed_periods as u32;
+        if now > self.next_instant() {
+            self.last = self.next_instant();
             Some(self.last)
         } else {
             None
