@@ -50,7 +50,6 @@
 
 mod builder;
 mod channel;
-mod congest_ctrl;
 mod connection;
 mod crypto;
 mod loss_compression;
@@ -67,7 +66,6 @@ pub mod tokio;
 mod util;
 
 pub use crate::builder::{ConnInitMethod, SrtSocketBuilder};
-pub use crate::congest_ctrl::CCData;
 pub use crate::connection::{Connection, ConnectionSettings};
 pub use crate::msg_number::MsgNumber;
 pub use crate::multiplex::{multiplex, PackChan, StreamerServer};

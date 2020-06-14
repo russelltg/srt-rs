@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use crate::protocol::stats::*;
-use crate::{CCData, SeqNumber};
+use crate::SeqNumber;
 
 struct MessageStats {
     pub message_count: usize,
@@ -120,13 +120,13 @@ impl SenderCongestionControl {
     }
 
     /// When an ACK packet is received
-    pub fn on_ack(&mut self, _data: &CCData) {}
+    pub fn on_ack(&mut self) {}
 
     /// When a NAK packet is received
-    pub fn on_nak(&mut self, _largest_seq_in_ll: SeqNumber, _data: &CCData) {}
+    pub fn on_nak(&mut self, _largest_seq_in_ll: SeqNumber) {}
 
     /// On packet sent
-    pub fn on_packet_sent(&mut self, _data: &CCData) {}
+    pub fn on_packet_sent(&mut self) {}
 
     fn updated_data_rate(&mut self, actual_data_rate: DataRate) -> DataRate {
         use LiveDataRate::*;

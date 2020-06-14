@@ -14,7 +14,7 @@ use crate::loss_compression::decompress_loss_list;
 use crate::packet::{AckControlInfo, ControlTypes, HandshakeControlInfo, SrtControlPacket};
 use crate::protocol::handshake::Handshake;
 use crate::protocol::Timer;
-use crate::{CCData, ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
+use crate::{ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
 
 use buffers::*;
 use congestion_control::{LiveDataRate, SenderCongestionControl};
@@ -348,10 +348,7 @@ impl Sender {
         // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.
 
         // 5) Update flow window size.
-        {
-            let cc_info = self.make_cc_info();
-            self.congestion_control.on_ack(&cc_info);
-        }
+        self.congestion_control.on_ack();
 
         // 6) If this is a Light ACK, stop.
         // TODO: wat
@@ -405,9 +402,7 @@ impl Sender {
 
         // update CC
         if let Some(last_packet) = self.loss_list.back() {
-            let cc_info = self.make_cc_info();
-            self.congestion_control
-                .on_nak(last_packet.seq_number, &cc_info);
+            self.congestion_control.on_nak(last_packet.seq_number);
         }
 
         // TODO: reset EXP
@@ -438,19 +433,9 @@ impl Sender {
         Ok(())
     }
 
-    fn make_cc_info(&self) -> CCData {
-        CCData {
-            est_bandwidth: self.metrics.est_link_cap,
-            max_segment_size: self.settings.max_packet_size,
-            latest_seq_num: Some(self.transmit_buffer.latest_seqence_number()),
-            packet_arr_rate: self.metrics.pkt_arr_rate,
-            rtt: Duration::from_micros(self.metrics.rtt.as_micros() as u64),
-        }
-    }
-
     fn pop_transmit_buffer(&mut self) -> Option<DataPacket> {
         let packet = self.transmit_buffer.pop_front()?;
-        self.congestion_control.on_packet_sent(&self.make_cc_info());
+        self.congestion_control.on_packet_sent();
         self.send_buffer.push_back(packet.clone());
         Some(packet)
     }
