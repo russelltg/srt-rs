@@ -1,5 +1,5 @@
 use std::io::{self};
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::ops::Deref;
 use std::path::Path;
 use std::pin::Pin;
@@ -157,13 +157,16 @@ fn local_port_addr(url: &Url, kind: &str) -> Result<(u16, Option<SocketAddr>), E
         // if host is specified, bind to 0
         Some(Host::Domain(d)) => (
             0,
-            Some(SocketAddr::new(
-                match d.parse() {
-                    Ok(addr) => addr,
-                    Err(err) => bail!("Failed to parse {} ip address: {}", kind, err),
+            Some(
+                match (d, port)
+                    .to_socket_addrs()
+                    .map(|mut it| it.find(SocketAddr::is_ipv4))
+                {
+                    Ok(Some(addr)) => addr,
+                    Ok(None) => bail!("No socketaddrs in host {}", d),
+                    Err(e) => bail!("Failed to parse host {}. Error: {}", d, e),
                 },
-                port,
-            )),
+            ),
         ),
         Some(Host::Ipv4(v4)) => (0, Some(SocketAddr::new(IpAddr::V4(v4), port))),
         Some(Host::Ipv6(v6)) => (0, Some(SocketAddr::new(IpAddr::V6(v6), port))),

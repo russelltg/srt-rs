@@ -296,6 +296,17 @@ mod stransmit_rs_snd_rcv {
         )
         .await
     }
+
+    #[tokio::test]
+    async fn parse_hostname() -> Result<(), Error> {
+        test_send(
+            2034,
+            &["udp://:2034", "srt://:2035"],
+            &["srt://localhost:2035", "udp://localhost:2036"],
+            2036,
+        )
+        .await
+    }
 }
 
 macro_rules! ui_tests {
