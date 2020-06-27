@@ -303,20 +303,31 @@ mod stransmit_rs_snd_rcv {
     }
 
     #[tokio::test]
+    async fn parse_hostname() -> Result<(), Error> {
+        test_send(
+            2034,
+            &["udp://:2034", "srt://:2035"],
+            &["srt://localhost:2035", "udp://localhost:2036"],
+            2036,
+        )
+        .await
+    }
+
+    #[tokio::test]
     async fn reconnect() -> Result<(), Error> {
         let srs_path = find_stransmit_rs();
 
         let mut a = Command::new(&srs_path)
-            .args(&["udp://:2034", "srt://127.0.0.1:2035?autoreconnect"])
+            .args(&["udp://:2037", "srt://127.0.0.1:2038?autoreconnect"])
             .spawn()?;
 
-        let b_args = &["srt://:2035", "udp://127.0.0.1:2036"];
+        let b_args = &["srt://:2038", "udp://127.0.0.1:2039"];
         let mut b = Command::new(&srs_path).args(b_args).spawn()?;
 
         let ident: i32 = rand::random();
 
-        let sender = udp_sender(2034, ident);
-        let recvr = udp_receiver(2036, ident);
+        let sender = udp_sender(2037, ident);
+        let recvr = udp_receiver(2039, ident);
 
         futures::try_join!(recvr, sender)?;
 
@@ -328,8 +339,8 @@ mod stransmit_rs_snd_rcv {
 
         let mut b = Command::new(&srs_path).args(b_args).spawn()?;
 
-        let sender = udp_sender(2034, ident);
-        let recvr = udp_receiver(2036, ident);
+        let sender = udp_sender(2037, ident);
+        let recvr = udp_receiver(2039, ident);
 
         futures::try_join!(recvr, sender)?;
 
@@ -340,17 +351,6 @@ mod stransmit_rs_snd_rcv {
         b.wait().expect(&failure_str);
 
         Ok(())
-    }
-
-    #[tokio::test]
-    async fn parse_hostname() -> Result<(), Error> {
-        test_send(
-            2034,
-            &["udp://:2034", "srt://:2035"],
-            &["srt://localhost:2035", "udp://localhost:2036"],
-            2036,
-        )
-        .await
     }
 }
 
