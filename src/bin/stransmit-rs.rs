@@ -24,6 +24,7 @@ use futures::{
 use tokio::{io::AsyncReadExt, net::UdpSocket, prelude::AsyncRead};
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
+use log::info;
 use srt::{ConnInitMethod, SrtSocketBuilder, StreamerServer};
 
 const AFTER_HELPTEXT: &str = include_str!("helptext.txt");
@@ -285,8 +286,8 @@ fn resolve_input<'a>(
                         }).boxed()
                     }
                     "srt" => {
-                        if input_url.query_pairs().find(|(k, _)| k == "autoreconnect").is_some() {
-                            unfold((input_addr, input_url, input_local_port), move |(input_addr, input_url, input_local_port)| async move { Some((make_srt_input(input_addr.clone(), input_url.clone(), input_local_port).await, (input_addr, input_url, input_local_port))) }).boxed()
+                        if input_url.query_pairs().any(|(k, _)| k == "autoreconnect") {
+                            unfold((input_addr, input_url, input_local_port), move |(input_addr, input_url, input_local_port)| async move { Some((make_srt_input(input_addr, input_url.clone(), input_local_port).await, (input_addr, input_url, input_local_port))) }).boxed()
                         } else {
                             once(make_srt_input(input_addr, input_url, input_local_port)).boxed()
                         }
@@ -313,6 +314,7 @@ fn resolve_input<'a>(
 }
 
 type BoxSink = Pin<Box<dyn Sink<Bytes, Error = Error> + Send>>;
+type SinkStream = BoxStream<'static, Result<BoxSink, Error>>;
 
 async fn make_srt_ouput(
     output_addr: Option<SocketAddr>,
@@ -359,9 +361,7 @@ async fn make_srt_ouput(
     }
 }
 
-fn resolve_output<'a>(
-    output_url: DataType<'a>,
-) -> Result<BoxStream<'static, Result<BoxSink, Error>>, Error> {
+fn resolve_output<'a>(output_url: DataType<'a>) -> Result<SinkStream, Error> {
     Ok(match output_url {
         DataType::Url(output_url) => {
             let (output_local_port, output_addr) = local_port_addr(&output_url, "output")?;
@@ -380,8 +380,8 @@ fn resolve_output<'a>(
                         .with(move |b| future::ready(Ok((b, output_addr.unwrap())))).boxed_sink())
                     }).boxed(),
                     "srt" => {
-                        if output_url.query_pairs().find(|(k, _)| k == "autoreconnect").is_some() {
-                            unfold((output_addr, output_url, output_local_port), |(output_addr, output_url, output_local_port)| async move { Some((make_srt_ouput(output_addr.clone(), output_url.clone(), output_local_port).await, (output_addr, output_url, output_local_port))) }).boxed()
+                        if output_url.query_pairs().any(|(k, _)| k == "autoreconnect") {
+                            unfold((output_addr, output_url, output_local_port), |(output_addr, output_url, output_local_port)| async move { Some((make_srt_ouput(output_addr, output_url.clone(), output_local_port).await, (output_addr, output_url, output_local_port))) }).boxed()
                         } else {
                             once(make_srt_ouput(output_addr, output_url, output_local_port)).boxed()
                         }
@@ -411,10 +411,7 @@ fn resolve_output<'a>(
 
 // Flatten a list of streams of sinks into a single sink that sends to the available sinks
 struct MultiSinkFlatten {
-    sinks: Vec<(
-        Option<BoxStream<'static, Result<BoxSink, Error>>>,
-        Option<BoxSink>,
-    )>,
+    sinks: Vec<(Option<SinkStream>, Option<BoxSink>)>,
 }
 
 impl MultiSinkFlatten {
@@ -439,6 +436,7 @@ impl Sink<Bytes> for MultiSinkFlatten {
                             Poll::Pending => break Poll::Pending,
                             Poll::Ready(Ok(_)) => break Poll::Ready(Ok(())),
                             Poll::Ready(Err(e)) => {
+                                info!("Sink closed {:?}", e);
                                 // sink closed, restart conn init
                                 *sink_opt = None;
                             }
