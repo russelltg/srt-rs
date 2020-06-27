@@ -1,30 +1,28 @@
-use std::io::{self};
-use std::net::{IpAddr, SocketAddr};
-use std::ops::Deref;
-use std::path::Path;
-use std::pin::Pin;
-use std::process::exit;
-use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::{
+    io,
+    net::{IpAddr, SocketAddr},
+    ops::Deref,
+    path::Path,
+    pin::Pin,
+    process::exit,
+    task::{Context, Poll},
+    time::{Duration, Instant},
+};
 
-use anyhow::{bail, Error};
+use anyhow::{bail, format_err, Error};
 use bytes::Bytes;
 use clap::{App, Arg};
 use url::{Host, Url};
 
-use futures::future::BoxFuture;
-use futures::stream::BoxStream;
 use futures::{
     future,
     prelude::*,
-    stream::{self, once, unfold},
+    ready,
+    stream::{self, once, unfold, BoxStream},
+    try_join,
 };
-
-use tokio::io::AsyncReadExt;
-use tokio::net::UdpSocket;
-use tokio::prelude::AsyncRead;
-use tokio_util::codec::BytesCodec;
-use tokio_util::udp::UdpFramed;
+use tokio::{io::AsyncReadExt, net::UdpSocket, prelude::AsyncRead};
+use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
 use srt::{ConnInitMethod, SrtSocketBuilder, StreamerServer};
 
@@ -131,7 +129,7 @@ where
                 }
             }
             // this has already been handled, ignore
-            "rendezvous" | "multiplex" => (),
+            "rendezvous" | "multiplex" | "autoreconnect" => (),
             unrecog => bail!("Unrecgonized parameter '{}' for srt", unrecog),
         };
     }
@@ -238,6 +236,34 @@ where
     Ok(addr)
 }
 
+async fn make_srt_input(
+    input_addr: Option<SocketAddr>,
+    input_url: Url,
+    input_local_port: u16,
+) -> Result<BoxStream<'static, Bytes>, Error> {
+    let mut builder = SrtSocketBuilder::new(get_conn_init_method(
+        input_addr,
+        input_url
+            .query_pairs()
+            .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None })
+            .as_deref(),
+    )?)
+    .local_port(input_local_port);
+
+    builder = add_srt_args(input_url.query_pairs(), builder)?;
+
+    // make sure multiplex was not specified
+    if input_url.query_pairs().any(|(k, _)| &*k == "multiplex") {
+        bail!("multiplex is not a valid option for input urls");
+    }
+    Ok(builder
+        .connect()
+        .await?
+        .map(Result::unwrap)
+        .map(|(_, b)| b)
+        .boxed())
+}
+
 fn resolve_input<'a>(
     input_url: DataType<'a>,
 ) -> Result<BoxStream<'static, Result<BoxStream<'static, Bytes>, Error>>, Error> {
@@ -259,32 +285,10 @@ fn resolve_input<'a>(
                         }).boxed()
                     }
                     "srt" => {
-
-                        let mut builder = SrtSocketBuilder::new(get_conn_init_method(
-                            input_addr,
-                            input_url
-                                .query_pairs()
-                                .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None })
-                                .as_deref()
-                        )?).local_port(input_local_port);
-
-                        builder = add_srt_args(input_url.query_pairs(), builder)?;
-
-                        // make sure multiplex was not specified
-                        if input_url.query_pairs().any(|(k, _)| &*k == "multiplex") {
-                            bail!("multiplex is not a valid option for input urls");
-                        }
-
-                        let is_autoreconnect = input_url.query_pairs().find(|(k, v)| k == "autoreconnect").is_some();
-
-                        let sock_fut = || async move {
-                            Ok(builder.connect().await?.map(Result::unwrap).map(|(_, b)| b).boxed())
-                        };
-
-                        if is_autoreconnect {
-                            unfold((), |_| async move { Some((sock_fut().await, ())) }).boxed()
+                        if input_url.query_pairs().find(|(k, _)| k == "autoreconnect").is_some() {
+                            unfold((input_addr, input_url, input_local_port), move |(input_addr, input_url, input_local_port)| async move { Some((make_srt_input(input_addr.clone(), input_url.clone(), input_local_port).await, (input_addr, input_url, input_local_port))) }).boxed()
                         } else {
-                            once(sock_fut()).boxed()
+                            once(make_srt_input(input_addr, input_url, input_local_port)).boxed()
                         }
                     }
                     s => bail!("unrecognized scheme: {} designated in input url", s),
@@ -310,6 +314,51 @@ fn resolve_input<'a>(
 
 type BoxSink = Pin<Box<dyn Sink<Bytes, Error = Error> + Send>>;
 
+async fn make_srt_ouput(
+    output_addr: Option<SocketAddr>,
+    output_url: Url,
+    output_local_port: u16,
+) -> Result<BoxSink, Error> {
+    let builder = SrtSocketBuilder::new(get_conn_init_method(
+        output_addr,
+        output_url
+            .query_pairs()
+            .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None })
+            .as_deref(),
+    )?)
+    .local_port(output_local_port);
+
+    let is_multiplex = match (
+        output_url
+            .query_pairs()
+            .find(|(k, _)| k == "multiplex")
+            .as_ref()
+            .map(|(_, v)| &**v),
+        builder.conn_type(),
+    ) {
+        // OK
+        (Some(""), ConnInitMethod::Listen) => true,
+        (None, _) => false,
+
+        // not OK
+        (Some(""), _) => bail!("The multiplex option is only supported for listen connections"),
+        (Some(a), _) => bail!("Unexpected value for multiplex: {}", a),
+    };
+    let builder = add_srt_args(output_url.query_pairs(), builder)?;
+
+    if is_multiplex {
+        Ok(StreamerServer::new(builder.build_multiplexed().await?)
+            .with(|b| future::ok((Instant::now(), b)))
+            .boxed_sink())
+    } else {
+        Ok(builder
+            .connect()
+            .await?
+            .with(|b| future::ok((Instant::now(), b)))
+            .boxed_sink())
+    }
+}
+
 fn resolve_output<'a>(
     output_url: DataType<'a>,
 ) -> Result<BoxStream<'static, Result<BoxSink, Error>>, Error> {
@@ -331,49 +380,10 @@ fn resolve_output<'a>(
                         .with(move |b| future::ready(Ok((b, output_addr.unwrap())))).boxed_sink())
                     }).boxed(),
                     "srt" => {
-                        let builder = SrtSocketBuilder::new(get_conn_init_method(
-                            output_addr,
-                            output_url
-                                .query_pairs()
-                                .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None })
-                                .as_deref()
-                        )?).local_port(output_local_port);
-
-                        let is_multiplex = match (
-                            output_url
-                                .query_pairs()
-                                .find(|(k, _)| k == "multiplex")
-                                .as_ref()
-                                .map(|(_, v)| &**v),
-                            builder.conn_type(),
-                        ) {
-                            // OK
-                            (Some(""), ConnInitMethod::Listen) => true,
-                            (None, _) => false,
-
-                            // not OK
-                            (Some(""), _) => bail!(
-                                "The multiplex option is only supported for listen connections"
-                            ),
-                            (Some(a), _) => bail!("Unexpected value for multiplex: {}", a),
-                        };
-
-                        let builder = add_srt_args(output_url.query_pairs(), builder)?;
-                        let is_autoreconnect = output_url.query_pairs().find(|(k, v)| k == "autoreconnect").is_some();
-
-                        let sock_fut = || async move {
-                            if is_multiplex {
-                                Ok(StreamerServer::new(builder.build_multiplexed().await?)
-                                    .with(|b| future::ok((Instant::now(), b))).boxed_sink())
-                            } else {
-                                Ok(builder.connect().await?.with(|b| future::ok((Instant::now(), b))).boxed_sink())
-                            }
-                        };
-
-                        if is_autoreconnect {
-                            unfold((), |_| async move { Some((sock_fut().await, ())) }).boxed()
+                        if output_url.query_pairs().find(|(k, _)| k == "autoreconnect").is_some() {
+                            unfold((output_addr, output_url, output_local_port), |(output_addr, output_url, output_local_port)| async move { Some((make_srt_ouput(output_addr.clone(), output_url.clone(), output_local_port).await, (output_addr, output_url, output_local_port))) }).boxed()
                         } else {
-                            once(sock_fut()).boxed()
+                            once(make_srt_ouput(output_addr, output_url, output_local_port)).boxed()
                         }
                     },
                   s => bail!("unrecognized scheme '{}' designated in output url", s),
@@ -399,52 +409,97 @@ fn resolve_output<'a>(
     })
 }
 
-enum SinkOrFuture {
-    Sink(BoxSink),
-    Future(BoxFuture<'static, Option<BoxSink>>),
-    Finished,
+// Flatten a list of streams of sinks into a single sink that sends to the available sinks
+struct MultiSinkFlatten {
+    sinks: Vec<(
+        Option<BoxStream<'static, Result<BoxSink, Error>>>,
+        Option<BoxSink>,
+    )>,
 }
 
-struct MultiSinkFlatten {
-    sinks: Vec<(BoxStream<'static, BoxSink>, SinkOrFuture)>,
+impl MultiSinkFlatten {
+    fn new(from: impl Iterator<Item = BoxStream<'static, Result<BoxSink, Error>>>) -> Self {
+        MultiSinkFlatten {
+            sinks: from.map(|str| (Some(str), None)).collect(),
+        }
+    }
 }
 
 impl Sink<Bytes> for MultiSinkFlatten {
     type Error = Error;
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        let ret = Poll::Ready(Ok(()));
-        for (mut stream, ref mut s) in &mut self.as_mut().sinks {
-            if let SinkOrFuture::Sink(sink) = s {
-                match sink.as_mut().poll_ready(cx) {
-                    Poll::Pending => ret = Poll::Pending,
-                    Poll::Ready(Ok(_)) => {}
-                    Poll::Ready(Err(e)) => {
-                        // sink closed, restart conn init
-                        *s = SinkOrFuture::Future(stream.next().boxed());
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        let mut ret = Poll::Ready(Err(format_err!("All sinks ended permanantly")));
+        for (ref mut stream_opt, ref mut sink_opt) in &mut self.as_mut().sinks {
+            // loop until we get a pending or ready
+            let poll_result = loop {
+                // poll the existing sink
+                match (stream_opt.as_mut(), sink_opt.as_mut()) {
+                    (_, Some(sink)) => {
+                        match sink.as_mut().poll_ready(cx) {
+                            Poll::Pending => break Poll::Pending,
+                            Poll::Ready(Ok(_)) => break Poll::Ready(Ok(())),
+                            Poll::Ready(Err(e)) => {
+                                // sink closed, restart conn init
+                                *sink_opt = None;
+                            }
+                        }
                     }
-                }
-            }
-            if let SinkOrFuture::Future(f) = s {
-                match f.as_mut().poll(cx) {
-                    Poll::Ready(Some(sink)) => {
-                        *s = SinkOrFuture::Sink(sink);
+                    (Some(stream), None) => {
+                        // xxx not ? here!
+                        match stream.as_mut().try_poll_next(cx)? {
+                            Poll::Ready(Some(sink)) => {
+                                *sink_opt = Some(sink);
+                            }
+                            Poll::Ready(None) => *stream_opt = None,
+                            Poll::Pending => break Poll::Pending,
+                        }
                     }
-                    Poll::Ready(None) => *s = SinkOrFuture::Finished,
-                    Poll::Pending => {}
+                    (None, None) => break Poll::Ready(Err(())),
                 }
+            };
+
+            // update result with the "logical max" of ret and poll_result, Ready::Ok > Pending > Ready::Err
+            match (&ret, poll_result) {
+                (_, Poll::Ready(Ok(()))) => ret = Poll::Ready(Ok(())), // Ready(Ok) trumps all
+                (Poll::Ready(Err(_)), Poll::Pending) => ret = Poll::Pending, // Pending trumps Ready(Err)
+                _ => {}                                                      // nothing to do
             }
         }
 
         ret
     }
-    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
-        todo!()
+    fn start_send(mut self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
+        for sink in &mut self
+            .as_mut()
+            .sinks
+            .iter_mut()
+            .filter_map(|(_, s)| s.as_mut())
+        {
+            sink.as_mut().start_send(item.clone())?; // xxx not ?
+        }
+        Ok(())
     }
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        todo!()
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        for sink in &mut self
+            .as_mut()
+            .sinks
+            .iter_mut()
+            .filter_map(|(_, s)| s.as_mut())
+        {
+            ready!(sink.as_mut().poll_flush(cx))?; // xxx not ?
+        }
+        Poll::Ready(Ok(()))
     }
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        todo!()
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        for sink in &mut self
+            .as_mut()
+            .sinks
+            .iter_mut()
+            .filter_map(|(_, s)| s.as_mut())
+        {
+            ready!(sink.as_mut().poll_close(cx))?; // xxx not ?
+        }
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -498,29 +553,26 @@ async fn run() -> Result<(), Error> {
     // Resolve the receiver side
     // this will be a future that resolves to a stream of bytes
     // (all boxed to allow for different protocols)
-    let from = resolve_input(input_url)?;
+    let mut stream_stream = resolve_input(input_url)?;
 
     // Resolve the sender side
     // similar to the receiver side, except a sink instead of a stream
-    let mut to_vec = vec![];
+    let mut sink_streams = vec![];
     for to in output_urls_iter.map(resolve_output) {
-        to_vec.push(to?.next().boxed());
+        sink_streams.push(to?);
     }
 
-    let (from, mut to_sinks) = futures::try_join!(from, future::try_join_all(to_vec.iter_mut()))?;
+    let mut sinks = MultiSinkFlatten::new(sink_streams.drain(..));
 
-    // combine the sinks
-    let mut to_sink: Pin<Box<dyn Sink<Bytes, Error = Error> + Send + 'static>> = to_sinks
-        .pop()
-        .expect("To sinks didn't even have one element");
-
-    // TODO: this can be optimized. This is a linked list right now, list would
-    // be more efficient
-    for sink in to_sinks {
-        to_sink = to_sink.fanout(sink).boxed_sink();
+    // poll sink and stream in parallel, only yielding when there is something ready for the sink and the stream is good.
+    while let (_, Some(stream)) = try_join!(
+        future::poll_fn(|cx| Pin::new(&mut sinks).poll_ready(cx)),
+        stream_stream.try_next()
+    )? {
+        // let a: () = &mut *stream;
+        sinks.send_all(&mut stream.map(Ok)).await?;
     }
 
-    to_sink.send_all(&mut from.map(Ok)).await?;
-    to_sink.close().await?;
+    sinks.close().await?;
     Ok(())
 }
