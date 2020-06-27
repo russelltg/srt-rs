@@ -361,7 +361,7 @@ async fn make_srt_ouput(
     }
 }
 
-fn resolve_output<'a>(output_url: DataType<'a>) -> Result<SinkStream, Error> {
+fn resolve_output(output_url: DataType) -> Result<SinkStream, Error> {
     Ok(match output_url {
         DataType::Url(output_url) => {
             let (output_local_port, output_addr) = local_port_addr(&output_url, "output")?;
