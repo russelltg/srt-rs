@@ -155,7 +155,7 @@ where
                     ConnectionAction::Close => {
                         if receiver.is_flushed() {
                             info!(
-                                "{:?} Receiver flush and connectiont timeout",
+                                "{:?} Receiver flush and connection timeout",
                                 sender.settings().local_sockid
                             );
                             return;
