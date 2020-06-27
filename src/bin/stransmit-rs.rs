@@ -160,7 +160,7 @@ fn local_port_addr(url: &Url, kind: &str) -> Result<(u16, Option<SocketAddr>), E
             Some(
                 match (d, port)
                     .to_socket_addrs()
-                    .map(|it| it.into_iter().filter(SocketAddr::is_ipv4).next())
+                    .map(|it| it.into_iter().find(SocketAddr::is_ipv4))
                 {
                     Ok(Some(addr)) => addr,
                     Ok(None) => bail!("No socketaddrs in host {}", d),
