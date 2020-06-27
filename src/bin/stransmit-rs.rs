@@ -14,7 +14,11 @@ use url::{Host, Url};
 
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
-use futures::{future, prelude::*, stream};
+use futures::{
+    future,
+    prelude::*,
+    stream::{self, once, unfold},
+};
 
 use tokio::io::AsyncReadExt;
 use tokio::net::UdpSocket;
@@ -236,7 +240,7 @@ where
 
 fn resolve_input<'a>(
     input_url: DataType<'a>,
-) -> Result<BoxFuture<'static, Result<BoxStream<'static, Bytes>, Error>>, Error> {
+) -> Result<BoxStream<'static, Result<BoxStream<'static, Bytes>, Error>>, Error> {
     Ok(match input_url {
         DataType::Url(input_url) => {
             let (input_local_port, input_addr) = local_port_addr(&input_url, "input")?;
@@ -244,7 +248,7 @@ fn resolve_input<'a>(
                     "udp" if input_local_port == 0 => 
                         bail!("Must not designate a ip to receive UDP. Example: udp://:1234, not udp://127.0.0.1:1234. If you with to bind to a specific adapter, use the adapter setting instead."),
                     "udp" => {
-                        async move {
+                        once(async move {
                             Ok(UdpFramed::new(
                                 UdpSocket::bind(&parse_udp_options(
                                     input_url.query_pairs(),
@@ -252,10 +256,9 @@ fn resolve_input<'a>(
                                 )?).await?,
                                 BytesCodec::new(),
                             ).map(Result::unwrap).map(|(b, _)| b.freeze()).boxed())
-                        }.boxed()
+                        }).boxed()
                     }
                     "srt" => {
-                        async move {
 
                         let mut builder = SrtSocketBuilder::new(get_conn_init_method(
                             input_addr,
@@ -272,30 +275,35 @@ fn resolve_input<'a>(
                             bail!("multiplex is not a valid option for input urls");
                         }
 
-                        Ok(builder.connect().await?.map(Result::unwrap).map(|(_, b)| b).boxed())
+                        let is_autoreconnect = input_url.query_pairs().find(|(k, v)| k == "autoreconnect").is_some();
 
-                        }.boxed()
+                        let sock_fut = || async move {
+                            Ok(builder.connect().await?.map(Result::unwrap).map(|(_, b)| b).boxed())
+                        };
+
+                        if is_autoreconnect {
+                            unfold((), |_| async move { Some((sock_fut().await, ())) }).boxed()
+                        } else {
+                            once(sock_fut()).boxed()
+                        }
                     }
                     s => bail!("unrecognized scheme: {} designated in input url", s),
                 }
         }
+        DataType::File(file) if file == Path::new("-") => once(async move {
+            Ok(read_to_stream(tokio::io::stdin())
+                .map(Result::unwrap)
+                .boxed())
+        })
+        .boxed(),
         DataType::File(file) => {
-            if file == Path::new("-") {
-                async move {
-                    Ok(read_to_stream(tokio::io::stdin())
-                        .map(Result::unwrap)
-                        .boxed())
-                }
-                .boxed()
-            } else {
-                let file = file.to_owned();
-                async move {
-                    let f = tokio::fs::File::open(file).await?;
+            let file = file.to_owned();
+            once(async move {
+                let f = tokio::fs::File::open(file).await?;
 
-                    Ok(read_to_stream(f).map(Result::unwrap).boxed())
-                }
-                .boxed()
-            }
+                Ok(read_to_stream(f).map(Result::unwrap).boxed())
+            })
+            .boxed()
         }
     })
 }
@@ -304,7 +312,7 @@ type BoxSink = Pin<Box<dyn Sink<Bytes, Error = Error> + Send>>;
 
 fn resolve_output<'a>(
     output_url: DataType<'a>,
-) -> Result<BoxFuture<'static, Result<BoxSink, Error>>, Error> {
+) -> Result<BoxStream<'static, Result<BoxSink, Error>>, Error> {
     Ok(match output_url {
         DataType::Url(output_url) => {
             let (output_local_port, output_addr) = local_port_addr(&output_url, "output")?;
@@ -312,7 +320,7 @@ fn resolve_output<'a>(
             match output_url.scheme() {
                     "udp" if output_addr.is_none() => 
                         bail!("Must designate a ip to send to to send UDP. Example: udp://127.0.0.1:1234, not udp://:1234"),
-                    "udp" => async move {
+                    "udp" => once(async move {
                         Ok(UdpFramed::new(
                             UdpSocket::bind(&parse_udp_options(
                                 output_url.query_pairs(),
@@ -321,7 +329,7 @@ fn resolve_output<'a>(
                             BytesCodec::new(),
                         )
                         .with(move |b| future::ready(Ok((b, output_addr.unwrap())))).boxed_sink())
-                    }.boxed(),
+                    }).boxed(),
                     "srt" => {
                         let builder = SrtSocketBuilder::new(get_conn_init_method(
                             output_addr,
@@ -350,43 +358,94 @@ fn resolve_output<'a>(
                             (Some(a), _) => bail!("Unexpected value for multiplex: {}", a),
                         };
 
-                        let  builder = add_srt_args(output_url.query_pairs(), builder)?;
+                        let builder = add_srt_args(output_url.query_pairs(), builder)?;
+                        let is_autoreconnect = output_url.query_pairs().find(|(k, v)| k == "autoreconnect").is_some();
 
-                        if is_multiplex {
-                            async move {
+                        let sock_fut = || async move {
+                            if is_multiplex {
                                 Ok(StreamerServer::new(builder.build_multiplexed().await?)
                                     .with(|b| future::ok((Instant::now(), b))).boxed_sink())
-                            }.boxed()
-                        } else {
-                            async move {
+                            } else {
                                 Ok(builder.connect().await?.with(|b| future::ok((Instant::now(), b))).boxed_sink())
-                            }.boxed()
+                            }
+                        };
+
+                        if is_autoreconnect {
+                            unfold((), |_| async move { Some((sock_fut().await, ())) }).boxed()
+                        } else {
+                            once(sock_fut()).boxed()
                         }
                     },
-                    s => bail!("unrecognized scheme '{}' designated in output url", s),
+                  s => bail!("unrecognized scheme '{}' designated in output url", s),
                 }
         }
+        DataType::File(file) if file == Path::new("-") => once(async move {
+            Ok(FutAsyncWrite(tokio::io::stdout())
+                .into_sink()
+                .sink_map_err(Error::from)
+                .boxed_sink())
+        })
+        .boxed(),
         DataType::File(file) => {
-            if file == Path::new("-") {
-                async move {
-                    Ok(FutAsyncWrite(tokio::io::stdout())
-                        .into_sink()
-                        .sink_map_err(Error::from)
-                        .boxed_sink())
-                }
-                .boxed()
-            } else {
-                let file = file.to_owned();
-                async move {
-                    Ok(FutAsyncWrite(tokio::fs::File::create(file).await?)
-                        .into_sink()
-                        .sink_map_err(Error::from)
-                        .boxed_sink())
-                }
-                .boxed()
-            }
+            let file = file.to_owned();
+            once(async move {
+                Ok(FutAsyncWrite(tokio::fs::File::create(file).await?)
+                    .into_sink()
+                    .sink_map_err(Error::from)
+                    .boxed_sink())
+            })
+            .boxed()
         }
     })
+}
+
+enum SinkOrFuture {
+    Sink(BoxSink),
+    Future(BoxFuture<'static, Option<BoxSink>>),
+    Finished,
+}
+
+struct MultiSinkFlatten {
+    sinks: Vec<(BoxStream<'static, BoxSink>, SinkOrFuture)>,
+}
+
+impl Sink<Bytes> for MultiSinkFlatten {
+    type Error = Error;
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        let ret = Poll::Ready(Ok(()));
+        for (mut stream, ref mut s) in &mut self.as_mut().sinks {
+            if let SinkOrFuture::Sink(sink) = s {
+                match sink.as_mut().poll_ready(cx) {
+                    Poll::Pending => ret = Poll::Pending,
+                    Poll::Ready(Ok(_)) => {}
+                    Poll::Ready(Err(e)) => {
+                        // sink closed, restart conn init
+                        *s = SinkOrFuture::Future(stream.next().boxed());
+                    }
+                }
+            }
+            if let SinkOrFuture::Future(f) = s {
+                match f.as_mut().poll(cx) {
+                    Poll::Ready(Some(sink)) => {
+                        *s = SinkOrFuture::Sink(sink);
+                    }
+                    Poll::Ready(None) => *s = SinkOrFuture::Finished,
+                    Poll::Pending => {}
+                }
+            }
+        }
+
+        ret
+    }
+    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
+        todo!()
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        todo!()
+    }
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        todo!()
+    }
 }
 
 #[tokio::main]
@@ -445,7 +504,7 @@ async fn run() -> Result<(), Error> {
     // similar to the receiver side, except a sink instead of a stream
     let mut to_vec = vec![];
     for to in output_urls_iter.map(resolve_output) {
-        to_vec.push(to?);
+        to_vec.push(to?.next().boxed());
     }
 
     let (from, mut to_sinks) = futures::try_join!(from, future::try_join_all(to_vec.iter_mut()))?;

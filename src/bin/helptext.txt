@@ -45,12 +45,13 @@ UDP - send over a UDP port.
 
 
     Settings: * interface=<ip address>  the interface to bind to, defaults to all (0.0.0.0)
-    * latency_ms=<number>     the milliseconds of TSBPD latency to use. If both sides set this, the higher setting is used
-    * rendezvous              use the rendezvous connection method * local_port=<number>     the local port to bind to. Only applicable for 
-                              rendezvous and connect connection modes * multiplex               allow multiple connections on the single port, only
-                              applicable for listen connection mode, in the sender position
-    * passphrase              the passphrase to use for encryption/decryption. Must match the other side.
-    * pbkeylen                the key length to use for encryption. Defaults to 0, unless passphrse is passed, in which case 16 is the default. Must be 16, 24, or 32
+    * latency_ms=<number>        the milliseconds of TSBPD latency to use. If both sides set this, the higher setting is used
+    * rendezvous                 use the rendezvous connection method * local_port=<number>     the local port to bind to. Only applicable for 
+                                 rendezvous and connect connection modes * multiplex               allow multiple connections on the single port, only
+                                 applicable for listen connection mode, in the sender position
+    * passphrase=<string>        the passphrase to use for encryption/decryption. Must match the other side.
+    * pbkeylen=<number>          the key length to use for encryption. Defaults to 0, unless passphrse is passed, in which case 16 is the default. Must be 16, 24, or 32
+    * autoreconnect              should the socket reconnect after connection is broken. Default is false, specify for true
  FILE - save or send a file
     example:
         stransmit-rs \
