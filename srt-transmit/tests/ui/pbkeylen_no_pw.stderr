@@ -1,0 +1,3 @@
+Invalid settings detected: pbkeylen specified with no passphrase
+
+See srt-transmit --help for more info

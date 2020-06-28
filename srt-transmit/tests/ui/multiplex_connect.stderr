@@ -1,0 +1,3 @@
+Invalid settings detected: The multiplex option is only supported for listen connections
+
+See srt-transmit --help for more info

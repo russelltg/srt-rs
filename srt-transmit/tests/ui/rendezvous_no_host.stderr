@@ -1,0 +1,3 @@
+Invalid settings detected: Cannot have rendezvous connection without host specified
+
+See srt-transmit --help for more info

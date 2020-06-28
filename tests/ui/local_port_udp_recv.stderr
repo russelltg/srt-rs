@@ -1,3 +1,0 @@
-Invalid settings detected: local_port is incompatiable with udp listen mode
-
-See stransmit-rs --help for more info

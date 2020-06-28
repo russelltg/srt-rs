@@ -1,0 +1,8 @@
+error: The following required arguments were not provided:
+    <FROM>
+    <TO>...
+
+USAGE:
+    srt-transmit <FROM> <TO>...
+
+For more information try --help

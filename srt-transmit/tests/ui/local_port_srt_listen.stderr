@@ -1,0 +1,3 @@
+Invalid settings detected: local_port is incompatible with listen connection technique
+
+See srt-transmit --help for more info

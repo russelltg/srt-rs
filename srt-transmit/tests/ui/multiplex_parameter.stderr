@@ -1,0 +1,3 @@
+Invalid settings detected: Unexpected value for multiplex: yes
+
+See srt-transmit --help for more info
