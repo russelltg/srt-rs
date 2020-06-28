@@ -222,7 +222,8 @@ impl SrtSocketBuilder {
                 ready(res.map_err(|e| warn!("Error parsing packet: {}", e)).ok())
             }),
             conn,
-            self.event_receiver.unwrap_or(Box::new(NullEventReceiver)),
+            self.event_receiver
+                .unwrap_or_else(|| Box::new(NullEventReceiver)),
         ))
     }
 
