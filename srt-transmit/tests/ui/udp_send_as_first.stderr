@@ -1,3 +1,3 @@
 Invalid settings detected: Must not designate a ip to receive UDP. Example: udp://:1234, not udp://127.0.0.1:1234. If you with to bind to a specific adapter, use the adapter setting instead.
 
-See stransmit-rs --help for more info
+See srt-transmit --help for more info

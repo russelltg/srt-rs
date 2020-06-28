@@ -10,9 +10,9 @@ use futures::prelude::*;
 use tokio::time::{delay_for, Duration};
 
 #[cfg(target_os = "windows")]
-const STRANSMIT_NAME: &str = "stransmit-rs.exe";
+const STRANSMIT_NAME: &str = "srt-transmit.exe";
 #[cfg(not(target_os = "windows"))]
-const STRANSMIT_NAME: &str = "stransmit-rs";
+const STRANSMIT_NAME: &str = "srt-transmit-rs";
 
 fn find_stransmit_rs() -> PathBuf {
     let mut stransmit_rs_path = env::current_exe().unwrap();

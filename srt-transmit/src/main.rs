@@ -508,7 +508,7 @@ impl Sink<Bytes> for MultiSinkFlatten {
 async fn main() {
     if let Err(e) = run().await {
         eprintln!(
-            "Invalid settings detected: {}\n\nSee stransmit-rs --help for more info",
+            "Invalid settings detected: {}\n\nSee srt-transmit --help for more info",
             e
         );
         exit(1);
@@ -521,7 +521,7 @@ async fn run() -> Result<(), Error> {
         .format_timestamp_micros()
         .init();
 
-    let matches = App::new("stransmit-rs")
+    let matches = App::new("srt-transmit")
         .version("1.0")
         .author("Russell Greene")
         .about("SRT sender and receiver written in rust")
