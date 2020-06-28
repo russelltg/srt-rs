@@ -14,7 +14,10 @@ use crate::loss_compression::decompress_loss_list;
 use crate::packet::{AckControlInfo, ControlTypes, HandshakeControlInfo, SrtControlPacket};
 use crate::protocol::handshake::Handshake;
 use crate::protocol::Timer;
-use crate::{ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
+use crate::{
+    event::{Event, EventReceiver},
+    ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber,
+};
 
 use buffers::*;
 use congestion_control::{LiveDataRate, SenderCongestionControl};
@@ -199,7 +202,7 @@ impl Sender {
     pub fn next_action(
         &mut self,
         now: Instant,
-        mut er: Option<&mut impl EventReceiver>,
+        er: &mut impl EventReceiver,
     ) -> SenderAlgorithmAction {
         use SenderAlgorithmAction::*;
         use SenderAlgorithmStep::*;
@@ -226,9 +229,8 @@ impl Sender {
         //      packet in the list and remove it from the list. Go to 5).
         if let Some(p) = self.loss_list.pop_front() {
             debug!("Sending packet in loss list, seq={:?}", p.seq_number);
-            if let Some(er) = &mut er {
-                er.on_event(&Event::SentRetrans(p.payload.len()), now);
-            }
+            er.on_event(&Event::SentRetrans(p.payload.len()), now);
+
             self.send_data(p);
 
             // TODO: returning here will result in sending all the packets in the loss
@@ -270,9 +272,7 @@ impl Sender {
 
             return WaitUntilAck;
         } else if let Some(p) = self.pop_transmit_buffer() {
-            if let Some(er) = &mut er {
-                er.on_event(&Event::Sent(p.payload.len()), now);
-            }
+            er.on_event(&Event::Sent(p.payload.len()), now);
             self.send_data(p);
         } else if self.close_requested {
             // this covers the niche case of dropping the last packet(s)
@@ -286,9 +286,7 @@ impl Sender {
         if let Some(p) = self.pop_transmit_buffer_16n() {
             //      NOTE: to get the closest timing, we ignore congestion control
             //      and send the 16th packet immediately, instead of proceeding to step 2
-            if let Some(er) = &mut er {
-                er.on_event(&Event::Sent(p.payload.len()), now);
-            }
+            er.on_event(&Event::Sent(p.payload.len()), now);
             self.send_data(p);
         }
 

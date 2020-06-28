@@ -38,6 +38,11 @@ pub trait EventReceiver {
 
 impl<E: EventReceiver + ?Sized> EventReceiver for Box<E> {
     fn on_event(&mut self, event: &Event, timestamp: Instant) {
-        self.on_event(event, timestamp)
+        (**self).on_event(event, timestamp)
     }
+}
+
+pub struct NullEventReceiver;
+impl EventReceiver for NullEventReceiver {
+    fn on_event(&mut self, _event: &Event, _timestamp: Instant) {}
 }

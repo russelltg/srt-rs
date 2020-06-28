@@ -25,7 +25,10 @@ use tokio::{io::AsyncReadExt, net::UdpSocket, prelude::AsyncRead};
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
 use log::info;
-use srt_tokio::{ConnInitMethod, SrtSocketBuilder, StreamerServer};
+use srt_tokio::{ConnInitMethod, Event, EventReceiver, SrtSocketBuilder, StreamerServer};
+
+use prometheus::{Encoder, IntCounter, TextEncoder};
+use warp::{hyper::header::CONTENT_TYPE, hyper::Response, Filter, Rejection};
 
 const AFTER_HELPTEXT: &str = include_str!("helptext.txt");
 
@@ -218,7 +221,7 @@ impl PrometheusEventReceiver {
 }
 
 impl EventReceiver for PrometheusEventReceiver {
-    fn on_event(&mut self, event: &srt::event::Event, _timestamp: Instant) {
+    fn on_event(&mut self, event: &Event, _timestamp: Instant) {
         match event {
             Event::SentRetrans(_) => self.retrans.inc(),
             Event::Sent(_) => self.sent.inc(),
@@ -380,7 +383,7 @@ async fn make_srt_ouput(
         (Some(""), _) => bail!("The multiplex option is only supported for listen connections"),
         (Some(a), _) => bail!("Unexpected value for multiplex: {}", a),
     };
-    let builder = add_srt_args(output_url.query_pairs(), builder)?;
+    let mut builder = add_srt_args(output_url.query_pairs(), builder)?;
 
     // prometheus
     builder = builder.event_receiver(Box::new(PrometheusEventReceiver::new()));
@@ -598,21 +601,13 @@ async fn run() -> Result<(), Error> {
     // Resolve the sender side
     // similar to the receiver side, except a sink instead of a stream
     let mut sink_streams = vec![];
+
     for to in output_urls_iter.map(resolve_output) {
         sink_streams.push(to?);
     }
 
     if let Some(val) = matches.value_of("prometheus") {
         let port = val.parse().unwrap();
-
-        // prometheus
-        // TODO: this does not belong here
-
-        let retrans_counter = Counter::with_opts(Opts::new(
-            "retransmitted_counter",
-            "Number of packets retransmitted",
-        ))
-        .unwrap();
 
         // warp
         let c = warp::path("metrics")

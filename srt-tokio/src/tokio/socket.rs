@@ -22,6 +22,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::{future, ready, select};
 use log::{debug, error, info, trace};
+use srt_protocol::EventReceiver;
 use tokio::time::delay_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
@@ -64,7 +65,7 @@ enum Action {
 pub fn create_bidrectional_srt<T>(
     sock: T,
     conn: crate::Connection,
-    mut event_receiver: Option<Box<impl EventReceiver + Send + ?Sized + 'static>>,
+    mut event_receiver: impl EventReceiver + Send + 'static,
 ) -> SrtSocket
 where
     T: Stream<Item = (Packet, SocketAddr)>
@@ -96,7 +97,7 @@ where
         let mut flushed = true;
         loop {
             let (sender_timeout, close) =
-                match sender.next_action(Instant::now(), event_receiver.as_mut()) {
+                match sender.next_action(Instant::now(), &mut event_receiver) {
                     SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {
                         (None, false)
                     }

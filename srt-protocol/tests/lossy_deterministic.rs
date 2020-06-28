@@ -10,7 +10,7 @@ use srt_protocol::{
         receiver::{Receiver, ReceiverAlgorithmAction},
         sender::{Sender, SenderAlgorithmAction},
     },
-    ConnectionSettings, Packet,
+    ConnectionSettings, NullEventReceiver, Packet,
 };
 use std::{
     collections::BinaryHeap,
@@ -144,7 +144,7 @@ fn do_lossy_test(seed: u64, count: usize) {
                 .unwrap(); // uhhhh
         }
 
-        let sender_next_time = match sendr.next_action(current_time) {
+        let sender_next_time = match sendr.next_action(current_time, &mut NullEventReceiver) {
             SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => None,
             SenderAlgorithmAction::WaitUntil(time) => Some(time),
             SenderAlgorithmAction::Close => None, // xxx

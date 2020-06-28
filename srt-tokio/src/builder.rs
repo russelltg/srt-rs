@@ -12,7 +12,7 @@ use crate::{
     PacketCodec, PacketParseError, SrtSocket,
 };
 use log::warn;
-use srt_protocol::pending_connection::ConnInitSettings;
+use srt_protocol::{pending_connection::ConnInitSettings, EventReceiver, NullEventReceiver};
 
 /// Struct to build sockets.
 ///
@@ -222,7 +222,7 @@ impl SrtSocketBuilder {
                 ready(res.map_err(|e| warn!("Error parsing packet: {}", e)).ok())
             }),
             conn,
-            self.event_receiver,
+            self.event_receiver.unwrap_or(Box::new(NullEventReceiver)),
         ))
     }
 
