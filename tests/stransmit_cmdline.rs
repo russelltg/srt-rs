@@ -43,6 +43,45 @@ fn find_stransmit_rs() -> PathBuf {
     stransmit_rs_path
 }
 
+async fn udp_receiver(udp_out: u16, ident: i32) -> Result<(), Error> {
+    let mut sock = UdpFramed::new(
+        UdpSocket::bind(&SocketAddr::new("127.0.0.1".parse()?, udp_out)).await?,
+        BytesCodec::new(),
+    );
+    let receive_data = async move {
+        let mut i = 0;
+        while let Some((pack, _)) = sock.try_next().await.unwrap() {
+            assert_eq!(&pack, &format!("asdf{}", ident));
+
+            // once we get 20, that's good enough for validity
+            i += 1;
+            if i > 20 {
+                break;
+            }
+        }
+    };
+    // 10s timeout
+    let succ = futures::select!(_ = receive_data.boxed().fuse() => true, _ = delay_for(Duration::from_secs(10)).fuse() => false);
+    assert!(succ, "Timeout with receiving");
+
+    Ok::<_, Error>(())
+}
+
+async fn udp_sender(udp_in: u16, ident: i32) -> Result<(), Error> {
+    let mut sock = UdpFramed::new(UdpSocket::bind("127.0.0.1:0").await?, BytesCodec::new());
+    let mut stream = stream::iter(0..100)
+        .zip(interval(Duration::from_millis(100)))
+        .map(|_| {
+            Ok((
+                Bytes::from(format!("asdf{}", ident)),
+                SocketAddr::new("127.0.0.1".parse().unwrap(), udp_in),
+            ))
+        });
+    sock.send_all(&mut stream).await.unwrap();
+
+    Ok::<_, Error>(())
+}
+
 async fn test_send(
     udp_in: u16,
     args_a: &'static [&str],
@@ -56,44 +95,8 @@ async fn test_send(
 
     let ident: i32 = rand::random();
 
-    let sender = async move {
-        let mut sock = UdpFramed::new(UdpSocket::bind("127.0.0.1:0").await?, BytesCodec::new());
-        let mut stream = stream::iter(0..100)
-            .zip(interval(Duration::from_millis(100)))
-            .map(|_| {
-                Ok((
-                    Bytes::from(format!("asdf{}", ident)),
-                    SocketAddr::new("127.0.0.1".parse().unwrap(), udp_in),
-                ))
-            });
-        sock.send_all(&mut stream).await.unwrap();
-
-        Ok::<_, Error>(())
-    };
-
-    let recvr = async move {
-        let mut sock = UdpFramed::new(
-            UdpSocket::bind(&SocketAddr::new("127.0.0.1".parse()?, udp_out)).await?,
-            BytesCodec::new(),
-        );
-        let receive_data = async move {
-            let mut i = 0;
-            while let Some((pack, _)) = sock.try_next().await.unwrap() {
-                assert_eq!(&pack, &format!("asdf{}", ident));
-
-                // once we get 20, that's good enough for validity
-                i += 1;
-                if i > 20 {
-                    break;
-                }
-            }
-        };
-        // 10s timeout
-        let succ = futures::select!(_ = receive_data.boxed().fuse() => true, _ = delay_for(Duration::from_secs(10)).fuse() => false);
-        assert!(succ, "Timeout with receiving");
-
-        Ok::<_, Error>(())
-    };
+    let sender = udp_sender(udp_in, ident);
+    let recvr = udp_receiver(udp_out, ident);
 
     futures::try_join!(recvr, sender)?;
 
@@ -158,7 +161,9 @@ fn ui_test(flags: &[&str], stderr: &str) {
 
 mod stransmit_rs_snd_rcv {
     use super::test_send;
+    use crate::{find_stransmit_rs, udp_receiver, udp_sender};
     use anyhow::Error;
+    use std::process::Command;
 
     #[tokio::test]
     async fn basic() -> Result<(), Error> {
@@ -306,6 +311,46 @@ mod stransmit_rs_snd_rcv {
             2036,
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn reconnect() -> Result<(), Error> {
+        let srs_path = find_stransmit_rs();
+
+        let mut a = Command::new(&srs_path)
+            .args(&["udp://:2037", "srt://127.0.0.1:2038?autoreconnect"])
+            .spawn()?;
+
+        let b_args = &["srt://:2038", "udp://127.0.0.1:2039"];
+        let mut b = Command::new(&srs_path).args(b_args).spawn()?;
+
+        let ident: i32 = rand::random();
+
+        let sender = udp_sender(2037, ident);
+        let recvr = udp_receiver(2039, ident);
+
+        futures::try_join!(recvr, sender)?;
+
+        let failure_str = format!("Failed reconnect test",);
+
+        // it worked, restart b, send again
+        b.kill().expect(&failure_str);
+        b.wait().expect(&failure_str);
+
+        let mut b = Command::new(&srs_path).args(b_args).spawn()?;
+
+        let sender = udp_sender(2037, ident);
+        let recvr = udp_receiver(2039, ident);
+
+        futures::try_join!(recvr, sender)?;
+
+        a.kill().expect(&failure_str);
+        b.kill().expect(&failure_str);
+
+        a.wait().expect(&failure_str);
+        b.wait().expect(&failure_str);
+
+        Ok(())
     }
 }
 
