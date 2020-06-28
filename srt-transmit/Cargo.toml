@@ -1,0 +1,36 @@
+[package]
+name = "srt-transmit"
+version = "0.1.0"
+authors = ["Russell Greene <russellgreene8@gmail.com>"]
+description = "SRT implementation in Rust"
+license = "Apache-2.0"
+documentation = "https://docs.rs/srt-rs"
+homepage = "https://github.com/russelltg/srt-rs"
+repository = "https://github.com/russelltg/srt-rs"
+edition = "2018"
+publish = false
+
+[dependencies]
+srt-tokio = { path = "../srt-tokio"}
+clap = { version = "2", default-features = false}
+log = { version = "0.4", default-features = false }
+url = "=2.1.0" # https://github.com/servo/rust-url/issues/581
+bytes = "0.5"
+anyhow = "1"
+env_logger = { version = "0.7", default-features = false }
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+
+prometheus = "0.9"
+warp = "0.2"
+
+[dependencies.tokio]
+version = "0.2"
+features = ["udp", "time",  "fs", "stream", "test-util", "macros", "io-util", "dns", "io-std", "sync"]
+
+[dependencies.tokio-util]
+version = "0.3"
+features = ["full"]
+
+
+[dev-dependencies]
+rand = "0.7"

@@ -1,0 +1,30 @@
+[package]
+name = "srt-protocol"
+version = "0.1.0"
+authors = ["Russell Greene <russellgreene8@gmail.com>"]
+description = "SRT implementation in Rust"
+license = "Apache-2.0"
+documentation = "https://docs.rs/srt-rs"
+homepage = "https://github.com/russelltg/srt-rs"
+repository = "https://github.com/russelltg/srt-rs"
+edition = "2018"
+publish = false
+
+[dependencies]
+log = { version = "0.4", default-features = false }
+bytes = "0.5"
+streaming-stats = "0.2.3"
+rand = "0.7"
+aes-ctr = "0.4"
+aes-soft = "0.4"
+block-cipher = "0.7"
+pbkdf2 = { version = "0.4", default-features = false }
+hmac = "0.8"
+sha-1 = "0.9"
+bitflags = "1"
+
+[dev-dependencies]
+proptest = "0.10"
+hex = "0.4"
+rand_distr = "0.2"
+env_logger = { version = "0.7", default-features = false }

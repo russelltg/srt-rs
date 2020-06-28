@@ -1,0 +1,3 @@
+Invalid settings detected: local_port is incompatiable with udp listen mode
+
+See srt-transmit --help for more info

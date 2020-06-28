@@ -1,8 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc cedafa49300f338c342f8cc6a95d757a9f2a5b0b1bf3544bf2f14ede16df227a # shrinks to message_loc = 0, enc = 1, retransmitted = false
-cc 48c20034b04d650a912e3e5273cf13082ed7978b3b65c572f52a959fdeb84efa # shrinks to message_loc = 0, enc = 0, retransmitted = true, in_order_delivery = false

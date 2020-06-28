@@ -1,0 +1,3 @@
+Invalid settings detected: Invalid key length 12, must be 16, 24, or 32
+
+See srt-transmit --help for more info

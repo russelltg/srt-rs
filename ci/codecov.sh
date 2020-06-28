@@ -21,7 +21,7 @@ rm -rf kcov-master master.tar.gz
 export RUST_LOG=
 run_test() {
     testname=$1
-    for testexec in target/release/deps/${testname}-*; do
+    for testexec in target/debug/deps/${testname}-*; do
         if [ -x $testexec ]; then 
             echo Doing kcov for $testexec
             mkdir -p "target/cov/$(basename $testexec)"

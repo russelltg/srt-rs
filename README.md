@@ -55,6 +55,13 @@ cargo run --example sender
 cargo run --example receiver
 ```
 
+# Structure
+
+This repository is structured into 3 crates:
+* `srt-protocol`: State machines for the SRT protocol, with no dependencies on futures or tokio. Someday, I would like this to be a no-std crate. I expect this to have frequent breaking changes.
+* `srt-tokio`: Tokio elements written on top of the protocol, expected to be a relatively stable API.
+* `srt-transmit`: A srt-live-tranmsit replacement written ontop of `srt-tokio`
+
 [codecov]: https://codecov.io/gh/russelltg/srt-rs
 [codecov badge]: https://codecov.io/gh/russelltg/srt-rs/branch/master/graph/badge.svg
 
