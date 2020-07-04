@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     io,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
-    ops::{Add, Deref, Sub},
+    ops::Deref,
     path::Path,
     pin::Pin,
     process::exit,
@@ -222,7 +222,7 @@ impl RollingDeriv {
 
     fn add(&mut self, data: usize, at: Instant) {
         self.data.push_back((at, data));
-        self.sum = self.sum + data;
+        self.sum += data;
 
         self.gauge.set(self.sum as f64 / self.window.as_secs_f64())
     }
@@ -230,7 +230,7 @@ impl RollingDeriv {
     fn drop_old(&mut self, now: Instant) {
         while let Some((old_at, old_data)) = self.data.front() {
             if now.duration_since(*old_at) > self.window {
-                self.sum = self.sum - *old_data;
+                self.sum -= *old_data;
                 self.data.pop_front();
             } else {
                 break;
