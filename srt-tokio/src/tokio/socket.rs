@@ -127,7 +127,7 @@ where
             }
 
             let recvr_timeout = loop {
-                match receiver.next_algorithm_action(Instant::now()) {
+                match receiver.next_algorithm_action(Instant::now(), &mut event_receiver) {
                     ReceiverAlgorithmAction::TimeBoundedReceive(t2) => {
                         break Some(t2);
                     }
@@ -255,20 +255,42 @@ where
                         Some((pack, from)) => {
                             connection.on_packet(Instant::now());
                             match &pack {
-                                Data(_) => receiver.handle_packet(Instant::now(), (pack, from)),
+                                Data(_) => receiver.handle_packet(
+                                    Instant::now(),
+                                    (pack, from),
+                                    &mut event_receiver,
+                                ),
                                 Control(cp) => match &cp.control_type {
                                     // sender-responsble packets
                                     Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
-                                        sender.handle_packet((pack, from), Instant::now()).unwrap();
+                                        sender
+                                            .handle_packet(
+                                                (pack, from),
+                                                Instant::now(),
+                                                &mut event_receiver,
+                                            )
+                                            .unwrap();
                                     }
                                     // receiver-respnsible
-                                    Ack2(_) => receiver.handle_packet(Instant::now(), (pack, from)),
+                                    Ack2(_) => receiver.handle_packet(
+                                        Instant::now(),
+                                        (pack, from),
+                                        &mut event_receiver,
+                                    ),
                                     // both
                                     Shutdown => {
                                         sender
-                                            .handle_packet((pack.clone(), from), Instant::now())
+                                            .handle_packet(
+                                                (pack.clone(), from),
+                                                Instant::now(),
+                                                &mut event_receiver,
+                                            )
                                             .unwrap();
-                                        receiver.handle_packet(Instant::now(), (pack, from));
+                                        receiver.handle_packet(
+                                            Instant::now(),
+                                            (pack, from),
+                                            &mut event_receiver,
+                                        );
                                     }
                                     // neither--this exists just to keep the connection alive
                                     KeepAlive => {}
@@ -291,7 +313,7 @@ where
                 Action::Send(res) => match res {
                     Some(item) => {
                         trace!("{:?} queued packet to send", sender.settings().local_sockid);
-                        sender.handle_data(item, Instant::now());
+                        sender.handle_data(item, Instant::now(), &mut event_receiver);
                     }
                     None => {
                         debug!("Incoming data stream closed");

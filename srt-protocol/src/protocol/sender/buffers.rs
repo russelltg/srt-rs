@@ -6,7 +6,8 @@ use bytes::{Bytes, BytesMut};
 use crate::packet::{DataEncryption, PacketLocation};
 use crate::protocol::{TimeBase, TimeStamp};
 use crate::{
-    crypto::CryptoManager, ConnectionSettings, DataPacket, MsgNumber, SeqNumber, SocketID,
+    crypto::CryptoManager, ConnectionSettings, DataPacket, Event, EventReceiver, MsgNumber,
+    SeqNumber, SocketID,
 };
 
 pub struct TransmitBuffer {
@@ -16,6 +17,9 @@ pub struct TransmitBuffer {
 
     /// The list of packets to transmit
     buffer: VecDeque<DataPacket>,
+
+    /// Tracks the total number of bytes in `buffer`
+    total_size: usize,
 
     crypto: Option<CryptoManager>,
 
@@ -33,6 +37,7 @@ impl TransmitBuffer {
             max_packet_size: settings.max_packet_size as usize,
             time_base: TimeBase::new(settings.socket_start_time),
             buffer: Default::default(),
+            total_size: 0,
             crypto: settings.crypto_manager.clone(),
             next_sequence_number: settings.init_send_seq_num,
             next_message_number: MsgNumber::new_truncate(0),
@@ -41,11 +46,20 @@ impl TransmitBuffer {
 
     /// In the case of a message longer than the packet size,
     /// It will be split into multiple packets
-    pub fn push_message(&mut self, data: (Instant, Bytes)) -> usize {
-        let (time, mut payload) = data;
+    pub fn push_message(
+        &mut self,
+        (time, mut payload): (Instant, Bytes),
+        now: Instant,
+        er: &mut impl EventReceiver,
+    ) -> usize {
         let mut location = PacketLocation::FIRST;
         let mut packet_count = 0;
         let message_number = self.get_new_message_number();
+
+        self.total_size += payload.len();
+        er.on_event(&Event::Queued(payload.len()), now);
+        er.on_event(&Event::TransmitBufferUpdated(self.total_size), now);
+
         loop {
             if payload.len() > self.max_packet_size as usize {
                 let this_payload = payload.slice(0..self.max_packet_size as usize);
@@ -67,8 +81,15 @@ impl TransmitBuffer {
         }
     }
 
-    pub fn pop_front(&mut self) -> Option<DataPacket> {
-        self.buffer.pop_front()
+    pub fn pop_front(&mut self, now: Instant, er: &mut impl EventReceiver) -> Option<DataPacket> {
+        if let Some(packet) = self.buffer.pop_front() {
+            self.total_size -= packet.payload.len();
+            er.on_event(&Event::TransmitBufferUpdated(self.total_size), now);
+
+            Some(packet)
+        } else {
+            None
+        }
     }
 
     pub fn front(&self) -> Option<&DataPacket> {
@@ -152,11 +173,24 @@ impl SendBuffer {
         }
     }
 
-    pub fn release_acknowledged_packets(&mut self, acknowledged: SeqNumber) {
+    pub fn release_acknowledged_packets(
+        &mut self,
+        acknowledged: SeqNumber,
+        now: Instant,
+        er: &mut impl EventReceiver,
+    ) {
+        let mut total_bytes = 0;
         while acknowledged > self.first_seq {
-            self.buffer.pop_front();
+            total_bytes += self
+                .buffer
+                .pop_front()
+                .map(|dp| dp.payload.len())
+                .unwrap_or(0);
+
             self.first_seq += 1;
         }
+
+        er.on_event(&Event::Ackd(total_bytes), now)
     }
 
     pub fn get<'a, I: Iterator<Item = SeqNumber> + 'a>(

@@ -1,7 +1,8 @@
 use std::{
+    collections::VecDeque,
     io,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
-    ops::Deref,
+    ops::{Add, Deref, Sub},
     path::Path,
     pin::Pin,
     process::exit,
@@ -27,7 +28,7 @@ use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 use log::info;
 use srt_tokio::{ConnInitMethod, Event, EventReceiver, SrtSocketBuilder, StreamerServer};
 
-use prometheus::{Encoder, IntCounter, TextEncoder};
+use prometheus::{Encoder, Gauge, IntGauge, TextEncoder};
 use warp::{hyper::header::CONTENT_TYPE, hyper::Response, Filter, Rejection};
 
 const AFTER_HELPTEXT: &str = include_str!("helptext.txt");
@@ -202,31 +203,129 @@ enum UdpKind {
     Listen(u16),
 }
 
+struct RollingDeriv {
+    data: VecDeque<(Instant, usize)>,
+    sum: usize,
+    window: Duration,
+    gauge: Gauge,
+}
+
+impl RollingDeriv {
+    fn new(window: Duration, gauge: Gauge) -> Self {
+        RollingDeriv {
+            data: VecDeque::new(),
+            sum: Default::default(),
+            window,
+            gauge,
+        }
+    }
+
+    fn add(&mut self, data: usize, at: Instant) {
+        self.data.push_back((at, data));
+        self.sum = self.sum + data;
+
+        self.gauge.set(self.sum as f64 / self.window.as_secs_f64())
+    }
+
+    fn drop_old(&mut self, now: Instant) {
+        while let Some((old_at, old_data)) = self.data.front() {
+            if now.duration_since(*old_at) > self.window {
+                self.sum = self.sum - *old_data;
+                self.data.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+}
+
 struct PrometheusEventReceiver {
-    retrans: IntCounter,
-    sent: IntCounter,
+    // "rates"
+    retrans: RollingDeriv,
+    sent: RollingDeriv,
+    received: RollingDeriv,
+    dropped: RollingDeriv,
+
+    // "buffers"
+    tbs: IntGauge,
+    rbs: IntGauge,
+    in_flight: IntGauge,
+
+    // "times"
+    snd: Gauge,
+    rtt: Gauge,
 }
 
 impl PrometheusEventReceiver {
     fn new() -> Self {
         PrometheusEventReceiver {
-            retrans: prometheus::register_int_counter!(
-                "retransmitted",
-                "number of packets retransmitted"
+            retrans: RollingDeriv::new(
+                Duration::from_millis(500),
+                prometheus::register_gauge!(
+                    "retransmitted",
+                    "retransmit bandwidth, bytes per second"
+                )
+                .unwrap(),
+            ),
+            sent: RollingDeriv::new(
+                Duration::from_millis(500),
+                prometheus::register_gauge!("sent", "packets sent, bytes per second").unwrap(),
+            ),
+            received: RollingDeriv::new(
+                Duration::from_millis(500),
+                prometheus::register_gauge!("received", "packets received, bytes per second")
+                    .unwrap(),
+            ),
+            dropped: RollingDeriv::new(
+                Duration::from_millis(500),
+                prometheus::register_gauge!("dropped", "packets dropped, bytes per second")
+                    .unwrap(),
+            ),
+
+            tbs: prometheus::register_int_gauge!(
+                "transmit_buffer_size",
+                "how much data is waiting to be sent"
             )
             .unwrap(),
-            sent: prometheus::register_int_counter!("sent", "number of packets sent").unwrap(),
+            rbs: prometheus::register_int_gauge!(
+                "receive_buffer_size",
+                "how much data is waiting to be outputtted"
+            )
+            .unwrap(),
+            snd: prometheus::register_gauge!("snd_time", "snd time, in milliseconds").unwrap(),
+            in_flight: prometheus::register_int_gauge!(
+                "in_flight_bytes",
+                "bytes sent but not ack'd"
+            )
+            .unwrap(),
+            rtt: prometheus::register_gauge!("rtt", "rtt, in milliseconds").unwrap(),
         }
     }
 }
 
 impl EventReceiver for PrometheusEventReceiver {
-    fn on_event(&mut self, event: &Event, _timestamp: Instant) {
+    fn on_event(&mut self, event: &Event, timestamp: Instant) {
         match event {
-            Event::SentRetrans(_) => self.retrans.inc(),
-            Event::Sent(_) => self.sent.inc(),
+            Event::RecvdRetrans(size) | Event::SentRetrans(size) => {
+                self.retrans.add(*size, timestamp)
+            }
+            Event::Sent(size) => {
+                self.sent.add(*size, timestamp);
+                self.in_flight.add(*size as i64)
+            }
+            Event::Dropped(size) => self.dropped.add(*size, timestamp),
+            Event::Recvd(size) => self.received.add(*size, timestamp),
+            Event::TransmitBufferUpdated(size) => self.tbs.set(*size as i64),
+            Event::ReceiverBufferUpdated(size) => self.rbs.set(*size as i64),
+            Event::SndTimeUpdated(time) => self.snd.set(time.as_secs_f64() * 1e3),
+            Event::Ackd(size) => self.in_flight.sub(*size as i64),
+            Event::RttUpdated(rtt) => self.rtt.set(rtt.as_secs_f64() * 1e3),
             _ => {}
         }
+        self.retrans.drop_old(timestamp);
+        self.sent.drop_old(timestamp);
+        self.received.drop_old(timestamp);
+        self.dropped.drop_old(timestamp);
     }
 }
 

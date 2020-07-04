@@ -1,8 +1,8 @@
 use std::cmp::{max, Ordering};
-use std::num::Wrapping;
+use std::num::{TryFromIntError, Wrapping};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::time::{Duration, Instant};
-use std::u32;
+use std::{convert::TryInto, u32};
 
 pub mod connection;
 pub mod handshake;
@@ -57,6 +57,15 @@ impl TimeStamp {
 
     pub fn as_duration(self) -> Duration {
         Duration::from_micros(u64::from(self.as_micros()))
+    }
+}
+
+impl TryInto<Duration> for TimeSpan {
+    type Error = TryFromIntError;
+
+    /// Fails if it's negative
+    fn try_into(self) -> Result<Duration, Self::Error> {
+        Ok(Duration::from_micros(self.0.try_into()?))
     }
 }
 

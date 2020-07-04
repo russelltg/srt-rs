@@ -2,6 +2,7 @@ mod buffers;
 mod congestion_control;
 
 use std::collections::VecDeque;
+use std::convert::TryInto;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -153,9 +154,14 @@ impl Sender {
         self.close_requested = true;
     }
 
-    pub fn handle_data(&mut self, data: (Instant, Bytes), now: Instant) {
+    pub fn handle_data(
+        &mut self,
+        data: (Instant, Bytes),
+        now: Instant,
+        er: &mut impl EventReceiver,
+    ) {
         let data_length = data.1.len();
-        let packet_count = self.transmit_buffer.push_message(data);
+        let packet_count = self.transmit_buffer.push_message(data, now, er);
         self.congestion_control
             .on_input(now, packet_count, data_length);
     }
@@ -169,6 +175,7 @@ impl Sender {
         &mut self,
         (packet, from): (Packet, SocketAddr),
         now: Instant,
+        er: &mut impl EventReceiver,
     ) -> SenderResult {
         // TODO: record/report packets from invalid hosts?
         if from != self.settings.remote {
@@ -178,7 +185,7 @@ impl Sender {
         log::info!("Received packet {:?}", packet);
 
         match packet {
-            Packet::Control(control) => self.handle_control_packet(control, now),
+            Packet::Control(control) => self.handle_control_packet(control, now, er),
             Packet::Data(data) => self.handle_data_packet(data, now),
         }
     }
@@ -271,7 +278,7 @@ impl Sender {
                    self.transmit_buffer.next_sequence_number - self.congestion_control.window_size());
 
             return WaitUntilAck;
-        } else if let Some(p) = self.pop_transmit_buffer() {
+        } else if let Some(p) = self.pop_transmit_buffer(now, er) {
             er.on_event(&Event::Sent(p.payload.len()), now);
             self.send_data(p);
         } else if self.close_requested {
@@ -283,7 +290,7 @@ impl Sender {
 
         //   5) If the sequence number of the current packet is 16n, where n is an
         //      integer, go to 2).
-        if let Some(p) = self.pop_transmit_buffer_16n() {
+        if let Some(p) = self.pop_transmit_buffer_16n(now, er) {
             //      NOTE: to get the closest timing, we ignore congestion control
             //      and send the 16th packet immediately, instead of proceeding to step 2
             er.on_event(&Event::Sent(p.payload.len()), now);
@@ -294,8 +301,10 @@ impl Sender {
         //      updated by congestion control and t is the total time used by step
         //      1 to step 5. Go to 1).
         self.step = Step6;
-        self.snd_timer
-            .set_period(self.congestion_control.snd_period());
+        let snd_time = self.congestion_control.snd_period();
+        self.snd_timer.set_period(snd_time);
+        er.on_event(&Event::SndTimeUpdated(snd_time), now);
+
         WaitUntil(self.snd_timer.next_instant())
     }
 
@@ -303,9 +312,14 @@ impl Sender {
         Ok(())
     }
 
-    fn handle_control_packet(&mut self, packet: ControlPacket, now: Instant) -> SenderResult {
+    fn handle_control_packet(
+        &mut self,
+        packet: ControlPacket,
+        now: Instant,
+        er: &mut impl EventReceiver,
+    ) -> SenderResult {
         match packet.control_type {
-            ControlTypes::Ack(info) => self.handle_ack_packet(now, &info),
+            ControlTypes::Ack(info) => self.handle_ack_packet(now, &info, er),
             ControlTypes::Ack2(_) => {
                 warn!("Sender received ACK2, unusual");
                 Ok(())
@@ -332,7 +346,12 @@ impl Sender {
         }
     }
 
-    fn handle_ack_packet(&mut self, now: Instant, info: &AckControlInfo) -> SenderResult {
+    fn handle_ack_packet(
+        &mut self,
+        now: Instant,
+        info: &AckControlInfo,
+        er: &mut impl EventReceiver,
+    ) -> SenderResult {
         // if this ack number is less than (but NOT equal--equal could just mean lost ACK2 that needs to be retransmitted)
         // the largest received ack number, than discard it
         // this can happen thorough packet reordering OR losing an ACK2 packet
@@ -361,6 +380,11 @@ impl Sender {
             .rtt_variance
             .unwrap_or_else(|| TimeSpan::from_micros(0));
 
+        er.on_event(
+            &Event::RttUpdated(self.metrics.rtt.try_into().unwrap()),
+            now,
+        );
+
         // 4) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
         // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.
 
@@ -383,7 +407,7 @@ impl Sender {
         // 9) Update sender's buffer (by releasing the buffer that has been
         //    acknowledged).
         self.send_buffer
-            .release_acknowledged_packets(info.ack_number);
+            .release_acknowledged_packets(info.ack_number, now, er);
 
         // 10) Update sender's loss list (by removing all those that has been
         //     acknowledged).
@@ -455,16 +479,24 @@ impl Sender {
         Ok(())
     }
 
-    fn pop_transmit_buffer(&mut self) -> Option<DataPacket> {
-        let packet = self.transmit_buffer.pop_front()?;
+    fn pop_transmit_buffer(
+        &mut self,
+        now: Instant,
+        er: &mut impl EventReceiver,
+    ) -> Option<DataPacket> {
+        let packet = self.transmit_buffer.pop_front(now, er)?;
         self.congestion_control.on_packet_sent();
         self.send_buffer.push_back(packet.clone());
         Some(packet)
     }
 
-    fn pop_transmit_buffer_16n(&mut self) -> Option<DataPacket> {
+    fn pop_transmit_buffer_16n(
+        &mut self,
+        now: Instant,
+        er: &mut impl EventReceiver,
+    ) -> Option<DataPacket> {
         match self.transmit_buffer.front().map(|p| p.seq_number % 16) {
-            Some(0) => self.pop_transmit_buffer(),
+            Some(0) => self.pop_transmit_buffer(now, er),
             _ => None,
         }
     }

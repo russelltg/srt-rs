@@ -28,6 +28,29 @@ pub enum Event {
     /// When the rtt is updated
     /// Sent by both receiver and sender
     RttUpdated(Duration),
+
+    /// Packet queued
+    /// size of new packet
+    /// Sent by sender
+    Queued(usize),
+
+    /// Transmit buffer updated
+    /// Bytes in the transmit buffer
+    /// Sent by sender
+    TransmitBufferUpdated(usize),
+
+    /// Receive buffer updated
+    /// Bytes in the receive buffer
+    /// Sent by receiver
+    ReceiverBufferUpdated(usize),
+
+    /// Snd time updated
+    /// Sent by sender
+    SndTimeUpdated(Duration),
+
+    /// Packet was acknowledged
+    /// Sent by sender
+    Ackd(usize),
 }
 
 /// Intercepts events that happen, for statistics
