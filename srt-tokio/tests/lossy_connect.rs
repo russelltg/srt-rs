@@ -11,7 +11,7 @@ use bytes::Bytes;
 use futures::channel::oneshot;
 use futures::{join, select, FutureExt, SinkExt};
 
-use srt_protocol::Packet;
+use srt_protocol::{NullEventReceiver, Packet};
 use srt_tokio::{SrtSocket, SrtSocketBuilder};
 
 use lossy_conn::LossyConn;
@@ -82,8 +82,9 @@ async fn connect() {
 
     let a = SrtSocketBuilder::new_listen()
         .local_port(1111)
-        .connect_with_sock(send);
-    let b = SrtSocketBuilder::new_connect("127.0.0.1:1111").connect_with_sock(recv);
+        .connect_with_sock::<NullEventReceiver, _>(send);
+    let b = SrtSocketBuilder::new_connect("127.0.0.1:1111")
+        .connect_with_sock::<NullEventReceiver, _>(recv);
 
     test(a, b).await
 }
@@ -95,11 +96,11 @@ async fn rendezvous() {
     async fn test_rendezvous(send: LossyConn<Packet>, recv: LossyConn<Packet>) {
         let a = SrtSocketBuilder::new_rendezvous("127.0.0.1:1511")
             .local_port(1512)
-            .connect_with_sock(send);
+            .connect_with_sock::<NullEventReceiver, _>(send);
 
         let b = SrtSocketBuilder::new_rendezvous("127.0.0.1:1512")
             .local_port(1511)
-            .connect_with_sock(recv);
+            .connect_with_sock::<NullEventReceiver, _>(recv);
 
         test(a, b).await
     }

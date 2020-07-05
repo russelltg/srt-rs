@@ -26,10 +26,15 @@ use tokio::{io::AsyncReadExt, net::UdpSocket, prelude::AsyncRead};
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
 use log::info;
-use srt_tokio::{ConnInitMethod, Event, EventReceiver, SrtSocketBuilder, StreamerServer};
+use srt_tokio::{ConnInitMethod, Event, EventReceiver, SocketID, SrtSocketBuilder, StreamerServer};
 
-use prometheus::{Encoder, Gauge, IntGauge, TextEncoder};
+use prometheus::{
+    register_gauge_vec, register_int_gauge_vec, Encoder, Gauge, GaugeVec, IntGauge, IntGaugeVec,
+    TextEncoder,
+};
 use warp::{hyper::header::CONTENT_TYPE, hyper::Response, Filter, Rejection};
+
+use lazy_static::lazy_static;
 
 const AFTER_HELPTEXT: &str = include_str!("helptext.txt");
 
@@ -239,6 +244,43 @@ impl RollingDeriv {
     }
 }
 
+lazy_static! {
+    static ref RETRANSMITTED_GAUGE: GaugeVec = register_gauge_vec!(
+        "retransmitted",
+        "retransmitted bytes per second",
+        &["socket_id"]
+    )
+    .unwrap();
+    static ref SENT_GAUGE: GaugeVec =
+        register_gauge_vec!("sent", "sent bytes per second", &["socket_id"]).unwrap();
+    static ref RECEIVED_GAUGE: GaugeVec =
+        register_gauge_vec!("received", "received bytes per second", &["socket_id"]).unwrap();
+    static ref DROPPED_GAUGE: GaugeVec =
+        register_gauge_vec!("dropped", "dropped bytes per second", &["socket_id"]).unwrap();
+    static ref TRANSMIT_BUFFER_SIZE_GAUGE: IntGaugeVec = register_int_gauge_vec!(
+        "transmit_buffer_size",
+        "how much data is waiting to be sent",
+        &["socket_id"]
+    )
+    .unwrap();
+    static ref RECEIVE_BUFFER_SIZE_GAUGE: IntGaugeVec = register_int_gauge_vec!(
+        "receive_buffer_size",
+        "how much data is waiting to be released",
+        &["socket_id"]
+    )
+    .unwrap();
+    static ref SND_GAUGE: GaugeVec =
+        register_gauge_vec!("snd_time", "snd time, in milliseconds", &["socket_id"]).unwrap();
+    static ref IN_FLIGHT_BYTES_GAUGE: IntGaugeVec = register_int_gauge_vec!(
+        "in_flight_bytes",
+        "bytes sent but not acknowledged",
+        &["socket_id"]
+    )
+    .unwrap();
+    static ref RTT_GAUGE: GaugeVec =
+        register_gauge_vec!("rtt", "rtt in milliseconds", &["socket_id"]).unwrap();
+}
+
 struct PrometheusEventReceiver {
     // "rates"
     retrans: RollingDeriv,
@@ -256,54 +298,43 @@ struct PrometheusEventReceiver {
     rtt: Gauge,
 }
 
-impl PrometheusEventReceiver {
-    fn new() -> Self {
+impl EventReceiver for PrometheusEventReceiver {
+    fn create(sockid: SocketID) -> Self {
+        let lv: &[&str] = &[&format!("{:?}", sockid)];
         PrometheusEventReceiver {
             retrans: RollingDeriv::new(
                 Duration::from_millis(500),
-                prometheus::register_gauge!(
-                    "retransmitted",
-                    "retransmit bandwidth, bytes per second"
-                )
-                .unwrap(),
+                RETRANSMITTED_GAUGE
+                    .get_metric_with_label_values(lv)
+                    .unwrap(),
             ),
             sent: RollingDeriv::new(
                 Duration::from_millis(500),
-                prometheus::register_gauge!("sent", "packets sent, bytes per second").unwrap(),
+                SENT_GAUGE.get_metric_with_label_values(lv).unwrap(),
             ),
             received: RollingDeriv::new(
                 Duration::from_millis(500),
-                prometheus::register_gauge!("received", "packets received, bytes per second")
-                    .unwrap(),
+                RECEIVED_GAUGE.get_metric_with_label_values(lv).unwrap(),
             ),
             dropped: RollingDeriv::new(
                 Duration::from_millis(500),
-                prometheus::register_gauge!("dropped", "packets dropped, bytes per second")
-                    .unwrap(),
+                DROPPED_GAUGE.get_metric_with_label_values(lv).unwrap(),
             ),
 
-            tbs: prometheus::register_int_gauge!(
-                "transmit_buffer_size",
-                "how much data is waiting to be sent"
-            )
-            .unwrap(),
-            rbs: prometheus::register_int_gauge!(
-                "receive_buffer_size",
-                "how much data is waiting to be outputtted"
-            )
-            .unwrap(),
-            snd: prometheus::register_gauge!("snd_time", "snd time, in milliseconds").unwrap(),
-            in_flight: prometheus::register_int_gauge!(
-                "in_flight_bytes",
-                "bytes sent but not ack'd"
-            )
-            .unwrap(),
-            rtt: prometheus::register_gauge!("rtt", "rtt, in milliseconds").unwrap(),
+            tbs: TRANSMIT_BUFFER_SIZE_GAUGE
+                .get_metric_with_label_values(lv)
+                .unwrap(),
+            rbs: RECEIVE_BUFFER_SIZE_GAUGE
+                .get_metric_with_label_values(lv)
+                .unwrap(),
+            in_flight: IN_FLIGHT_BYTES_GAUGE
+                .get_metric_with_label_values(lv)
+                .unwrap(),
+
+            snd: SND_GAUGE.get_metric_with_label_values(lv).unwrap(),
+            rtt: RTT_GAUGE.get_metric_with_label_values(lv).unwrap(),
         }
     }
-}
-
-impl EventReceiver for PrometheusEventReceiver {
     fn on_event(&mut self, event: &Event, timestamp: Instant) {
         match event {
             Event::RecvdRetrans(size) | Event::SentRetrans(size) => {
@@ -391,10 +422,8 @@ async fn make_srt_input(
         bail!("multiplex is not a valid option for input urls");
     }
 
-    builder = builder.event_receiver(Box::new(PrometheusEventReceiver::new()));
-
     Ok(builder
-        .connect()
+        .connect_event_receiver::<PrometheusEventReceiver>()
         .await?
         .map(Result::unwrap)
         .map(|(_, b)| b)
@@ -482,10 +511,7 @@ async fn make_srt_ouput(
         (Some(""), _) => bail!("The multiplex option is only supported for listen connections"),
         (Some(a), _) => bail!("Unexpected value for multiplex: {}", a),
     };
-    let mut builder = add_srt_args(output_url.query_pairs(), builder)?;
-
-    // prometheus
-    builder = builder.event_receiver(Box::new(PrometheusEventReceiver::new()));
+    let builder = add_srt_args(output_url.query_pairs(), builder)?;
 
     if is_multiplex {
         Ok(StreamerServer::new(builder.build_multiplexed().await?)
@@ -493,7 +519,7 @@ async fn make_srt_ouput(
             .boxed_sink())
     } else {
         Ok(builder
-            .connect()
+            .connect_event_receiver::<PrometheusEventReceiver>()
             .await?
             .with(|b| future::ok((Instant::now(), b)))
             .boxed_sink())

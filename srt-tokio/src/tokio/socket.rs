@@ -62,17 +62,14 @@ enum Action {
 /// 1. Receive packets and send them to either the sender or the receiver through
 ///    a channel
 /// 2. Take outgoing packets and send them on the socket
-pub fn create_bidrectional_srt<T>(
-    sock: T,
-    conn: crate::Connection,
-    mut event_receiver: impl EventReceiver + Send + 'static,
-) -> SrtSocket
+pub fn create_bidrectional_srt<ER, T>(sock: T, conn: crate::Connection) -> SrtSocket
 where
     T: Stream<Item = (Packet, SocketAddr)>
         + Sink<(Packet, SocketAddr), Error = io::Error>
         + Send
         + Unpin
         + 'static,
+    ER: EventReceiver + Send,
 {
     let (mut release, recvr) = mpsc::channel(128);
     let (sender, new_data) = mpsc::channel(128);
@@ -84,6 +81,8 @@ where
     let flush_wakeup = fw.clone();
 
     tokio::spawn(async move {
+        let mut event_receiver = ER::create(conn_copy.settings.local_sockid);
+
         let mut close_receiver = close_oneshot.fuse();
         let _close_sender = close_send; // exists for drop
         let mut new_data = new_data.fuse();

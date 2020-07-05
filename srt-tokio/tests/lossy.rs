@@ -9,6 +9,7 @@ use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
 
 mod lossy_conn;
 use crate::lossy_conn::LossyConn;
+use srt_protocol::NullEventReceiver;
 
 #[tokio::test]
 async fn lossy() {
@@ -33,9 +34,9 @@ async fn lossy() {
     let sender = SrtSocketBuilder::new(ConnInitMethod::Listen)
         .local_port(1111)
         .latency(Duration::from_secs(8))
-        .connect_with_sock(send);
+        .connect_with_sock::<NullEventReceiver, _>(send);
     let recvr = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:1111".parse().unwrap()))
-        .connect_with_sock(recv);
+        .connect_with_sock::<NullEventReceiver, _>(recv);
 
     let sender = async move {
         let mut sender = sender.await.unwrap();

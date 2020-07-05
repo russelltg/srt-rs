@@ -57,7 +57,6 @@ pub struct SrtSocketBuilder {
     local_addr: SocketAddr,
     conn_type: ConnInitMethod,
     init_settings: ConnInitSettings,
-    event_receiver: Option<Box<dyn EventReceiver + Send>>,
 }
 
 /// Describes how this SRT entity will connect to the other.
@@ -84,7 +83,6 @@ impl SrtSocketBuilder {
             local_addr: "0.0.0.0:0".parse().unwrap(),
             conn_type,
             init_settings: ConnInitSettings::default(),
-            event_receiver: None,
         }
     }
 
@@ -178,20 +176,15 @@ impl SrtSocketBuilder {
         self
     }
 
-    /// Set the event receiver, used for receiving statistics
-    pub fn event_receiver(mut self, event_receiver: Box<dyn EventReceiver + Send>) -> Self {
-        self.event_receiver = Some(event_receiver);
-        self
-    }
-
     /// Connect with a custom socket. Not typically used, see [`connect`](SrtSocketBuilder::connect) instead.
-    pub async fn connect_with_sock<T>(self, mut socket: T) -> Result<SrtSocket, io::Error>
+    pub async fn connect_with_sock<ER, T>(self, mut socket: T) -> Result<SrtSocket, io::Error>
     where
         T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
             + Sink<(Packet, SocketAddr), Error = io::Error>
             + Unpin
             + Send
             + 'static,
+        ER: EventReceiver + Send,
     {
         let conn = match self.conn_type {
             ConnInitMethod::Listen => {
@@ -217,21 +210,25 @@ impl SrtSocketBuilder {
             }
         };
 
-        Ok(create_bidrectional_srt(
+        Ok(create_bidrectional_srt::<ER, _>(
             socket.filter_map(|res| {
                 ready(res.map_err(|e| warn!("Error parsing packet: {}", e)).ok())
             }),
             conn,
-            self.event_receiver
-                .unwrap_or_else(|| Box::new(NullEventReceiver)),
         ))
     }
 
     /// Connects to the remote socket. Resolves when it has been connected successfully.
     pub async fn connect(self) -> Result<SrtSocket, io::Error> {
+        self.connect_event_receiver::<NullEventReceiver>().await
+    }
+
+    pub async fn connect_event_receiver<ER: EventReceiver + Send>(
+        self,
+    ) -> Result<SrtSocket, io::Error> {
         let la = self.local_addr;
         Ok(self
-            .connect_with_sock(UdpFramed::new(UdpSocket::bind(&la).await?, PacketCodec {}))
+            .connect_with_sock::<ER, _>(UdpFramed::new(UdpSocket::bind(&la).await?, PacketCodec {}))
             .await?)
     }
 

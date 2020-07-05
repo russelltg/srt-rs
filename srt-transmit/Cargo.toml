@@ -19,6 +19,7 @@ bytes = "0.5"
 anyhow = "1"
 env_logger = { version = "0.7", default-features = false }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+lazy_static = "1"
 
 prometheus = "0.9"
 warp = "0.2"

@@ -30,7 +30,7 @@ async fn multiplexer() -> Result<()> {
         while let Some(Ok((settings, channel))) =
             futures::select!(res = server.next().fuse() => res, _ = fused_finish => None)
         {
-            let mut sender = create_bidrectional_srt(channel, settings, NullEventReceiver); // TODO: stats here
+            let mut sender = create_bidrectional_srt::<NullEventReceiver, _>(channel, settings); // TODO: stats here
 
             let mut stream =
                 stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());

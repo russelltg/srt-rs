@@ -66,6 +66,5 @@ use srt_protocol::connection::{self, Connection, ConnectionSettings};
 use srt_protocol::crypto;
 use srt_protocol::packet::{self, ControlPacket, Packet, PacketParseError};
 use srt_protocol::protocol;
-use srt_protocol::SocketID;
 
-pub use srt_protocol::{Event, EventReceiver};
+pub use srt_protocol::{Event, EventReceiver, SocketID};

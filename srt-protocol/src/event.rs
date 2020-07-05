@@ -1,3 +1,4 @@
+use crate::SocketID;
 use std::time::{Duration, Instant};
 
 #[non_exhaustive]
@@ -55,17 +56,17 @@ pub enum Event {
 
 /// Intercepts events that happen, for statistics
 pub trait EventReceiver {
+    /// Create an EventReceiver for a socketid
+    fn create(sockid: SocketID) -> Self;
+
     /// Calls on the sender/receiver tasks, so make it quick!
     fn on_event(&mut self, event: &Event, timestamp: Instant);
 }
 
-impl<E: EventReceiver + ?Sized> EventReceiver for Box<E> {
-    fn on_event(&mut self, event: &Event, timestamp: Instant) {
-        (**self).on_event(event, timestamp)
-    }
-}
-
 pub struct NullEventReceiver;
 impl EventReceiver for NullEventReceiver {
+    fn create(_sockid: SocketID) -> Self {
+        Self
+    }
     fn on_event(&mut self, _event: &Event, _timestamp: Instant) {}
 }
