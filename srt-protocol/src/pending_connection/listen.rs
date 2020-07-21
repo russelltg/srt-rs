@@ -122,7 +122,8 @@ impl Listen {
                         syn_cookie: state.cookie,
                         socket_id: self.init_settings.local_sockid,
                         info: hsv5,
-                        init_seq_num: self.init_settings.starting_send_seqnum,
+                        // use peer's ISN and send it back for security check
+                        init_seq_num: shake.init_seq_num,
                         shake_type: ShakeType::Conclusion,
                         ..shake // TODO: this will pass peer wrong
                     }),
