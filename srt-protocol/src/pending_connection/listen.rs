@@ -122,7 +122,14 @@ impl Listen {
                         syn_cookie: state.cookie,
                         socket_id: self.init_settings.local_sockid,
                         info: hsv5,
-                        // use peer's ISN and send it back for security check
+                        // srt/srtcore/core.cpp
+                        // void CUDT::acceptAndRespond(...)
+                        // {
+                        //    ...
+                        //    // use peer's ISN and send it back for security check
+                        //    m_iISN = hs->m_iISN;
+                        //    ...
+                        // }
                         init_seq_num: shake.init_seq_num,
                         shake_type: ShakeType::Conclusion,
                         ..shake // TODO: this will pass peer wrong
