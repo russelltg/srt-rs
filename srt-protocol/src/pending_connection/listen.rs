@@ -122,7 +122,8 @@ impl Listen {
                         syn_cookie: state.cookie,
                         socket_id: self.init_settings.local_sockid,
                         info: hsv5,
-                        // srt/srtcore/core.cpp
+                        // in srt/srtcore/core.cpp
+                        //
                         // void CUDT::acceptAndRespond(...)
                         // {
                         //    ...
