@@ -20,7 +20,7 @@ use std::{
 use bytes::Bytes;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
-use futures::{future, ready, select};
+use futures::{future, ready, select_biased};
 use log::{debug, error, info, trace};
 use srt_protocol::EventReceiver;
 use tokio::time::delay_until;
@@ -232,17 +232,17 @@ where
                 }
             };
 
-            let action = select! {
-                // one of the entities requested wakeup
-                _ = timeout_fut.fuse() => Action::Nothing,
-                // new packet received
+            let action = select_biased! {
+                // new packet received--highest priority
                 res = sock.next() =>
                     Action::DelegatePacket(res),
-                // new packet queued
+                // new packet queued--second higest priority
                 res = new_data.next() => {
                     Action::Send(res)
                 }
-                // socket closed
+                // one of the entities requested wakeup
+                _ = timeout_fut.fuse() => Action::Nothing,
+                // socket closed-lowest priority
                 _ = close_receiver =>  {
                     Action::CloseSender
                 }
