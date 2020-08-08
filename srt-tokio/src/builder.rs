@@ -196,6 +196,7 @@ impl SrtSocketBuilder {
                     addr,
                     self.local_addr.ip(),
                     self.init_settings,
+                    rand::random(),
                 )
                 .await?
             }
@@ -205,6 +206,7 @@ impl SrtSocketBuilder {
                     self.local_addr,
                     remote_public,
                     self.init_settings,
+                    rand::random(),
                 )
                 .await?
             }

@@ -7,7 +7,7 @@ use crate::{ConnectionSettings, SocketID};
 
 use super::{
     hsv5::{start_hsv5_initiation, StartedInitiator},
-    ConnInitSettings, ConnectError,
+    ConnInitSettings, ConnectError, SeqNumber,
 };
 use ConnectError::*;
 use ConnectState::*;
@@ -39,17 +39,24 @@ pub struct Connect {
     remote: SocketAddr,
     local_addr: IpAddr,
     init_settings: ConnInitSettings,
+    init_send_seq_num: SeqNumber,
     state: ConnectState,
 }
 
 pub type ConnectResult = Result<Option<(Packet, SocketAddr)>, ConnectError>;
 
 impl Connect {
-    pub fn new(remote: SocketAddr, local_addr: IpAddr, init_settings: ConnInitSettings) -> Self {
+    pub fn new(
+        remote: SocketAddr,
+        local_addr: IpAddr,
+        init_settings: ConnInitSettings,
+        init_send_seq_num: SeqNumber,
+    ) -> Self {
         Connect {
             remote,
             local_addr,
             init_settings,
+            init_send_seq_num,
             state: ConnectState::new(),
         }
     }
@@ -58,7 +65,7 @@ impl Connect {
             dest_sockid: SocketID(0),
             timestamp: TimeStamp::from_micros(0), // TODO: this is not zero in the reference implementation
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                init_seq_num: self.init_settings.starting_send_seqnum,
+                init_seq_num: self.init_send_seq_num,
                 max_packet_size: 1500, // TODO: take as a parameter
                 max_flow_size: 8192,   // TODO: take as a parameter
                 socket_id: self.init_settings.local_sockid,
@@ -90,7 +97,7 @@ impl Connect {
                         shake_type: ShakeType::Conclusion,
                         socket_id: self.init_settings.local_sockid,
                         info: hsv5,
-                        init_seq_num: self.init_settings.starting_send_seqnum,
+                        init_seq_num: self.init_send_seq_num,
                         ..info
                     }),
                 });
@@ -115,7 +122,8 @@ impl Connect {
     ) -> ConnectResult {
         match (info.shake_type, info.info.version(), from) {
             (ShakeType::Conclusion, 5, from) if from == self.remote => {
-                let settings = initiator.finish_hsv5_initiation(&info, from)?;
+                let settings =
+                    initiator.finish_hsv5_initiation(&info, self.init_send_seq_num, from)?;
 
                 self.state = Connected(settings);
 

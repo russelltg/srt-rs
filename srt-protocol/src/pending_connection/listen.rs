@@ -69,7 +69,7 @@ impl Listen {
                             ext_km: None,
                             ext_config: None,
                         },
-                        init_seq_num: self.init_settings.starting_send_seqnum,
+                        init_seq_num: shake.init_seq_num,
                         ..shake
                     }),
                 });
@@ -112,8 +112,12 @@ impl Listen {
             // first induction received, wait for response (with cookie)
             (ShakeType::Conclusion, VERSION_5, syn_cookie) if syn_cookie == state.cookie => {
                 // construct a packet to send back
-                let (hsv5, connection) =
-                    gen_hsv5_response(self.init_settings.clone(), &shake, from)?;
+                let (hsv5, connection) = gen_hsv5_response(
+                    self.init_settings.clone(),
+                    shake.init_seq_num,
+                    &shake,
+                    from,
+                )?;
 
                 let resp_handshake = ControlPacket {
                     timestamp,

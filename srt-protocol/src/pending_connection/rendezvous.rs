@@ -12,13 +12,14 @@ use crate::packet::{
     ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SrtControlPacket,
 };
 use crate::protocol::{handshake::Handshake, TimeStamp};
-use crate::{Connection, ConnectionSettings, ControlPacket, Packet, SocketID};
+use crate::{Connection, ConnectionSettings, ControlPacket, Packet, SeqNumber, SocketID};
 
 use ConnectError::*;
 use RendezvousState::*;
 
 pub struct Rendezvous {
     init_settings: ConnInitSettings,
+    init_send_seq_num: SeqNumber,
     local_addr: SocketAddr,
     remote_public: SocketAddr,
     state: RendezvousState,
@@ -46,6 +47,7 @@ impl Rendezvous {
         local_addr: SocketAddr,
         remote_public: SocketAddr,
         init_settings: ConnInitSettings,
+        init_send_seq_num: SeqNumber,
     ) -> Self {
         let cookie = gen_cookie(&local_addr);
         let last_packet = (
@@ -53,7 +55,7 @@ impl Rendezvous {
                 dest_sockid: SocketID(0),
                 timestamp: TimeStamp::from_micros(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                    init_seq_num: init_settings.starting_send_seqnum,
+                    init_seq_num: init_send_seq_num,
                     max_packet_size: 1500, // TODO: take as a parameter
                     max_flow_size: 8192,   // TODO: take as a parameter
                     socket_id: init_settings.local_sockid,
@@ -72,6 +74,7 @@ impl Rendezvous {
             last_packet,
             connection: None,
             init_settings,
+            init_send_seq_num,
             local_addr,
             remote_public,
         }
@@ -133,7 +136,7 @@ impl Rendezvous {
 
     fn gen_packet(&self, shake_type: ShakeType, info: HandshakeVSInfo) -> HandshakeControlInfo {
         HandshakeControlInfo {
-            init_seq_num: self.init_settings.starting_send_seqnum,
+            init_seq_num: self.init_send_seq_num,
             max_packet_size: 1500, // TODO: take as a parameter
             max_flow_size: 8192,   // TODO: take as a parameter
             socket_id: self.init_settings.local_sockid,
@@ -203,6 +206,7 @@ impl Rendezvous {
                     (Responder, Some(SrtControlPacket::HandshakeRequest(_))) => {
                         let (hsv5, connection) = gen_hsv5_response(
                             self.init_settings.clone(),
+                            self.init_send_seq_num,
                             info,
                             self.remote_public,
                         )?;
@@ -240,7 +244,11 @@ impl Rendezvous {
                     let agreement =
                         self.gen_packet(ShakeType::Agreement, Rendezvous::empty_flags());
 
-                    let settings = initiator.finish_hsv5_initiation(info, self.remote_public)?;
+                    let settings = initiator.finish_hsv5_initiation(
+                        info,
+                        self.init_send_seq_num,
+                        self.remote_public,
+                    )?;
 
                     self.set_connected(settings, Some(ControlTypes::Handshake(agreement.clone())));
                     self.send(info.socket_id, agreement)
@@ -263,8 +271,12 @@ impl Rendezvous {
                     Some(_) => return Err(ExpectedHSReq),
                     None => return Err(ExpectedExtFlags),
                 };
-                let (hsv5, connection) =
-                    gen_hsv5_response(self.init_settings.clone(), info, self.remote_public)?;
+                let (hsv5, connection) = gen_hsv5_response(
+                    self.init_settings.clone(),
+                    self.init_send_seq_num,
+                    info,
+                    self.remote_public,
+                )?;
                 self.transition(InitiatedResponder(connection));
 
                 self.send_conclusion(info.socket_id, hsv5)
@@ -284,7 +296,11 @@ impl Rendezvous {
                 Some(SrtControlPacket::HandshakeResponse(_)) => {
                     let agreement = self.gen_packet(ShakeType::Agreement, hsv5);
 
-                    let settings = initiator.finish_hsv5_initiation(info, self.remote_public)?;
+                    let settings = initiator.finish_hsv5_initiation(
+                        info,
+                        self.init_send_seq_num,
+                        self.remote_public,
+                    )?;
                     self.set_connected(settings, Some(ControlTypes::Handshake(agreement.clone())));
 
                     self.send(info.socket_id, agreement)
@@ -328,7 +344,11 @@ impl Rendezvous {
         match info.shake_type {
             ShakeType::Conclusion => match extract_ext_info(info)? {
                 Some(SrtControlPacket::HandshakeResponse(_)) => {
-                    let connection = initiator.finish_hsv5_initiation(info, self.remote_public)?;
+                    let connection = initiator.finish_hsv5_initiation(
+                        info,
+                        self.init_send_seq_num,
+                        self.remote_public,
+                    )?;
 
                     self.set_connected(connection, None);
                     self.send_agreement(info.socket_id, Rendezvous::empty_flags())

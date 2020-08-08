@@ -33,7 +33,6 @@ pub enum ConnectError {
 
 #[derive(Debug, Clone)]
 pub struct ConnInitSettings {
-    pub starting_send_seqnum: SeqNumber,
     pub local_sockid: SocketID,
     pub crypto: Option<CryptoOptions>,
     pub send_latency: Duration,
@@ -95,7 +94,6 @@ impl Default for ConnInitSettings {
             crypto: None,
             send_latency: Duration::from_millis(50),
             recv_latency: Duration::from_micros(50),
-            starting_send_seqnum: random(),
             local_sockid: random(),
         }
     }
@@ -106,7 +104,6 @@ impl ConnInitSettings {
             crypto: self.crypto.clone(),
             send_latency: self.send_latency,
             recv_latency: self.recv_latency,
-            starting_send_seqnum: random(),
             local_sockid: random(),
         }
     }

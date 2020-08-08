@@ -6,7 +6,7 @@ use crate::{
     packet::{
         HandshakeControlInfo, HandshakeVSInfo, SrtControlPacket, SrtHandshake, SrtShakeFlags,
     },
-    ConnectionSettings, SrtVersion,
+    ConnectionSettings, SeqNumber, SrtVersion,
 };
 use std::{
     net::SocketAddr,
@@ -15,6 +15,7 @@ use std::{
 
 pub fn gen_hsv5_response(
     settings: ConnInitSettings,
+    init_send_seq_num: SeqNumber,
     with_hsv5: &HandshakeControlInfo,
     from: SocketAddr,
 ) -> Result<(HandshakeVSInfo, ConnectionSettings), ConnectError> {
@@ -74,7 +75,7 @@ pub fn gen_hsv5_response(
             remote_sockid: with_hsv5.socket_id,
             local_sockid: settings.local_sockid,
             socket_start_time: Instant::now(), // xxx?
-            init_send_seq_num: settings.starting_send_seqnum,
+            init_send_seq_num,
             init_recv_seq_num: with_hsv5.init_seq_num,
             max_packet_size: 1500, // todo: parameters!
             max_flow_size: 8192,
@@ -128,6 +129,7 @@ impl StartedInitiator {
     pub fn finish_hsv5_initiation(
         self,
         response: &HandshakeControlInfo,
+        init_send_seq_num: SeqNumber,
         from: SocketAddr,
     ) -> Result<ConnectionSettings, ConnectError> {
         // TODO: factor this out with above...
@@ -156,7 +158,7 @@ impl StartedInitiator {
             remote_sockid: response.socket_id,
             local_sockid: self.settings.local_sockid,
             socket_start_time: Instant::now(), // xxx?
-            init_send_seq_num: self.settings.starting_send_seqnum,
+            init_send_seq_num,
             init_recv_seq_num: response.init_seq_num,
             max_packet_size: 1500, // todo: parameters!
             max_flow_size: 8192,

@@ -15,6 +15,7 @@ srt-protocol = { path = "../srt-protocol" }
 log = { version = "0.4", default-features = false }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 bytes = "0.5"
+rand = "0.7"
 
 [dependencies.tokio]
 version = "0.2"

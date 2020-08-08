@@ -15,7 +15,7 @@ use srt_protocol::{
         ConnInitSettings,
     },
     protocol::handshake::Handshake,
-    Connection, Packet, PacketParseError,
+    Connection, Packet, PacketParseError, SeqNumber,
 };
 
 use crate::util::get_packet;
@@ -28,13 +28,14 @@ pub async fn connect<T>(
     remote: SocketAddr,
     local_addr: IpAddr,
     init_settings: ConnInitSettings,
+    init_seq_number: SeqNumber,
 ) -> Result<Connection, io::Error>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
         + Sink<(Packet, SocketAddr), Error = io::Error>
         + Unpin,
 {
-    let mut connect = Connect::new(remote, local_addr, init_settings);
+    let mut connect = Connect::new(remote, local_addr, init_settings, init_seq_number);
 
     let mut tick_interval = interval(Duration::from_millis(100));
     loop {
@@ -95,6 +96,7 @@ pub async fn rendezvous<T>(
     local_addr: SocketAddr,
     remote_public: SocketAddr,
     init_settings: ConnInitSettings,
+    init_seq_number: SeqNumber,
 ) -> Result<Connection, io::Error>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
@@ -102,7 +104,7 @@ where
         + Unpin,
 {
     let sockid = init_settings.local_sockid;
-    let mut rendezvous = Rendezvous::new(local_addr, remote_public, init_settings);
+    let mut rendezvous = Rendezvous::new(local_addr, remote_public, init_settings, init_seq_number);
 
     let mut tick_interval = interval(Duration::from_millis(100));
     loop {
