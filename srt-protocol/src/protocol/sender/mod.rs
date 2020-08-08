@@ -172,7 +172,7 @@ impl Sender {
             return Ok(());
         }
 
-        log::info!("Received packet {:?}", packet);
+        debug!("Received packet {:?}", packet);
 
         match packet {
             Packet::Control(control) => self.handle_control_packet(control, now),
