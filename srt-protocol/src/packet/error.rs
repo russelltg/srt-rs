@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, io};
+use std::{error::Error, fmt, io, str::Utf8Error};
 
 #[derive(Debug)]
 #[non_exhaustive]
@@ -20,6 +20,7 @@ pub enum PacketParseError {
     BadStreamEncapsulation(u8),
     StreamEncapsulationNotSrt,
     BadDataEncryption(u8),
+    StreamTypeNotUTF8(Utf8Error),
     Io(io::Error),
 }
 

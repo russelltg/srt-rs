@@ -9,7 +9,7 @@ use super::{
 use log::debug;
 
 use crate::packet::{
-    ControlTypes, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SrtControlPacket,
+    ControlTypes, HSV5Info, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SrtControlPacket,
 };
 use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::{Connection, ConnectionSettings, ControlPacket, Packet, SocketID};
@@ -108,19 +108,14 @@ fn extract_ext_info(
     info: &HandshakeControlInfo,
 ) -> Result<Option<&SrtControlPacket>, ConnectError> {
     match &info.info {
-        HandshakeVSInfo::V5 { ext_hs, .. } => Ok(ext_hs.as_ref()),
+        HandshakeVSInfo::V5(hs) => Ok(hs.ext_hs.as_ref()),
         _ => Err(UnsupportedProtocolVersion(4)),
     }
 }
 
 impl Rendezvous {
     fn empty_flags() -> HandshakeVSInfo {
-        HandshakeVSInfo::V5 {
-            crypto_size: 0,
-            ext_config: None,
-            ext_hs: None,
-            ext_km: None,
-        }
+        HandshakeVSInfo::V5(HSV5Info::default())
     }
 
     fn transition(&mut self, state: RendezvousState) {

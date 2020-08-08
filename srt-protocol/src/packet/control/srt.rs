@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, time::Duration};
+use std::{convert::TryFrom, str, time::Duration};
 
 use bitflags::bitflags;
 use bytes::{Buf, BufMut};
@@ -31,9 +31,9 @@ pub enum SrtControlPacket {
     /// ID = 4
     KeyManagerResponse(SrtKeyMessage),
 
-    /// StreamID(?) // TODO: research
+    /// Stream identifier
     /// ID = 5
-    StreamId,
+    StreamId(String),
 
     /// Smoother? // TODO: research
     /// ID = 6
@@ -207,6 +207,21 @@ impl SrtControlPacket {
             2 => Ok(HandshakeResponse(SrtHandshake::parse(buf)?)),
             3 => Ok(KeyManagerRequest(SrtKeyMessage::parse(buf)?)),
             4 => Ok(KeyManagerResponse(SrtKeyMessage::parse(buf)?)),
+            5 => {
+                // cut off null bytes at end
+                let bytes = buf.bytes();
+                let end = bytes.len()
+                    - bytes
+                        .iter()
+                        .rev()
+                        .position(|a| *a != 0)
+                        .unwrap_or(bytes.len());
+
+                match str::from_utf8(&bytes[0..end]) {
+                    Ok(s) => Ok(StreamId(s.into())),
+                    Err(e) => Err(PacketParseError::StreamTypeNotUTF8(e)),
+                }
+            }
             _ => Err(PacketParseError::BadSRTConfigExtensionType(packet_type)), // TODO: that's not really the right error...
         }
     }
@@ -221,19 +236,26 @@ impl SrtControlPacket {
             HandshakeResponse(_) => 2,
             KeyManagerRequest(_) => 3,
             KeyManagerResponse(_) => 4,
-            StreamId => 5,
+            StreamId(_) => 5,
             Smoother => 6,
         }
     }
     pub fn serialize<T: BufMut>(&self, into: &mut T) {
         use self::SrtControlPacket::*;
 
-        match *self {
-            HandshakeRequest(ref s) | HandshakeResponse(ref s) => {
+        match self {
+            HandshakeRequest(s) | HandshakeResponse(s) => {
                 s.serialize(into);
             }
-            KeyManagerRequest(ref k) | KeyManagerResponse(ref k) => {
+            KeyManagerRequest(k) | KeyManagerResponse(k) => {
                 k.serialize(into);
+            }
+            StreamId(sid) => {
+                into.put(sid.as_bytes());
+
+                // add padding bytes to be aligned to 32-bit boundary
+                let pad_bytes = (((sid.len() + 3) / 4) * 4) - sid.len();
+                into.put(&[0; 4][..pad_bytes]);
             }
             _ => unimplemented!(),
         }
@@ -249,6 +271,7 @@ impl SrtControlPacket {
             KeyManagerRequest(ref k) | KeyManagerResponse(ref k) => {
                 4 + k.salt.len() as u16 / 4 + k.wrapped_keys.len() as u16 / 4
             }
+            StreamId(sid) => ((sid.len() + 3) / 4) as u16, // round up to nearest multiple of 4
             _ => unimplemented!(),
         }
     }
@@ -470,7 +493,7 @@ impl fmt::Debug for SrtControlPacket {
             SrtControlPacket::HandshakeResponse(resp) => write!(f, "hsresp={:?}", resp),
             SrtControlPacket::KeyManagerRequest(req) => write!(f, "kmreq={:?}", req),
             SrtControlPacket::KeyManagerResponse(resp) => write!(f, "kmresp={:?}", resp),
-            SrtControlPacket::StreamId => write!(f, "streamid"),
+            SrtControlPacket::StreamId(sid) => write!(f, "streamid={}", sid),
             SrtControlPacket::Smoother => write!(f, "smoother"),
         }
     }
@@ -517,5 +540,21 @@ mod tests {
         let deserialized = Packet::parse(&mut Cursor::new(buf)).unwrap();
 
         assert_eq!(handshake, deserialized);
+    }
+
+    #[test]
+    fn ser_deser_sid() {
+        let sid = Packet::Control(ControlPacket {
+            timestamp: TimeStamp::from_micros(123),
+            dest_sockid: SocketID(1234),
+            control_type: ControlTypes::Srt(SrtControlPacket::StreamId("Hellohelloheloo".into())),
+        });
+
+        let mut buf = Vec::new();
+        sid.serialize(&mut buf);
+
+        let deser = Packet::parse(&mut Cursor::new(buf)).unwrap();
+
+        assert_eq!(sid, deser);
     }
 }
