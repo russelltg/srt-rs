@@ -3,6 +3,7 @@ use futures::stream;
 use futures::{SinkExt, StreamExt};
 use tokio::time::delay_for;
 
+use srt_protocol::NullEventReceiver;
 use srt_tokio::SrtSocketBuilder;
 use std::io::Error;
 use std::time::{Duration, Instant};
@@ -20,7 +21,8 @@ async fn main() -> Result<(), Error> {
     println!("SRT Multiplex Server is listening on port: {}", port);
 
     while let Some(Ok((conn, pack_chan))) = binding.next().await {
-        let mut srt_socket = srt_tokio::tokio::create_bidrectional_srt(pack_chan, conn);
+        let mut srt_socket =
+            srt_tokio::tokio::create_bidrectional_srt::<NullEventReceiver, _>(pack_chan, conn);
 
         tokio::spawn(async move {
             let client_desc = format!(
