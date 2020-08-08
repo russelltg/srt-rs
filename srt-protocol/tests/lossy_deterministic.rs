@@ -1,7 +1,7 @@
 // lossy tests based on protocol to be fully deterministic
 
 use bytes::Bytes;
-use log::{info, trace};
+use log::{debug, info, trace};
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use rand_distr::{Distribution, Normal};
 use srt_protocol::{
@@ -53,7 +53,6 @@ fn lossy_deterministic() {
 
     for _ in 0..10 {
         let seed = rand::random();
-        println!("{}", seed);
         do_lossy_test(seed, 10_000);
     }
 }
@@ -160,7 +159,7 @@ fn do_lossy_test(seed: u64, count: usize) {
         };
         while let Some((packet, _)) = sendr.pop_output() {
             if rng.gen::<f64>() < DROP_RATE {
-                info!("Dropping {:?}", packet);
+                debug!("Dropping {:?}", packet);
             } else {
                 s2r.push(HeapEntry {
                     packet,
@@ -175,7 +174,7 @@ fn do_lossy_test(seed: u64, count: usize) {
                 ReceiverAlgorithmAction::TimeBoundedReceive(time) => break Some(time),
                 ReceiverAlgorithmAction::SendControl(cp, _) => {
                     if rng.gen::<f64>() < DROP_RATE {
-                        info!("Dropping {:?}", cp);
+                        debug!("Dropping {:?}", cp);
                     } else {
                         r2s.push(HeapEntry {
                             packet: Packet::Control(cp),
