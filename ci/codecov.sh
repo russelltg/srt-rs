@@ -32,7 +32,7 @@ run_test() {
 
 # Run each rust file in tests
 run_test srt
-for testpath in tests/*.rs; do
+for testpath in srt-protocol/tests/*.rs srt-tokio/tests/*.rs srt-transmit/tests/*.rs; do
     testfile="$(basename $testpath)"
     testname="${testfile%.*}"
     run_test $testname
