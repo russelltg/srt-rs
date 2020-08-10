@@ -6,7 +6,7 @@ pr:
 
 variables:
   - name: RUST_LOG 
-    value: 'debug,rustc_ap_syntax=error,rustfmt_nightly=error'
+    value: 'info,rustc_ap_syntax=error,rustfmt_nightly=error'
   - name: SRT_ALLOW_NO_INTEROP_TESTS
     value: '1'
 

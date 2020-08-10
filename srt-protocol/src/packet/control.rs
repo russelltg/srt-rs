@@ -1,5 +1,8 @@
 use std::fmt::{self, Debug, Formatter};
-use std::net::{IpAddr, Ipv4Addr};
+use std::{
+    io::Cursor,
+    net::{IpAddr, Ipv4Addr},
+};
 
 use bitflags::bitflags;
 use bytes::{Buf, BufMut};
@@ -97,9 +100,25 @@ bitflags! {
         const HS = 0b1;
         /// The packet has a kmreq extension
         const KM = 0b10;
-        /// The packet has a config extension (SID or smoother)
+        /// The packet has a config extension (SID or smoother or filter or group)
         const CONFIG = 0b100;
     }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct HSV5Info {
+    /// the crypto size in bytes, either 0 (no encryption), 16, 24, or 32 (stored /8)
+    /// source: https://github.com/Haivision/srt/blob/master/docs/stransmit.md#medium-srt
+    pub crypto_size: u8,
+
+    /// The extension HSReq/HSResp
+    pub ext_hs: Option<SrtControlPacket>,
+
+    /// The extension KMREQ/KMRESP
+    pub ext_km: Option<SrtControlPacket>,
+
+    /// The SID
+    pub sid: Option<String>,
 }
 
 /// HS-version dependenent data
@@ -107,20 +126,7 @@ bitflags! {
 #[allow(clippy::large_enum_variant)]
 pub enum HandshakeVSInfo {
     V4(SocketType),
-    V5 {
-        /// the crypto size in bytes, either 0 (no encryption), 16, 24, or 32 (stored /8)
-        /// source: https://github.com/Haivision/srt/blob/master/docs/stransmit.md#medium-srt
-        crypto_size: u8,
-
-        /// The extension HSReq/HSResp
-        ext_hs: Option<SrtControlPacket>,
-
-        /// The extension KMREQ/KMRESP
-        ext_km: Option<SrtControlPacket>,
-
-        /// The extension config (SID, smoother)
-        ext_config: Option<SrtControlPacket>,
-    },
+    V5(HSV5Info),
 }
 
 /// The control info for handshake packets
@@ -233,14 +239,9 @@ impl HandshakeVSInfo {
     fn type_flags(&self, shake_type: ShakeType) -> u32 {
         match self {
             HandshakeVSInfo::V4(ty) => *ty as u32,
-            HandshakeVSInfo::V5 {
-                crypto_size,
-                ext_hs,
-                ext_km,
-                ext_config,
-            } => {
+            HandshakeVSInfo::V5(hs) => {
                 if shake_type == ShakeType::Induction
-                    && (ext_hs.is_some() || ext_km.is_some() || ext_config.is_some())
+                    && (hs.ext_hs.is_some() || hs.ext_km.is_some() || hs.sid.is_some())
                 {
                     // induction does not include any extensions, and instead has the
                     // magic code. this is an incompatialbe place to be.
@@ -249,18 +250,18 @@ impl HandshakeVSInfo {
 
                 let mut flags = ExtFlags::empty();
 
-                if ext_hs.is_some() {
+                if hs.ext_hs.is_some() {
                     flags |= ExtFlags::HS;
                 }
-                if ext_km.is_some() {
+                if hs.ext_km.is_some() {
                     flags |= ExtFlags::KM;
                 }
-                if ext_config.is_some() {
+                if hs.sid.is_some() {
                     flags |= ExtFlags::CONFIG;
                 }
                 // take the crypto size, get rid of the frist three (garunteed zero) bits, then shift it into the
                 // most significant 2-byte word
-                (u32::from(*crypto_size) >> 3 << 16)
+                (u32::from(hs.crypto_size) >> 3 << 16)
                     // when this is an induction packet, includ the magic code instead of flags
                     | if shake_type == ShakeType::Induction {
                         u32::from(SRT_MAGIC_CODE)
@@ -435,12 +436,7 @@ impl ControlTypes {
                                 warn!("HSv5 induction response did not have SRT_MAGIC_CODE, which is suspicious")
                             }
 
-                            HandshakeVSInfo::V5 {
-                                crypto_size,
-                                ext_hs: None,
-                                ext_km: None,
-                                ext_config: None,
-                            }
+                            HandshakeVSInfo::V5(HSV5Info::default())
                         } else {
                             // if this is not induction, this is the extension flags
                             let extensions = match ExtFlags::from_bits(type_ext_socket_type) {
@@ -461,12 +457,26 @@ impl ControlTypes {
                                     return Err(PacketParseError::NotEnoughData);
                                 }
                                 let pack_type = buf.get_u16();
-                                let _pack_size = buf.get_u16(); // TODO: why exactly is this needed?
-                                match pack_type {
-                                    // 1 and 2 are handshake response and requests
-                                    1 | 2 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
-                                    e => return Err(PacketParseError::BadSRTHsExtensionType(e)),
+                                let pack_size_words = buf.get_u16();
+                                let pack_size = usize::from(pack_size_words) * 4;
+
+                                if buf.remaining() < pack_size {
+                                    return Err(PacketParseError::NotEnoughData);
                                 }
+
+                                let buffer = &buf.bytes()[..pack_size];
+
+                                let ret = match pack_type {
+                                    // 1 and 2 are handshake response and requests
+                                    1 | 2 => Some(SrtControlPacket::parse(
+                                        pack_type,
+                                        &mut Cursor::new(buffer),
+                                    )?),
+                                    e => return Err(PacketParseError::BadSRTHsExtensionType(e)),
+                                };
+                                buf.advance(pack_size);
+
+                                ret
                             } else {
                                 None
                             };
@@ -484,28 +494,41 @@ impl ControlTypes {
                             } else {
                                 None
                             };
-                            let ext_config = if extensions.contains(ExtFlags::CONFIG) {
-                                if buf.remaining() < 4 {
-                                    return Err(PacketParseError::NotEnoughData);
-                                }
-                                let pack_type = buf.get_u16();
-                                let _pack_size = buf.get_u16(); // TODO: why exactly is this needed?
-                                match pack_type {
-                                    // 5 is sid 6 is smoother
-                                    5 | 6 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
-                                    e => {
-                                        return Err(PacketParseError::BadSRTConfigExtensionType(e))
+                            let mut sid = None;
+
+                            if extensions.contains(ExtFlags::CONFIG) {
+                                while buf.remaining() > 4 {
+                                    let pack_type = buf.get_u16();
+
+                                    let pack_size_words = buf.get_u16();
+                                    let pack_size = usize::from(pack_size_words) * 4;
+
+                                    if buf.remaining() < pack_size {
+                                        return Err(PacketParseError::NotEnoughData);
                                     }
+
+                                    let buffer = &buf.bytes()[..pack_size];
+
+                                    match SrtControlPacket::parse(
+                                        pack_type,
+                                        &mut Cursor::new(&buffer),
+                                    )? {
+                                        // 5 is sid 6 is smoother
+                                        SrtControlPacket::StreamId(stream_id) => {
+                                            sid = Some(stream_id)
+                                        }
+                                        _ => unimplemented!("Implement other kinds"),
+                                    }
+
+                                    buf.advance(pack_size);
                                 }
-                            } else {
-                                None
-                            };
-                            HandshakeVSInfo::V5 {
+                            }
+                            HandshakeVSInfo::V5(HSV5Info {
                                 crypto_size,
                                 ext_hs,
                                 ext_km,
-                                ext_config,
-                            }
+                                sid,
+                            })
                         }
                     }
                     _ => unreachable!(), // this is already checked for above
@@ -662,16 +685,14 @@ impl ControlTypes {
                 }
 
                 // serialzie extensions
-                if let HandshakeVSInfo::V5 {
-                    ref ext_hs,
-                    ref ext_km,
-                    ref ext_config,
-                    ..
-                } = c.info
-                {
-                    for ext in [ext_hs, ext_km, ext_config]
-                        .iter()
-                        .filter_map(|&s| s.as_ref())
+                if let HandshakeVSInfo::V5(hs) = &c.info {
+                    for ext in [
+                        &hs.ext_hs,
+                        &hs.ext_km,
+                        &hs.sid.clone().map(SrtControlPacket::StreamId),
+                    ]
+                    .iter()
+                    .filter_map(|&s| s.as_ref())
                     {
                         into.put_u16(ext.type_id());
                         // put the size in 32-bit integers
@@ -800,25 +821,31 @@ impl Debug for HandshakeControlInfo {
     }
 }
 
+impl Default for HSV5Info {
+    fn default() -> Self {
+        HSV5Info {
+            crypto_size: 0,
+            ext_hs: None,
+            ext_km: None,
+            sid: None,
+        }
+    }
+}
+
 impl Debug for HandshakeVSInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             HandshakeVSInfo::V4(stype) => write!(f, "UDT: {:?}", stype),
-            HandshakeVSInfo::V5 {
-                crypto_size,
-                ext_hs,
-                ext_km,
-                ext_config,
-            } => {
-                write!(f, "SRT: crypto={:?}", crypto_size)?;
-                if let Some(pack) = ext_hs {
+            HandshakeVSInfo::V5(hs) => {
+                write!(f, "SRT: crypto={:?}", hs.crypto_size)?;
+                if let Some(pack) = &hs.ext_hs {
                     write!(f, " hs={:?}", pack)?;
                 }
-                if let Some(pack) = ext_km {
+                if let Some(pack) = &hs.ext_km {
                     write!(f, " km={:?}", pack)?;
                 }
-                if let Some(pack) = ext_config {
-                    write!(f, " config={:?}", pack)?;
+                if let Some(sid) = &hs.sid {
+                    write!(f, " sid={:?}", sid)?;
                 }
                 Ok(())
             }
@@ -860,7 +887,7 @@ mod test {
                 socket_id: SocketID(1231),
                 syn_cookie: 0,
                 peer_addr: "127.0.0.1".parse().unwrap(),
-                info: HandshakeVSInfo::V5 {
+                info: HandshakeVSInfo::V5(HSV5Info {
                     crypto_size: 0, // TODO: implement
                     ext_hs: Some(SrtControlPacket::HandshakeResponse(SrtHandshake {
                         version: SrtVersion::CURRENT,
@@ -869,8 +896,8 @@ mod test {
                         recv_latency: Duration::from_millis(12345),
                     })),
                     ext_km: None,
-                    ext_config: None,
-                },
+                    sid: None,
+                }),
             }),
         };
 
@@ -963,7 +990,7 @@ mod test {
                     socket_id: SocketID(1_030_305_462),
                     syn_cookie: -471_595_555,
                     peer_addr: "127.0.0.1".parse().unwrap(),
-                    info: HandshakeVSInfo::V5 {
+                    info: HandshakeVSInfo::V5(HSV5Info {
                         crypto_size: 0,
                         ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                             version: SrtVersion::new(1, 3, 1),
@@ -976,8 +1003,8 @@ mod test {
                             recv_latency: Duration::new(0, 0)
                         })),
                         ext_km: None,
-                        ext_config: None
-                    }
+                        sid: None,
+                    })
                 })
             }
         );
@@ -1008,7 +1035,7 @@ mod test {
                     socket_id: SocketID(904_368_365),
                     syn_cookie: 1_561_775_338,
                     peer_addr: "127.0.0.1".parse().unwrap(),
-                    info: HandshakeVSInfo::V5 {
+                    info: HandshakeVSInfo::V5(HSV5Info {
                         crypto_size: 0,
                         ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                             version: SrtVersion::new(1, 3, 1),
@@ -1032,8 +1059,8 @@ mod test {
                             )
                             .unwrap()
                         })),
-                        ext_config: None
-                    }
+                        sid: None,
+                    })
                 })
             }
         );
@@ -1074,12 +1101,42 @@ mod test {
                 socket_id: SocketID(0),
                 syn_cookie: 0,
                 peer_addr: [127, 0, 0, 1].into(),
-                info: HandshakeVSInfo::V5 {
+                info: HandshakeVSInfo::V5(HSV5Info {
                     crypto_size: 16,
-                    ext_config: None,
-                    ext_hs: None,
                     ext_km: None,
-                },
+                    ext_hs: None,
+                    sid: None,
+                }),
+            }),
+        };
+
+        let mut ser = vec![];
+        pack.serialize(&mut ser);
+
+        let pack_deser = ControlPacket::parse(&mut Cursor::new(&ser)).unwrap();
+
+        assert_eq!(pack, pack_deser);
+    }
+
+    #[test]
+    fn test_sid() {
+        let pack = ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: SocketID(0),
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                init_seq_num: SeqNumber(0),
+                max_packet_size: 1816,
+                max_flow_size: 0,
+                shake_type: ShakeType::Conclusion,
+                socket_id: SocketID(0),
+                syn_cookie: 0,
+                peer_addr: [127, 0, 0, 1].into(),
+                info: HandshakeVSInfo::V5(HSV5Info {
+                    crypto_size: 0,
+                    ext_km: None,
+                    ext_hs: None,
+                    sid: Some("Hello hello".into()),
+                }),
             }),
         };
 

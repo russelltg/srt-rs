@@ -4,7 +4,8 @@ use super::{ConnInitSettings, ConnectError};
 use crate::{
     crypto::CryptoManager,
     packet::{
-        HandshakeControlInfo, HandshakeVSInfo, SrtControlPacket, SrtHandshake, SrtShakeFlags,
+        HSV5Info, HandshakeControlInfo, HandshakeVSInfo, SrtControlPacket, SrtHandshake,
+        SrtShakeFlags,
     },
     ConnectionSettings, SeqNumber, SrtVersion,
 };
@@ -19,28 +20,22 @@ pub fn gen_hsv5_response(
     with_hsv5: &HandshakeControlInfo,
     from: SocketAddr,
 ) -> Result<(HandshakeVSInfo, ConnectionSettings), ConnectError> {
-    let (crypto_size, incoming_ext_hs, incoming_ext_km, _incoming_ext_config) =
-        match &with_hsv5.info {
-            HandshakeVSInfo::V5 {
-                crypto_size,
-                ext_hs,
-                ext_km,
-                ext_config,
-            } => (crypto_size, ext_hs, ext_km, ext_config),
-            i => return Err(ConnectError::UnsupportedProtocolVersion(i.version())),
-        };
+    let incoming = match &with_hsv5.info {
+        HandshakeVSInfo::V5(hs) => hs,
+        i => return Err(ConnectError::UnsupportedProtocolVersion(i.version())),
+    };
 
-    let hs = match incoming_ext_hs {
+    let hs = match incoming.ext_hs {
         Some(SrtControlPacket::HandshakeRequest(hs)) => hs,
         Some(_) => return Err(ConnectError::ExpectedHSReq),
         None => return Err(ConnectError::ExpectedExtFlags),
     };
 
     // crypto
-    let cm = match (&settings.crypto, incoming_ext_km) {
+    let cm = match (&settings.crypto, &incoming.ext_km) {
         // ok, both sizes have crypto
         (Some(co), Some(SrtControlPacket::KeyManagerRequest(km))) => {
-            if co.size != *crypto_size {
+            if co.size != incoming.crypto_size {
                 unimplemented!("Key size mismatch");
             }
 
@@ -59,7 +54,7 @@ pub fn gen_hsv5_response(
     };
 
     Ok((
-        HandshakeVSInfo::V5 {
+        HandshakeVSInfo::V5(HSV5Info {
             crypto_size: cm.as_ref().map(|c| c.key_length()).unwrap_or(0),
             ext_hs: Some(SrtControlPacket::HandshakeResponse(SrtHandshake {
                 version: SrtVersion::CURRENT,
@@ -68,8 +63,8 @@ pub fn gen_hsv5_response(
                 recv_latency: settings.recv_latency,
             })),
             ext_km: outgoing_ext_km.map(SrtControlPacket::KeyManagerResponse),
-            ext_config: None,
-        },
+            sid: None,
+        }),
         ConnectionSettings {
             remote: from,
             remote_sockid: with_hsv5.socket_id,
@@ -110,7 +105,7 @@ pub fn start_hsv5_initiation(
     };
 
     Ok((
-        HandshakeVSInfo::V5 {
+        HandshakeVSInfo::V5(HSV5Info {
             crypto_size: self_crypto_size,
             ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                 version: SrtVersion::CURRENT,
@@ -119,8 +114,8 @@ pub fn start_hsv5_initiation(
                 recv_latency: settings.recv_latency,
             })),
             ext_km,
-            ext_config: None,
-        },
+            sid: None,
+        }),
         StartedInitiator { cm, settings },
     ))
 }
@@ -133,18 +128,12 @@ impl StartedInitiator {
         from: SocketAddr,
     ) -> Result<ConnectionSettings, ConnectError> {
         // TODO: factor this out with above...
-        let (_crypto_size, incoming_ext_hs, _incoming_ext_km, _incoming_ext_config) =
-            match &response.info {
-                HandshakeVSInfo::V5 {
-                    crypto_size,
-                    ext_hs,
-                    ext_km,
-                    ext_config,
-                } => (crypto_size, ext_hs, ext_km, ext_config),
-                i => return Err(ConnectError::UnsupportedProtocolVersion(i.version())),
-            };
+        let incoming = match &response.info {
+            HandshakeVSInfo::V5(hs) => hs,
+            i => return Err(ConnectError::UnsupportedProtocolVersion(i.version())),
+        };
 
-        let hs = match incoming_ext_hs {
+        let hs = match incoming.ext_hs {
             Some(SrtControlPacket::HandshakeResponse(hs)) => hs,
             Some(_) => return Err(ConnectError::ExpectedHSResp),
             None => return Err(ConnectError::ExpectedExtFlags),

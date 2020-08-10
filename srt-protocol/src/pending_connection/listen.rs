@@ -63,12 +63,7 @@ impl Listen {
                     control_type: ControlTypes::Handshake(HandshakeControlInfo {
                         syn_cookie: cookie,
                         socket_id: self.init_settings.local_sockid,
-                        info: HandshakeVSInfo::V5 {
-                            crypto_size: 0,
-                            ext_hs: None,
-                            ext_km: None,
-                            ext_config: None,
-                        },
+                        info: HandshakeVSInfo::V5(HSV5Info::default()),
                         init_seq_num: shake.init_seq_num,
                         ..shake
                     }),
@@ -212,12 +207,7 @@ mod test {
             socket_id: random(),
             syn_cookie: 0,
             peer_addr: IpAddr::from([127, 0, 0, 1]),
-            info: HandshakeVSInfo::V5 {
-                crypto_size: 0,
-                ext_hs: None,
-                ext_km: None,
-                ext_config: None,
-            },
+            info: HandshakeVSInfo::V5(HSV5Info::default()),
         }
     }
 
@@ -230,7 +220,7 @@ mod test {
             socket_id: random(),
             syn_cookie: gen_cookie(&"127.0.0.1:8765".parse().unwrap()),
             peer_addr: IpAddr::from([127, 0, 0, 1]),
-            info: HandshakeVSInfo::V5 {
+            info: HandshakeVSInfo::V5(HSV5Info {
                 crypto_size: 0,
                 ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                     version: SrtVersion::CURRENT,
@@ -239,8 +229,8 @@ mod test {
                     recv_latency: Duration::from_secs(2),
                 })),
                 ext_km: None,
-                ext_config: None,
-            },
+                sid: None,
+            }),
         }
     }
 
@@ -268,7 +258,7 @@ mod test {
         ));
         // make sure it returns hs_ext
         assert!(matches!(resp,
-            Ok(Some((Packet::Control(ControlPacket{control_type: ControlTypes::Handshake(HandshakeControlInfo{info: HandshakeVSInfo::V5{ext_hs: Some(_), ..}, ..}), ..}), _)))), "{:?}", resp
+            Ok(Some((Packet::Control(ControlPacket{control_type: ControlTypes::Handshake(HandshakeControlInfo{info: HandshakeVSInfo::V5(HSV5Info{ext_hs: Some(_), ..}), ..}), ..}), _)))), "{:?}", resp
         );
     }
 
@@ -385,12 +375,7 @@ mod test {
         assert!(matches!(resp, Ok(Some(_))));
 
         let mut c = test_conclusion();
-        c.info = HandshakeVSInfo::V5 {
-            crypto_size: 0,
-            ext_hs: None,
-            ext_km: None,
-            ext_config: None,
-        };
+        c.info = HandshakeVSInfo::V5(HSV5Info::default());
 
         let resp = l.handle_packet((build_hs_pack(c), "127.0.0.1:8765".parse().unwrap()));
 
