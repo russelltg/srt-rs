@@ -59,10 +59,10 @@ mod util;
 use codec::PacketCodec;
 
 pub use crate::builder::{ConnInitMethod, SrtSocketBuilder};
-pub use crate::multiplex::{multiplex, PackChan, StreamerServer};
+pub use crate::multiplex::{multiplex, StreamerServer};
 pub use crate::tokio::SrtSocket;
 
-use srt_protocol::connection::{self, Connection, ConnectionSettings};
+use srt_protocol::connection::{Connection, ConnectionSettings};
 use srt_protocol::crypto;
 use srt_protocol::packet::{self, ControlPacket, Packet, PacketParseError};
 use srt_protocol::protocol;

@@ -8,11 +8,14 @@ use futures::{future::ready, Sink, Stream, StreamExt};
 
 use crate::tokio::create_bidrectional_srt;
 use crate::{
-    connection::Connection, crypto::CryptoOptions, multiplex, pending_connection, PackChan, Packet,
-    PacketCodec, PacketParseError, SrtSocket,
+    crypto::CryptoOptions, multiplex, pending_connection, Packet, PacketCodec, PacketParseError,
+    SrtSocket,
 };
 use log::warn;
-use srt_protocol::pending_connection::ConnInitSettings;
+use srt_protocol::{
+    accesscontrol::{AllowAllStreamAcceptor, StreamAcceptor},
+    pending_connection::ConnInitSettings,
+};
 
 /// Struct to build sockets.
 ///
@@ -61,7 +64,7 @@ pub struct SrtSocketBuilder {
 }
 
 /// Describes how this SRT entity will connect to the other.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnInitMethod {
     /// Listens on the local socket, expecting there to be a [`Connect`](ConnInitMethod::Connect) instance that eventually connects to this socket.
     /// This almost certianly menas you should use it with [`SrtSocketBuilder::local_port`],
@@ -69,7 +72,8 @@ pub enum ConnInitMethod {
     Listen,
 
     /// Connect to a listening socket. It expects the listen socket to be on the [`SocketAddr`] provided.
-    Connect(SocketAddr),
+    /// If the second argument is provided, it is the streamid
+    Connect(SocketAddr, Option<String>),
 
     /// Connect to another [`Rendezvous`](ConnInitMethod::Rendezvous) connection. This is useful if both sides are behind a NAT. The [`SocketAddr`]
     /// passed should be the **public** address and port of the other [`Rendezvous`](ConnInitMethod::Rendezvous) connection.
@@ -87,6 +91,7 @@ impl SrtSocketBuilder {
         }
     }
 
+    /// Create a new listener, accepting one connection
     pub fn new_listen() -> Self {
         Self::new(ConnInitMethod::Listen)
     }
@@ -98,6 +103,18 @@ impl SrtSocketBuilder {
     pub fn new_connect(to: impl ToSocketAddrs) -> Self {
         Self::new(ConnInitMethod::Connect(
             to.to_socket_addrs().unwrap().next().unwrap(),
+            None,
+        ))
+    }
+
+    /// Connects to the first address yielded by `to`
+    ///
+    /// # Panics
+    /// * `to` fails to resolve to a [`SocketAddr`]
+    pub fn new_connect_with_streamid(to: impl ToSocketAddrs, streamid: impl Into<String>) -> Self {
+        Self::new(ConnInitMethod::Connect(
+            to.to_socket_addrs().unwrap().next().unwrap(),
+            Some(streamid.into()),
         ))
     }
 
@@ -190,12 +207,13 @@ impl SrtSocketBuilder {
             ConnInitMethod::Listen => {
                 pending_connection::listen(&mut socket, self.init_settings).await?
             }
-            ConnInitMethod::Connect(addr) => {
+            ConnInitMethod::Connect(addr, sid) => {
                 pending_connection::connect(
                     &mut socket,
                     addr,
                     self.local_addr.ip(),
                     self.init_settings,
+                    sid,
                 )
                 .await?
             }
@@ -232,9 +250,19 @@ impl SrtSocketBuilder {
     /// If this is built with a non-listen builder
     pub async fn build_multiplexed(
         self,
-    ) -> Result<impl Stream<Item = Result<(Connection, PackChan), io::Error>>, io::Error> {
+    ) -> Result<impl Stream<Item = Result<SrtSocket, io::Error>>, io::Error> {
+        self.build_multiplexed_with_acceptor(AllowAllStreamAcceptor::default())
+            .await
+    }
+
+    pub async fn build_multiplexed_with_acceptor(
+        self,
+        acceptor: impl StreamAcceptor + Clone,
+    ) -> Result<impl Stream<Item = Result<SrtSocket, io::Error>>, io::Error> {
         match self.conn_type {
-            ConnInitMethod::Listen => multiplex(self.local_addr, self.init_settings).await,
+            ConnInitMethod::Listen => {
+                multiplex(self.local_addr, self.init_settings, acceptor).await
+            }
             _ => panic!("Cannot bind multiplexed with any connection mode other than listen"),
         }
     }

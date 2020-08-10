@@ -8,6 +8,7 @@ use std::{
 };
 
 use srt_protocol::{
+    accesscontrol::AllowAllStreamAcceptor,
     pending_connection::{
         connect::{Connect, ConnectState},
         listen::{Listen, ListenState},
@@ -28,13 +29,14 @@ pub async fn connect<T>(
     remote: SocketAddr,
     local_addr: IpAddr,
     init_settings: ConnInitSettings,
+    streamid: Option<String>,
 ) -> Result<Connection, io::Error>
 where
     T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
         + Sink<(Packet, SocketAddr), Error = io::Error>
         + Unpin,
 {
-    let mut connect = Connect::new(remote, local_addr, init_settings);
+    let mut connect = Connect::new(remote, local_addr, init_settings, streamid);
 
     let mut tick_interval = interval(Duration::from_millis(100));
     loop {
@@ -70,7 +72,7 @@ where
         + Sink<(Packet, SocketAddr), Error = io::Error>
         + Unpin,
 {
-    let mut listen = Listen::new(init_settings);
+    let mut listen = Listen::new(init_settings, AllowAllStreamAcceptor::default());
 
     loop {
         let packet = get_packet(sock).await?;

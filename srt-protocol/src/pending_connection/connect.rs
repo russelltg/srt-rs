@@ -40,17 +40,24 @@ pub struct Connect {
     local_addr: IpAddr,
     init_settings: ConnInitSettings,
     state: ConnectState,
+    streamid: Option<String>,
 }
 
 pub type ConnectResult = Result<Option<(Packet, SocketAddr)>, ConnectError>;
 
 impl Connect {
-    pub fn new(remote: SocketAddr, local_addr: IpAddr, init_settings: ConnInitSettings) -> Self {
+    pub fn new(
+        remote: SocketAddr,
+        local_addr: IpAddr,
+        init_settings: ConnInitSettings,
+        streamid: Option<String>,
+    ) -> Self {
         Connect {
             remote,
             local_addr,
             init_settings,
             state: ConnectState::new(),
+            streamid,
         }
     }
     fn on_start(&mut self) -> ConnectResult {
@@ -80,7 +87,8 @@ impl Connect {
     ) -> ConnectResult {
         match (info.shake_type, &info.info, from) {
             (ShakeType::Induction, HandshakeVSInfo::V5 { .. }, from) if from == self.remote => {
-                let (hsv5, cm) = start_hsv5_initiation(self.init_settings.clone())?;
+                let (hsv5, cm) =
+                    start_hsv5_initiation(self.init_settings.clone(), self.streamid.clone())?;
 
                 // send back a packet with the same syn cookie
                 let packet = Packet::Control(ControlPacket {

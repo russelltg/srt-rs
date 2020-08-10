@@ -12,7 +12,10 @@ use crate::packet::{
     ControlTypes, HSV5Info, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SrtControlPacket,
 };
 use crate::protocol::{handshake::Handshake, TimeStamp};
-use crate::{Connection, ConnectionSettings, ControlPacket, Packet, SocketID};
+use crate::{
+    accesscontrol::AllowAllStreamAcceptor, Connection, ConnectionSettings, ControlPacket, Packet,
+    SocketID,
+};
 
 use ConnectError::*;
 use RendezvousState::*;
@@ -183,7 +186,7 @@ impl Rendezvous {
 
         match (info.shake_type, role) {
             (ShakeType::Waveahand, Initiator) => {
-                let (hsv5, initiator) = start_hsv5_initiation(self.init_settings.clone())?;
+                let (hsv5, initiator) = start_hsv5_initiation(self.init_settings.clone(), None)?; // NOTE: streamid not supported in rendezvous
 
                 self.transition(AttentionInitiator(hsv5.clone(), initiator));
 
@@ -197,16 +200,18 @@ impl Rendezvous {
                 let hsv5_shake = match (&role, extract_ext_info(info)?) {
                     (Responder, Some(SrtControlPacket::HandshakeRequest(_))) => {
                         let (hsv5, connection) = gen_hsv5_response(
-                            self.init_settings.clone(),
+                            &mut self.init_settings,
                             info,
                             self.remote_public,
+                            &mut AllowAllStreamAcceptor::default(),
                         )?;
                         self.transition(FineResponder(connection));
 
                         hsv5
                     }
                     (Initiator, None) => {
-                        let (hsv5, initiator) = start_hsv5_initiation(self.init_settings.clone())?;
+                        let (hsv5, initiator) =
+                            start_hsv5_initiation(self.init_settings.clone(), None)?; // NOTE: streamid not supported in rendezvous
                         self.transition(FineInitiator(hsv5.clone(), initiator));
                         hsv5
                     }
@@ -220,6 +225,7 @@ impl Rendezvous {
             }
             (ShakeType::Agreement, _) => Ok(None),
             (ShakeType::Induction, _) => Err(RendezvousExpected(info.clone())),
+            (ShakeType::Rejection(rej), _) => Err(rej.into()),
         }
     }
 
@@ -258,8 +264,12 @@ impl Rendezvous {
                     Some(_) => return Err(ExpectedHSReq),
                     None => return Err(ExpectedExtFlags),
                 };
-                let (hsv5, connection) =
-                    gen_hsv5_response(self.init_settings.clone(), info, self.remote_public)?;
+                let (hsv5, connection) = gen_hsv5_response(
+                    &mut self.init_settings,
+                    info,
+                    self.remote_public,
+                    &mut AllowAllStreamAcceptor::default(),
+                )?;
                 self.transition(InitiatedResponder(connection));
 
                 self.send_conclusion(info.socket_id, hsv5)

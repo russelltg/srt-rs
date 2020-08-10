@@ -11,7 +11,7 @@ async fn test_latency_exchange(
     listener_send_latency: Duration,
     listener_recv_latency: Duration,
 ) -> Result<()> {
-    let connecter = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:4000".parse()?))
+    let connecter = SrtSocketBuilder::new_connect("127.0.0.1:4000")
         .send_latency(connecter_send_latency)
         .receive_latency(connecter_recv_latency)
         .connect();

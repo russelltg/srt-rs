@@ -1,17 +1,24 @@
-use std::time::Instant;
-
-use srt_tokio::{SrtSocket, SrtSocketBuilder};
-
-use anyhow::Result;
 use bytes::Bytes;
-use futures::channel::oneshot;
-use futures::future::join_all;
-use futures::stream;
-use futures::{FutureExt, SinkExt, StreamExt};
+use futures::{channel::oneshot, future::join_all, stream, FutureExt, SinkExt, StreamExt};
 use log::info;
+use srt_protocol::accesscontrol::{AcceptParameters, RejectReason, StreamAcceptor};
+use srt_tokio::{SrtSocket, SrtSocketBuilder};
+use std::{io, net::SocketAddr, time::Instant};
+
+struct AccessController;
+
+impl StreamAcceptor for AccessController {
+    fn accept(
+        &mut self,
+        streamid: Option<&str>,
+        _ip: SocketAddr,
+    ) -> Result<AcceptParameters, RejectReason> {
+        streamid.
+    }
+}
 
 #[tokio::test]
-async fn multiplexer() -> Result<()> {
+async fn streamid() -> io::Result<()> {
     let _ = env_logger::try_init();
 
     let (finished_send, finished_recv) = oneshot::channel();
@@ -66,5 +73,3 @@ async fn multiplexer() -> Result<()> {
     finished_send.send(()).unwrap();
     Ok(())
 }
-
-// crypto!!

@@ -38,8 +38,7 @@ async fn not_enough_latency() {
     let sender = SrtSocketBuilder::new(ConnInitMethod::Listen)
         .local_port(1000)
         .connect_with_sock(send);
-    let recvr = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:1000".parse().unwrap()))
-        .connect_with_sock(recv);
+    let recvr = SrtSocketBuilder::new_connect("127.0.0.1:1000").connect_with_sock(recv);
 
     tokio::spawn(async move {
         let mut sender = sender.await.unwrap();

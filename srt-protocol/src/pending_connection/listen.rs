@@ -2,15 +2,16 @@ use std::net::SocketAddr;
 
 use crate::packet::*;
 use crate::protocol::TimeStamp;
-use crate::{ConnectionSettings, SocketID};
+use crate::{accesscontrol::StreamAcceptor, ConnectionSettings, SocketID};
 
 use super::{cookie::gen_cookie, hsv5::gen_hsv5_response, ConnInitSettings, ConnectError};
 use ConnectError::*;
 use ListenState::*;
 
-pub struct Listen {
+pub struct Listen<A: StreamAcceptor> {
     init_settings: ConnInitSettings,
     state: ListenState,
+    acceptor: A,
 }
 
 #[derive(Clone)]
@@ -27,15 +28,24 @@ pub enum ListenState {
     InductionWait,
     ConclusionWait(ConclusionWaitState),
     Connected(ControlPacket, ConnectionSettings),
+
+    // we have sent reject packet, but haven't returned reject yet
+    Reject(RejectReason),
+}
+
+enum ListenAction {
+    SendPacket(Packet, SocketAddr),
+    DiscardedBecause(ConnectError),
 }
 
 type ListenResult = Result<Option<(Packet, SocketAddr)>, ConnectError>;
 
-impl Listen {
-    pub fn new(init_settings: ConnInitSettings) -> Listen {
+impl<A: StreamAcceptor> Listen<A> {
+    pub fn new(init_settings: ConnInitSettings, acceptor: A) -> Listen<A> {
         Listen {
             state: InductionWait,
             init_settings,
+            acceptor,
         }
     }
     fn wait_for_induction(
@@ -108,7 +118,7 @@ impl Listen {
             (ShakeType::Conclusion, VERSION_5, syn_cookie) if syn_cookie == state.cookie => {
                 // construct a packet to send back
                 let (hsv5, connection) =
-                    gen_hsv5_response(self.init_settings.clone(), &shake, from)?;
+                    gen_hsv5_response(&mut self.init_settings, &shake, from, &mut self.acceptor)?;
 
                 let resp_handshake = ControlPacket {
                     timestamp,
@@ -151,6 +161,7 @@ impl Listen {
             (InductionWait, control_type) | (ConclusionWait(_), control_type) => {
                 Err(HandshakeExpected(control_type))
             }
+            (Reject(reason), _) => Err(ConnectError::Rejecting(reason)),
             (Connected(_, _), _) => Ok(None),
         }
     }
@@ -177,12 +188,16 @@ mod test {
     use rand::random;
 
     use crate::{
+        accesscontrol::AllowAllStreamAcceptor,
         packet::{ControlPacket, DataPacket, HandshakeControlInfo, Packet, ShakeType},
         SrtVersion,
     };
 
-    fn test_listen() -> Listen {
-        Listen::new(ConnInitSettings::default())
+    fn test_listen() -> Listen<AllowAllStreamAcceptor> {
+        Listen::new(
+            ConnInitSettings::default(),
+            AllowAllStreamAcceptor::default(),
+        )
     }
 
     fn test_induction() -> HandshakeControlInfo {

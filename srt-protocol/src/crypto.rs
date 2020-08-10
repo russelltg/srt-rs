@@ -9,8 +9,10 @@ use pbkdf2::pbkdf2;
 use sha1::Sha1;
 
 use crate::{
-    packet::{Auth, CipherType, DataEncryption, KeyFlags, PacketType, SrtKeyMessage},
-    pending_connection::ConnectError,
+    packet::{
+        Auth, CipherType, CoreRejectReason, DataEncryption, KeyFlags, PacketType, SrtKeyMessage,
+    },
+    pending_connection::ConnectionReject,
     SeqNumber,
 };
 use fmt::Debug;
@@ -54,7 +56,7 @@ impl CryptoManager {
     pub fn new_from_kmreq(
         options: CryptoOptions,
         kmreq: &SrtKeyMessage,
-    ) -> Result<Self, ConnectError> {
+    ) -> Result<Self, ConnectionReject> {
         let salt = kmreq.salt[..].try_into().unwrap();
         let kek = CryptoManager::gen_kek(&options, &salt);
 
@@ -89,7 +91,9 @@ impl CryptoManager {
         }
 
         if iv != wrap::DEFAULT_IV {
-            return Err(ConnectError::BadSecret);
+            return Err(ConnectionReject::Rejecting(
+                CoreRejectReason::BadSecret.into(),
+            ));
         }
 
         let even = if kmreq.key_flags.contains(KeyFlags::EVEN) {

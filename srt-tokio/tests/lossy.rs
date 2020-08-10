@@ -34,8 +34,7 @@ async fn lossy() {
         .local_port(1111)
         .latency(Duration::from_secs(8))
         .connect_with_sock(send);
-    let recvr = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:1111".parse().unwrap()))
-        .connect_with_sock(recv);
+    let recvr = SrtSocketBuilder::new_connect("127.0.0.1:1111").connect_with_sock(recv);
 
     let sender = async move {
         let mut sender = sender.await.unwrap();

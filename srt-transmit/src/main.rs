@@ -182,7 +182,7 @@ fn get_conn_init_method(
 ) -> Result<ConnInitMethod, Error> {
     Ok(match (addr, rendezvous_v) {
         // address but not rendezvous -> connect
-        (Some(addr), None) => ConnInitMethod::Connect(addr),
+        (Some(addr), None) => ConnInitMethod::Connect(addr, None),
         // no address or rendezvous -> listen
         (None, None) => ConnInitMethod::Listen,
         // address and rendezvous flag -> rendezvous

@@ -6,7 +6,7 @@ pub mod rendezvous;
 
 use crate::{
     crypto::CryptoOptions,
-    packet::{ControlTypes, HandshakeControlInfo},
+    packet::{ControlTypes, HandshakeControlInfo, RejectReason},
     DataPacket, SeqNumber, SocketID,
 };
 use rand::random;
@@ -28,7 +28,15 @@ pub enum ConnectError {
     ExpectedHSResp,
     ExpectedExtFlags,
     ExpectedNoExtFlags,
-    BadSecret,
+}
+
+#[derive(Debug)]
+pub enum ConnectionReject {
+    /// local rejected remote
+    Rejecting(RejectReason),
+
+    /// remote rejected local
+    Rejected(RejectReason),
 }
 
 #[derive(Debug, Clone)]
@@ -83,10 +91,20 @@ impl fmt::Display for ConnectError {
             ExpectedNoExtFlags => {
                 write!(f, "Initiator did not expect handshake flags, but got some")
             }
-            BadSecret => write!(f, "Wrong password"),
         }
     }
 }
+
+impl fmt::Display for ConnectionReject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use ConnectionReject::*;
+        match self {
+            Rejecting(rr) => write!(f, "Local server rejected remote: {}", rr),
+            Rejected(rr) => write!(f, "Remote rejected connection: {}", rr),
+        }
+    }
+}
+
 impl Error for ConnectError {}
 
 impl Default for ConnInitSettings {
