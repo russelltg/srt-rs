@@ -3,7 +3,7 @@ use std::{cmp::Ordering, net::SocketAddr, time::Instant};
 use super::{
     cookie::gen_cookie,
     hsv5::{gen_hsv5_response, start_hsv5_initiation, StartedInitiator},
-    ConnInitSettings, ConnectError,
+    ConnInitSettings, ConnectError, ConnectionReject,
 };
 
 use log::debug;
@@ -225,7 +225,7 @@ impl Rendezvous {
             }
             (ShakeType::Agreement, _) => Ok(None),
             (ShakeType::Induction, _) => Err(RendezvousExpected(info.clone())),
-            (ShakeType::Rejection(rej), _) => Err(rej.into()),
+            (ShakeType::Rejection(rej), _) => Err(ConnectionReject::Rejected(rej).into()),
         }
     }
 

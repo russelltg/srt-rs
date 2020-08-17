@@ -28,6 +28,7 @@ pub enum ConnectError {
     ExpectedHSResp,
     ExpectedExtFlags,
     ExpectedNoExtFlags,
+    Reject(ConnectionReject),
 }
 
 #[derive(Debug)]
@@ -91,6 +92,7 @@ impl fmt::Display for ConnectError {
             ExpectedNoExtFlags => {
                 write!(f, "Initiator did not expect handshake flags, but got some")
             }
+            Reject(cr) => write!(f, "{}", cr),
         }
     }
 }
@@ -102,6 +104,12 @@ impl fmt::Display for ConnectionReject {
             Rejecting(rr) => write!(f, "Local server rejected remote: {}", rr),
             Rejected(rr) => write!(f, "Remote rejected connection: {}", rr),
         }
+    }
+}
+
+impl From<ConnectionReject> for ConnectError {
+    fn from(cr: ConnectionReject) -> Self {
+        ConnectError::Reject(cr)
     }
 }
 

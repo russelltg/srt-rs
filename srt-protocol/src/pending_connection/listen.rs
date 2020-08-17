@@ -4,8 +4,9 @@ use crate::packet::*;
 use crate::protocol::TimeStamp;
 use crate::{accesscontrol::StreamAcceptor, ConnectionSettings, SocketID};
 
-use super::{cookie::gen_cookie, hsv5::gen_hsv5_response, ConnInitSettings, ConnectError};
-use ConnectError::*;
+use super::{
+    cookie::gen_cookie, hsv5::gen_hsv5_response, ConnInitSettings, ConnectError, ConnectionReject,
+};
 use ListenState::*;
 
 pub struct Listen<A: StreamAcceptor> {
@@ -89,7 +90,7 @@ impl<A: StreamAcceptor> Listen<A> {
                 });
                 Ok(Some((induction_response, from)))
             }
-            _ => Err(InductionExpected(shake)),
+            _ => Err(ConnectError::InductionExpected(shake)),
         }
     }
 
@@ -142,11 +143,13 @@ impl<A: StreamAcceptor> Listen<A> {
 
                 Ok(Some((Packet::Control(resp_handshake), from)))
             }
-            (ShakeType::Conclusion, VERSION_5, syn_cookie) => {
-                Err(InvalidHandshakeCookie(state.cookie, syn_cookie))
+            (ShakeType::Conclusion, VERSION_5, syn_cookie) => Err(
+                ConnectError::InvalidHandshakeCookie(state.cookie, syn_cookie),
+            ),
+            (ShakeType::Conclusion, version, _) => {
+                Err(ConnectError::UnsupportedProtocolVersion(version))
             }
-            (ShakeType::Conclusion, version, _) => Err(UnsupportedProtocolVersion(version)),
-            (_, _, _) => Err(ConclusionExpected(shake)),
+            (_, _, _) => Err(ConnectError::ConclusionExpected(shake)),
         }
     }
 
@@ -159,9 +162,9 @@ impl<A: StreamAcceptor> Listen<A> {
                 self.wait_for_conclusion(from, control.timestamp, state, shake)
             }
             (InductionWait, control_type) | (ConclusionWait(_), control_type) => {
-                Err(HandshakeExpected(control_type))
+                Err(ConnectError::HandshakeExpected(control_type))
             }
-            (Reject(reason), _) => Err(ConnectError::Rejecting(reason)),
+            (Reject(reason), _) => Err(ConnectionReject::Rejected(reason).into()),
             (Connected(_, _), _) => Ok(None),
         }
     }
@@ -169,7 +172,7 @@ impl<A: StreamAcceptor> Listen<A> {
     pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr)) -> ListenResult {
         match packet {
             Packet::Control(control) => self.handle_control_packets(control, from),
-            Packet::Data(data) => Err(ControlExpected(data)),
+            Packet::Data(data) => Err(ConnectError::ControlExpected(data)),
         }
     }
 
