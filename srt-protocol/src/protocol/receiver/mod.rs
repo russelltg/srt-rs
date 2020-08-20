@@ -1,5 +1,4 @@
-use std::cmp::max;
-use std::cmp::{min, Ordering};
+use std::cmp::{max, min, Ordering};
 use std::collections::VecDeque;
 use std::iter::Iterator;
 use std::net::SocketAddr;

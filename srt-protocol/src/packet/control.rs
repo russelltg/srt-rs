@@ -343,10 +343,8 @@ impl Debug for ControlPacket {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{{{:?} ts={:.4}s dst={:?}}}",
-            self.control_type,
-            self.timestamp.as_secs_f64(),
-            self.dest_sockid,
+            "{{{:?} ts={:?}s dst={:?}}}",
+            self.control_type, self.timestamp, self.dest_sockid,
         )
     }
 }

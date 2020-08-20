@@ -1,4 +1,5 @@
 use std::cmp::{max, Ordering};
+use std::fmt;
 use std::num::Wrapping;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::time::{Duration, Instant};
@@ -12,7 +13,7 @@ pub mod stats;
 
 /// Timestamp in us after creation
 /// These wrap every 2^32 microseconds
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, Ord)]
 pub struct TimeStamp(Wrapping<u32>);
 
 /// Signed duration in us, e.g. RTT
@@ -50,13 +51,12 @@ impl TimeStamp {
     pub fn as_micros(self) -> u32 {
         (self.0).0
     }
+}
 
-    pub fn as_secs_f64(self) -> f64 {
-        (self.0).0 as f64 / 1e6
-    }
-
-    pub fn as_duration(self) -> Duration {
-        Duration::from_micros(u64::from(self.as_micros()))
+impl fmt::Debug for TimeStamp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let duration = Duration::from_micros(u64::from((self.0).0)).as_secs_f64();
+        write!(f, "{:.4}", duration)
     }
 }
 

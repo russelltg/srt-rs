@@ -132,7 +132,7 @@ impl RecvBuffer {
             debug!(
                 "Message was deemed ready for release, Now={:?}, Ts={:?}, dT={:?}, Latency={:?}, buf.len={}, sn={}, npackets={}",
                 now - self.remote_clock.origin_time(),
-                pack.timestamp.as_duration(),
+                pack.timestamp,
                 now - self.remote_clock.instant_from(now, pack.timestamp),
                 self.tsbpd_latency,
                 self.buffer.len(),
