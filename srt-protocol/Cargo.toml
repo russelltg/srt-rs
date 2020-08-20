@@ -18,8 +18,8 @@ rand = "0.7"
 aes-ctr = "0.4"
 aes-soft = "0.5"
 block-cipher = "0.8"
-pbkdf2 = { version = "0.4", default-features = false }
-hmac = "0.8"
+pbkdf2 = { version = "0.5", default-features = false }
+hmac = "0.9"
 sha-1 = "0.9"
 bitflags = "1"
 
