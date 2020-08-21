@@ -13,7 +13,7 @@ pub use self::control::*;
 pub use self::data::*;
 pub use error::PacketParseError;
 
-use crate::protocol::TimeStamp;
+use crate::protocol::time::TimeStamp;
 use crate::SocketID;
 
 /// Represents A UDT/SRT packet

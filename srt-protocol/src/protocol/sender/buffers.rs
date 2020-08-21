@@ -4,7 +4,7 @@ use std::time::Instant;
 use bytes::{Bytes, BytesMut};
 
 use crate::packet::{DataEncryption, PacketLocation};
-use crate::protocol::{TimeBase, TimeStamp};
+use crate::protocol::time::{TimeBase, TimeStamp};
 use crate::{
     crypto::CryptoManager, ConnectionSettings, DataPacket, MsgNumber, SeqNumber, SocketID,
 };

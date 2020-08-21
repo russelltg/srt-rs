@@ -516,7 +516,8 @@ impl TryFrom<u8> for CipherType {
 mod tests {
     use super::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
     use crate::packet::ControlTypes;
-    use crate::{protocol::TimeStamp, ControlPacket, Packet, SocketID, SrtVersion};
+    use crate::protocol::time::TimeStamp;
+    use crate::{ControlPacket, Packet, SocketID, SrtVersion};
 
     use std::io::Cursor;
     use std::time::Duration;

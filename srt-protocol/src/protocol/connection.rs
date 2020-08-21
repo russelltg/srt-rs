@@ -1,5 +1,5 @@
 use crate::connection::ConnectionSettings;
-use crate::protocol::Timer;
+use crate::protocol::time::Timer;
 
 use std::cmp::min;
 use std::time::{Duration, Instant};

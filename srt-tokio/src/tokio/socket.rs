@@ -4,7 +4,7 @@ use crate::protocol::connection::{Connection, ConnectionAction};
 use crate::protocol::handshake::Handshake;
 use crate::protocol::receiver::{Receiver, ReceiverAlgorithmAction};
 use crate::protocol::sender::{Sender, SenderAlgorithmAction};
-use crate::protocol::TimeBase;
+use crate::protocol::time::TimeBase;
 use crate::Packet::*;
 use crate::{ConnectionSettings, ControlPacket, Packet};
 

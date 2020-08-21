@@ -9,11 +9,10 @@ use bytes::Bytes;
 use log::debug;
 use log::{trace, warn};
 
-use super::TimeSpan;
 use crate::loss_compression::decompress_loss_list;
 use crate::packet::{AckControlInfo, ControlTypes, HandshakeControlInfo, SrtControlPacket};
 use crate::protocol::handshake::Handshake;
-use crate::protocol::Timer;
+use crate::protocol::time::{TimeSpan, Timer};
 use crate::{ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
 
 use buffers::*;

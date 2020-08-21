@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use crate::packet::*;
-use crate::protocol::TimeStamp;
+use crate::protocol::time::TimeStamp;
 use crate::{ConnectionSettings, SocketID};
 
 use super::{cookie::gen_cookie, hsv5::gen_hsv5_response, ConnInitSettings, ConnectError};

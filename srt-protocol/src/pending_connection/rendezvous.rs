@@ -11,7 +11,8 @@ use log::debug;
 use crate::packet::{
     ControlTypes, HSV5Info, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SrtControlPacket,
 };
-use crate::protocol::{handshake::Handshake, TimeStamp};
+use crate::protocol::handshake::Handshake;
+use crate::protocol::time::TimeStamp;
 use crate::{Connection, ConnectionSettings, ControlPacket, Packet, SocketID};
 
 use ConnectError::*;

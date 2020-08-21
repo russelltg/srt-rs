@@ -2,7 +2,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 
 use crate::packet::*;
-use crate::protocol::TimeStamp;
+use crate::protocol::time::TimeStamp;
 use crate::{ConnectionSettings, SocketID};
 
 use super::{

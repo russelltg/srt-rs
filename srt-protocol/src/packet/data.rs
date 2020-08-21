@@ -5,7 +5,7 @@ use std::cmp::min;
 use std::{convert::TryFrom, fmt};
 
 use super::PacketParseError;
-use crate::protocol::TimeStamp;
+use crate::protocol::time::TimeStamp;
 use crate::{MsgNumber, SeqNumber, SocketID};
 
 /// A UDT packet carrying data

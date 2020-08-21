@@ -7,14 +7,13 @@ use std::time::Instant;
 use bytes::{Bytes, BytesMut};
 use log::{debug, error, info, trace, warn};
 
-use super::TimeSpan;
 use crate::loss_compression::compress_loss_list;
 use crate::packet::{
     AckControlInfo, ControlPacket, ControlTypes, DataEncryption, DataPacket, HandshakeControlInfo,
     Packet, SrtControlPacket,
 };
 use crate::protocol::handshake::Handshake;
-use crate::protocol::TimeStamp;
+use crate::protocol::time::{TimeSpan, TimeStamp};
 use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber};
 
 mod buffer;
@@ -146,6 +145,10 @@ impl Receiver {
     }
 
     pub fn handle_shutdown(&mut self) {
+        info!(
+            "{:?}: Shutdown packet received, flushing receiver...",
+            self.settings.local_sockid
+        );
         self.shutdown_flag = true;
     }
 
@@ -181,16 +184,8 @@ impl Receiver {
                     ControlTypes::Handshake(shake) => self.handle_handshake_packet(now, shake),
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
                     ControlTypes::Nak { .. } => warn!("Receiver received NAK packet, unusual"),
-                    ControlTypes::Shutdown => {
-                        info!(
-                            "{:?}: Shutdown packet received, flushing receiver...",
-                            self.settings.local_sockid
-                        );
-                        self.shutdown_flag = true;
-                    } // end of stream
-                    ControlTypes::Srt(srt_packet) => {
-                        self.handle_srt_control_packet(srt_packet);
-                    }
+                    ControlTypes::Shutdown => self.handle_shutdown(), // end of stream
+                    ControlTypes::Srt(srt_packet) => self.handle_srt_control_packet(srt_packet),
                 }
             }
             Packet::Data(data) => self.handle_data_packet(data, now),
@@ -206,10 +201,10 @@ impl Receiver {
         //      expired. If there is any, process the event (as described below
         //      in this section) and reset the associated time variables. For
         //      ACK, also check the ACK packet interval.
-        if self.timers.ack.check_expired(now).is_some() {
+        if self.timers.check_ack(now).is_some() {
             self.on_ack_event(now);
         }
-        if self.timers.nak.check_expired(now).is_some() {
+        if self.timers.check_nak(now).is_some() {
             self.on_nak_event(now);
         }
 

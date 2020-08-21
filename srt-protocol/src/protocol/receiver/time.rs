@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use stats::OnlineStats;
 
-use crate::protocol::{TimeBase, TimeSpan, TimeStamp, Timer};
+use crate::protocol::time::{TimeBase, TimeSpan, TimeStamp, Timer};
 
 pub(crate) struct SynchronizedRemoteClock {
     tolerance: Duration,
@@ -170,6 +170,14 @@ impl ReceiveTimers {
 
     pub fn next_timer(&self, now: Instant) -> Instant {
         max(now, min(self.nak.next_instant(), self.ack.next_instant()))
+    }
+
+    pub fn check_ack(&mut self, now: Instant) -> Option<Instant> {
+        self.ack.check_expired(now)
+    }
+
+    pub fn check_nak(&mut self, now: Instant) -> Option<Instant> {
+        self.nak.check_expired(now)
     }
 
     pub fn update_rtt(&mut self, rtt: &RTT) {

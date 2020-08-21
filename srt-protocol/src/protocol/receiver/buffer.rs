@@ -7,7 +7,7 @@ use log::{debug, info};
 
 use crate::packet::PacketLocation;
 use crate::protocol::receiver::time::SynchronizedRemoteClock;
-use crate::protocol::{TimeBase, TimeStamp};
+use crate::protocol::time::{TimeBase, TimeStamp};
 use crate::{ConnectionSettings, DataPacket, SeqNumber};
 
 pub struct RecvBuffer {
@@ -247,7 +247,7 @@ mod test {
     use super::RecvBuffer;
     use crate::{
         packet::{DataEncryption, PacketLocation},
-        protocol::TimeStamp,
+        protocol::time::TimeStamp,
         DataPacket, MsgNumber, SeqNumber, SocketID,
     };
     use bytes::Bytes;

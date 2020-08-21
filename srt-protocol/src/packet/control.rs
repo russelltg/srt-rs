@@ -8,7 +8,7 @@ use bitflags::bitflags;
 use bytes::{Buf, BufMut};
 use log::warn;
 
-use crate::protocol::{TimeSpan, TimeStamp};
+use crate::protocol::time::{TimeSpan, TimeStamp};
 use crate::{MsgNumber, SeqNumber, SocketID};
 
 mod srt;
