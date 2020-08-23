@@ -223,7 +223,7 @@ mod test {
 
     fn build_hs_pack(i: HandshakeControlInfo) -> Packet {
         Packet::Control(ControlPacket {
-            timestamp: TimeStamp::from_micros(0),
+            timestamp: TimeStamp::from_u32(0),
             dest_sockid: random(),
             control_type: ControlTypes::Handshake(i),
         })
@@ -260,7 +260,7 @@ mod test {
             encryption: DataEncryption::None,
             retransmitted: false,
             message_number: random(),
-            timestamp: TimeStamp::from_micros(0),
+            timestamp: TimeStamp::from_u32(0),
             dest_sockid: random(),
             payload: Bytes::from(&b"asdf"[..]),
         };
@@ -280,7 +280,7 @@ mod test {
         assert!(matches!(
             l.handle_packet((
                 Packet::Control(ControlPacket {
-                    timestamp: TimeStamp::from_micros(0),
+                    timestamp: TimeStamp::from_u32(0),
                     dest_sockid: random(),
                     control_type: a2.clone()
                 }),

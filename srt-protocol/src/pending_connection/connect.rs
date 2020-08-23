@@ -56,7 +56,7 @@ impl Connect {
     fn on_start(&mut self) -> ConnectResult {
         let packet = Packet::Control(ControlPacket {
             dest_sockid: SocketID(0),
-            timestamp: TimeStamp::from_micros(0), // TODO: this is not zero in the reference implementation
+            timestamp: TimeStamp::from_u32(0), // TODO: this is not zero in the reference implementation
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: self.init_settings.starting_send_seqnum,
                 max_packet_size: 1500, // TODO: take as a parameter

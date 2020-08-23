@@ -588,7 +588,7 @@ impl Receiver {
     }
 
     fn next_timer(&self, now: Instant) -> Instant {
-        match self.receive_buffer.next_message_release_time(now) {
+        match self.receive_buffer.next_message_release_time() {
             Some(next_rel_time) => min(self.timers.next_timer(now), next_rel_time),
             None => self.timers.next_timer(now),
         }

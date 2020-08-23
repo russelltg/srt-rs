@@ -299,7 +299,7 @@ impl ControlPacket {
         // get reserved data, which is the last two bytes of the first four bytes
         let reserved = buf.get_u16();
         let add_info = buf.get_i32();
-        let timestamp = TimeStamp::from_micros(buf.get_u32());
+        let timestamp = TimeStamp::from_u32(buf.get_u32());
         let dest_sockid = buf.get_u32();
 
         Ok(ControlPacket {
@@ -321,7 +321,7 @@ impl ControlPacket {
         into.put_i32(self.control_type.additional_info());
 
         // timestamp
-        into.put_u32(self.timestamp.as_micros());
+        into.put_u32(self.timestamp.as_u32());
 
         // dest sock id
         into.put_u32(self.dest_sockid.0);
@@ -875,7 +875,7 @@ mod test {
     #[test]
     fn handshake_ser_des_test() {
         let pack = ControlPacket {
-            timestamp: TimeStamp::from_micros(0),
+            timestamp: TimeStamp::from_u32(0),
             dest_sockid: SocketID(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber::new_truncate(1_827_131),
@@ -910,7 +910,7 @@ mod test {
     #[test]
     fn ack_ser_des_test() {
         let pack = ControlPacket {
-            timestamp: TimeStamp::from_micros(113_703),
+            timestamp: TimeStamp::from_u32(113_703),
             dest_sockid: SocketID(2_453_706_529),
             control_type: ControlTypes::Ack(AckControlInfo {
                 ack_seq_num: 1,
@@ -934,7 +934,7 @@ mod test {
     #[test]
     fn ack2_ser_des_test() {
         let pack = ControlPacket {
-            timestamp: TimeStamp::from_micros(125_812),
+            timestamp: TimeStamp::from_u32(125_812),
             dest_sockid: SocketID(8313),
             control_type: ControlTypes::Ack2(831),
         };
@@ -963,7 +963,7 @@ mod test {
         assert_eq!(
             packet,
             ControlPacket {
-                timestamp: TimeStamp::from_micros(100_720),
+                timestamp: TimeStamp::from_u32(100_720),
                 dest_sockid: SocketID(738_193_394),
                 control_type: ControlTypes::Srt(SrtControlPacket::Reject)
             }
@@ -978,7 +978,7 @@ mod test {
         assert_eq!(
             packet,
             ControlPacket {
-                timestamp: TimeStamp::from_micros(1_023_684),
+                timestamp: TimeStamp::from_u32(1_023_684),
                 dest_sockid: SocketID(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: SeqNumber(1_153_345_037),
@@ -1023,7 +1023,7 @@ mod test {
         assert_eq!(
             packet,
             ControlPacket {
-                timestamp: TimeStamp::from_micros(1_531_530),
+                timestamp: TimeStamp::from_u32(1_531_530),
                 dest_sockid: SocketID(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: SeqNumber(1_877_981_400),
@@ -1089,7 +1089,7 @@ mod test {
     #[test]
     fn test_enc_size() {
         let pack = ControlPacket {
-            timestamp: TimeStamp::from_micros(0),
+            timestamp: TimeStamp::from_u32(0),
             dest_sockid: SocketID(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber(0),
@@ -1119,7 +1119,7 @@ mod test {
     #[test]
     fn test_sid() {
         let pack = ControlPacket {
-            timestamp: TimeStamp::from_micros(0),
+            timestamp: TimeStamp::from_u32(0),
             dest_sockid: SocketID(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber(0),

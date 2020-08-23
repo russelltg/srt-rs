@@ -31,7 +31,7 @@ impl SynchronizedRemoteClock {
         let drift = self.time_base.timestamp_from(now) - ts;
         match &mut self.stats {
             None => {
-                self.time_base.adjust(drift);
+                self.time_base.adjust(now, drift);
             }
             Some(stats) => {
                 stats.add(drift.as_micros());
@@ -42,15 +42,15 @@ impl SynchronizedRemoteClock {
 
                 if stats.stddev() < self.tolerance.as_micros() as f64 {
                     self.time_base
-                        .adjust(TimeSpan::from_micros(stats.mean() as i32));
+                        .adjust(now,TimeSpan::from_micros(stats.mean() as i32));
                 }
             }
         }
         self.stats = Some(OnlineStats::new());
     }
 
-    pub fn instant_from(&self, now: Instant, ts: TimeStamp) -> Instant {
-        self.time_base.instant_from(now, ts)
+    pub fn instant_from(&self, ts: TimeStamp) -> Instant {
+        self.time_base.instant_from(ts)
     }
 
     pub fn origin_time(&self) -> Instant {
@@ -72,12 +72,12 @@ mod synchronized_remote_clock {
 
             let drift = Duration::from_micros(drift_ts);
             let start = Instant::now();
-            let start_ts = TimeStamp::from_micros(100_000_000);
+            let start_ts = TimeStamp::from_u32(100_000_000);
 
             let mut clock = SynchronizedRemoteClock::new(start);
 
             clock.synchronize(start, start_ts);
-            let instant = clock.instant_from(start, start_ts);
+            let instant = clock.instant_from(start_ts);
 
             prop_assert_eq!(instant, start, "the clock should be adjusted on the first sample");
 
@@ -87,7 +87,7 @@ mod synchronized_remote_clock {
                 let now_ts = start_ts + TimeSpan::from_micros(tick_ts);
 
                 clock.synchronize(now, now_ts);
-                let instant = clock.instant_from(start, now_ts);
+                let instant = clock.instant_from(now_ts);
 
                 match tick_ts.cmp(&MAX_SAMPLES) {
                     Ordering::Less => assert_eq!(instant, start + tick, "the clock should not be adjusted until {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts),
@@ -103,7 +103,7 @@ mod synchronized_remote_clock {
                 let now_ts = start_ts + TimeSpan::from_micros(tick_ts);
 
                 clock.synchronize(now, now_ts - TimeSpan::from_micros((tick_ts % 2) * 11000)); // constant 5ms drift variance
-                let instant = clock.instant_from(start, now_ts);
+                let instant = clock.instant_from(now_ts);
 
                 prop_assert_eq!(instant, now, "the clock should not be adjusted: tick_ts = {}", tick_ts);
             }

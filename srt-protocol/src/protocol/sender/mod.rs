@@ -344,10 +344,10 @@ impl Sender {
         self.send_control(ControlTypes::Ack2(info.ack_seq_num), now);
 
         // 3) Update RTT and RTTVar.
-        self.metrics.rtt = info.rtt.unwrap_or_else(|| TimeSpan::from_micros(0));
+        self.metrics.rtt = info.rtt.unwrap_or_else(|| TimeSpan::ZERO);
         self.metrics.rtt_var = info
             .rtt_variance
-            .unwrap_or_else(|| TimeSpan::from_micros(0));
+            .unwrap_or_else(|| TimeSpan::ZERO);
 
         // 4) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
         // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.

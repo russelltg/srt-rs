@@ -96,7 +96,7 @@ impl DataPacket {
         let in_order_delivery = (buf.bytes()[0] & 0b0010_0000) != 0;
 
         let message_number = MsgNumber::new_truncate(buf.get_u32());
-        let timestamp = TimeStamp::from_micros(buf.get_u32());
+        let timestamp = TimeStamp::from_u32(buf.get_u32());
         let dest_sockid = SocketID(buf.get_u32());
 
         Ok(DataPacket {
@@ -128,7 +128,7 @@ impl DataPacket {
                         | (self.retransmitted as u8) << 2, // 6th bit
                 )) << 24),
         );
-        into.put_u32(self.timestamp.as_micros());
+        into.put_u32(self.timestamp.as_u32());
         into.put_u32(self.dest_sockid.0);
         into.put(&self.payload[..]);
     }
@@ -196,7 +196,7 @@ mod tests {
                 encryption,
                 retransmitted,
                 message_number: MsgNumber::new_truncate(123),
-                timestamp: TimeStamp::from_micros(0),
+                timestamp: TimeStamp::from_u32(0),
                 dest_sockid: SocketID(0),
                 payload: Bytes::new(),
             };

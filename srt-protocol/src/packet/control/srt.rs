@@ -525,7 +525,7 @@ mod tests {
     #[test]
     fn deser_ser_shake() {
         let handshake = Packet::Control(ControlPacket {
-            timestamp: TimeStamp::from_micros(123_141),
+            timestamp: TimeStamp::from_u32(123_141),
             dest_sockid: SocketID(123),
             control_type: ControlTypes::Srt(SrtControlPacket::HandshakeRequest(SrtHandshake {
                 version: SrtVersion::CURRENT,
@@ -546,7 +546,7 @@ mod tests {
     #[test]
     fn ser_deser_sid() {
         let sid = Packet::Control(ControlPacket {
-            timestamp: TimeStamp::from_micros(123),
+            timestamp: TimeStamp::from_u32(123),
             dest_sockid: SocketID(1234),
             control_type: ControlTypes::Srt(SrtControlPacket::StreamId("Hellohelloheloo".into())),
         });

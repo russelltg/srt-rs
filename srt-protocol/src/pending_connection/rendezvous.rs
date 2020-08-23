@@ -52,7 +52,7 @@ impl Rendezvous {
         let last_packet = (
             ControlPacket {
                 dest_sockid: SocketID(0),
-                timestamp: TimeStamp::from_micros(0),
+                timestamp: TimeStamp::from_u32(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: init_settings.starting_send_seqnum,
                     max_packet_size: 1500, // TODO: take as a parameter
@@ -143,7 +143,7 @@ impl Rendezvous {
     fn send(&mut self, dest_sockid: SocketID, packet: HandshakeControlInfo) -> RendezvousResult {
         let pack_pair = (
             ControlPacket {
-                timestamp: TimeStamp::from_micros(0),
+                timestamp: TimeStamp::from_u32(0),
                 dest_sockid,
                 control_type: ControlTypes::Handshake(packet),
             },
