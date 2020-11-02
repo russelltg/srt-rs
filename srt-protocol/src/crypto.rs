@@ -1,9 +1,8 @@
 use aes_ctr::{
-    stream_cipher::{NewStreamCipher, SyncStreamCipher},
+    cipher::{NewStreamCipher, SyncStreamCipher, NewBlockCipher},
     Aes128Ctr, Aes192Ctr, Aes256Ctr,
 };
 use aes_soft::{Aes128, Aes192, Aes256};
-use block_cipher::NewBlockCipher;
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
 use sha1::Sha1;

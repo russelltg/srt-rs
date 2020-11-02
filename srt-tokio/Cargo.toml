@@ -26,6 +26,6 @@ features = ["full"]
 
 [dev-dependencies]
 anyhow = "1"
-env_logger = { version = "0.7", default-features = false }
+env_logger = { version = "0.8", default-features = false }
 rand = "0.7"
-rand_distr = "0.2"
+rand_distr = "0.3"
