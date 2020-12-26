@@ -1,5 +1,5 @@
 use futures::select;
-use log::warn;
+use log::{debug, warn};
 
 use std::{
     io,
@@ -17,8 +17,6 @@ use srt_protocol::{
     protocol::handshake::Handshake,
     Connection, Packet, PacketParseError,
 };
-
-use crate::util::get_packet;
 
 use futures::prelude::*;
 use tokio::time::interval;
@@ -42,6 +40,7 @@ where
             now = tick_interval.tick().fuse() => connect.handle_tick(now.into()),
             packet = get_packet(sock).fuse() => connect.handle_packet(packet?),
         };
+        debug!("sending packet");
 
         match result {
             Ok(Some(packet)) => {
@@ -74,6 +73,7 @@ where
 
     loop {
         let packet = get_packet(sock).await?;
+        debug!("got packet {:?}", packet);
         match listen.handle_packet(packet) {
             Ok(Some(packet)) => sock.send(packet).await?,
             Err(e) => {
@@ -125,6 +125,20 @@ where
 
         if let Some(connection) = rendezvous.connection() {
             return Ok(connection.clone());
+        }
+    }
+}
+
+pub async fn get_packet<
+    T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>> + Unpin,
+>(
+    sock: &mut T,
+) -> Result<(Packet, SocketAddr), io::Error> {
+    loop {
+        match sock.next().await {
+            None => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "")),
+            Some(Ok(t)) => break Ok(t),
+            Some(Err(e)) => warn!("Failed to parse packet: {}", e),
         }
     }
 }

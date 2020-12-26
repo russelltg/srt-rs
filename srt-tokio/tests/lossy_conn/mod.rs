@@ -13,7 +13,7 @@ use std::{
 use futures::channel::mpsc;
 use futures::{ready, stream::Fuse, Future, Sink, Stream, StreamExt};
 
-use tokio::time::{self, delay_for, Delay};
+use tokio::time::{self, sleep, Sleep};
 
 use anyhow::Result;
 
@@ -37,7 +37,7 @@ pub struct LossyConn<T> {
     local_addr: SocketAddr,
 
     delay_buffer: BinaryHeap<TTime<(T, SocketAddr)>>,
-    delay: Delay,
+    delay: Pin<Box<Sleep>>,
 
     generator: StdRng,
 }
@@ -80,7 +80,7 @@ impl<T: Unpin + Debug> Stream for LossyConn<T> {
 
                 // reset timer
                 if let Some(i) = pin.delay_buffer.peek() {
-                    pin.delay.reset(time::Instant::from_std(i.time));
+                    pin.delay.as_mut().reset(time::Instant::from_std(i.time));
                 }
 
                 trace!(
@@ -129,7 +129,7 @@ impl<T: Unpin + Debug> Stream for LossyConn<T> {
             });
 
             // update the timer
-            pin.delay.reset(time::Instant::from_std(
+            pin.delay.as_mut().reset(time::Instant::from_std(
                 pin.delay_buffer.peek().unwrap().time,
             ));
             let _ = Pin::new(&mut pin.delay).poll(cx);
@@ -204,7 +204,7 @@ impl<T> LossyConn<T> {
                 remote_addr: local_b,
 
                 delay_buffer: BinaryHeap::new(),
-                delay: delay_for(Duration::from_secs(0)),
+                delay: Box::pin(sleep(Duration::from_secs(0))),
 
                 generator: r1,
             },
@@ -219,7 +219,7 @@ impl<T> LossyConn<T> {
                 remote_addr: local_a,
 
                 delay_buffer: BinaryHeap::new(),
-                delay: delay_for(Duration::from_secs(0)),
+                delay: Box::pin(sleep(Duration::from_secs(0))),
 
                 generator: r2,
             },

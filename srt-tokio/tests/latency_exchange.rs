@@ -1,7 +1,7 @@
 use anyhow::Result;
 use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
 use std::time::Duration;
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 use futures::prelude::*;
 
@@ -54,10 +54,10 @@ async fn test_latency_exchange(
 async fn latency_exchange() -> Result<()> {
     let from_secs = Duration::from_secs;
 
-    env_logger::init();
+    let _ = pretty_env_logger::try_init();
 
     test_latency_exchange(from_secs(3), from_secs(4), from_secs(5), from_secs(4)).await?;
-    delay_for(from_secs(2)).await;
+    sleep(from_secs(2)).await;
     test_latency_exchange(from_secs(4), from_secs(5), from_secs(5), from_secs(3)).await?;
 
     Ok(())

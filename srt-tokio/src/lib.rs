@@ -54,7 +54,6 @@ mod codec;
 mod multiplex;
 mod pending_connection;
 pub mod tokio;
-mod util;
 
 use codec::PacketCodec;
 

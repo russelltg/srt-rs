@@ -7,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
-use tokio::time::{delay_for, interval};
+use tokio::time::sleep;
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
@@ -61,7 +61,7 @@ async fn udp_receiver(udp_out: u16, ident: i32) -> Result<(), Error> {
         }
     };
     // 10s timeout
-    let succ = futures::select!(_ = receive_data.boxed().fuse() => true, _ = delay_for(Duration::from_secs(10)).fuse() => false);
+    let succ = futures::select!(_ = receive_data.boxed().fuse() => true, _ = sleep(Duration::from_secs(10)).fuse() => false);
     assert!(succ, "Timeout with receiving");
 
     Ok::<_, Error>(())
@@ -69,14 +69,15 @@ async fn udp_receiver(udp_out: u16, ident: i32) -> Result<(), Error> {
 
 async fn udp_sender(udp_in: u16, ident: i32) -> Result<(), Error> {
     let mut sock = UdpFramed::new(UdpSocket::bind("127.0.0.1:0").await?, BytesCodec::new());
-    let mut stream = stream::iter(0..100)
-        .zip(interval(Duration::from_millis(100)))
-        .map(|_| {
-            Ok((
-                Bytes::from(format!("asdf{}", ident)),
-                SocketAddr::new("127.0.0.1".parse().unwrap(), udp_in),
-            ))
-        });
+    let mut stream =
+        tokio_stream::StreamExt::throttle(stream::iter(0..100), Duration::from_millis(100))
+            .map(|_| {
+                Ok((
+                    Bytes::from(format!("asdf{}", ident)),
+                    SocketAddr::new("127.0.0.1".parse().unwrap(), udp_in),
+                ))
+            })
+            .boxed();
     sock.send_all(&mut stream).await.unwrap();
 
     Ok::<_, Error>(())
