@@ -1,5 +1,5 @@
 use aes_ctr::{
-    cipher::{NewStreamCipher, SyncStreamCipher, NewBlockCipher},
+    cipher::{NewBlockCipher, NewStreamCipher, SyncStreamCipher},
     Aes128Ctr, Aes192Ctr, Aes256Ctr,
 };
 use aes_soft::{Aes128, Aes192, Aes256};
