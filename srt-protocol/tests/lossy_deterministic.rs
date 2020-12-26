@@ -39,7 +39,7 @@ impl Ord for HeapEntry {
 
 #[test]
 fn lossy_deterministic() {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     let once_failing_seeds = [
         (7843866891970470107, 10),

@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, str, time::Duration};
+use std::{convert::TryFrom, time::Duration};
 
 use bitflags::bitflags;
 use bytes::{Buf, BufMut};
@@ -209,17 +209,19 @@ impl SrtControlPacket {
             4 => Ok(KeyManagerResponse(SrtKeyMessage::parse(buf)?)),
             5 => {
                 // cut off null bytes at end
-                let bytes = buf.bytes();
-                let end = bytes.len()
-                    - bytes
-                        .iter()
-                        .rev()
-                        .position(|a| *a != 0)
-                        .unwrap_or(bytes.len());
+                let mut string_bytes = vec![0; buf.remaining()];
+                buf.copy_to_slice(&mut string_bytes[..]);
+                let shrink_by = string_bytes
+                    .iter()
+                    .rev()
+                    .position(|a| *a != 0)
+                    .unwrap_or(string_bytes.len()); // all null
 
-                match str::from_utf8(&bytes[0..end]) {
-                    Ok(s) => Ok(StreamId(s.into())),
-                    Err(e) => Err(PacketParseError::StreamTypeNotUTF8(e)),
+                string_bytes.resize(string_bytes.len() - shrink_by, 0);
+
+                match String::from_utf8(string_bytes) {
+                    Ok(s) => Ok(StreamId(s)),
+                    Err(e) => Err(PacketParseError::StreamTypeNotUTF8(e.utf8_error())),
                 }
             }
             _ => Err(PacketParseError::BadSRTConfigExtensionType(packet_type)), // TODO: that's not really the right error...

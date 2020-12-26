@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::stream;
 use futures::{SinkExt, StreamExt};
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 use srt_tokio::SrtSocketBuilder;
 use std::io::Error;
@@ -16,7 +16,7 @@ async fn main() -> Result<(), Error> {
 
     let mut stream = stream::unfold(0, |count| async move {
         print!("\rSent {:?} packets", count);
-        delay_for(Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(10)).await;
         return Some((Ok((Instant::now(), Bytes::from(vec![0; 8000]))), count + 1));
     })
     .boxed();

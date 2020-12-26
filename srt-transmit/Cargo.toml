@@ -15,19 +15,20 @@ srt-tokio = { path = "../srt-tokio"}
 clap = { version = "2", default-features = false}
 log = { version = "0.4", default-features = false }
 url = "=2.1.0" # https://github.com/servo/rust-url/issues/581
-bytes = "0.5"
+bytes = "1.0"
 anyhow = "1"
-env_logger = { version = "0.8", default-features = false }
+pretty_env_logger = { version = "0.4", default-features = false }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 
 [dependencies.tokio]
-version = "0.2"
-features = ["net", "time",  "fs", "stream", "test-util", "macros", "io-util", "io-std", "sync"]
+version = "1"
+features = ["net", "time",  "fs", "test-util", "macros", "io-util", "io-std", "sync", "rt-multi-thread"]
 
 [dependencies.tokio-util]
-version = "0.3"
+version = "0.6"
 features = ["full"]
 
 
 [dev-dependencies]
-rand = "0.7"
+rand = "0.8"
+tokio-stream = "0.1"

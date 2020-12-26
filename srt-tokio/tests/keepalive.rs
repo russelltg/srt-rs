@@ -3,14 +3,14 @@ use srt_tokio::SrtSocketBuilder;
 use bytes::Bytes;
 use futures::prelude::*;
 use std::time::{Duration, Instant};
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 // Tests opening a connection, and waiting a while then sending stuff
 // it should be able to keep the connection alive
 // exp total time is 8 seconds, so this should timeout if KeepAlives's aren't properly implemented
 #[tokio::test]
 async fn keepalive() {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     let s = async {
         let mut s = SrtSocketBuilder::new_connect("127.0.0.1:4444")
@@ -18,7 +18,7 @@ async fn keepalive() {
             .await
             .unwrap();
 
-        delay_for(Duration::from_secs(10)).await;
+        sleep(Duration::from_secs(10)).await;
 
         s.send((Instant::now(), b"1234"[..].into())).await.unwrap();
         s.close().await.unwrap();

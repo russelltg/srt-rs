@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 /// Send a single packet, with a large tsbpd, then close. Make sure it gets delviered with the delay.
 #[tokio::test]
 async fn single_packet_tsbpd() {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     let sender = SrtSocketBuilder::new_connect("127.0.0.1:3000")
         .latency(Duration::from_secs(5))

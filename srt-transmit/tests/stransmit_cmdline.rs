@@ -7,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
-use tokio::time::{delay_for, interval};
+use tokio::time::sleep;
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
@@ -48,6 +48,10 @@ async fn udp_receiver(udp_out: u16, ident: i32) -> Result<(), Error> {
         UdpSocket::bind(&SocketAddr::new("127.0.0.1".parse()?, udp_out)).await?,
         BytesCodec::new(),
     );
+    udp_receiver_sock(&mut sock, ident).await
+}
+
+async fn udp_receiver_sock(sock: &mut UdpFramed<BytesCodec>, ident: i32) -> Result<(), Error> {
     let receive_data = async move {
         let mut i = 0;
         while let Some((pack, _)) = sock.try_next().await.unwrap() {
@@ -61,7 +65,7 @@ async fn udp_receiver(udp_out: u16, ident: i32) -> Result<(), Error> {
         }
     };
     // 10s timeout
-    let succ = futures::select!(_ = receive_data.boxed().fuse() => true, _ = delay_for(Duration::from_secs(10)).fuse() => false);
+    let succ = futures::select!(_ = receive_data.boxed().fuse() => true, _ = sleep(Duration::from_secs(10)).fuse() => false);
     assert!(succ, "Timeout with receiving");
 
     Ok::<_, Error>(())
@@ -69,14 +73,15 @@ async fn udp_receiver(udp_out: u16, ident: i32) -> Result<(), Error> {
 
 async fn udp_sender(udp_in: u16, ident: i32) -> Result<(), Error> {
     let mut sock = UdpFramed::new(UdpSocket::bind("127.0.0.1:0").await?, BytesCodec::new());
-    let mut stream = stream::iter(0..100)
-        .zip(interval(Duration::from_millis(100)))
-        .map(|_| {
-            Ok((
-                Bytes::from(format!("asdf{}", ident)),
-                SocketAddr::new("127.0.0.1".parse().unwrap(), udp_in),
-            ))
-        });
+    let mut stream =
+        tokio_stream::StreamExt::throttle(stream::iter(0..100), Duration::from_millis(100))
+            .map(|_| {
+                Ok((
+                    Bytes::from(format!("asdf{}", ident)),
+                    SocketAddr::new("127.0.0.1".parse().unwrap(), udp_in),
+                ))
+            })
+            .boxed();
     sock.send_all(&mut stream).await.unwrap();
 
     Ok::<_, Error>(())
@@ -161,9 +166,11 @@ fn ui_test(flags: &[&str], stderr: &str) {
 
 mod stransmit_rs_snd_rcv {
     use super::test_send;
-    use crate::{find_stransmit_rs, udp_receiver, udp_sender};
+    use crate::{find_stransmit_rs, udp_receiver_sock, udp_sender};
     use anyhow::Error;
-    use std::process::Command;
+    use std::{net::SocketAddr, process::Command};
+    use tokio::net::UdpSocket;
+    use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
     #[tokio::test]
     async fn basic() -> Result<(), Error> {
@@ -319,17 +326,23 @@ mod stransmit_rs_snd_rcv {
 
         let mut a = Command::new(&srs_path)
             .args(&["udp://:2037", "srt://127.0.0.1:2038?autoreconnect"])
-            .spawn()?;
+            .spawn()
+            .unwrap();
 
         let b_args = &["srt://:2038", "udp://127.0.0.1:2039"];
         let mut b = Command::new(&srs_path).args(b_args).spawn()?;
 
         let ident: i32 = rand::random();
 
-        let sender = udp_sender(2037, ident);
-        let recvr = udp_receiver(2039, ident);
+        let mut recv_sock = UdpFramed::new(
+            UdpSocket::bind(&SocketAddr::new("127.0.0.1".parse()?, 2039)).await?,
+            BytesCodec::new(),
+        );
 
-        futures::try_join!(recvr, sender)?;
+        let sender = udp_sender(2037, ident);
+        let recvr = udp_receiver_sock(&mut recv_sock, ident);
+
+        futures::try_join!(recvr, sender).unwrap();
 
         let failure_str = format!("Failed reconnect test",);
 
@@ -337,12 +350,12 @@ mod stransmit_rs_snd_rcv {
         b.kill().expect(&failure_str);
         b.wait().expect(&failure_str);
 
-        let mut b = Command::new(&srs_path).args(b_args).spawn()?;
+        let mut b = Command::new(&srs_path).args(b_args).spawn().unwrap();
 
         let sender = udp_sender(2037, ident);
-        let recvr = udp_receiver(2039, ident);
+        let recvr = udp_receiver_sock(&mut recv_sock, ident);
 
-        futures::try_join!(recvr, sender)?;
+        futures::try_join!(recvr, sender).unwrap();
 
         a.kill().expect(&failure_str);
         b.kill().expect(&failure_str);
