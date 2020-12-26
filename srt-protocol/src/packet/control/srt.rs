@@ -220,7 +220,7 @@ impl SrtControlPacket {
                 string_bytes.resize(string_bytes.len() - shrink_by, 0);
 
                 match String::from_utf8(string_bytes) {
-                    Ok(s) => Ok(StreamId(s.into())),
+                    Ok(s) => Ok(StreamId(s)),
                     Err(e) => Err(PacketParseError::StreamTypeNotUTF8(e.utf8_error())),
                 }
             }
