@@ -1,7 +1,10 @@
 use bytes::Bytes;
 use futures::{channel::oneshot, future::join_all, stream, FutureExt, SinkExt, StreamExt};
 use log::info;
-use srt_protocol::accesscontrol::{AcceptParameters, RejectReason, StreamAcceptor};
+use srt_protocol::{
+    accesscontrol::{AcceptParameters, StreamAcceptor},
+    packet::RejectReason,
+};
 use srt_tokio::{SrtSocket, SrtSocketBuilder};
 use std::{io, net::SocketAddr, time::Instant};
 
@@ -13,13 +16,13 @@ impl StreamAcceptor for AccessController {
         streamid: Option<&str>,
         _ip: SocketAddr,
     ) -> Result<AcceptParameters, RejectReason> {
-        streamid.
+        todo!()
     }
 }
 
 #[tokio::test]
 async fn streamid() -> io::Result<()> {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     let (finished_send, finished_recv) = oneshot::channel();
 
