@@ -7,7 +7,7 @@ use std::{
 };
 
 use futures::prelude::*;
-use tokio::time::{delay_for, Duration};
+use tokio::time::{sleep, Duration};
 
 #[cfg(target_os = "windows")]
 const STRANSMIT_NAME: &str = "srt-transmit.exe";
@@ -37,7 +37,7 @@ fn find_stransmit_rs() -> PathBuf {
 
 #[tokio::test]
 async fn receiver_timeout() {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     let b = SrtSocketBuilder::new_connect("127.0.0.1:1872").connect();
 
@@ -50,7 +50,7 @@ async fn receiver_timeout() {
 
     let sender = async move {
         a.stdin.as_mut().unwrap().write_all(b"asdf").unwrap();
-        delay_for(Duration::from_millis(2000)).await;
+        sleep(Duration::from_millis(2000)).await;
 
         a.kill().unwrap();
     };

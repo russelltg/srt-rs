@@ -22,7 +22,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::{future, ready, select};
 use log::{debug, error, info, trace};
-use tokio::time::delay_until;
+use tokio::time::sleep_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
@@ -217,7 +217,7 @@ where
                             ""
                         }
                     );
-                    delay_until(to.into()).await
+                    sleep_until(to.into()).await
                 } else {
                     trace!(
                         "{:?} not scheduling wakeup!!!",

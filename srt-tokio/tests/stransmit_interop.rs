@@ -10,7 +10,6 @@ use futures::{future::try_join, join, stream, SinkExt, Stream, StreamExt};
 use log::info;
 
 use tokio::net::UdpSocket;
-use tokio::time::interval;
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
@@ -34,10 +33,11 @@ macro_rules! allow_not_found {
 }
 
 fn counting_stream(packets: u32, delay: Duration) -> impl Stream<Item = Bytes> {
-    stream::iter(0..packets)
-        .map(|i| Bytes::from(i.to_string()))
-        .zip(interval(delay))
-        .map(|(b, _)| b)
+    tokio_stream::StreamExt::throttle(
+        stream::iter(0..packets).map(|i| Bytes::from(i.to_string())),
+        delay,
+    )
+    .boxed()
 }
 
 async fn udp_recvr(packets: u32, port: u16) -> Result<(), Error> {
@@ -83,7 +83,8 @@ async fn udp_sender(packets: u32, port: u16) -> Result<(), Error> {
     let mut sock = UdpFramed::new(UdpSocket::bind("127.0.0.1:0").await?, BytesCodec::new());
 
     let mut stream = counting_stream(packets, Duration::from_millis(1))
-        .map(|b| Ok((b, ([127, 0, 0, 1], port).into())));
+        .map(|b| Ok((b, ([127, 0, 0, 1], port).into())))
+        .boxed();
 
     sock.send_all(&mut stream).await?;
     sock.close().await?;
@@ -93,7 +94,7 @@ async fn udp_sender(packets: u32, port: u16) -> Result<(), Error> {
 
 #[tokio::test]
 async fn stransmit_client() -> Result<(), Error> {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     const PACKETS: u32 = 1_000;
 
@@ -150,7 +151,7 @@ async fn stransmit_client() -> Result<(), Error> {
 // srt-rs connects to stransmit and sends to stransmit
 #[tokio::test]
 async fn stransmit_server() -> Result<(), Error> {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     const PACKETS: u32 = 1_000;
 
@@ -196,7 +197,7 @@ async fn stransmit_server() -> Result<(), Error> {
 #[tokio::test]
 #[ignore]
 async fn stransmit_rendezvous() -> Result<(), Error> {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     const PACKETS: u32 = 1_000;
 
@@ -235,7 +236,7 @@ async fn stransmit_rendezvous() -> Result<(), Error> {
 
 #[tokio::test]
 async fn stransmit_encrypt() -> Result<(), Error> {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     const PACKETS: u32 = 1_000;
 
@@ -269,7 +270,7 @@ async fn stransmit_encrypt() -> Result<(), Error> {
 
 #[tokio::test]
 async fn stransmit_decrypt() -> Result<(), Error> {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     const PACKETS: u32 = 1_000;
 

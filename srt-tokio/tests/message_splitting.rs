@@ -10,7 +10,7 @@ const PACKET_SIZE: usize = 1 << 19;
 
 #[tokio::test]
 async fn message_splitting() -> Result<()> {
-    env_logger::init();
+    let _ = pretty_env_logger::try_init();
 
     let sender = SrtSocketBuilder::new_connect("127.0.0.1:11124").connect();
 

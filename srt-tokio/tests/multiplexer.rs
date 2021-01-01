@@ -12,7 +12,7 @@ use log::info;
 
 #[tokio::test]
 async fn multiplexer() -> Result<()> {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     let (finished_send, finished_recv) = oneshot::channel();
 

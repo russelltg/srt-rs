@@ -62,7 +62,7 @@ impl Packet {
         }
 
         // peek at the first byte to check if it's data or control
-        let first = buf.bytes()[0];
+        let first = buf.chunk()[0];
 
         // Check if the first bit is one or zero;
         // if it's one it's a cotnrol packet,

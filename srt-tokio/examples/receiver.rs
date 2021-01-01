@@ -1,6 +1,6 @@
 use srt_tokio::SrtSocketBuilder;
 use std::io::Error;
-use tokio::stream::StreamExt;
+use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {

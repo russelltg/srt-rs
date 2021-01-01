@@ -5,13 +5,12 @@ use log::info;
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use srt_tokio::SrtSocketBuilder;
 use std::time::{Duration, Instant};
-use tokio::net::UdpSocket;
-use tokio::time::interval;
+use tokio::{net::UdpSocket, time::sleep};
 
 // Send a bunch of invalid packets to the socket, making sure that it can handle it
 #[tokio::test]
 async fn invalid_packets() {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     let sender = async {
         let mut sender = SrtSocketBuilder::new_connect("127.0.0.1:8876")
@@ -20,10 +19,10 @@ async fn invalid_packets() {
             .await
             .unwrap();
 
-        let mut counting_stream = stream::iter(0..100)
-            .zip(interval(Duration::from_millis(1)))
-            .map(|(i, _)| Bytes::from(i.to_string()))
-            .map(|b| Ok((Instant::now(), b)));
+        let mut counting_stream =
+            tokio_stream::StreamExt::throttle(stream::iter(0..100), Duration::from_millis(1))
+                .map(|i| Ok((Instant::now(), Bytes::from(i.to_string()))))
+                .boxed();
 
         sender.send_all(&mut counting_stream).await.unwrap();
         sender.close().await.unwrap();
@@ -56,9 +55,10 @@ async fn invalid_packets() {
         info!("Seed is {}", s);
         let mut rng = StdRng::seed_from_u64(s);
 
-        let mut sock = UdpSocket::bind(&"127.0.0.1:0").await.unwrap();
-        while interval(Duration::from_millis(1)).next().await.is_some() {
-            let mut to_send = vec![0; rng.gen_range(1, 1024)];
+        let sock = UdpSocket::bind(&"127.0.0.1:0").await.unwrap();
+        loop {
+            sleep(Duration::from_millis(1)).await;
+            let mut to_send = vec![0; rng.gen_range(1..=1024)];
             for i in &mut to_send {
                 *i = rng.gen();
             }

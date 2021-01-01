@@ -1,7 +1,6 @@
-use std::fmt::{self, Debug, Formatter};
 use std::{
     convert::TryFrom,
-    io::Cursor,
+    fmt::{self, Debug, Formatter},
     net::{IpAddr, Ipv4Addr},
 };
 
@@ -532,17 +531,16 @@ impl ControlTypes {
                                     return Err(PacketParseError::NotEnoughData);
                                 }
 
-                                let buffer = &buf.bytes()[..pack_size];
+                                let mut srt_pack_rd = buf.take(pack_size);
 
                                 let ret = match pack_type {
                                     // 1 and 2 are handshake response and requests
-                                    1 | 2 => Some(SrtControlPacket::parse(
-                                        pack_type,
-                                        &mut Cursor::new(buffer),
-                                    )?),
+                                    1 | 2 => {
+                                        Some(SrtControlPacket::parse(pack_type, &mut srt_pack_rd)?)
+                                    }
                                     e => return Err(PacketParseError::BadSRTHsExtensionType(e)),
                                 };
-                                buf.advance(pack_size);
+                                buf = srt_pack_rd.into_inner();
 
                                 ret
                             } else {
@@ -575,12 +573,9 @@ impl ControlTypes {
                                         return Err(PacketParseError::NotEnoughData);
                                     }
 
-                                    let buffer = &buf.bytes()[..pack_size];
+                                    let mut buffer = buf.take(pack_size);
 
-                                    match SrtControlPacket::parse(
-                                        pack_type,
-                                        &mut Cursor::new(&buffer),
-                                    )? {
+                                    match SrtControlPacket::parse(pack_type, &mut buffer)? {
                                         // 5 is sid 6 is smoother
                                         SrtControlPacket::StreamId(stream_id) => {
                                             sid = Some(stream_id)
@@ -588,7 +583,7 @@ impl ControlTypes {
                                         _ => unimplemented!("Implement other kinds"),
                                     }
 
-                                    buf.advance(pack_size);
+                                    buf = buffer.into_inner();
                                 }
                             }
                             HandshakeVSInfo::V5(HSV5Info {
@@ -613,7 +608,13 @@ impl ControlTypes {
                     info,
                 }))
             }
-            0x1 => Ok(ControlTypes::KeepAlive),
+            0x1 => {
+                // discard the "unused" packet field, if it exists
+                if buf.remaining() >= 4 {
+                    buf.get_u32();
+                }
+                Ok(ControlTypes::KeepAlive)
+            }
             0x2 => {
                 // ACK
 
@@ -666,9 +667,17 @@ impl ControlTypes {
 
                 Ok(ControlTypes::Nak(loss_info))
             }
-            0x5 => Ok(ControlTypes::Shutdown),
+            0x5 => {
+                if buf.remaining() >= 4 {
+                    buf.get_u32(); // discard "unused" packet field
+                }
+                Ok(ControlTypes::Shutdown)
+            }
             0x6 => {
                 // ACK2
+                if buf.remaining() >= 4 {
+                    buf.get_u32(); // discard "unused" packet field
+                }
                 Ok(ControlTypes::Ack2(extra_info))
             }
             0x7 => {
@@ -1129,6 +1138,8 @@ impl Display for ServerRejectReason {
 #[cfg(test)]
 mod test {
 
+    use bytes::BytesMut;
+
     use super::*;
     use crate::{SeqNumber, SocketID, SrtVersion};
     use std::io::Cursor;
@@ -1161,11 +1172,11 @@ mod test {
             }),
         };
 
-        let mut buf = vec![];
+        let mut buf = BytesMut::with_capacity(128);
         pack.serialize(&mut buf);
 
-        let des = ControlPacket::parse(&mut Cursor::new(buf)).unwrap();
-
+        let des = ControlPacket::parse(&mut buf).unwrap();
+        assert!(buf.is_empty());
         assert_eq!(pack, des);
     }
 
@@ -1185,11 +1196,11 @@ mod test {
             }),
         };
 
-        let mut buf = vec![];
+        let mut buf = BytesMut::with_capacity(128);
         pack.serialize(&mut buf);
 
-        let des = ControlPacket::parse(&mut Cursor::new(buf)).unwrap();
-
+        let des = ControlPacket::parse(&mut buf).unwrap();
+        assert!(buf.is_empty());
         assert_eq!(pack, des);
     }
 
@@ -1202,14 +1213,14 @@ mod test {
         };
         assert_eq!(pack.control_type.additional_info(), 831);
 
-        let mut buf = vec![];
+        let mut buf = BytesMut::with_capacity(128);
         pack.serialize(&mut buf);
 
         // dword 2 should have 831 in big endian, so the last two bits of the second dword
         assert_eq!((u32::from(buf[6]) << 8) + u32::from(buf[7]), 831);
 
-        let des = ControlPacket::parse(&mut Cursor::new(buf)).unwrap();
-
+        let des = ControlPacket::parse(&mut buf).unwrap();
+        assert!(buf.is_empty());
         assert_eq!(pack, des);
     }
 
@@ -1370,11 +1381,11 @@ mod test {
             }),
         };
 
-        let mut ser = vec![];
+        let mut ser = BytesMut::with_capacity(128);
         pack.serialize(&mut ser);
 
-        let pack_deser = ControlPacket::parse(&mut Cursor::new(&ser)).unwrap();
-
+        let pack_deser = ControlPacket::parse(&mut ser).unwrap();
+        assert!(ser.is_empty());
         assert_eq!(pack, pack_deser);
     }
 
@@ -1400,11 +1411,27 @@ mod test {
             }),
         };
 
-        let mut ser = vec![];
+        let mut ser = BytesMut::with_capacity(128);
         pack.serialize(&mut ser);
 
-        let pack_deser = ControlPacket::parse(&mut Cursor::new(&ser)).unwrap();
-
+        let pack_deser = ControlPacket::parse(&mut ser).unwrap();
         assert_eq!(pack, pack_deser);
+        assert!(ser.is_empty());
+    }
+
+    #[test]
+    fn test_keepalive() {
+        let pack = ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: SocketID(0),
+            control_type: ControlTypes::KeepAlive,
+        };
+
+        let mut ser = BytesMut::with_capacity(128);
+        pack.serialize(&mut ser);
+
+        let pack_deser = ControlPacket::parse(&mut ser).unwrap();
+        assert_eq!(pack, pack_deser);
+        assert!(ser.is_empty());
     }
 }

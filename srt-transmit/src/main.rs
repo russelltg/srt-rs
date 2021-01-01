@@ -21,7 +21,10 @@ use futures::{
     stream::{self, once, unfold, BoxStream},
     try_join,
 };
-use tokio::{io::AsyncReadExt, net::UdpSocket, prelude::AsyncRead};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    net::UdpSocket,
+};
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
 use log::info;
@@ -516,7 +519,7 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Error> {
-    env_logger::Builder::from_default_env()
+    pretty_env_logger::formatted_builder()
         // .format(|buf, record| writeln!(buf, "{} [{}] {}", record.args()))
         .format_timestamp_micros()
         .init();
