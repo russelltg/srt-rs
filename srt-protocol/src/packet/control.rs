@@ -1073,27 +1073,27 @@ impl TryFrom<i32> for ServerRejectReason {
     type Error = i32;
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         Ok(match value {
-            1000 => ServerRejectReason::Fallback,
-            1001 => ServerRejectReason::KeyNotSup,
-            1002 => ServerRejectReason::Filepath,
-            1003 => ServerRejectReason::HostNotFound,
-            1400 => ServerRejectReason::BadRequest,
-            1401 => ServerRejectReason::Unauthorized,
-            1402 => ServerRejectReason::Overload,
-            1403 => ServerRejectReason::Forbidden,
-            1404 => ServerRejectReason::Notfound,
-            1405 => ServerRejectReason::BadMode,
-            1406 => ServerRejectReason::Unacceptable,
-            1409 => ServerRejectReason::Conflict,
-            1415 => ServerRejectReason::NotSupMedia,
-            1423 => ServerRejectReason::Locked,
-            1424 => ServerRejectReason::FailedDepend,
-            1500 => ServerRejectReason::InternalServerError,
-            1501 => ServerRejectReason::Unimplemented,
-            1502 => ServerRejectReason::Gateway,
-            1503 => ServerRejectReason::Down,
-            1505 => ServerRejectReason::Version,
-            1507 => ServerRejectReason::NoRoom,
+            2000 => ServerRejectReason::Fallback,
+            2001 => ServerRejectReason::KeyNotSup,
+            2002 => ServerRejectReason::Filepath,
+            2003 => ServerRejectReason::HostNotFound,
+            2400 => ServerRejectReason::BadRequest,
+            2401 => ServerRejectReason::Unauthorized,
+            2402 => ServerRejectReason::Overload,
+            2403 => ServerRejectReason::Forbidden,
+            2404 => ServerRejectReason::Notfound,
+            2405 => ServerRejectReason::BadMode,
+            2406 => ServerRejectReason::Unacceptable,
+            2409 => ServerRejectReason::Conflict,
+            2415 => ServerRejectReason::NotSupMedia,
+            2423 => ServerRejectReason::Locked,
+            2424 => ServerRejectReason::FailedDepend,
+            2500 => ServerRejectReason::InternalServerError,
+            2501 => ServerRejectReason::Unimplemented,
+            2502 => ServerRejectReason::Gateway,
+            2503 => ServerRejectReason::Down,
+            2505 => ServerRejectReason::Version,
+            2507 => ServerRejectReason::NoRoom,
             unrecog => return Err(unrecog),
         })
     }
@@ -1126,7 +1126,7 @@ impl Display for ServerRejectReason {
                 ServerRejectReason::Locked => write!(f, "The resource being accessed is locked for any access"),
                 ServerRejectReason::FailedDepend => write!(f, "The request failed because it specified a dependent session ID that has been disconnected"),
                 ServerRejectReason::InternalServerError => write!(f, "Unexpected internal server error"),
-                ServerRejectReason::Unimplemented => write!(f, "The request was recognized, but the current version doesn't support it"),
+                ServerRejectReason::Unimplemented => write!(f, "The request was recognized, but the current version doesn't support it (unimplemented)"),
                 ServerRejectReason::Gateway => write!(f, "The server acts as a gateway and the target endpoint rejected the connection"),
                 ServerRejectReason::Down => write!(f, "The service has been temporarily taken over by a stub reporting this error. The real service can be down for maintenance or crashed"),
                 ServerRejectReason::Version => write!(f, "SRT version not supported. This might be either unsupported backward compatibility, or an upper value of a version"),
@@ -1142,8 +1142,8 @@ mod test {
 
     use super::*;
     use crate::{SeqNumber, SocketID, SrtVersion};
-    use std::io::Cursor;
     use std::time::Duration;
+    use std::{convert::TryInto, io::Cursor};
 
     #[test]
     fn handshake_ser_des_test() {
@@ -1433,5 +1433,15 @@ mod test {
         let pack_deser = ControlPacket::parse(&mut ser).unwrap();
         assert_eq!(pack, pack_deser);
         assert!(ser.is_empty());
+    }
+
+    #[test]
+    fn test_reject_reason_deser_ser() {
+        assert_eq!(
+            Ok(RejectReason::Server(ServerRejectReason::Unimplemented)),
+            <i32 as TryInto<RejectReason>>::try_into(
+                RejectReason::Server(ServerRejectReason::Unimplemented).into()
+            )
+        );
     }
 }

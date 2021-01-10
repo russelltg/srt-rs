@@ -1,5 +1,6 @@
-use crate::packet::RejectReason;
+use crate::{crypto::CryptoOptions, packet::RejectReason};
 use std::{
+    convert::TryFrom,
     error::Error,
     fmt::{self, Display},
     marker::PhantomData,
@@ -116,12 +117,54 @@ impl Display for ConnectionType {
     }
 }
 
+impl FromStr for ConnectionType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "stream" => Ok(ConnectionType::Stream),
+            "file" => Ok(ConnectionType::File),
+            "auth" => Ok(ConnectionType::Auth),
+            _ => Err(()),
+        }
+    }
+}
+
 impl Display for ConnectionMode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ConnectionMode::Request => write!(f, "request"),
             ConnectionMode::Publish => write!(f, "publish"),
             ConnectionMode::Bidirectional => write!(f, "bidirectional"),
+        }
+    }
+}
+
+impl FromStr for ConnectionMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "request" => Ok(ConnectionMode::Request),
+            "publish" => Ok(ConnectionMode::Publish),
+            "bidirectional" => Ok(ConnectionMode::Bidirectional),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<AccessControlEntry> for StandardAccessControlEntry {
+    type Error = ();
+
+    fn try_from(value: AccessControlEntry) -> Result<Self, Self::Error> {
+        match &value.key[..] {
+            "u" => Ok(StandardAccessControlEntry::UserName(value.value)),
+            "r" => Ok(StandardAccessControlEntry::ResourceName(value.value)),
+            "h" => Ok(StandardAccessControlEntry::HostName(value.value)),
+            "s" => Ok(StandardAccessControlEntry::SessionID(value.value)),
+            "t" => Ok(StandardAccessControlEntry::Type(value.value.parse()?)),
+            "m" => Ok(StandardAccessControlEntry::Mode(value.value.parse()?)),
+            _ => Err(()),
         }
     }
 }
@@ -146,21 +189,27 @@ impl Display for StandardAccessControlEntry {
 }
 
 pub struct AcceptParameters {
-    password: Option<String>,
+    crypto_options: Option<CryptoOptions>,
 }
 
 impl AcceptParameters {
     pub fn new() -> AcceptParameters {
-        AcceptParameters { password: None }
+        AcceptParameters {
+            crypto_options: None,
+        }
     }
 
-    pub fn set_password(&mut self, password: impl Into<String>) -> &mut Self {
-        self.password = Some(password.into());
+    pub fn set_crypto_options(&mut self, password: impl Into<String>, size: u8) -> &mut Self {
+        assert!(matches!(size, 16 | 24 | 32));
+        self.crypto_options = Some(CryptoOptions {
+            size,
+            passphrase: password.into(),
+        });
         self
     }
 
-    pub(crate) fn take_password(&mut self) -> Option<String> {
-        self.password.take()
+    pub(crate) fn take_crypto_options(&mut self) -> Option<CryptoOptions> {
+        self.crypto_options.take()
     }
 }
 

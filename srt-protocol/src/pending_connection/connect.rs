@@ -1,26 +1,26 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 
-use crate::packet::*;
-use crate::protocol::TimeStamp;
-use crate::{ConnectionSettings, SocketID};
+use crate::protocol::{handshake::Handshake, TimeStamp};
+use crate::SocketID;
+use crate::{packet::*, Connection};
 
 use super::{
     hsv5::{start_hsv5_initiation, StartedInitiator},
-    ConnInitSettings, ConnectError,
+    ConnInitSettings, ConnectError, ConnectionResult,
 };
 use ConnectError::*;
 use ConnectState::*;
+use ConnectionResult::*;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
-pub enum ConnectState {
+enum ConnectState {
     Configured,
     /// keep induction packet around for retransmit
     InductionResponseWait(Packet),
     /// keep conclusion packet around for retransmit
     ConclusionResponseWait(Packet, StartedInitiator),
-    Connected(ConnectionSettings),
 }
 
 impl Default for ConnectState {
@@ -43,8 +43,6 @@ pub struct Connect {
     streamid: Option<String>,
 }
 
-pub type ConnectResult = Result<Option<(Packet, SocketAddr)>, ConnectError>;
-
 impl Connect {
     pub fn new(
         remote: SocketAddr,
@@ -60,7 +58,7 @@ impl Connect {
             streamid,
         }
     }
-    fn on_start(&mut self) -> ConnectResult {
+    fn on_start(&mut self) -> ConnectionResult {
         let packet = Packet::Control(ControlPacket {
             dest_sockid: SocketID(0),
             timestamp: TimeStamp::from_micros(0), // TODO: this is not zero in the reference implementation
@@ -76,7 +74,7 @@ impl Connect {
             }),
         });
         self.state = InductionResponseWait(packet.clone());
-        Ok(Some((packet, self.remote)))
+        SendPacket((packet, self.remote))
     }
 
     pub fn wait_for_induction(
@@ -84,11 +82,16 @@ impl Connect {
         from: SocketAddr,
         timestamp: TimeStamp,
         info: HandshakeControlInfo,
-    ) -> ConnectResult {
+    ) -> ConnectionResult {
         match (info.shake_type, &info.info, from) {
             (ShakeType::Induction, HandshakeVSInfo::V5 { .. }, from) if from == self.remote => {
-                let (hsv5, cm) =
-                    start_hsv5_initiation(self.init_settings.clone(), self.streamid.clone())?;
+                let (hsv5, cm) = match start_hsv5_initiation(
+                    self.init_settings.clone(),
+                    self.streamid.clone(),
+                ) {
+                    Ok(hc) => hc,
+                    Err(rr) => todo!(), //return Reject(rr),
+                };
 
                 // send back a packet with the same syn cookie
                 let packet = Packet::Control(ControlPacket {
@@ -103,15 +106,15 @@ impl Connect {
                     }),
                 });
                 self.state = ConclusionResponseWait(packet.clone(), cm);
-                Ok(Some((packet, from)))
+                SendPacket((packet, from))
             }
             (ShakeType::Induction, HandshakeVSInfo::V5 { .. }, from) => {
-                Err(UnexpectedHost(self.remote, from))
+                NotHandled(UnexpectedHost(self.remote, from))
             }
             (ShakeType::Induction, version, _) => {
-                Err(UnsupportedProtocolVersion(version.version()))
+                NotHandled(UnsupportedProtocolVersion(version.version()))
             }
-            (_, _, _) => Err(InductionExpected(info)),
+            (_, _, _) => NotHandled(InductionExpected(info)),
         }
     }
 
@@ -120,57 +123,55 @@ impl Connect {
         from: SocketAddr,
         info: HandshakeControlInfo,
         initiator: StartedInitiator,
-    ) -> ConnectResult {
+    ) -> ConnectionResult {
         match (info.shake_type, info.info.version(), from) {
             (ShakeType::Conclusion, 5, from) if from == self.remote => {
-                let settings = initiator.finish_hsv5_initiation(&info, from)?;
-
-                self.state = Connected(settings);
+                let settings = match initiator.finish_hsv5_initiation(&info, from) {
+                    Ok(s) => s,
+                    Err(rr) => return NotHandled(rr),
+                };
 
                 // TODO: no handshake retransmit packet needed? is this right? Needs testing.
-
-                Ok(None)
+                Connected(Connection {
+                    settings,
+                    handshake: Handshake::Connector,
+                })
             }
-            (ShakeType::Conclusion, 5, from) => Err(UnexpectedHost(self.remote, from)),
-            (ShakeType::Conclusion, version, _) => Err(UnsupportedProtocolVersion(version)),
-            (ShakeType::Induction, _, _) => Ok(None),
-            (_, _, _) => Err(ConclusionExpected(info)),
+            (ShakeType::Conclusion, 5, from) => NotHandled(UnexpectedHost(self.remote, from)),
+            (ShakeType::Conclusion, version, _) => NotHandled(UnsupportedProtocolVersion(version)),
+            (ShakeType::Induction, _, _) => NoAction,
+            (_, _, _) => NotHandled(ConclusionExpected(info)),
         }
     }
 
-    pub fn handle_packet(&mut self, next: (Packet, SocketAddr)) -> ConnectResult {
+    pub fn handle_packet(&mut self, next: (Packet, SocketAddr)) -> ConnectionResult {
         let (packet, from) = next;
         match (self.state.clone(), packet) {
             (InductionResponseWait(_), Packet::Control(control)) => match control.control_type {
                 ControlTypes::Handshake(shake) => {
                     self.wait_for_induction(from, control.timestamp, shake)
                 }
-                control_type => Err(HandshakeExpected(control_type)),
+                control_type => NotHandled(HandshakeExpected(control_type)),
             },
             (ConclusionResponseWait(_, cm), Packet::Control(control)) => match control.control_type
             {
                 ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, shake, cm),
-                control_type => Err(HandshakeExpected(control_type)),
+                control_type => NotHandled(HandshakeExpected(control_type)),
             },
-            (_, Packet::Data(data)) => Err(ControlExpected(data)),
-            (_, _) => Ok(None),
+            (_, Packet::Data(data)) => NotHandled(ControlExpected(data)),
+            (_, _) => NoAction,
         }
     }
 
-    pub fn handle_tick(&mut self, _now: Instant) -> ConnectResult {
+    pub fn handle_tick(&mut self, _now: Instant) -> ConnectionResult {
         match &self.state {
             Configured => self.on_start(),
             InductionResponseWait(request_packet) => {
-                Ok(Some((request_packet.clone(), self.remote)))
+                SendPacket((request_packet.clone(), self.remote))
             }
             ConclusionResponseWait(request_packet, _) => {
-                Ok(Some((request_packet.clone(), self.remote)))
+                SendPacket((request_packet.clone(), self.remote))
             }
-            _ => Ok(None),
         }
-    }
-
-    pub fn state(&self) -> &ConnectState {
-        &self.state
     }
 }

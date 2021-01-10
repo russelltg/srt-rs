@@ -183,14 +183,14 @@ bitflags! {
         /// One bit in payload packet msgno is "retransmitted" flag
         const REXMITFLG = 0x20;
 
-        /// Not entirely sure what this means.... TODO:
+        /// This entity supports stream ID packets
         const STREAM = 0x40;
 
         /// Again not sure... TODO:
         const FILTERCAP = 0x80;
 
         // currently implemented flags
-        const SUPPORTED = Self::TSBPDSND.bits | Self::TSBPDRCV.bits | Self::HAICRYPT.bits | Self::REXMITFLG.bits;
+        const SUPPORTED = Self::TSBPDSND.bits | Self::TSBPDRCV.bits | Self::HAICRYPT.bits | Self::REXMITFLG.bits | Self::STREAM.bits;
     }
 }
 

@@ -23,6 +23,7 @@ pub enum Packet {
     Data(DataPacket),
     Control(ControlPacket),
 }
+
 impl Packet {
     pub fn timestamp(&self) -> TimeStamp {
         match *self {
@@ -85,6 +86,19 @@ impl Packet {
         }
     }
 }
+
+impl From<DataPacket> for Packet {
+    fn from(dp: DataPacket) -> Self {
+        Packet::Data(dp)
+    }
+}
+
+impl From<ControlPacket> for Packet {
+    fn from(cp: ControlPacket) -> Self {
+        Packet::Control(cp)
+    }
+}
+
 impl Debug for Packet {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         match self {
