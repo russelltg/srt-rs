@@ -2,11 +2,13 @@ use bytes::Bytes;
 use futures::{channel::oneshot, future::join_all, stream, FutureExt, SinkExt, StreamExt};
 use log::info;
 use srt_protocol::{
-    accesscontrol::{AcceptParameters, StreamAcceptor},
-    packet::RejectReason,
+    accesscontrol::{
+        AcceptParameters, AccessControlList, StandardAccessControlEntry, StreamAcceptor,
+    },
+    packet::{RejectReason, ServerRejectReason},
 };
 use srt_tokio::{SrtSocket, SrtSocketBuilder};
-use std::{io, net::SocketAddr, time::Instant};
+use std::{convert::TryFrom, io, net::SocketAddr, time::Instant};
 
 struct AccessController;
 
@@ -14,9 +16,31 @@ impl StreamAcceptor for AccessController {
     fn accept(
         &mut self,
         streamid: Option<&str>,
-        _ip: SocketAddr,
+        ip: SocketAddr,
     ) -> Result<AcceptParameters, RejectReason> {
-        todo!()
+        info!("Got request from {} for {:?}", ip, streamid);
+
+        let mut acl = streamid
+            .ok_or(RejectReason::Server(ServerRejectReason::HostNotFound))?
+            .parse::<AccessControlList>()
+            .map_err(|_| RejectReason::Server(ServerRejectReason::BadRequest))?;
+
+        for entry in acl
+            .0
+            .drain(..)
+            .filter_map(|a| StandardAccessControlEntry::try_from(a).ok())
+        {
+            match entry {
+                StandardAccessControlEntry::UserName(_) => {}
+                StandardAccessControlEntry::ResourceName(_) => {}
+                StandardAccessControlEntry::HostName(_) => {}
+                StandardAccessControlEntry::SessionID(_) => {}
+                StandardAccessControlEntry::Type(_) => {}
+                StandardAccessControlEntry::Mode(_) => {}
+            }
+        }
+
+        Err(RejectReason::Server(ServerRejectReason::Unimplemented))
     }
 }
 
@@ -29,7 +53,7 @@ async fn streamid() -> io::Result<()> {
     tokio::spawn(async {
         let mut server = SrtSocketBuilder::new_listen()
             .local_port(2000)
-            .build_multiplexed()
+            .build_multiplexed_with_acceptor(AccessController)
             .await
             .unwrap()
             .boxed();
@@ -53,12 +77,21 @@ async fn streamid() -> io::Result<()> {
 
     // connect 10 clients to it
     let mut join_handles = vec![];
-    for _ in 0..3 {
+    for _ in 0..1 {
         join_handles.push(tokio::spawn(async move {
-            let mut recvr = SrtSocketBuilder::new_connect("127.0.0.1:2000")
-                .connect()
-                .await
-                .unwrap();
+            let mut recvr = SrtSocketBuilder::new_connect_with_streamid(
+                "127.0.0.1:2000",
+                format!(
+                    "{}",
+                    AccessControlList(vec![
+                        StandardAccessControlEntry::UserName("russell".into()).into(),
+                        StandardAccessControlEntry::ResourceName("tacos".into()).into()
+                    ])
+                ),
+            )
+            .connect()
+            .await
+            .unwrap();
             info!("Created connection");
 
             let first = recvr.next().await;

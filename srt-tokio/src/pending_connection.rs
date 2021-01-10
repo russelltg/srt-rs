@@ -10,12 +10,9 @@ use std::{
 use srt_protocol::{
     accesscontrol::AllowAllStreamAcceptor,
     pending_connection::{
-        connect::{Connect, ConnectState},
-        listen::{Listen, ListenState},
-        rendezvous::Rendezvous,
-        ConnInitSettings,
+        connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnInitSettings,
+        ConnectionResult,
     },
-    protocol::handshake::Handshake,
     Connection, Packet, PacketParseError,
 };
 
@@ -45,19 +42,18 @@ where
         debug!("sending packet");
 
         match result {
-            Ok(Some(packet)) => {
+            ConnectionResult::SendPacket(packet) => {
                 sock.send(packet).await?;
             }
-            Err(e) => {
+            ConnectionResult::NotHandled(e) => {
                 warn!("{:?}", e);
             }
-            _ => {}
-        }
-        if let ConnectState::Connected(settings) = connect.state() {
-            return Ok(Connection {
-                settings: settings.clone(),
-                handshake: Handshake::Connector,
-            });
+            ConnectionResult::Reject(rp, rr) => {
+                sock.send(rp).await?;
+                todo!()
+            }
+            ConnectionResult::Connected(conn) => return Ok(conn),
+            ConnectionResult::NoAction => {}
         }
     }
 }
@@ -71,23 +67,20 @@ where
         + Sink<(Packet, SocketAddr), Error = io::Error>
         + Unpin,
 {
-    let mut listen = Listen::new(init_settings, AllowAllStreamAcceptor::default());
+    let mut a = AllowAllStreamAcceptor::default();
+    let mut listen = Listen::new(init_settings);
 
     loop {
         let packet = get_packet(sock).await?;
         debug!("got packet {:?}", packet);
-        match listen.handle_packet(packet) {
-            Ok(Some(packet)) => sock.send(packet).await?,
-            Err(e) => {
+        match listen.handle_packet(packet, &mut a) {
+            ConnectionResult::SendPacket(packet) => sock.send(packet).await?,
+            ConnectionResult::NotHandled(e) => {
                 warn!("{:?}", e);
             }
-            _ => {}
-        }
-        if let ListenState::Connected(resp_handshake, settings) = listen.state().clone() {
-            return Ok(Connection {
-                settings,
-                handshake: Handshake::Listener(resp_handshake.control_type),
-            });
+            ConnectionResult::Reject(_, _) => todo!(),
+            ConnectionResult::Connected(c) => return Ok(c),
+            ConnectionResult::NoAction => {}
         }
     }
 }
@@ -116,17 +109,15 @@ where
         // trace!("Ticking {:?} {:?}", sockid, rendezvous);
 
         match result {
-            Ok(Some((packet, address))) => {
-                sock.send((Packet::Control(packet), address)).await?;
+            ConnectionResult::SendPacket(packet) => {
+                sock.send(packet).await?;
             }
-            Err(e) => {
+            ConnectionResult::NotHandled(e) => {
                 warn!("rendezvous {:?} error: {}", sockid, e);
             }
-            _ => {}
-        }
-
-        if let Some(connection) = rendezvous.connection() {
-            return Ok(connection.clone());
+            ConnectionResult::Reject(_, _) => todo!(),
+            ConnectionResult::Connected(c) => return Ok(c),
+            ConnectionResult::NoAction => {}
         }
     }
 }

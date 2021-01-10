@@ -11,27 +11,23 @@ use futures::{
     stream::unfold,
 };
 
-use log::warn;
+use log::{info, warn};
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 
 use crate::{
-    channel::Channel, protocol::handshake::Handshake, tokio::create_bidrectional_srt, Connection,
-    Packet, PacketCodec, SocketID, SrtSocket,
+    channel::Channel, tokio::create_bidrectional_srt, Packet, PacketCodec, SocketID, SrtSocket,
 };
 use srt_protocol::{
     accesscontrol::StreamAcceptor,
-    pending_connection::{
-        listen::{Listen, ListenState},
-        ConnInitSettings,
-    },
+    pending_connection::{listen::Listen, ConnInitSettings, ConnectionResult},
 };
 
 type PackChan = Channel<(Packet, SocketAddr)>;
 
 struct MultiplexState<A: StreamAcceptor> {
     sock: UdpFramed<PacketCodec>,
-    pending: HashMap<SocketAddr, Listen<A>>,
+    pending: HashMap<SocketAddr, Listen>,
     acceptor: A,
     conns: HashMap<SocketID, PackChan>,
     init_settings: ConnInitSettings,
@@ -44,7 +40,7 @@ enum Action {
     Send((Packet, SocketAddr)),
 }
 
-impl<T: StreamAcceptor + Clone> MultiplexState<T> {
+impl<T: StreamAcceptor> MultiplexState<T> {
     async fn next_conn(&mut self) -> Result<Option<SrtSocket>, io::Error> {
         loop {
             // impl Future<Output = (Packet, SocketAddr)
@@ -113,38 +109,43 @@ impl<T: StreamAcceptor + Clone> MultiplexState<T> {
         // new connection?
         let this_conn_settings = self.init_settings.clone();
 
-        let new_acc = self.acceptor.clone();
         let listen = self
             .pending
             .entry(from)
-            .or_insert_with(|| Listen::new(this_conn_settings.copy_randomize(), new_acc));
+            .or_insert_with(|| Listen::new(this_conn_settings.copy_randomize()));
 
         // already started connection?
-        match listen.handle_packet((pack, from)) {
-            Ok(Some(pa)) => self.sock.send(pa).await?,
-            Err(e) => warn!("{:?}", e),
-            _ => {}
-        }
-        if let ListenState::Connected(resp_handshake, settings) = listen.state().clone() {
-            let (s, r) = Channel::channel(100);
+        let conn = match listen.handle_packet((pack, from), &mut self.acceptor) {
+            ConnectionResult::SendPacket(pa) => {
+                self.sock.send(pa).await?;
+                return Ok(None);
+            }
+            ConnectionResult::Reject(pa, rej) => {
+                self.sock.send(pa).await?;
+                info!("Rejected connection from {}: {}", from, rej);
+                self.pending.remove(&from);
+                return Ok(None);
+            }
+            ConnectionResult::NotHandled(e) => {
+                warn!("{:?}", e);
+                return Ok(None);
+            }
+            ConnectionResult::NoAction => return Ok(None),
+            ConnectionResult::Connected(c) => c,
+        };
+        let (s, r) = Channel::channel(100);
 
-            self.conns.insert(settings.local_sockid, r);
+        self.conns.insert(conn.settings.local_sockid, r);
 
-            let conn = Connection {
-                settings,
-                handshake: Handshake::Listener(resp_handshake.control_type),
-            };
-            self.pending.remove(&from); // remove from pending connections, it's been resolved
-            return Ok(Some(create_bidrectional_srt(s, conn)));
-        }
-        Ok(None)
+        self.pending.remove(&from); // remove from pending connections, it's been resolved
+        return Ok(Some(create_bidrectional_srt(s, conn)));
     }
 }
 
 pub async fn multiplex(
     addr: SocketAddr,
     init_settings: ConnInitSettings,
-    acceptor: impl StreamAcceptor + Clone,
+    acceptor: impl StreamAcceptor,
 ) -> Result<impl Stream<Item = Result<SrtSocket, io::Error>>, io::Error> {
     Ok(unfold(
         MultiplexState {

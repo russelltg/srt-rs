@@ -257,7 +257,7 @@ impl SrtSocketBuilder {
 
     pub async fn build_multiplexed_with_acceptor(
         self,
-        acceptor: impl StreamAcceptor + Clone,
+        acceptor: impl StreamAcceptor,
     ) -> Result<impl Stream<Item = Result<SrtSocket, io::Error>>, io::Error> {
         match self.conn_type {
             ConnInitMethod::Listen => {
