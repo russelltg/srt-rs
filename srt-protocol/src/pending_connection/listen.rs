@@ -89,20 +89,23 @@ impl Listen {
         response_to: &HandshakeControlInfo,
         from: SocketAddr,
         timestamp: TimeStamp,
-        r: &ConnectionReject,
-    ) -> (Packet, SocketAddr) {
-        (
-            ControlPacket {
-                timestamp,
-                dest_sockid: response_to.socket_id,
-                control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                    shake_type: ShakeType::Rejection(r.reason()),
-                    socket_id: self.init_settings.local_sockid,
-                    ..response_to.clone()
-                }),
-            }
-            .into(),
-            from,
+        r: ConnectionReject,
+    ) -> ConnectionResult {
+        ConnectionResult::Reject(
+            Some((
+                ControlPacket {
+                    timestamp,
+                    dest_sockid: response_to.socket_id,
+                    control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                        shake_type: ShakeType::Rejection(r.reason()),
+                        socket_id: self.init_settings.local_sockid,
+                        ..response_to.clone()
+                    }),
+                }
+                .into(),
+                from,
+            )),
+            r,
         )
     }
 
@@ -136,7 +139,7 @@ impl Listen {
                         GenHsv5Result::Accept(h, c) => (h, c),
                         GenHsv5Result::NotHandled(e) => return NotHandled(e),
                         GenHsv5Result::Reject(r) => {
-                            return Reject(self.make_rejection(&shake, from, timestamp, &r), r)
+                            return self.make_rejection(&shake, from, timestamp, r);
                         }
                     };
 

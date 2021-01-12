@@ -117,7 +117,7 @@ pub struct StartedInitiator {
 pub fn start_hsv5_initiation(
     settings: ConnInitSettings,
     streamid: Option<String>,
-) -> Result<(HandshakeVSInfo, StartedInitiator), ConnectionReject> {
+) -> (HandshakeVSInfo, StartedInitiator) {
     let self_crypto_size = settings.crypto.as_ref().map(|co| co.size).unwrap_or(0);
 
     // if peer_crypto_size != self_crypto_size {
@@ -132,7 +132,7 @@ pub fn start_hsv5_initiation(
         (None, None)
     };
 
-    Ok((
+    (
         HandshakeVSInfo::V5(HSV5Info {
             crypto_size: self_crypto_size,
             ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
@@ -145,7 +145,7 @@ pub fn start_hsv5_initiation(
             sid: streamid,
         }),
         StartedInitiator { cm, settings },
-    ))
+    )
 }
 
 impl StartedInitiator {

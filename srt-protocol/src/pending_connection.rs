@@ -42,7 +42,7 @@ pub enum ConnectionReject {
 #[derive(Debug)]
 pub enum ConnectionResult {
     NotHandled(ConnectError),
-    Reject((Packet, SocketAddr), ConnectionReject),
+    Reject(Option<(Packet, SocketAddr)>, ConnectionReject),
     SendPacket((Packet, SocketAddr)),
     Connected(Connection),
     NoAction,
@@ -104,6 +104,8 @@ impl fmt::Display for ConnectError {
     }
 }
 
+impl Error for ConnectError {}
+
 impl fmt::Display for ConnectionReject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use ConnectionReject::*;
@@ -122,7 +124,7 @@ impl ConnectionReject {
     }
 }
 
-impl Error for ConnectError {}
+impl Error for ConnectionReject {}
 
 impl Default for ConnInitSettings {
     fn default() -> Self {

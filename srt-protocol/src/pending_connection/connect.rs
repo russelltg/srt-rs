@@ -7,7 +7,7 @@ use crate::{packet::*, Connection};
 
 use super::{
     hsv5::{start_hsv5_initiation, StartedInitiator},
-    ConnInitSettings, ConnectError, ConnectionResult,
+    ConnInitSettings, ConnectError, ConnectionReject, ConnectionResult,
 };
 use ConnectError::*;
 use ConnectState::*;
@@ -85,13 +85,8 @@ impl Connect {
     ) -> ConnectionResult {
         match (info.shake_type, &info.info, from) {
             (ShakeType::Induction, HandshakeVSInfo::V5 { .. }, from) if from == self.remote => {
-                let (hsv5, cm) = match start_hsv5_initiation(
-                    self.init_settings.clone(),
-                    self.streamid.clone(),
-                ) {
-                    Ok(hc) => hc,
-                    Err(rr) => todo!(), //return Reject(rr),
-                };
+                let (hsv5, cm) =
+                    start_hsv5_initiation(self.init_settings.clone(), self.streamid.clone());
 
                 // send back a packet with the same syn cookie
                 let packet = Packet::Control(ControlPacket {
@@ -139,6 +134,10 @@ impl Connect {
             }
             (ShakeType::Conclusion, 5, from) => NotHandled(UnexpectedHost(self.remote, from)),
             (ShakeType::Conclusion, version, _) => NotHandled(UnsupportedProtocolVersion(version)),
+            (ShakeType::Rejection(rej), _, from) if from == self.remote => {
+                Reject(None, ConnectionReject::Rejected(rej))
+            }
+            (ShakeType::Rejection(_), _, from) => NotHandled(UnexpectedHost(self.remote, from)),
             (ShakeType::Induction, _, _) => NoAction,
             (_, _, _) => NotHandled(ConclusionExpected(info)),
         }
@@ -173,5 +172,104 @@ impl Connect {
                 SendPacket((request_packet.clone(), self.remote))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::time::Duration;
+
+    use rand::random;
+
+    use crate::pending_connection::ConnectionReject;
+
+    use super::*;
+
+    const TEST_SOCKID: SocketID = SocketID(7655);
+
+    #[test]
+    fn reject() {
+        let mut c = test_connect(Some("#!::u=test".into()));
+        c.handle_tick(Instant::now());
+
+        let first = Packet::Control(ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: TEST_SOCKID,
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                syn_cookie: 5554,
+                socket_id: SocketID(5678),
+                info: HandshakeVSInfo::V5(HSV5Info::default()),
+                init_seq_num: random(),
+                max_packet_size: 8192,
+                max_flow_size: 1234,
+                shake_type: ShakeType::Induction,
+                peer_addr: [127, 0, 0, 1].into(),
+            }),
+        });
+
+        let resp = c.handle_packet((first, test_remote()));
+        assert!(
+            matches!(
+                resp,
+                ConnectionResult::SendPacket((Packet::Control(ControlPacket {
+                    control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                        shake_type: ShakeType::Conclusion,
+                        socket_id,
+                        syn_cookie: 5554,
+                        ..
+                    }), ..
+                }), _)) if socket_id == TEST_SOCKID
+            ),
+            "{:?}",
+            resp
+        );
+
+        // send rejection
+        let rejection = Packet::Control(ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: TEST_SOCKID,
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                init_seq_num: random(),
+                max_packet_size: 8192,
+                max_flow_size: 1234,
+                shake_type: ShakeType::Rejection(RejectReason::Server(ServerRejectReason::BadMode)),
+                socket_id: SocketID(5678),
+                syn_cookie: 2222,
+                peer_addr: [127, 0, 0, 1].into(),
+                info: HandshakeVSInfo::V5(HSV5Info::default()),
+            }),
+        });
+
+        let resp = c.handle_packet((rejection, test_remote()));
+        assert!(
+            matches!(
+                resp,
+                ConnectionResult::Reject(
+                    _,
+                    ConnectionReject::Rejected(RejectReason::Server(ServerRejectReason::BadMode)),
+                )
+            ),
+            "{:?}",
+            resp
+        );
+    }
+
+    fn test_remote() -> SocketAddr {
+        ([127, 0, 0, 1], 6666).into()
+    }
+
+    fn test_connect(sid: Option<String>) -> Connect {
+        Connect::new(
+            test_remote(),
+            [127, 0, 0, 1].into(),
+            ConnInitSettings {
+                starting_send_seqnum: random(),
+                local_sockid: TEST_SOCKID,
+                crypto: None,
+                send_latency: Duration::from_millis(20),
+                recv_latency: Duration::from_millis(20),
+            },
+            sid,
+        )
     }
 }

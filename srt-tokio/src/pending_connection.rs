@@ -49,8 +49,13 @@ where
                 warn!("{:?}", e);
             }
             ConnectionResult::Reject(rp, rr) => {
-                sock.send(rp).await?;
-                todo!()
+                if let Some(rp) = rp {
+                    sock.send(rp).await?;
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    Box::new(rr),
+                ));
             }
             ConnectionResult::Connected(conn) => return Ok(conn),
             ConnectionResult::NoAction => {}
@@ -103,7 +108,7 @@ where
     loop {
         let result = select! {
             now = tick_interval.tick().fuse() => rendezvous.handle_tick(now.into()),
-            packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?),
+            packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?, ),
         };
 
         // trace!("Ticking {:?} {:?}", sockid, rendezvous);

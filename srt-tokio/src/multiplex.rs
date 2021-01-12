@@ -121,7 +121,9 @@ impl<T: StreamAcceptor> MultiplexState<T> {
                 return Ok(None);
             }
             ConnectionResult::Reject(pa, rej) => {
-                self.sock.send(pa).await?;
+                if let Some(pa) = pa {
+                    self.sock.send(pa).await?;
+                }
                 info!("Rejected connection from {}: {}", from, rej);
                 self.pending.remove(&from);
                 return Ok(None);
