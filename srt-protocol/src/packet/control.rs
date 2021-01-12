@@ -1034,7 +1034,7 @@ impl TryFrom<i32> for CoreRejectReason {
 
 impl Into<i32> for CoreRejectReason {
     fn into(self) -> i32 {
-        return self as i32;
+        self as i32
     }
 }
 

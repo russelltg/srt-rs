@@ -34,7 +34,6 @@ pub fn gen_hsv5_response(
                 ConnectionReject::Rejecting(
                     ServerRejectReason::Version.into(), // TODO: this error is tehcnially reserved for access control handlers, as the ref impl supports hsv4+5, while we only support 5
                 )
-                .into(),
             );
         }
     };

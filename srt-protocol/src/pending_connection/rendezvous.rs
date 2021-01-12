@@ -265,7 +265,7 @@ impl Rendezvous {
             }
             (ShakeType::Agreement, _) => NoAction,
             (ShakeType::Induction, _) => NotHandled(RendezvousExpected(info.clone())),
-            (ShakeType::Rejection(rej), _) => Reject(None, ConnectionReject::Rejected(rej).into()),
+            (ShakeType::Rejection(rej), _) => Reject(None, ConnectionReject::Rejected(rej)),
         }
     }
 
@@ -399,7 +399,7 @@ impl Rendezvous {
                 }
                 Ok(Some(_)) => NotHandled(ExpectedHSResp),
                 Ok(None) => NotHandled(ExpectedExtFlags), // spec says stay in this state
-                Err(e) => return NotHandled(e),
+                Err(e) => NotHandled(e),
             },
             _ => NoAction, // real errors here
         }
@@ -452,7 +452,7 @@ impl Rendezvous {
                 self.handle_fine_initiator(hs, hsv5, initiator)
             }
             (FineResponder(conn), _) => self.handle_fine_responder(&packet, conn),
-            (_, Err(e)) => return NotHandled(e),
+            (_, Err(e)) => NotHandled(e),
         }
     }
 

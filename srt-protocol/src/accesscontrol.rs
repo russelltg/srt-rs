@@ -75,7 +75,7 @@ impl FromStr for AccessControlList {
         s = &s[4..]; // skip start
 
         Ok(AccessControlList(
-            s.split(",")
+            s.split(',')
                 .map(str::parse)
                 .collect::<Result<Vec<_>, _>>()?,
         ))
