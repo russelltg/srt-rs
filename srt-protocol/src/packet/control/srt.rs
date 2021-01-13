@@ -190,7 +190,7 @@ bitflags! {
         const FILTERCAP = 0x80;
 
         // currently implemented flags
-        const SUPPORTED = Self::TSBPDSND.bits | Self::TSBPDRCV.bits | Self::HAICRYPT.bits | Self::REXMITFLG.bits | Self::STREAM.bits;
+        const SUPPORTED = Self::TSBPDSND.bits | Self::TSBPDRCV.bits | Self::HAICRYPT.bits | Self::REXMITFLG.bits;
     }
 }
 
