@@ -210,24 +210,23 @@ impl SrtControlPacket {
             5 => {
                 // the stream id string is stored as 32-bit little endian words
                 // https://tools.ietf.org/html/draft-sharabayko-mops-srt-01#section-3.2.1.3
-                let mut bytes = Vec::with_capacity(buf.remaining());
-                let mut chunks = buf.chunk().chunks(4).peekable();
-
-                while let Some(&[a, b, c, d]) = chunks.next() {
-                    // make sure to skip padding bytes if any for the last word
-                    if chunks.peek().is_none() {
-                        match (d, c, b, a) {
-                            (_, 0, 0, 0) => bytes.push(d),
-                            (_, _, 0, 0) => bytes.extend(&[d, c]),
-                            (_, _, _, 0) => bytes.extend(&[d, c, b]),
-                            _ => {}
-                        }
-                    } else {
-                        bytes.extend(&[d, c, b, a]);
-                    }
+                if buf.remaining() % 4 != 0 {
+                    return Err(PacketParseError::NotEnoughData);
                 }
 
-                buf.advance(buf.remaining());
+                let mut bytes = Vec::with_capacity(buf.remaining());
+
+                while buf.remaining() > 4 {
+                    bytes.extend(&buf.get_u32_le().to_be_bytes());
+                }
+
+                // make sure to skip padding bytes if any for the last word
+                match buf.get_u32_le().to_be_bytes() {
+                    [a, 0, 0, 0] => bytes.push(a),
+                    [a, b, 0, 0] => bytes.extend(&[a, b]),
+                    [a, b, c, 0] => bytes.extend(&[a, b, c]),
+                    _ => {}
+                }
 
                 match String::from_utf8(bytes) {
                     Ok(s) => Ok(StreamId(s)),
