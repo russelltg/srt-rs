@@ -57,7 +57,12 @@ where
                     Box::new(rr),
                 ));
             }
-            ConnectionResult::Connected(conn) => return Ok(conn),
+            ConnectionResult::Connected(pa, conn) => {
+                if let Some(pa) = pa {
+                    sock.send(pa).await?;
+                }
+                return Ok(conn);
+            }
             ConnectionResult::NoAction => {}
         }
     }
@@ -84,7 +89,12 @@ where
                 warn!("{:?}", e);
             }
             ConnectionResult::Reject(_, _) => todo!(),
-            ConnectionResult::Connected(c) => return Ok(c),
+            ConnectionResult::Connected(pa, c) => {
+                if let Some(pa) = pa {
+                    sock.send(pa).await?;
+                }
+                return Ok(c);
+            }
             ConnectionResult::NoAction => {}
         }
     }
@@ -121,7 +131,12 @@ where
                 warn!("rendezvous {:?} error: {}", sockid, e);
             }
             ConnectionResult::Reject(_, _) => todo!(),
-            ConnectionResult::Connected(c) => return Ok(c),
+            ConnectionResult::Connected(pa, c) => {
+                if let Some(pa) = pa {
+                    sock.send(pa).await?;
+                }
+                return Ok(c);
+            }
             ConnectionResult::NoAction => {}
         }
     }

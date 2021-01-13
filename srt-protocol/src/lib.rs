@@ -1,3 +1,4 @@
+pub mod accesscontrol;
 pub mod connection;
 pub mod crypto;
 mod loss_compression;
@@ -9,7 +10,6 @@ pub mod protocol;
 mod seq_number;
 mod socket_id;
 mod srt_version;
-pub mod accesscontrol;
 
 pub use connection::{Connection, ConnectionSettings};
 pub use msg_number::MsgNumber;

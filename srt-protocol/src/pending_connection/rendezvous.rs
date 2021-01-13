@@ -28,7 +28,6 @@ pub struct Rendezvous {
     state: RendezvousState,
     cookie: i32,
     last_packet: (Packet, SocketAddr),
-    connection: Option<Connection>,
 }
 
 // see haivision/srt/docs/handshake.md for documentation
@@ -75,15 +74,10 @@ impl Rendezvous {
             state: Waving,
             cookie,
             last_packet,
-            connection: None,
             init_settings,
             local_addr,
             remote_public,
         }
-    }
-
-    pub fn connection(&self) -> Option<&Connection> {
-        self.connection.as_ref()
     }
 }
 
@@ -192,11 +186,24 @@ impl Rendezvous {
         )
     }
 
-    fn set_connected(&mut self, settings: ConnectionSettings, resp: Option<ControlTypes>) {
-        self.connection = Some(Connection {
-            settings,
-            handshake: Handshake::Rendezvous(resp),
-        });
+    fn set_connected(&mut self, dest_sockid: SocketID, settings: ConnectionSettings, agreement: Option<HandshakeControlInfo>) -> ConnectionResult {
+        Connected(
+            agreement.clone().map(|agreement| (
+                ControlPacket {
+                    timestamp: TimeStamp::from_micros(0),
+                    dest_sockid,
+                    control_type: ControlTypes::Handshake(agreement.clone()),
+                }
+                .into(),
+                self.remote_public,
+            )),
+            Connection {
+                settings,
+                handshake: Handshake::Rendezvous(Some(ControlTypes::Handshake(
+                    agreement,
+                ))),
+            },
+        )
     }
 
     fn handle_waving(
@@ -242,7 +249,7 @@ impl Rendezvous {
                             GenHsv5Result::Accept(h, c) => (h, c),
                             GenHsv5Result::NotHandled(e) => return NotHandled(e),
                             GenHsv5Result::Reject(r) => {
-                                return self.make_rejection(info,  timestamp, r)
+                                return self.make_rejection(info, timestamp, r)
                             }
                         };
                         self.transition(FineResponder(connection));
@@ -287,8 +294,7 @@ impl Rendezvous {
                         Err(r) => return NotHandled(r),
                     };
 
-                    self.set_connected(settings, Some(ControlTypes::Handshake(agreement.clone())));
-                    self.send(info.socket_id, agreement)
+                    self.set_connected(info.socket_id, settings, agreement)
                 }
                 Ok(Some(_)) => NotHandled(ExpectedHSResp),
                 Ok(None) => {
@@ -301,7 +307,11 @@ impl Rendezvous {
         }
     }
 
-    fn handle_attention_responder(&mut self, info: &HandshakeControlInfo, timestamp: TimeStamp) -> ConnectionResult {
+    fn handle_attention_responder(
+        &mut self,
+        info: &HandshakeControlInfo,
+        timestamp: TimeStamp,
+    ) -> ConnectionResult {
         match info.shake_type {
             ShakeType::Conclusion => {
                 match extract_ext_info(info) {
@@ -318,7 +328,7 @@ impl Rendezvous {
                 ) {
                     GenHsv5Result::Accept(h, c) => (h, c),
                     GenHsv5Result::NotHandled(e) => return NotHandled(e),
-                    GenHsv5Result::Reject(r) => return self.make_rejection(info,  timestamp, r),
+                    GenHsv5Result::Reject(r) => return self.make_rejection(info, timestamp, r),
                 };
                 self.transition(InitiatedResponder(connection));
 
@@ -344,9 +354,8 @@ impl Rendezvous {
                         Ok(s) => s,
                         Err(r) => return NotHandled(r),
                     };
-                    self.set_connected(settings, Some(ControlTypes::Handshake(agreement.clone())));
 
-                    self.send(info.socket_id, agreement)
+                    self.set_connected(info.socket_id, settings, agreement)
                 }
                 Ok(Some(_)) => NotHandled(ExpectedHSResp),
                 Ok(None) => NotHandled(ExpectedExtFlags),
@@ -427,10 +436,7 @@ impl Rendezvous {
         self.send_agreement(remote_sockid, Rendezvous::empty_flags())
     }
 
-    pub fn handle_packet(
-        &mut self,
-        (packet, from): (Packet, SocketAddr),
-    ) -> ConnectionResult {
+    pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr)) -> ConnectionResult {
         if from != self.remote_public {
             return NotHandled(UnexpectedHost(self.remote_public, from));
         }

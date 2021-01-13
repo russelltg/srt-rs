@@ -127,10 +127,13 @@ impl Connect {
                 };
 
                 // TODO: no handshake retransmit packet needed? is this right? Needs testing.
-                Connected(Connection {
-                    settings,
-                    handshake: Handshake::Connector,
-                })
+                Connected(
+                    None,
+                    Connection {
+                        settings,
+                        handshake: Handshake::Connector,
+                    },
+                )
             }
             (ShakeType::Conclusion, 5, from) => NotHandled(UnexpectedHost(self.remote, from)),
             (ShakeType::Conclusion, version, _) => NotHandled(UnsupportedProtocolVersion(version)),

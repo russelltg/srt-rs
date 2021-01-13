@@ -161,10 +161,13 @@ impl Listen {
                 // use the remote ones
 
                 // finish the connection
-                Connected(Connection {
-                    settings,
-                    handshake: Handshake::Listener(resp_handshake.control_type),
-                })
+                Connected(
+                    Some((resp_handshake.clone().into(), from)),
+                    Connection {
+                        settings,
+                        handshake: Handshake::Listener(resp_handshake.control_type),
+                    },
+                )
             }
             (ShakeType::Conclusion, VERSION_5, syn_cookie) => NotHandled(
                 ConnectError::InvalidHandshakeCookie(state.cookie, syn_cookie),
@@ -293,17 +296,20 @@ mod test {
         assert!(
             matches!(
                 resp,
-                Connected(Connection {
-                    handshake:
-                        Handshake::Listener(ControlTypes::Handshake(HandshakeControlInfo {
-                            info:
-                                HandshakeVSInfo::V5(HSV5Info {
-                                    ext_hs: Some(_), ..
-                                }),
-                            ..
-                        })),
-                    ..
-                })
+                Connected(
+                    Some(_),
+                    Connection {
+                        handshake:
+                            Handshake::Listener(ControlTypes::Handshake(HandshakeControlInfo {
+                                info:
+                                    HandshakeVSInfo::V5(HSV5Info {
+                                        ext_hs: Some(_), ..
+                                    }),
+                                ..
+                            })),
+                        ..
+                    },
+                )
             ),
             "{:?}",
             resp

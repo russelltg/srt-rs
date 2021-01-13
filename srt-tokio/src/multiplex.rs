@@ -133,7 +133,12 @@ impl<T: StreamAcceptor> MultiplexState<T> {
                 return Ok(None);
             }
             ConnectionResult::NoAction => return Ok(None),
-            ConnectionResult::Connected(c) => c,
+            ConnectionResult::Connected(pa, c) => {
+                if let Some(pa) = pa {
+                    self.sock.send(pa).await?;
+                }
+                c
+            }
         };
         let (s, r) = Channel::channel(100);
 

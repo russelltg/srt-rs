@@ -44,7 +44,7 @@ pub enum ConnectionResult {
     NotHandled(ConnectError),
     Reject(Option<(Packet, SocketAddr)>, ConnectionReject),
     SendPacket((Packet, SocketAddr)),
-    Connected(Connection),
+    Connected(Option<(Packet, SocketAddr)>, Connection),
     NoAction,
 }
 

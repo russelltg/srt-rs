@@ -30,11 +30,9 @@ pub fn gen_hsv5_response(
     let incoming = match &with_hsv5.info {
         HandshakeVSInfo::V5(hs) => hs,
         _ => {
-            return GenHsv5Result::Reject(
-                ConnectionReject::Rejecting(
-                    ServerRejectReason::Version.into(), // TODO: this error is tehcnially reserved for access control handlers, as the ref impl supports hsv4+5, while we only support 5
-                )
-            );
+            return GenHsv5Result::Reject(ConnectionReject::Rejecting(
+                ServerRejectReason::Version.into(), // TODO: this error is tehcnially reserved for access control handlers, as the ref impl supports hsv4+5, while we only support 5
+            ));
         }
     };
 
