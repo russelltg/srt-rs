@@ -82,7 +82,6 @@ pub fn gen_hsv5_response(
         None
     };
 
-
     GenHsv5Result::Accept(
         HandshakeVSInfo::V5(HSV5Info {
             crypto_size: cm.as_ref().map(|c| c.key_length()).unwrap_or(0),
