@@ -158,9 +158,9 @@ impl Rendezvous {
         self.send(dest_sockid, self.gen_packet(ShakeType::Conclusion, info))
     }
 
-    fn send_agreement(&mut self, dest_sockid: SocketID, info: HandshakeVSInfo) -> ConnectionResult {
-        self.send(dest_sockid, self.gen_packet(ShakeType::Agreement, info))
-    }
+    // fn send_agreement(&mut self, dest_sockid: SocketID, info: HandshakeVSInfo) -> ConnectionResult {
+    //     self.send(dest_sockid, self.gen_packet(ShakeType::Agreement, info))
+    // }
 
     fn make_rejection(
         &self,
@@ -186,22 +186,20 @@ impl Rendezvous {
         )
     }
 
-    fn set_connected(&mut self, dest_sockid: SocketID, settings: ConnectionSettings, agreement: Option<HandshakeControlInfo>) -> ConnectionResult {
+    fn set_connected(&mut self, settings: ConnectionSettings, agreement: Option<HandshakeControlInfo>, to_send: Option<HandshakeControlInfo>) -> ConnectionResult {
         Connected(
-            agreement.clone().map(|agreement| (
+            to_send.map(|to_send| (
                 ControlPacket {
                     timestamp: TimeStamp::from_micros(0),
-                    dest_sockid,
-                    control_type: ControlTypes::Handshake(agreement.clone()),
+                    dest_sockid: settings.remote_sockid,
+                    control_type: ControlTypes::Handshake(to_send),
                 }
                 .into(),
                 self.remote_public,
             )),
             Connection {
                 settings,
-                handshake: Handshake::Rendezvous(Some(ControlTypes::Handshake(
-                    agreement,
-                ))),
+                handshake: Handshake::Rendezvous(agreement.map(ControlTypes::Handshake)),
             },
         )
     }
@@ -294,7 +292,7 @@ impl Rendezvous {
                         Err(r) => return NotHandled(r),
                     };
 
-                    self.set_connected(info.socket_id, settings, agreement)
+                    self.set_connected(settings, Some(agreement.clone()), Some(agreement))
                 }
                 Ok(Some(_)) => NotHandled(ExpectedHSResp),
                 Ok(None) => {
@@ -355,7 +353,7 @@ impl Rendezvous {
                         Err(r) => return NotHandled(r),
                     };
 
-                    self.set_connected(info.socket_id, settings, agreement)
+                    self.set_connected( settings, Some(agreement.clone()), Some(agreement))
                 }
                 Ok(Some(_)) => NotHandled(ExpectedHSResp),
                 Ok(None) => NotHandled(ExpectedExtFlags),
@@ -383,7 +381,7 @@ impl Rendezvous {
             | Packet::Control(ControlPacket {
                 control_type: ControlTypes::KeepAlive,
                 ..
-            }) => self.set_connected(connection, None),
+            }) => return self.set_connected(connection, None, None),
             _ => {}
         }
         NoAction
@@ -403,8 +401,7 @@ impl Rendezvous {
                             Err(e) => return NotHandled(e),
                         };
 
-                    self.set_connected(connection, None);
-                    self.send_agreement(info.socket_id, Rendezvous::empty_flags())
+                    self.set_connected(connection, None, Some(self.gen_packet(ShakeType::Agreement, Rendezvous::empty_flags())))
                 }
                 Ok(Some(_)) => NotHandled(ExpectedHSResp),
                 Ok(None) => NotHandled(ExpectedExtFlags), // spec says stay in this state
@@ -430,10 +427,8 @@ impl Rendezvous {
                 _ => {}
             }
         }
-        let remote_sockid = connection.remote_sockid;
 
-        self.set_connected(connection, None);
-        self.send_agreement(remote_sockid, Rendezvous::empty_flags())
+        self.set_connected(connection, None, Some(self.gen_packet(ShakeType::Agreement, Rendezvous::empty_flags())))
     }
 
     pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr)) -> ConnectionResult {
