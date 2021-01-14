@@ -76,6 +76,12 @@ pub fn gen_hsv5_response(
     } else {
         None
     };
+    let sid = if let HandshakeVSInfo::V5(info) = &with_hsv5.info {
+        info.sid.clone()
+    } else {
+        None
+    };
+
 
     GenHsv5Result::Accept(
         HandshakeVSInfo::V5(HSV5Info {
@@ -87,7 +93,7 @@ pub fn gen_hsv5_response(
                 recv_latency: settings.recv_latency,
             })),
             ext_km: outgoing_ext_km.map(SrtControlPacket::KeyManagerResponse),
-            sid: None,
+            sid,
         }),
         ConnectionSettings {
             remote: from,
