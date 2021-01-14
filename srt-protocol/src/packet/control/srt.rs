@@ -208,18 +208,27 @@ impl SrtControlPacket {
             3 => Ok(KeyManagerRequest(SrtKeyMessage::parse(buf)?)),
             4 => Ok(KeyManagerResponse(SrtKeyMessage::parse(buf)?)),
             5 => {
-                // cut off null bytes at end
-                let mut string_bytes = vec![0; buf.remaining()];
-                buf.copy_to_slice(&mut string_bytes[..]);
-                let shrink_by = string_bytes
-                    .iter()
-                    .rev()
-                    .position(|a| *a != 0)
-                    .unwrap_or(string_bytes.len()); // all null
+                // the stream id string is stored as 32-bit little endian words
+                // https://tools.ietf.org/html/draft-sharabayko-mops-srt-01#section-3.2.1.3
+                if buf.remaining() % 4 != 0 {
+                    return Err(PacketParseError::NotEnoughData);
+                }
 
-                string_bytes.resize(string_bytes.len() - shrink_by, 0);
+                let mut bytes = Vec::with_capacity(buf.remaining());
 
-                match String::from_utf8(string_bytes) {
+                while buf.remaining() > 4 {
+                    bytes.extend(&buf.get_u32_le().to_be_bytes());
+                }
+
+                // make sure to skip padding bytes if any for the last word
+                match buf.get_u32_le().to_be_bytes() {
+                    [a, 0, 0, 0] => bytes.push(a),
+                    [a, b, 0, 0] => bytes.extend(&[a, b]),
+                    [a, b, c, 0] => bytes.extend(&[a, b, c]),
+                    _ => {}
+                }
+
+                match String::from_utf8(bytes) {
                     Ok(s) => Ok(StreamId(s)),
                     Err(e) => Err(PacketParseError::StreamTypeNotUTF8(e.utf8_error())),
                 }
@@ -253,11 +262,21 @@ impl SrtControlPacket {
                 k.serialize(into);
             }
             StreamId(sid) => {
-                into.put(sid.as_bytes());
+                // the stream id string is stored as 32-bit little endian words
+                // https://tools.ietf.org/html/draft-sharabayko-mops-srt-01#section-3.2.1.3
+                let mut chunks = sid.as_bytes().chunks_exact(4);
 
-                // add padding bytes to be aligned to 32-bit boundary
-                let pad_bytes = (((sid.len() + 3) / 4) * 4) - sid.len();
-                into.put(&[0; 4][..pad_bytes]);
+                while let Some(&[a, b, c, d]) = chunks.next() {
+                    into.put(&[d, c, b, a][..]);
+                }
+
+                // add padding bytes for the final word if needed
+                match *chunks.remainder() {
+                    [a, b, c] => into.put(&[0, c, b, a][..]),
+                    [a, b] => into.put(&[0, 0, b, a][..]),
+                    [a] => into.put(&[0, 0, 0, a][..]),
+                    _ => {}
+                }
             }
             _ => unimplemented!(),
         }

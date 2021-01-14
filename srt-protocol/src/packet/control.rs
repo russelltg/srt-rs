@@ -1026,6 +1026,53 @@ mod test {
     }
 
     #[test]
+    fn raw_handshake_sid() {
+        // this is an example HSv5 conclusion packet from the reference implementation that has a
+        // stream id.
+        let packet_data = hex::decode("800000000000000000000b1400000000000000050000000563444b2e000005dc00002000ffffffff37eb0ee52154fbd60100007f0000000000000000000000000001000300010401000000bf0014001400050003646362616867666500006a69").unwrap();
+        let packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..])).unwrap();
+        assert_eq!(
+            packet,
+            ControlPacket {
+                timestamp: TimeStamp::from_micros(2836),
+                dest_sockid: SocketID(0),
+                control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                    init_seq_num: SeqNumber(1_665_420_078),
+                    max_packet_size: 1500,
+                    max_flow_size: 8192,
+                    shake_type: ShakeType::Conclusion,
+                    socket_id: SocketID(0x37eb0ee5),
+                    syn_cookie: 559_217_622,
+                    peer_addr: "127.0.0.1".parse().unwrap(),
+                    info: HandshakeVSInfo::V5(HSV5Info {
+                        crypto_size: 0,
+                        ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
+                            version: SrtVersion::new(1, 4, 1),
+                            flags: SrtShakeFlags::TSBPDSND
+                                | SrtShakeFlags::TSBPDRCV
+                                | SrtShakeFlags::HAICRYPT
+                                | SrtShakeFlags::REXMITFLG
+                                | SrtShakeFlags::TLPKTDROP
+                                | SrtShakeFlags::NAKREPORT
+                                | SrtShakeFlags::FILTERCAP,
+                            send_latency: Duration::from_millis(20),
+                            recv_latency: Duration::from_millis(20)
+                        })),
+                        ext_km: None,
+                        sid: Some(String::from("abcdefghij")),
+                    })
+                })
+            }
+        );
+
+        // reserialize it
+        let mut buf = vec![];
+        packet.serialize(&mut buf);
+
+        assert_eq!(&buf[..], &packet_data[..]);
+    }
+
+    #[test]
     fn raw_handshake_crypto() {
         // this is an example HSv5 conclusion packet from the reference implementation that has crypto data embedded.
         let packet_data = hex::decode("800000000000000000175E8A0000000000000005000000036FEFB8D8000005DC00002000FFFFFFFF35E790ED5D16CCEA0100007F00000000000000000000000000010003000103010000002F01F401F40003000E122029010000000002000200000004049D75B0AC924C6E4C9EC40FEB4FE973DB1D215D426C18A2871EBF77E2646D9BAB15DBD7689AEF60EC").unwrap();
