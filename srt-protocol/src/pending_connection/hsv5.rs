@@ -106,6 +106,7 @@ pub fn gen_hsv5_response(
             send_tsbpd_latency: Duration::max(settings.send_latency, hs.recv_latency),
             recv_tsbpd_latency: Duration::max(settings.recv_latency, hs.send_latency),
             crypto_manager: cm,
+            stream_id: incoming.sid.clone()
         },
     )
 }
@@ -114,6 +115,7 @@ pub fn gen_hsv5_response(
 pub struct StartedInitiator {
     cm: Option<CryptoManager>,
     settings: ConnInitSettings,
+    streamid: Option<String>,
 }
 
 pub fn start_hsv5_initiation(
@@ -144,9 +146,9 @@ pub fn start_hsv5_initiation(
                 recv_latency: settings.recv_latency,
             })),
             ext_km,
-            sid: streamid,
+            sid: streamid.clone(),
         }),
-        StartedInitiator { cm, settings },
+        StartedInitiator { cm, settings, streamid },
     )
 }
 
@@ -183,6 +185,7 @@ impl StartedInitiator {
             send_tsbpd_latency: Duration::max(self.settings.send_latency, hs.recv_latency),
             recv_tsbpd_latency: Duration::max(self.settings.recv_latency, hs.send_latency),
             crypto_manager: self.cm,
+            stream_id: self.streamid,
         })
     }
 }

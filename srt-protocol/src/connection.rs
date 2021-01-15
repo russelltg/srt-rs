@@ -42,6 +42,8 @@ pub struct ConnectionSettings {
 
     // if this stream is encrypted, it needs a crypto manager
     pub crypto_manager: Option<CryptoManager>,
+
+    pub stream_id: Option<String>,
 }
 
 impl ConnectionSettings {
