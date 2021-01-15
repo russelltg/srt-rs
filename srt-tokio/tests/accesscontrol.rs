@@ -32,7 +32,10 @@ impl StreamAcceptor for AccessController {
         {
             match entry {
                 StandardAccessControlEntry::UserName(_) => {}
-                StandardAccessControlEntry::ResourceName(_) => {}
+                StandardAccessControlEntry::ResourceName(rn) => match rn.parse::<i32>() {
+                    Ok(i) if i < 5 => return Ok(AcceptParameters::new()),
+                    _ => return Err(ServerRejectReason::BadRequest.into()),
+                }
                 StandardAccessControlEntry::HostName(_) => {}
                 StandardAccessControlEntry::SessionID(_) => {}
                 StandardAccessControlEntry::Type(_) => {}
@@ -77,29 +80,35 @@ async fn streamid() -> io::Result<()> {
 
     // connect 10 clients to it
     let mut join_handles = vec![];
-    for _ in 0..1 {
+    for i in 0..10 {
         join_handles.push(tokio::spawn(async move {
-            let mut recvr = SrtSocketBuilder::new_connect_with_streamid(
+            let recvr = SrtSocketBuilder::new_connect_with_streamid(
                 "127.0.0.1:2000",
                 format!(
                     "{}",
                     AccessControlList(vec![
                         StandardAccessControlEntry::UserName("russell".into()).into(),
-                        StandardAccessControlEntry::ResourceName("tacos".into()).into()
+                        StandardAccessControlEntry::ResourceName(format!("{}", i)).into()
                     ])
                 ),
             )
             .connect()
-            .await
-            .unwrap();
-            info!("Created connection");
+            .await;
 
-            let first = recvr.next().await;
-            assert_eq!(first.unwrap().unwrap().1, "asdf");
-            let second = recvr.next().await;
-            assert!(second.is_none());
+            if i < 5 {
+                let mut recvr = recvr.unwrap();
 
-            info!("Connection done");
+                info!("Created connection");
+
+                let first = recvr.next().await;
+                assert_eq!(first.unwrap().unwrap().1, "asdf");
+                let second = recvr.next().await;
+                assert!(second.is_none());
+
+                info!("Connection done");
+            } else {
+                assert_eq!(recvr.unwrap_err().kind(), io::ErrorKind::ConnectionRefused) ;
+            }
         }));
     }
 
