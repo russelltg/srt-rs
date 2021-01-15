@@ -106,7 +106,7 @@ pub fn gen_hsv5_response(
             send_tsbpd_latency: Duration::max(settings.send_latency, hs.recv_latency),
             recv_tsbpd_latency: Duration::max(settings.recv_latency, hs.send_latency),
             crypto_manager: cm,
-            stream_id: incoming.sid.clone()
+            stream_id: incoming.sid.clone(),
         },
     )
 }
@@ -148,7 +148,11 @@ pub fn start_hsv5_initiation(
             ext_km,
             sid: streamid.clone(),
         }),
-        StartedInitiator { cm, settings, streamid },
+        StartedInitiator {
+            cm,
+            settings,
+            streamid,
+        },
     )
 }
 

@@ -31,7 +31,9 @@ impl StreamAcceptor for AccessController {
             .filter_map(|a| StandardAccessControlEntry::try_from(a).ok())
         {
             match entry {
-                StandardAccessControlEntry::UserName(u) if u == "admin" => return Ok(AcceptParameters::new()),
+                StandardAccessControlEntry::UserName(u) if u == "admin" => {
+                    return Ok(AcceptParameters::new())
+                }
                 _ => continue,
             }
         }
@@ -56,7 +58,16 @@ async fn main() -> io::Result<()> {
     while let Some(Ok(result)) = server.next().await {
         let mut sender: SrtSocket = result.into();
 
-        let mut stream = stream::iter(Some(Ok((Instant::now(), Bytes::from(format!("Hello admin!! Your SID is {:?}", sender.settings().stream_id))))).into_iter());
+        let mut stream = stream::iter(
+            Some(Ok((
+                Instant::now(),
+                Bytes::from(format!(
+                    "Hello admin!! Your SID is {:?}",
+                    sender.settings().stream_id
+                )),
+            )))
+            .into_iter(),
+        );
 
         tokio::spawn(async move {
             sender.send_all(&mut stream).await.unwrap();

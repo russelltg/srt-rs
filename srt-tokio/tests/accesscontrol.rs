@@ -35,7 +35,7 @@ impl StreamAcceptor for AccessController {
                 StandardAccessControlEntry::ResourceName(rn) => match rn.parse::<i32>() {
                     Ok(i) if i < 5 => return Ok(AcceptParameters::new()),
                     _ => return Err(ServerRejectReason::BadRequest.into()),
-                }
+                },
                 StandardAccessControlEntry::HostName(_) => {}
                 StandardAccessControlEntry::SessionID(_) => {}
                 StandardAccessControlEntry::Type(_) => {}
@@ -107,7 +107,7 @@ async fn streamid() -> io::Result<()> {
 
                 info!("Connection done");
             } else {
-                assert_eq!(recvr.unwrap_err().kind(), io::ErrorKind::ConnectionRefused) ;
+                assert_eq!(recvr.unwrap_err().kind(), io::ErrorKind::ConnectionRefused);
             }
         }));
     }
