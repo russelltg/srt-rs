@@ -74,6 +74,7 @@ fn do_lossy_test(seed: u64, count: usize) {
         send_tsbpd_latency: Duration::from_secs(8),
         recv_tsbpd_latency: Duration::from_secs(8),
         crypto_manager: None,
+        stream_id: None,
     };
 
     let s2 = ConnectionSettings {
@@ -88,6 +89,7 @@ fn do_lossy_test(seed: u64, count: usize) {
         send_tsbpd_latency: Duration::from_secs(8),
         recv_tsbpd_latency: Duration::from_secs(8),
         crypto_manager: None,
+        stream_id: None,
     };
 
     let mut sendr = Sender::new(s1, Handshake::Connector);

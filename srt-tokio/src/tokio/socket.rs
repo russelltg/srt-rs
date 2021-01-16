@@ -31,6 +31,7 @@ use tokio::time::sleep_until;
 ///
 /// The sockets yield and consume `(Instant, Bytes)`, representng the data and the origin instant. This instant
 /// defines when the packet will be released on the receiving side, at more or less one latency later.
+#[derive(Debug)]
 pub struct SrtSocket {
     // receiver datastructures
     recvr: mpsc::Receiver<(Instant, Bytes)>,

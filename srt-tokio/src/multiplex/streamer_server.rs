@@ -9,18 +9,16 @@ use futures::{ready, SinkExt, StreamExt};
 
 use bytes::Bytes;
 
-use crate::{tokio::create_bidrectional_srt, Connection, PackChan};
+use crate::SrtSocket;
 
-type BoxConnStream = Pin<Box<dyn Stream<Item = Result<(Connection, PackChan), io::Error>> + Send>>;
+type BoxConnStream = Pin<Box<dyn Stream<Item = Result<SrtSocket, io::Error>> + Send>>;
 pub struct StreamerServer {
     server: BoxConnStream,
     channels: Vec<mpsc::Sender<(Instant, Bytes)>>,
 }
 
 impl StreamerServer {
-    pub fn new(
-        server: impl Stream<Item = Result<(Connection, PackChan), io::Error>> + Send + 'static,
-    ) -> Self {
+    pub fn new(server: impl Stream<Item = Result<SrtSocket, io::Error>> + Send + 'static) -> Self {
         StreamerServer {
             server: server.boxed(),
             channels: vec![], // TODO: research lengths
@@ -81,11 +79,9 @@ impl Sink<(Instant, Bytes)> for StreamerServer {
         }
 
         loop {
-            let (conn, chan) = ready!(Pin::new(&mut self.server).poll_next(cx))
+            let mut sender = ready!(Pin::new(&mut self.server).poll_next(cx))
                 .expect("Multiplexer stream ended, strange")
                 .expect("Multiplex server return Err");
-
-            let mut sender = create_bidrectional_srt(chan, conn);
 
             let (tx, rx) = mpsc::channel(100);
 

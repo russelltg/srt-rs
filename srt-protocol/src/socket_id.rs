@@ -3,6 +3,7 @@ use rand::Rng;
 
 use std::fmt;
 
+/// A newtype wrapper for strongly-typed SocketIDs
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct SocketID(pub u32);
 

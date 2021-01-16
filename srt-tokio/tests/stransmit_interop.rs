@@ -157,12 +157,11 @@ async fn stransmit_server() -> Result<(), Error> {
 
     // start SRT connector
     let serv = async {
-        let mut sender =
-            SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:2000".parse().unwrap()))
-                .latency(Duration::from_millis(99))
-                .connect()
-                .await
-                .unwrap();
+        let mut sender = SrtSocketBuilder::new_connect("127.0.0.1:2000")
+            .latency(Duration::from_millis(99))
+            .connect()
+            .await
+            .unwrap();
 
         assert_eq!(
             sender.settings().send_tsbpd_latency,
