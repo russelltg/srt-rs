@@ -278,7 +278,7 @@ fn resolve_input<'a>(
         DataType::Url(input_url) => {
             let (input_local_port, input_addr) = local_port_addr(&input_url, "input")?;
             match input_url.scheme() {
-                    "udp" if input_local_port == 0 => 
+                    "udp" if input_local_port == 0 =>
                         bail!("Must not designate a ip to receive UDP. Example: udp://:1234, not udp://127.0.0.1:1234. If you with to bind to a specific adapter, use the adapter setting instead."),
                     "udp" => {
                         once(async move {
@@ -373,7 +373,7 @@ fn resolve_output(output_url: DataType) -> Result<SinkStream, Error> {
             let (output_local_port, output_addr) = local_port_addr(&output_url, "output")?;
 
             match output_url.scheme() {
-                    "udp" if output_addr.is_none() => 
+                    "udp" if output_addr.is_none() =>
                         bail!("Must designate a ip to send to to send UDP. Example: udp://127.0.0.1:1234, not udp://:1234"),
                     "udp" => once(async move {
                         Ok(UdpFramed::new(
