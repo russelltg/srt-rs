@@ -22,10 +22,11 @@ use futures::{
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
+    net::TcpListener,
+    net::TcpStream,
     net::UdpSocket,
 };
-use tokio_util::codec::FramedWrite;
-use tokio_util::{codec::BytesCodec, udp::UdpFramed};
+use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
 
 use log::info;
 use srt_tokio::{ConnInitMethod, SrtSocketBuilder, StreamerServer};
@@ -295,6 +296,30 @@ fn resolve_input<'a>(
                         once(make_srt_input(input_addr, input_url, input_local_port)).boxed()
                     }
                 }
+                "tcp" if input_addr.is_none() => bail!("Must provide an address to use TCP"),
+                "tcp" => {
+                    let input = input_addr.unwrap();
+                    if input_url.query_pairs().any(|(k, _)| k == "listen") {
+                        once(async move {
+                            let listener = TcpListener::bind(input).await?;
+                            let (stream, _) = listener.accept().await?;
+                            Ok(Framed::new(stream, BytesCodec::new())
+                                .map(Result::unwrap)
+                                .map(|b| b.freeze())
+                                .boxed())
+                        })
+                        .boxed()
+                    } else {
+                        once(async move {
+                            let stream = TcpStream::connect(input).await?;
+                            Ok(Framed::new(stream, BytesCodec::new())
+                                .map(Result::unwrap)
+                                .map(|b| b.freeze())
+                                .boxed())
+                        })
+                        .boxed()
+                    }
+                }
                 s => bail!("unrecognized scheme: {} designated in input url", s),
             }
         }
@@ -406,6 +431,28 @@ fn resolve_output(output_url: DataType) -> Result<SinkStream, Error> {
                         .boxed()
                     } else {
                         once(make_srt_ouput(output_addr, output_url, output_local_port)).boxed()
+                    }
+                }
+                "tcp" if output_addr.is_none() => bail!("Must provide an address to use TCP"),
+                "tcp" => {
+                    let output = output_addr.unwrap();
+                    if output_url.query_pairs().any(|(k, _)| k == "listen") {
+                        once(async move {
+                            let listener = TcpListener::bind(output).await?;
+                            let (stream, _) = listener.accept().await?;
+                            Ok(Framed::new(stream, BytesCodec::new())
+                                .with(move |b| future::ready(Ok(b)))
+                                .boxed_sink())
+                        })
+                        .boxed()
+                    } else {
+                        once(async move {
+                            let stream = TcpStream::connect(output).await?;
+                            Ok(Framed::new(stream, BytesCodec::new())
+                                .with(move |b| future::ready(Ok(b)))
+                                .boxed_sink())
+                        })
+                        .boxed()
                     }
                 }
                 s => bail!("unrecognized scheme '{}' designated in output url", s),
