@@ -278,28 +278,44 @@ fn resolve_input<'a>(
         DataType::Url(input_url) => {
             let (input_local_port, input_addr) = local_port_addr(&input_url, "input")?;
             match input_url.scheme() {
-                    "udp" if input_local_port == 0 => 
-                        bail!("Must not designate a ip to receive UDP. Example: udp://:1234, not udp://127.0.0.1:1234. If you with to bind to a specific adapter, use the adapter setting instead."),
-                    "udp" => {
-                        once(async move {
-                            Ok(UdpFramed::new(
-                                UdpSocket::bind(&parse_udp_options(
-                                    input_url.query_pairs(),
-                                    UdpKind::Listen(input_local_port),
-                                )?).await?,
-                                BytesCodec::new(),
-                            ).map(Result::unwrap).map(|(b, _)| b.freeze()).boxed())
-                        }).boxed()
+                "udp" if input_local_port == 0 => bail!(
+                    "Must not designate a ip to receive UDP. \
+                     Example: udp://:1234, not udp://127.0.0.1:1234. \
+                     If you with to bind to a specific adapter, use the adapter setting instead."
+                ),
+                "udp" => once(async move {
+                    Ok(UdpFramed::new(
+                        UdpSocket::bind(&parse_udp_options(
+                            input_url.query_pairs(),
+                            UdpKind::Listen(input_local_port),
+                        )?)
+                        .await?,
+                        BytesCodec::new(),
+                    )
+                    .map(Result::unwrap)
+                    .map(|(b, _)| b.freeze())
+                    .boxed())
+                })
+                .boxed(),
+                "srt" => {
+                    if input_url.query_pairs().any(|(k, _)| k == "autoreconnect") {
+                        unfold(
+                            (input_addr, input_url, input_local_port),
+                            move |(input_addr, input_url, input_local_port)| async move {
+                                Some((
+                                    make_srt_input(input_addr, input_url.clone(), input_local_port)
+                                        .await,
+                                    (input_addr, input_url, input_local_port),
+                                ))
+                            },
+                        )
+                        .boxed()
+                    } else {
+                        once(make_srt_input(input_addr, input_url, input_local_port)).boxed()
                     }
-                    "srt" => {
-                        if input_url.query_pairs().any(|(k, _)| k == "autoreconnect") {
-                            unfold((input_addr, input_url, input_local_port), move |(input_addr, input_url, input_local_port)| async move { Some((make_srt_input(input_addr, input_url.clone(), input_local_port).await, (input_addr, input_url, input_local_port))) }).boxed()
-                        } else {
-                            once(make_srt_input(input_addr, input_url, input_local_port)).boxed()
-                        }
-                    }
-                    s => bail!("unrecognized scheme: {} designated in input url", s),
                 }
+                s => bail!("unrecognized scheme: {} designated in input url", s),
+            }
         }
         DataType::File(file) if file == Path::new("-") => once(async move {
             Ok(read_to_stream(tokio::io::stdin())
@@ -373,27 +389,46 @@ fn resolve_output(output_url: DataType) -> Result<SinkStream, Error> {
             let (output_local_port, output_addr) = local_port_addr(&output_url, "output")?;
 
             match output_url.scheme() {
-                    "udp" if output_addr.is_none() => 
-                        bail!("Must designate a ip to send to to send UDP. Example: udp://127.0.0.1:1234, not udp://:1234"),
-                    "udp" => once(async move {
-                        Ok(UdpFramed::new(
-                            UdpSocket::bind(&parse_udp_options(
-                                output_url.query_pairs(),
-                                UdpKind::Send,
-                            )?).await?,
-                            BytesCodec::new(),
+                "udp" if output_addr.is_none() => bail!(
+                    "Must designate a ip to send to to send UDP. \
+                     Example: udp://127.0.0.1:1234, not udp://:1234"
+                ),
+                "udp" => once(async move {
+                    Ok(UdpFramed::new(
+                        UdpSocket::bind(&parse_udp_options(
+                            output_url.query_pairs(),
+                            UdpKind::Send,
+                        )?)
+                        .await?,
+                        BytesCodec::new(),
+                    )
+                    .with(move |b| future::ready(Ok((b, output_addr.unwrap()))))
+                    .boxed_sink())
+                })
+                .boxed(),
+                "srt" => {
+                    if output_url.query_pairs().any(|(k, _)| k == "autoreconnect") {
+                        unfold(
+                            (output_addr, output_url, output_local_port),
+                            |(output_addr, output_url, output_local_port)| async move {
+                                Some((
+                                    make_srt_ouput(
+                                        output_addr,
+                                        output_url.clone(),
+                                        output_local_port,
+                                    )
+                                    .await,
+                                    (output_addr, output_url, output_local_port),
+                                ))
+                            },
                         )
-                        .with(move |b| future::ready(Ok((b, output_addr.unwrap())))).boxed_sink())
-                    }).boxed(),
-                    "srt" => {
-                        if output_url.query_pairs().any(|(k, _)| k == "autoreconnect") {
-                            unfold((output_addr, output_url, output_local_port), |(output_addr, output_url, output_local_port)| async move { Some((make_srt_ouput(output_addr, output_url.clone(), output_local_port).await, (output_addr, output_url, output_local_port))) }).boxed()
-                        } else {
-                            once(make_srt_ouput(output_addr, output_url, output_local_port)).boxed()
-                        }
-                    },
-                  s => bail!("unrecognized scheme '{}' designated in output url", s),
+                        .boxed()
+                    } else {
+                        once(make_srt_ouput(output_addr, output_url, output_local_port)).boxed()
+                    }
                 }
+                s => bail!("unrecognized scheme '{}' designated in output url", s),
+            }
         }
         DataType::File(file) if file == Path::new("-") => once(async move {
             Ok(FutAsyncWrite(tokio::io::stdout())
