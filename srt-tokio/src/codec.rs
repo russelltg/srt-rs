@@ -4,7 +4,15 @@ use log::debug;
 use std::io;
 use tokio_util::codec::{Decoder, Encoder};
 
-pub struct PacketCodec;
+pub struct PacketCodec {
+    is_ipv6: bool,
+}
+
+impl PacketCodec {
+    pub fn new(is_ipv6: bool) -> Self {
+        PacketCodec { is_ipv6 }
+    }
+}
 
 impl Decoder for PacketCodec {
     type Item = Packet;
@@ -15,7 +23,7 @@ impl Decoder for PacketCodec {
             return Ok(None);
         }
 
-        let ret = Packet::parse(buf).map(Some);
+        let ret = Packet::parse(buf, self.is_ipv6).map(Some);
 
         if !buf.is_empty() {
             debug!("Leftover bytes in packet {:?} {:?}", ret, buf.to_vec());

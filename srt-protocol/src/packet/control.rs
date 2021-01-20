@@ -360,7 +360,7 @@ impl SocketType {
 }
 
 impl ControlPacket {
-    pub fn parse(buf: &mut impl Buf) -> Result<ControlPacket, PacketParseError> {
+    pub fn parse(buf: &mut impl Buf, is_ipv6: bool) -> Result<ControlPacket, PacketParseError> {
         let control_type = buf.get_u16() << 1 >> 1; // clear first bit
 
         // get reserved data, which is the last two bytes of the first four bytes
@@ -373,7 +373,13 @@ impl ControlPacket {
             timestamp,
             dest_sockid: SocketID(dest_sockid),
             // just match against the second byte, as everything is in that
-            control_type: ControlTypes::deserialize(control_type, reserved, add_info, buf)?,
+            control_type: ControlTypes::deserialize(
+                control_type,
+                reserved,
+                add_info,
+                buf,
+                is_ipv6,
+            )?,
         })
     }
 
@@ -432,6 +438,7 @@ impl ControlTypes {
         reserved: u16,
         extra_info: i32,
         mut buf: T,
+        is_ipv6: bool,
     ) -> Result<ControlTypes, PacketParseError> {
         match packet_type {
             0x0 => {
@@ -473,7 +480,7 @@ impl ControlTypes {
                 buf.copy_to_slice(&mut ip_buf);
 
                 // TODO: this is probably really wrong, so fix it
-                let peer_addr = if ip_buf[4..] == [0; 12][..] {
+                let peer_addr = if !is_ipv6 {
                     IpAddr::from(Ipv4Addr::new(ip_buf[3], ip_buf[2], ip_buf[1], ip_buf[0]))
                 } else {
                     IpAddr::from(ip_buf)
@@ -1175,7 +1182,7 @@ mod test {
         let mut buf = BytesMut::with_capacity(128);
         pack.serialize(&mut buf);
 
-        let des = ControlPacket::parse(&mut buf).unwrap();
+        let des = ControlPacket::parse(&mut buf, false).unwrap();
         assert!(buf.is_empty());
         assert_eq!(pack, des);
     }
@@ -1199,7 +1206,7 @@ mod test {
         let mut buf = BytesMut::with_capacity(128);
         pack.serialize(&mut buf);
 
-        let des = ControlPacket::parse(&mut buf).unwrap();
+        let des = ControlPacket::parse(&mut buf, false).unwrap();
         assert!(buf.is_empty());
         assert_eq!(pack, des);
     }
@@ -1219,7 +1226,7 @@ mod test {
         // dword 2 should have 831 in big endian, so the last two bits of the second dword
         assert_eq!((u32::from(buf[6]) << 8) + u32::from(buf[7]), 831);
 
-        let des = ControlPacket::parse(&mut buf).unwrap();
+        let des = ControlPacket::parse(&mut buf, false).unwrap();
         assert!(buf.is_empty());
         assert_eq!(pack, des);
     }
@@ -1231,7 +1238,7 @@ mod test {
         let packet_data =
             hex::decode("FFFF000000000000000189702BFFEFF2000103010000001E00000078").unwrap();
 
-        let packet = ControlPacket::parse(&mut Cursor::new(packet_data)).unwrap();
+        let packet = ControlPacket::parse(&mut Cursor::new(packet_data), false).unwrap();
 
         assert_eq!(
             packet,
@@ -1247,7 +1254,7 @@ mod test {
     fn raw_handshake_srt() {
         // this is a example HSv5 conclusion packet from the reference implementation
         let packet_data = hex::decode("8000000000000000000F9EC400000000000000050000000144BEA60D000005DC00002000FFFFFFFF3D6936B6E3E405DD0100007F00000000000000000000000000010003000103010000002F00780000").unwrap();
-        let packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..])).unwrap();
+        let packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..]), false).unwrap();
         assert_eq!(
             packet,
             ControlPacket {
@@ -1292,7 +1299,7 @@ mod test {
         // this is an example HSv5 conclusion packet from the reference implementation that has a
         // stream id.
         let packet_data = hex::decode("800000000000000000000b1400000000000000050000000563444b2e000005dc00002000ffffffff37eb0ee52154fbd60100007f0000000000000000000000000001000300010401000000bf0014001400050003646362616867666500006a69").unwrap();
-        let packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..])).unwrap();
+        let packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..]), false).unwrap();
         assert_eq!(
             packet,
             ControlPacket {
@@ -1338,7 +1345,7 @@ mod test {
     fn raw_handshake_crypto() {
         // this is an example HSv5 conclusion packet from the reference implementation that has crypto data embedded.
         let packet_data = hex::decode("800000000000000000175E8A0000000000000005000000036FEFB8D8000005DC00002000FFFFFFFF35E790ED5D16CCEA0100007F00000000000000000000000000010003000103010000002F01F401F40003000E122029010000000002000200000004049D75B0AC924C6E4C9EC40FEB4FE973DB1D215D426C18A2871EBF77E2646D9BAB15DBD7689AEF60EC").unwrap();
-        let packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..])).unwrap();
+        let packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..]), false).unwrap();
 
         assert_eq!(
             packet,
@@ -1392,7 +1399,7 @@ mod test {
     #[test]
     fn raw_handshake_crypto_pt2() {
         let packet_data = hex::decode("8000000000000000000000000C110D94000000050000000374B7526E000005DC00002000FFFFFFFF18C1CED1F3819B720100007F00000000000000000000000000020003000103010000003F03E803E80004000E12202901000000000200020000000404D3B3D84BE1188A4EBDA4DA16EA65D522D82DE544E1BE06B6ED8128BF15AA4E18EC50EAA95546B101").unwrap();
-        let _packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..])).unwrap();
+        let _packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..]), false).unwrap();
         dbg!(&_packet);
     }
 
@@ -1403,7 +1410,7 @@ mod test {
             hex::decode("800200000000000e000246e5d96d5e1a389c24780000452900007bb000001fa9")
                 .unwrap();
 
-        let _cp = ControlPacket::parse(&mut Cursor::new(packet_data)).unwrap();
+        let _cp = ControlPacket::parse(&mut Cursor::new(packet_data), false).unwrap();
     }
 
     #[test]
@@ -1431,7 +1438,7 @@ mod test {
         let mut ser = BytesMut::with_capacity(128);
         pack.serialize(&mut ser);
 
-        let pack_deser = ControlPacket::parse(&mut ser).unwrap();
+        let pack_deser = ControlPacket::parse(&mut ser, false).unwrap();
         assert!(ser.is_empty());
         assert_eq!(pack, pack_deser);
     }
@@ -1461,7 +1468,7 @@ mod test {
         let mut ser = BytesMut::with_capacity(128);
         pack.serialize(&mut ser);
 
-        let pack_deser = ControlPacket::parse(&mut ser).unwrap();
+        let pack_deser = ControlPacket::parse(&mut ser, false).unwrap();
         assert_eq!(pack, pack_deser);
         assert!(ser.is_empty());
     }
@@ -1477,7 +1484,7 @@ mod test {
         let mut ser = BytesMut::with_capacity(128);
         pack.serialize(&mut ser);
 
-        let pack_deser = ControlPacket::parse(&mut ser).unwrap();
+        let pack_deser = ControlPacket::parse(&mut ser, false).unwrap();
         assert_eq!(pack, pack_deser);
         assert!(ser.is_empty());
     }

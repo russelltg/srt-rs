@@ -240,7 +240,10 @@ impl SrtSocketBuilder {
     pub async fn connect(self) -> Result<SrtSocket, io::Error> {
         let la = self.local_addr;
         Ok(self
-            .connect_with_sock(UdpFramed::new(UdpSocket::bind(&la).await?, PacketCodec {}))
+            .connect_with_sock(UdpFramed::new(
+                UdpSocket::bind(&la).await?,
+                PacketCodec::new(la.is_ipv6()),
+            ))
             .await?)
     }
 

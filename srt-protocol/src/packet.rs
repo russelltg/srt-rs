@@ -54,7 +54,7 @@ impl Packet {
         }
     }
 
-    pub fn parse<T: Buf>(buf: &mut T) -> Result<Packet, PacketParseError> {
+    pub fn parse<T: Buf>(buf: &mut T, is_ipv6: bool) -> Result<Packet, PacketParseError> {
         // Buffer must be at least 16 bytes,
         // the length of a header packet
         if buf.remaining() < 16 {
@@ -70,7 +70,7 @@ impl Packet {
         Ok(if (first & 0x80) == 0 {
             Packet::Data(DataPacket::parse(buf)?)
         } else {
-            Packet::Control(ControlPacket::parse(buf)?)
+            Packet::Control(ControlPacket::parse(buf, is_ipv6)?)
         })
     }
 
