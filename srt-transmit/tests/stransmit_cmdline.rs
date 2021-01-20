@@ -191,12 +191,34 @@ mod stransmit_rs_snd_rcv {
     }
 
     #[tokio::test]
+    async fn basic_tcp() -> Result<(), Error> {
+        test_send(
+            3000,
+            &["udp://:3000", "tcp://127.0.0.1:3001"],
+            &["tcp://:3001", "udp://127.0.0.1:3002"],
+            3002,
+        )
+        .await
+    }
+
+    #[tokio::test]
     async fn sender_as_listener() -> Result<(), Error> {
         test_send(
             2003,
             &["udp://:2003", "srt://:2004"],
             &["srt://127.0.0.1:2004", "udp://127.0.0.1:2005"],
             2005,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn sender_as_listener_tcp() -> Result<(), Error> {
+        test_send(
+            3003,
+            &["udp://:3003", "tcp://:3004"],
+            &["tcp://127.0.0.1:3004", "udp://127.0.0.1:3005"],
+            3005,
         )
         .await
     }
