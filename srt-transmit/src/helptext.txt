@@ -5,10 +5,10 @@ Supported protocols:
         srt-transmit
             tcp://host:1234 \
                 # ^- connect to host:1234 \
-            tcp://host:1234?listen
-                # ^- bind to interface host:1234 and listen for data
+            tcp://:1234
+                # ^- bind to interface 0.0.0.0:1234 and listen for data
     Settings:
-    * listen: bind to the address:port provided and listen for connections
+    * interface=<IP address> the interface to bind to, defaults to 0.0.0.0
 
  UDP - send over a UDP port.
     example:

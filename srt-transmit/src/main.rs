@@ -296,22 +296,30 @@ fn resolve_input<'a>(
                         once(make_srt_input(input_addr, input_url, input_local_port)).boxed()
                     }
                 }
-                "tcp" if input_addr.is_none() => bail!("Must provide an address to use TCP"),
                 "tcp" => {
-                    let input = input_addr.unwrap();
-                    if input_url.query_pairs().any(|(k, _)| k == "listen") {
+                    if let Some(input) = input_addr {
                         once(async move {
-                            let listener = TcpListener::bind(input).await?;
-                            let (stream, _) = listener.accept().await?;
-                            Ok(Framed::new(stream, BytesCodec::new())
-                                .map(Result::unwrap)
-                                .map(|b| b.freeze())
-                                .boxed())
+                            loop {
+                                match TcpStream::connect(input).await {
+                                    Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+                                    Ok(stream) => {
+                                        return Ok(Framed::new(stream, BytesCodec::new())
+                                            .map(Result::unwrap)
+                                            .map(|b| b.freeze())
+                                            .boxed())
+                                    }
+                                }
+                            }
                         })
                         .boxed()
                     } else {
                         once(async move {
-                            let stream = TcpStream::connect(input).await?;
+                            let input = &parse_connection_options(
+                                input_url.query_pairs(),
+                                ConnectionKind::Listen(input_local_port),
+                            )?;
+                            let listener = TcpListener::bind(input).await?;
+                            let (stream, _) = listener.accept().await?;
                             Ok(Framed::new(stream, BytesCodec::new())
                                 .map(Result::unwrap)
                                 .map(|b| b.freeze())
@@ -433,21 +441,29 @@ fn resolve_output(output_url: DataType) -> Result<SinkStream, Error> {
                         once(make_srt_ouput(output_addr, output_url, output_local_port)).boxed()
                     }
                 }
-                "tcp" if output_addr.is_none() => bail!("Must provide an address to use TCP"),
                 "tcp" => {
-                    let output = output_addr.unwrap();
-                    if output_url.query_pairs().any(|(k, _)| k == "listen") {
+                    if let Some(output) = output_addr {
                         once(async move {
-                            let listener = TcpListener::bind(output).await?;
-                            let (stream, _) = listener.accept().await?;
-                            Ok(Framed::new(stream, BytesCodec::new())
-                                .with(move |b| future::ready(Ok(b)))
-                                .boxed_sink())
+                            loop {
+                                match TcpStream::connect(output).await {
+                                    Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+                                    Ok(stream) => {
+                                        return Ok(Framed::new(stream, BytesCodec::new())
+                                            .with(move |b| future::ready(Ok(b)))
+                                            .boxed_sink())
+                                    }
+                                }
+                            }
                         })
                         .boxed()
                     } else {
                         once(async move {
-                            let stream = TcpStream::connect(output).await?;
+                            let output = &parse_connection_options(
+                                output_url.query_pairs(),
+                                ConnectionKind::Listen(output_local_port),
+                            )?;
+                            let listener = TcpListener::bind(output).await?;
+                            let (stream, _) = listener.accept().await?;
                             Ok(Framed::new(stream, BytesCodec::new())
                                 .with(move |b| future::ready(Ok(b)))
                                 .boxed_sink())
