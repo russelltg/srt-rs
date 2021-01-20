@@ -179,22 +179,22 @@ fn get_conn_init_method(
 }
 
 #[derive(Copy, Clone)]
-enum UdpKind {
+enum ConnectionKind {
     Send,
     Listen(u16),
 }
 
-fn parse_udp_options<C>(
+fn parse_connection_options<C>(
     args: impl Iterator<Item = (C, C)>,
-    kind: UdpKind,
+    kind: ConnectionKind,
 ) -> Result<SocketAddr, Error>
 where
     C: Deref<Target = str>,
 {
     // defaults
     let mut addr = match kind {
-        UdpKind::Send => "0.0.0.0:0".parse().unwrap(),
-        UdpKind::Listen(port) => SocketAddr::new("0.0.0.0".parse().unwrap(), port),
+        ConnectionKind::Send => "0.0.0.0:0".parse().unwrap(),
+        ConnectionKind::Listen(port) => SocketAddr::new("0.0.0.0".parse().unwrap(), port),
     };
 
     for (k, v) in args {
@@ -207,7 +207,7 @@ where
                     err
                 ),
             }),
-            ("local_port", port, UdpKind::Send) => addr.set_port(match port.parse() {
+            ("local_port", port, ConnectionKind::Send) => addr.set_port(match port.parse() {
                 Ok(port) => port,
                 Err(err) => bail!(
                     "Failed to parse local_port parameter '{}' as 16 bit integer: {}",
@@ -215,7 +215,7 @@ where
                     err
                 ),
             }),
-            ("local_port", _, UdpKind::Listen(_)) => {
+            ("local_port", _, ConnectionKind::Listen(_)) => {
                 bail!("local_port is incompatiable with udp listen mode")
             }
             (unrecog, _, _) => bail!("Unrecognized udp flag: {}", unrecog),
@@ -267,9 +267,9 @@ fn resolve_input<'a>(
                 ),
                 "udp" => once(async move {
                     Ok(UdpFramed::new(
-                        UdpSocket::bind(&parse_udp_options(
+                        UdpSocket::bind(&parse_connection_options(
                             input_url.query_pairs(),
-                            UdpKind::Listen(input_local_port),
+                            ConnectionKind::Listen(input_local_port),
                         )?)
                         .await?,
                         BytesCodec::new(),
@@ -401,9 +401,9 @@ fn resolve_output(output_url: DataType) -> Result<SinkStream, Error> {
                 ),
                 "udp" => once(async move {
                     Ok(UdpFramed::new(
-                        UdpSocket::bind(&parse_udp_options(
+                        UdpSocket::bind(&parse_connection_options(
                             output_url.query_pairs(),
-                            UdpKind::Send,
+                            ConnectionKind::Send,
                         )?)
                         .await?,
                         BytesCodec::new(),
