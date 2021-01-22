@@ -1250,6 +1250,35 @@ mod test {
     }
 
     #[test]
+    fn raw_handshake_ipv6() {
+        let packet_data = hex::decode("8000000000000000000002b00000000000000004000000023c3b0296000005dc00002000000000010669ead20000000000000000000000000000000001000000").unwrap();
+        let packet = ControlPacket::parse(&mut Cursor::new(&packet_data[..]), true).unwrap();
+
+        let r = ControlPacket {
+            timestamp: TimeStamp::from_micros(688),
+            dest_sockid: SocketID(0),
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                init_seq_num: SeqNumber(1010500246),
+                max_packet_size: 1500,
+                max_flow_size: 8192,
+                shake_type: ShakeType::Induction,
+                socket_id: SocketID(0x0669EAD2),
+                syn_cookie: 0,
+                peer_addr: "::1.0.0.0".parse().unwrap(),
+                info: HandshakeVSInfo::V4(SocketType::Datagram),
+            }),
+        };
+
+        assert_eq!(packet, r);
+
+        // reserialize it
+        let mut buf = vec![];
+        packet.serialize(&mut buf);
+
+        assert_eq!(&buf[..], &packet_data[..]);
+    }
+
+    #[test]
     fn raw_handshake_srt() {
         // this is a example HSv5 conclusion packet from the reference implementation
         let packet_data = hex::decode("8000000000000000000F9EC400000000000000050000000144BEA60D000005DC00002000FFFFFFFF3D6936B6E3E405DD0100007F00000000000000000000000000010003000103010000002F00780000").unwrap();
