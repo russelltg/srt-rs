@@ -9,14 +9,14 @@ use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::process::{Child, Command};
 use tokio::time::sleep;
-use tokio_util::codec::BytesCodec;
+use tokio_util::codec::{BytesCodec, Decoder};
 use tokio_util::udp::UdpFramed;
 
 use anyhow::Error;
 
 use futures::{stream, FutureExt, SinkExt, StreamExt, TryStreamExt};
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 
 #[cfg(target_os = "windows")]
 const STRANSMIT_NAME: &str = "srt-transmit.exe";
@@ -44,15 +44,45 @@ fn find_stransmit_rs() -> PathBuf {
     stransmit_rs_path
 }
 
-async fn udp_receiver(udp_out: u16, ident: i32) -> Result<(), Error> {
-    let mut sock = UdpFramed::new(
+struct ChunkDecoder {
+    size: usize,
+}
+
+impl ChunkDecoder {
+    pub fn new(size: usize) -> Self {
+        ChunkDecoder { size }
+    }
+}
+
+impl Decoder for ChunkDecoder {
+    type Item = BytesMut;
+    type Error = std::io::Error;
+
+    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<BytesMut>, std::io::Error> {
+        if buf.len() >= self.size {
+            let out = buf.split_to(self.size);
+            buf.reserve(self.size);
+            Ok(Some(out))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+async fn build_receiver_socket(udp_out: u16, ident: i32) -> Result<UdpFramed<ChunkDecoder>, Error> {
+    let len = format!("asdf{}", ident).len();
+    Ok(UdpFramed::new(
         UdpSocket::bind(&SocketAddr::new("127.0.0.1".parse()?, udp_out)).await?,
-        BytesCodec::new(),
-    );
+        ChunkDecoder::new(len),
+    ))
+}
+
+async fn udp_receiver(udp_out: u16, ident: i32) -> Result<(), Error> {
+    let mut sock = build_receiver_socket(udp_out, ident).await?;
     udp_receiver_sock(&mut sock, ident).await
 }
 
-async fn udp_receiver_sock(sock: &mut UdpFramed<BytesCodec>, ident: i32) -> Result<(), Error> {
+async fn udp_receiver_sock(sock: &mut UdpFramed<ChunkDecoder>, ident: i32) -> Result<(), Error> {
     let receive_data = async move {
         let mut i = 0;
         while let Some((pack, _)) = sock.try_next().await.unwrap() {
@@ -173,11 +203,9 @@ fn ui_test(flags: &[&str], stderr: &str) {
 
 mod stransmit_rs_snd_rcv {
     use super::test_send;
-    use crate::{find_stransmit_rs, udp_receiver_sock, udp_sender};
+    use crate::{build_receiver_socket, find_stransmit_rs, udp_receiver_sock, udp_sender};
     use anyhow::Error;
-    use std::net::SocketAddr;
-    use tokio::{net::UdpSocket, process::Command};
-    use tokio_util::{codec::BytesCodec, udp::UdpFramed};
+    use tokio::process::Command;
 
     #[tokio::test]
     async fn basic() -> Result<(), Error> {
@@ -363,10 +391,7 @@ mod stransmit_rs_snd_rcv {
 
         let ident: i32 = rand::random();
 
-        let mut recv_sock = UdpFramed::new(
-            UdpSocket::bind(&SocketAddr::new("127.0.0.1".parse()?, 2039)).await?,
-            BytesCodec::new(),
-        );
+        let mut recv_sock = build_receiver_socket(2039, ident).await?;
 
         let sender = udp_sender(2037, ident);
         let recvr = udp_receiver_sock(&mut recv_sock, ident);
