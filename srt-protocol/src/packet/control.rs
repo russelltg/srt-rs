@@ -1,7 +1,7 @@
 use std::{
     convert::TryFrom,
     fmt::{self, Debug, Formatter},
-    net::{IpAddr, Ipv4Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
 use bitflags::bitflags;
@@ -475,15 +475,16 @@ impl ControlTypes {
                 let socket_id = SocketID(buf.get_u32());
                 let syn_cookie = buf.get_i32();
 
-                // get the IP
-                let mut ip_buf: [u8; 16] = [0; 16];
-                buf.copy_to_slice(&mut ip_buf);
-
-                // TODO: this is probably really wrong, so fix it
                 let peer_addr = if !is_ipv6 {
-                    IpAddr::from(Ipv4Addr::new(ip_buf[3], ip_buf[2], ip_buf[1], ip_buf[0]))
+                    let ip = buf.get_u32_le();
+                    buf.get_u32();
+                    buf.get_u32();
+                    buf.get_u32();
+                    IpAddr::from(Ipv4Addr::from(ip))
                 } else {
-                    IpAddr::from(ip_buf)
+                    let mut ip_buf = [0u8; 16];
+                    buf.copy_to_slice(&mut ip_buf);
+                    IpAddr::from(Ipv6Addr::from(ip_buf))
                 };
 
                 let info = match udt_version {
@@ -753,18 +754,16 @@ impl ControlTypes {
 
                 match c.peer_addr {
                     IpAddr::V4(four) => {
-                        let mut v = Vec::from(&four.octets()[..]);
-                        v.reverse(); // reverse bytes
-                        into.put(&v[..]);
+                        let v = u32::from(four);
+                        into.put_u32_le(v);
 
                         // the data structure reuiqres enough space for an ipv6, so pad the end with 16 - 4 = 12 bytes
                         into.put(&[0; 12][..]);
                     }
                     IpAddr::V6(six) => {
-                        let mut v = Vec::from(&six.octets()[..]);
-                        v.reverse();
+                        let v = u128::from(six);
 
-                        into.put(&v[..]);
+                        into.put_u128(v);
                     }
                 }
 
