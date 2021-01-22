@@ -2,11 +2,12 @@ use std::env;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::thread;
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
+use tokio::process::{Child, Command};
 use tokio::time::sleep;
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
@@ -87,6 +88,19 @@ async fn udp_sender(udp_in: u16, ident: i32) -> Result<(), Error> {
     Ok::<_, Error>(())
 }
 
+async fn wait_for(mut a: Child, mut b: Child, failure_str: &str) -> Result<(), Error> {
+    futures::select! {
+        r_a = a.wait().fuse() => { r_a.expect(failure_str); },
+        r_b = b.wait().fuse() => { r_b.expect(failure_str); },
+        _ = sleep(Duration::from_secs(10)).fuse() => {
+            a.kill().await.expect(failure_str);
+            b.kill().await.expect(failure_str);
+        }
+    }
+
+    Ok::<_, Error>(())
+}
+
 async fn test_send(
     udp_in: u16,
     args_a: &'static [&str],
@@ -95,8 +109,8 @@ async fn test_send(
 ) -> Result<(), Error> {
     let srs_path = find_stransmit_rs();
 
-    let mut a = Command::new(&srs_path).args(args_a).spawn()?;
-    let mut b = Command::new(&srs_path).args(args_b).spawn()?;
+    let a = Command::new(&srs_path).args(args_a).spawn()?;
+    let b = Command::new(&srs_path).args(args_b).spawn()?;
 
     let ident: i32 = rand::random();
 
@@ -111,18 +125,11 @@ async fn test_send(
         args_b.join(" ")
     );
 
-    // it worked, kill the processes
-    a.kill().expect(&failure_str);
-    b.kill().expect(&failure_str);
-
-    a.wait().expect(&failure_str);
-    b.wait().expect(&failure_str);
-
-    Ok(())
+    wait_for(a, b, &failure_str).await
 }
 
 fn ui_test(flags: &[&str], stderr: &str) {
-    let mut child = Command::new(find_stransmit_rs())
+    let mut child = std::process::Command::new(find_stransmit_rs())
         .args(flags)
         .stderr(Stdio::piped())
         .spawn()
@@ -168,8 +175,8 @@ mod stransmit_rs_snd_rcv {
     use super::test_send;
     use crate::{find_stransmit_rs, udp_receiver_sock, udp_sender};
     use anyhow::Error;
-    use std::{net::SocketAddr, process::Command};
-    use tokio::net::UdpSocket;
+    use std::net::SocketAddr;
+    use tokio::{net::UdpSocket, process::Command};
     use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
     #[tokio::test]
@@ -347,8 +354,8 @@ mod stransmit_rs_snd_rcv {
         let failure_str = format!("Failed reconnect test",);
 
         // it worked, restart b, send again
-        b.kill().expect(&failure_str);
-        b.wait().expect(&failure_str);
+        b.kill().await.expect(&failure_str);
+        b.wait().await.expect(&failure_str);
 
         let mut b = Command::new(&srs_path).args(b_args).spawn().unwrap();
 
@@ -357,11 +364,11 @@ mod stransmit_rs_snd_rcv {
 
         futures::try_join!(recvr, sender).unwrap();
 
-        a.kill().expect(&failure_str);
-        b.kill().expect(&failure_str);
+        a.kill().await.expect(&failure_str);
+        b.kill().await.expect(&failure_str);
 
-        a.wait().expect(&failure_str);
-        b.wait().expect(&failure_str);
+        a.wait().await.expect(&failure_str);
+        b.wait().await.expect(&failure_str);
 
         Ok(())
     }
