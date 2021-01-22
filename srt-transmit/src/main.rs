@@ -1,5 +1,4 @@
 use std::{
-    io,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     ops::Deref,
     path::Path,
@@ -25,6 +24,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt},
     net::UdpSocket,
 };
+use tokio_util::codec::FramedWrite;
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
 use log::info;
@@ -42,25 +42,6 @@ trait MySinkExt<Item>: Sink<Item> {
     }
 }
 impl<T, Item> MySinkExt<Item> for T where T: Sink<Item> {}
-
-// futures::AsyncWrite impl for tokio::io::AsyncWrite
-struct FutAsyncWrite<T>(T);
-impl<T: tokio::io::AsyncWrite + Unpin> futures::AsyncWrite for FutAsyncWrite<T> {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &[u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        <T as tokio::io::AsyncWrite>::poll_write(Pin::new(&mut self.0), cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        <T as tokio::io::AsyncWrite>::poll_flush(Pin::new(&mut self.0), cx)
-    }
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        <T as tokio::io::AsyncWrite>::poll_shutdown(Pin::new(&mut self.0), cx)
-    }
-}
 
 // INPUT and OUTPUT can be either a Url of a File
 enum DataType<'a> {
@@ -431,18 +412,17 @@ fn resolve_output(output_url: DataType) -> Result<SinkStream, Error> {
             }
         }
         DataType::File(file) if file == Path::new("-") => once(async move {
-            Ok(FutAsyncWrite(tokio::io::stdout())
-                .into_sink()
-                .sink_map_err(Error::from)
+            Ok(FramedWrite::new(tokio::io::stdout(), BytesCodec::new())
+                .with(move |b| future::ready(Ok(b)))
                 .boxed_sink())
         })
         .boxed(),
         DataType::File(file) => {
             let file = file.to_owned();
             once(async move {
-                Ok(FutAsyncWrite(tokio::fs::File::create(file).await?)
-                    .into_sink()
-                    .sink_map_err(Error::from)
+                let output = tokio::fs::File::create(file).await?;
+                Ok(FramedWrite::new(output, BytesCodec::new())
+                    .with(move |b| future::ready(Ok(b)))
                     .boxed_sink())
             })
             .boxed()
