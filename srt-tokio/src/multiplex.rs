@@ -156,7 +156,10 @@ pub async fn multiplex(
 ) -> Result<impl Stream<Item = Result<SrtSocket, io::Error>>, io::Error> {
     Ok(unfold(
         MultiplexState {
-            sock: UdpFramed::new(UdpSocket::bind(addr).await?, PacketCodec),
+            sock: UdpFramed::new(
+                UdpSocket::bind(addr).await?,
+                PacketCodec::new(addr.is_ipv6()),
+            ),
             pending: HashMap::new(),
             acceptor,
             conns: HashMap::new(),

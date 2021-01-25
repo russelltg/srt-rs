@@ -558,7 +558,7 @@ mod tests {
         let mut buf = Vec::new();
         handshake.serialize(&mut buf);
 
-        let deserialized = Packet::parse(&mut Cursor::new(buf)).unwrap();
+        let deserialized = Packet::parse(&mut Cursor::new(buf), false).unwrap();
 
         assert_eq!(handshake, deserialized);
     }
@@ -574,7 +574,7 @@ mod tests {
         let mut buf = Vec::new();
         sid.serialize(&mut buf);
 
-        let deser = Packet::parse(&mut Cursor::new(buf)).unwrap();
+        let deser = Packet::parse(&mut Cursor::new(buf), false).unwrap();
 
         assert_eq!(sid, deser);
     }

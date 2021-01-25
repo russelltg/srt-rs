@@ -1,4 +1,4 @@
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::{io, time::Duration};
 
 use tokio::net::UdpSocket;
@@ -11,7 +11,7 @@ use crate::{
     crypto::CryptoOptions, multiplex, pending_connection, Packet, PacketCodec, PacketParseError,
     SrtSocket,
 };
-use log::warn;
+use log::{error, warn};
 use srt_protocol::{
     accesscontrol::{AllowAllStreamAcceptor, StreamAcceptor},
     pending_connection::ConnInitSettings,
@@ -58,9 +58,18 @@ use srt_protocol::{
 #[derive(Debug, Clone)]
 #[must_use]
 pub struct SrtSocketBuilder {
-    local_addr: SocketAddr,
+    local_addr: Option<IpAddr>,
+    local_port: u16,
     conn_type: ConnInitMethod,
     init_settings: ConnInitSettings,
+}
+
+fn unspecified(is_ipv4: bool) -> IpAddr {
+    if is_ipv4 {
+        Ipv4Addr::UNSPECIFIED.into()
+    } else {
+        Ipv6Addr::UNSPECIFIED.into()
+    }
 }
 
 /// Describes how this SRT entity will connect to the other.
@@ -81,17 +90,20 @@ pub enum ConnInitMethod {
 }
 
 impl SrtSocketBuilder {
-    /// Defaults to binding to `0.0.0.0:0` (all adaptors, OS assigned port), 50ms latency, and no encryption.
+    /// Defaults to binding to all adaptors, OS assigned port, 50ms latency, and no encryption.
+    /// In listen mode it defaults to IPv4 if not otherwise specified.
     /// Generally easier to use [`new_listen`](SrtSocketBuilder::new_listen), [`new_connect`](SrtSocketBuilder::new_connect) or [`new_rendezvous`](SrtSocketBuilder::new_rendezvous)
     pub fn new(conn_type: ConnInitMethod) -> Self {
         SrtSocketBuilder {
-            local_addr: "0.0.0.0:0".parse().unwrap(),
+            local_addr: None,
+            local_port: 0,
             conn_type,
             init_settings: ConnInitSettings::default(),
         }
     }
 
     /// Create a new listener, accepting one connection
+    /// It would listen to IPv4 0.0.0.0 by default.
     pub fn new_listen() -> Self {
         Self::new(ConnInitMethod::Listen)
     }
@@ -142,14 +154,14 @@ impl SrtSocketBuilder {
 
     /// Sets the local address of the socket. This can be used to bind to just a specific network adapter instead of the default of all adapters.
     pub fn local_addr(mut self, local_addr: IpAddr) -> Self {
-        self.local_addr.set_ip(local_addr);
+        self.local_addr = Some(local_addr);
 
         self
     }
 
     /// Sets the port to bind to. In general, to be used for [`ConnInitMethod::Listen`] and [`ConnInitMethod::Rendezvous`], but generally not [`ConnInitMethod::Connect`].
     pub fn local_port(mut self, port: u16) -> Self {
-        self.local_addr.set_port(port);
+        self.local_port = port;
 
         self
     }
@@ -208,19 +220,33 @@ impl SrtSocketBuilder {
                 pending_connection::listen(&mut socket, self.init_settings).await?
             }
             ConnInitMethod::Connect(addr, sid) => {
-                pending_connection::connect(
+                let local_addr = self
+                    .local_addr
+                    .unwrap_or_else(|| unspecified(addr.is_ipv4()));
+                if matches!((addr.ip(), local_addr), (IpAddr::V4(_), IpAddr::V6(_)) | (IpAddr::V6(_), IpAddr::V4(_)))
+                {
+                    error!("Mismatched address and local address ip family");
+                    return Err(io::ErrorKind::InvalidInput.into());
+                }
+                let r = pending_connection::connect(
                     &mut socket,
                     addr,
-                    self.local_addr.ip(),
+                    local_addr,
                     self.init_settings,
                     sid,
                 )
-                .await?
+                .await;
+
+                r?
             }
             ConnInitMethod::Rendezvous(remote_public) => {
+                let addr = self
+                    .local_addr
+                    .unwrap_or_else(|| unspecified(remote_public.is_ipv4()));
+                let local_addr = SocketAddr::new(addr, self.local_port);
                 pending_connection::rendezvous(
                     &mut socket,
-                    self.local_addr,
+                    local_addr,
                     remote_public,
                     self.init_settings,
                 )
@@ -238,9 +264,21 @@ impl SrtSocketBuilder {
 
     /// Connects to the remote socket. Resolves when it has been connected successfully.
     pub async fn connect(self) -> Result<SrtSocket, io::Error> {
-        let la = self.local_addr;
+        let is_ipv4 = match self.conn_type {
+            ConnInitMethod::Connect(addr, _) => addr.is_ipv4(),
+            ConnInitMethod::Rendezvous(addr) => addr.is_ipv4(),
+            ConnInitMethod::Listen => true,
+        };
+
+        let la = SocketAddr::new(
+            self.local_addr.unwrap_or_else(|| unspecified(is_ipv4)),
+            self.local_port,
+        );
         Ok(self
-            .connect_with_sock(UdpFramed::new(UdpSocket::bind(&la).await?, PacketCodec {}))
+            .connect_with_sock(UdpFramed::new(
+                UdpSocket::bind(&la).await?,
+                PacketCodec::new(la.is_ipv6()),
+            ))
             .await?)
     }
 
@@ -261,7 +299,11 @@ impl SrtSocketBuilder {
     ) -> Result<impl Stream<Item = Result<SrtSocket, io::Error>>, io::Error> {
         match self.conn_type {
             ConnInitMethod::Listen => {
-                multiplex(self.local_addr, self.init_settings, acceptor).await
+                let addr = self
+                    .local_addr
+                    .unwrap_or_else(|| Ipv4Addr::UNSPECIFIED.into());
+                let local_addr = SocketAddr::new(addr, self.local_port);
+                multiplex(local_addr, self.init_settings, acceptor).await
             }
             _ => panic!("Cannot bind multiplexed with any connection mode other than listen"),
         }
