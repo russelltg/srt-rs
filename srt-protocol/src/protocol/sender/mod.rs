@@ -70,12 +70,6 @@ pub enum SenderAlgorithmAction {
     Close,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum SenderAlgorithmStep {
-    Step1,
-    Step6,
-}
-
 pub struct Sender {
     /// The settings, including remote sockid and address
     settings: ConnectionSettings,
@@ -108,7 +102,8 @@ pub struct Sender {
     /// The ack sequence number that an ack2 has been sent for
     lr_acked_ack: i32,
 
-    step: SenderAlgorithmStep,
+    /// How many can you send currently without running into CC
+    // num_can_send: u64,
 
     snd_timer: Timer,
 
@@ -135,7 +130,7 @@ impl Sender {
             lr_acked_ack: -1, // TODO: why magic number?
             output_buffer: VecDeque::new(),
             transmit_buffer: TransmitBuffer::new(&settings),
-            step: SenderAlgorithmStep::Step1,
+            // num_can_send: 0,
             snd_timer: Timer::new(Duration::from_millis(1), settings.socket_start_time),
             close_requested: false,
             shutdown_sent: false,
@@ -155,11 +150,6 @@ impl Sender {
         let packet_count = self.transmit_buffer.push_message(data);
         self.congestion_control
             .on_input(now, packet_count, data_length);
-    }
-
-    fn handle_snd_timer(&mut self, now: Instant) {
-        self.snd_timer.reset(now);
-        self.step = SenderAlgorithmStep::Step1;
     }
 
     pub fn handle_packet(
@@ -198,7 +188,7 @@ impl Sender {
 
     pub fn next_action(&mut self, now: Instant) -> SenderAlgorithmAction {
         use SenderAlgorithmAction::*;
-        use SenderAlgorithmStep::*;
+
 
         // don't return close until fully flushed
         if self.close_requested && self.is_flushed() {
@@ -210,82 +200,94 @@ impl Sender {
             return Close;
         }
 
-        if let Some(exp_time) = self.snd_timer.check_expired(now) {
-            self.handle_snd_timer(exp_time);
-        }
-
-        if self.step == Step6 {
-            return WaitUntil(self.snd_timer.next_instant());
-        }
-
-        //   1) If the sender's loss list is not empty, retransmit the first
-        //      packet in the list and remove it from the list. Go to 5).
-        if let Some(p) = self.loss_list.pop_front() {
-            debug!("Sending packet in loss list, seq={:?}", p.seq_number);
-            self.send_data(p);
-
-            // TODO: returning here will result in sending all the packets in the loss
-            //       list before progressing further through the sender algorithm. This
-            //       appears to be inconsistent with the UDT spec. Is it consistent
-            //       with the reference implementation?
-            return WaitForData;
-        }
-        // TODO: what is messaging mode?
-        // TODO: I honestly don't know what this means
-        //
-        //   2) In messaging mode, if the packets has been the loss list for a
-        //      time more than the application specified TTL, send a message drop
-        //      request and remove all related packets from the loss list. Go to
-        //      1).
-
-        //   3) Wait until there is application data to be sent.
-        else if self.transmit_buffer.is_empty() && !self.close_requested {
-            // TODO: the spec for 3) seems to suggest waiting at here for data,
-            //       but if execution doesn't jump back to Step1, then many of
-            //       the tests don't pass... WAT?
-            return WaitForData;
-        }
-        //   4)
-        //        a. If the number of unacknowledged packets exceeds the
-        //           flow/congestion window size, wait until an ACK comes. Go to
-        //           1).
-        //        b. Pack a new data packet and send it out.
-        // TODO: account for looping here <--- WAT?
-        else if self.lr_acked_packet
-            < self.transmit_buffer.next_sequence_number - self.congestion_control.window_size()
-        {
-            // flow window exceeded, wait for ACK
-            trace!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}",
-                   self.lr_acked_packet,
-                   self.transmit_buffer.next_sequence_number,
-                   self.congestion_control.window_size(),
-                   self.transmit_buffer.next_sequence_number - self.congestion_control.window_size());
-
-            return WaitUntilAck;
-        } else if let Some(p) = self.pop_transmit_buffer() {
-            self.send_data(p);
-        } else if self.close_requested {
-            // this covers the niche case of dropping the last packet(s)
-            if let Some(dp) = self.send_buffer.front().cloned() {
-                self.send_data(dp);
-            }
-        }
-
-        //   5) If the sequence number of the current packet is 16n, where n is an
-        //      integer, go to 2).
-        if let Some(p) = self.pop_transmit_buffer_16n() {
-            //      NOTE: to get the closest timing, we ignore congestion control
-            //      and send the 16th packet immediately, instead of proceeding to step 2
-            self.send_data(p);
-        }
-
-        //   6) Wait (SND - t) time, where SND is the inter-packet interval
-        //      updated by congestion control and t is the total time used by step
-        //      1 to step 5. Go to 1).
-        self.step = Step6;
         self.snd_timer
             .set_period(self.congestion_control.snd_period());
-        WaitUntil(self.snd_timer.next_instant())
+        let mut num_can_send = self.snd_timer.check_expired(now).unwrap_or(0);
+
+        loop {
+            if num_can_send == 0 {
+                return WaitUntil(self.snd_timer.next_instant());
+            }
+
+            //   1) If the sender's loss list is not empty, retransmit the first
+            //      packet in the list and remove it from the list. Go to 5).
+            if let Some(p) = self.loss_list.pop_front() {
+                debug!("Sending packet in loss list, seq={:?}", p.seq_number);
+                self.send_data(p);
+
+                // TODO: returning here will result in sending all the packets in the loss
+                //       list before progressing further through the sender algorithm. This
+                //       appears to be inconsistent with the UDT spec. Is it consistent
+                //       with the reference implementation?
+                return WaitForData;
+            }
+            // TODO: what is messaging mode?
+            // TODO: I honestly don't know what this means
+            //
+            //   2) In messaging mode, if the packets has been the loss list for a
+            //      time more than the application specified TTL, send a message drop
+            //      request and remove all related packets from the loss list. Go to
+            //      1).
+
+            //   3) Wait until there is application data to be sent.
+            else if self.transmit_buffer.is_empty() && !self.close_requested {
+                // TODO: the spec for 3) seems to suggest waiting at here for data,
+                //       but if execution doesn't jump back to Step1, then many of
+                //       the tests don't pass... WAT?
+                if matches!(self.handshake, Handshake::Connector) {
+                    // dbg!(self.transmit_buffer.len(), &self.handshake);
+                }
+                return WaitForData;
+            }
+            //   4)
+            //        a. If the number of unacknowledged packets exceeds the
+            //           flow/congestion window size, wait until an ACK comes. Go to
+            //           1).
+            //        b. Pack a new data packet and send it out.
+            // TODO: account for looping here <--- WAT?
+            else if self.lr_acked_packet
+                < self.transmit_buffer.next_sequence_number_to_send() - self.congestion_control.window_size()
+            {
+                // flow window exceeded, wait for ACK
+                trace!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}",
+                    self.lr_acked_packet,
+                    self.transmit_buffer.next_sequence_number_to_send(),
+                    self.congestion_control.window_size(),
+                    self.transmit_buffer.next_sequence_number_to_send() - self.congestion_control.window_size());
+
+                if matches!(self.handshake, Handshake::Connector) {
+                    //    dbg!(self.transmit_buffer.next_sequence_number_to_send() - self.lr_acked_packet, self.lr_acked_packet);
+                }
+                
+
+                return WaitUntilAck;
+            } else if let Some(p) = self.pop_transmit_buffer() {
+                self.send_data(p);
+                num_can_send = num_can_send.saturating_sub(1);
+            } else if self.close_requested {
+                // this covers the niche case of dropping the last packet(s)
+                if let Some(dp) = self.send_buffer.front().cloned() {
+                    self.send_data(dp);
+                    num_can_send = num_can_send.saturating_sub(1);
+                }
+            }
+
+            //   5) If the sequence number of the current packet is 16n, where n is an
+            //      integer, go to 2).
+            if let Some(p) = self.pop_transmit_buffer_16n() {
+                //      NOTE: to get the closest timing, we ignore congestion control
+                //      and send the 16th packet immediately, instead of proceeding to step 2
+                self.send_data(p);
+                num_can_send = num_can_send.saturating_sub(1);
+            }
+
+            //   6) Wait (SND - t) time, where SND is the inter-packet interval
+            //      updated by congestion control and t is the total time used by step
+            //      1 to step 5. Go to 1).
+                if matches!(self.handshake, Handshake::Connector) {
+                    // dbg!("hi");
+                }
+        }
     }
 
     fn handle_data_packet(&mut self, _packet: DataPacket, _now: Instant) -> SenderResult {
@@ -468,5 +470,6 @@ impl Sender {
 
     fn send_data(&mut self, p: DataPacket) {
         self.output_buffer.push_back(Packet::Data(p));
+        // let _ = (self.num_can_send.saturating_sub(1));
     }
 }

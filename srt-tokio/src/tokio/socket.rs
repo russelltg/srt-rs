@@ -91,6 +91,11 @@ where
         let mut receiver = Receiver::new(conn_copy.settings, Handshake::Connector);
 
         let mut flushed = true;
+
+        let mut last_send = Instant::now();
+        let start = Instant::now();
+        let mut packets_sent = 0;
+
         loop {
             let (sender_timeout, close) = match sender.next_action(Instant::now()) {
                 SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {
@@ -106,6 +111,9 @@ where
                 if let Err(e) = sock.send(out).await {
                     error!("Error while seding packet: {:?}", e); // TODO: real error handling
                 }
+                    // dbg!((Instant::now() - start).as_secs_f64() * 1e6 / packets_sent as f64);
+                    packets_sent += 1;
+                    last_send = Instant::now();
             }
 
             if close && receiver.is_flushed() {
@@ -198,6 +206,14 @@ where
                 .iter()
                 .filter_map(|&x| x) // Only take Some(x) timeouts
                 .min();
+
+            if let Some(to) = timeout {
+                if Instant::now() > to {
+                    // dbg!();
+                    continue;
+                }
+
+            }
 
             let timeout_fut = async {
                 if let Some(to) = timeout {

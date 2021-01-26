@@ -534,10 +534,11 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Error> {
-    pretty_env_logger::formatted_builder()
+    pretty_env_logger
+    // ::formatted_builder()
         // .format(|buf, record| writeln!(buf, "{} [{}] {}", record.args()))
-        .format_timestamp_micros()
-        .init();
+        // .format_timestamp_micros()
+        ::init();
 
     let matches = App::new("srt-transmit")
         .version("1.0")

@@ -47,10 +47,8 @@ impl Connection {
             if self.exp_count == 16 {
                 info!("16 exps, timeout!");
             }
-            self.exp_timer.reset(exp)
         }
         if let Some(exp) = self.keepalive_timer.check_expired(now) {
-            self.keepalive_timer.reset(exp);
             return ConnectionAction::SendKeepAlive;
         }
         if self.exp_count >= 16 {

@@ -19,7 +19,7 @@ pub struct TransmitBuffer {
 
     crypto: Option<CryptoManager>,
 
-    /// The sequence number for the next data packet
+    /// The sequence number for the next data packet that's pushed into the buffer
     pub next_sequence_number: SeqNumber,
 
     /// The message number for the next message
@@ -85,6 +85,14 @@ impl TransmitBuffer {
 
     pub fn timestamp_from(&self, at: Instant) -> TimeStamp {
         self.time_base.timestamp_from(at)
+    }
+
+    pub fn next_sequence_number_to_send(&self) -> SeqNumber {
+        if let Some(front) = self.buffer.front() {
+            front.seq_number
+        } else {
+            self.next_sequence_number
+        }
     }
 
     fn begin_transmit(

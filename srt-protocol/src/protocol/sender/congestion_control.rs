@@ -104,19 +104,20 @@ impl SenderCongestionControl {
 
             let mean_packet_size = self.message_stats.mean_payload_size() + SRT_DATA_HEADER_SIZE;
             // multiply packet size to adjust data rate to microseconds (i.e. x 1,000,000)
-            let period = mean_packet_size * 1_000_000 / self.current_data_rate;
+            // (bytes / packet) * (ns/s) / (bytes/s) = ns/packet
+            let period = mean_packet_size * 1_000_000_000 / self.current_data_rate;
 
             if period > 0 {
-                return Duration::from_micros(period as u64);
+                return Duration::from_nanos(period as u64);
             }
         }
-        Duration::from_micros(1)
+        Duration::from_micros(100)
     }
 
     pub fn window_size(&self) -> u32 {
         // Up to SRT 1.0.6, this value was set at 1000 pkts, which may be insufficient
         // for satellite links with ~1000 msec RTT and high bit rate.
-        self.window_size.unwrap_or(1000) as u32
+        self.window_size.unwrap_or(100_000) as u32
     }
 
     /// When an ACK packet is received
