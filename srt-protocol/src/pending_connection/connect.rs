@@ -118,10 +118,11 @@ impl Connect {
         from: SocketAddr,
         info: HandshakeControlInfo,
         initiator: StartedInitiator,
+        now: Instant,
     ) -> ConnectionResult {
         match (info.shake_type, info.info.version(), from) {
             (ShakeType::Conclusion, 5, from) if from == self.remote => {
-                let settings = match initiator.finish_hsv5_initiation(&info, from) {
+                let settings = match initiator.finish_hsv5_initiation(&info, from, now) {
                     Ok(s) => s,
                     Err(rr) => return NotHandled(rr),
                 };
@@ -146,7 +147,7 @@ impl Connect {
         }
     }
 
-    pub fn handle_packet(&mut self, next: (Packet, SocketAddr)) -> ConnectionResult {
+    pub fn handle_packet(&mut self, next: (Packet, SocketAddr), now: Instant) -> ConnectionResult {
         let (packet, from) = next;
         match (self.state.clone(), packet) {
             (InductionResponseWait(_), Packet::Control(control)) => match control.control_type {
@@ -157,7 +158,7 @@ impl Connect {
             },
             (ConclusionResponseWait(_, cm), Packet::Control(control)) => match control.control_type
             {
-                ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, shake, cm),
+                ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, shake, cm, now),
                 control_type => NotHandled(HandshakeExpected(control_type)),
             },
             (_, Packet::Data(data)) => NotHandled(ControlExpected(data)),
@@ -210,7 +211,7 @@ mod test {
             }),
         });
 
-        let resp = c.handle_packet((first, test_remote()));
+        let resp = c.handle_packet((first, test_remote()), Instant::now());
         assert!(
             matches!(
                 resp,
@@ -243,7 +244,7 @@ mod test {
             }),
         });
 
-        let resp = c.handle_packet((rejection, test_remote()));
+        let resp = c.handle_packet((rejection, test_remote()), Instant::now());
         assert!(
             matches!(
                 resp,

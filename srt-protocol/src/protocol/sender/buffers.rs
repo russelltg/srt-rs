@@ -41,8 +41,7 @@ impl TransmitBuffer {
 
     /// In the case of a message longer than the packet size,
     /// It will be split into multiple packets
-    pub fn push_message(&mut self, data: (Instant, Bytes)) -> usize {
-        let (time, mut payload) = data;
+    pub fn push_message(&mut self, (time, mut payload): (Instant, Bytes)) -> usize {
         let mut location = PacketLocation::FIRST;
         let mut packet_count = 0;
         let message_number = self.get_new_message_number();
@@ -85,6 +84,10 @@ impl TransmitBuffer {
 
     pub fn timestamp_from(&self, at: Instant) -> TimeStamp {
         self.time_base.timestamp_from(at)
+    }
+
+    pub fn instant_from(&self, now: Instant, at: TimeStamp) -> Instant {
+        self.time_base.instant_from(now, at)
     }
 
     pub fn next_sequence_number_to_send(&self) -> SeqNumber {

@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use log::debug;
+use log::{debug, info};
 use log::{trace, warn};
 
 use super::TimeSpan;
@@ -105,7 +105,7 @@ pub struct Sender {
     /// How many can you send currently without running into CC
     // num_can_send: u64,
 
-    snd_timer: Timer,
+    pub snd_timer: Timer,
 
     close_requested: bool,
     shutdown_sent: bool,
@@ -131,7 +131,7 @@ impl Sender {
             output_buffer: VecDeque::new(),
             transmit_buffer: TransmitBuffer::new(&settings),
             // num_can_send: 0,
-            snd_timer: Timer::new(Duration::from_millis(1), settings.socket_start_time),
+            snd_timer: Timer::new(Duration::from_micros(1), settings.socket_start_time),
             close_requested: false,
             shutdown_sent: false,
         }
@@ -146,6 +146,13 @@ impl Sender {
     }
 
     pub fn handle_data(&mut self, data: (Instant, Bytes), now: Instant) {
+        let earliest_delivery_time = now + Duration::from_micros(self.metrics.rtt.as_micros() as u64);
+        let requested_delivery_time = data.0 + self.settings.send_tsbpd_latency;
+
+        if earliest_delivery_time > requested_delivery_time {
+            info!("Packet impossible to deliver in time {:?} too late", earliest_delivery_time - requested_delivery_time);
+        }
+
         let data_length = data.1.len();
         let packet_count = self.transmit_buffer.push_message(data);
         self.congestion_control
@@ -213,7 +220,7 @@ impl Sender {
             //      packet in the list and remove it from the list. Go to 5).
             if let Some(p) = self.loss_list.pop_front() {
                 debug!("Sending packet in loss list, seq={:?}", p.seq_number);
-                self.send_data(p);
+                self.send_data(p, now);
 
                 // TODO: returning here will result in sending all the packets in the loss
                 //       list before progressing further through the sender algorithm. This
@@ -262,12 +269,12 @@ impl Sender {
 
                 return WaitUntilAck;
             } else if let Some(p) = self.pop_transmit_buffer() {
-                self.send_data(p);
+                self.send_data(p, now);
                 num_can_send = num_can_send.saturating_sub(1);
             } else if self.close_requested {
                 // this covers the niche case of dropping the last packet(s)
                 if let Some(dp) = self.send_buffer.front().cloned() {
-                    self.send_data(dp);
+                    self.send_data(dp, now);
                     num_can_send = num_can_send.saturating_sub(1);
                 }
             }
@@ -277,7 +284,7 @@ impl Sender {
             if let Some(p) = self.pop_transmit_buffer_16n() {
                 //      NOTE: to get the closest timing, we ignore congestion control
                 //      and send the 16th packet immediately, instead of proceeding to step 2
-                self.send_data(p);
+                self.send_data(p, now);
                 num_can_send = num_can_send.saturating_sub(1);
             }
 
@@ -468,8 +475,13 @@ impl Sender {
         }));
     }
 
-    fn send_data(&mut self, p: DataPacket) {
+    fn send_data(&mut self, p: DataPacket, now: Instant) {
+        let earliest_delivery_time = now + Duration::from_micros(self.metrics.rtt.as_micros() as u64);
+        let requested_delivery_time = self.transmit_buffer.instant_from(now, p.timestamp) + self.settings.send_tsbpd_latency;
+
+        if earliest_delivery_time > requested_delivery_time {
+            info!("Packet {:?} impossible to deliver in time {:?} too late", p.seq_number, earliest_delivery_time - requested_delivery_time);
+        }
         self.output_buffer.push_back(Packet::Data(p));
-        // let _ = (self.num_can_send.saturating_sub(1));
     }
 }

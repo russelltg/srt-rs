@@ -1,11 +1,7 @@
 use futures::select;
 use log::{debug, warn};
 
-use std::{
-    io,
-    net::{IpAddr, SocketAddr},
-    time::Duration,
-};
+use std::{io, net::{IpAddr, SocketAddr}, time::{Duration, Instant}};
 
 use srt_protocol::{
     accesscontrol::AllowAllStreamAcceptor,
@@ -37,7 +33,7 @@ where
     loop {
         let result = select! {
             now = tick_interval.tick().fuse() => connect.handle_tick(now.into()),
-            packet = get_packet(sock).fuse() => connect.handle_packet(packet?),
+            packet = get_packet(sock).fuse() => connect.handle_packet(packet?, Instant::now()),
         };
         debug!("sending packet");
 
@@ -83,7 +79,7 @@ where
     loop {
         let packet = get_packet(sock).await?;
         debug!("got packet {:?}", packet);
-        match listen.handle_packet(packet, &mut a) {
+        match listen.handle_packet(packet, Instant::now(), &mut a) {
             ConnectionResult::SendPacket(packet) => sock.send(packet).await?,
             ConnectionResult::NotHandled(e) => {
                 warn!("{:?}", e);
@@ -118,7 +114,7 @@ where
     loop {
         let result = select! {
             now = tick_interval.tick().fuse() => rendezvous.handle_tick(now.into()),
-            packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?, ),
+            packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?, Instant::now()),
         };
 
         // trace!("Ticking {:?} {:?}", sockid, rendezvous);

@@ -46,16 +46,3 @@ pub struct ConnectionSettings {
     pub stream_id: Option<String>,
 }
 
-impl ConnectionSettings {
-    /// Timestamp in us
-    pub fn get_timestamp(&self, at: Instant) -> i32 {
-        let elapsed = at - self.socket_start_time;
-
-        elapsed.as_micros() as i32 // TODO: handle overflow here
-    }
-
-    /// Timestamp in us
-    pub fn get_timestamp_now(&self) -> i32 {
-        self.get_timestamp(Instant::now())
-    }
-}

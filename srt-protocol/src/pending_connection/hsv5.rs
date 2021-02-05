@@ -25,6 +25,7 @@ pub fn gen_hsv5_response(
     settings: &mut ConnInitSettings,
     with_hsv5: &HandshakeControlInfo,
     from: SocketAddr,
+    now: Instant,
     acceptor: &mut impl StreamAcceptor,
 ) -> GenHsv5Result {
     let incoming = match &with_hsv5.info {
@@ -98,7 +99,7 @@ pub fn gen_hsv5_response(
             remote: from,
             remote_sockid: with_hsv5.socket_id,
             local_sockid: settings.local_sockid,
-            socket_start_time: Instant::now(), // xxx?
+            socket_start_time: now,
             init_send_seq_num: settings.starting_send_seqnum,
             init_recv_seq_num: with_hsv5.init_seq_num,
             max_packet_size: 1500, // todo: parameters!
@@ -161,6 +162,7 @@ impl StartedInitiator {
         self,
         response: &HandshakeControlInfo,
         from: SocketAddr,
+        now: Instant,
     ) -> Result<ConnectionSettings, ConnectError> {
         // TODO: factor this out with above...
         let incoming = match &response.info {
@@ -181,7 +183,7 @@ impl StartedInitiator {
             remote: from,
             remote_sockid: response.socket_id,
             local_sockid: self.settings.local_sockid,
-            socket_start_time: Instant::now(), // xxx?
+            socket_start_time: now, // xxx?
             init_send_seq_num: self.settings.starting_send_seqnum,
             init_recv_seq_num: response.init_seq_num,
             max_packet_size: 1500, // todo: parameters!

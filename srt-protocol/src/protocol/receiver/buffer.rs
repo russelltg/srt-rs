@@ -58,6 +58,7 @@ impl RecvBuffer {
     /// If `pack.seq_number < self.head`, this is nop (ie it appears before an already released packet)
     pub fn add(&mut self, pack: DataPacket) {
         if pack.seq_number < self.head {
+            info!("Packet received is already too late {:?}", pack.seq_number);
             return; // packet is too late
         }
 
@@ -102,10 +103,11 @@ impl RecvBuffer {
 
         if too_late {
             info!(
-                "Dropping packets [{},{}), {} ms too late",
+                "Dropping packets [{},{}) ({} packets), {:?} too late",
                 self.head,
                 self.head + first_non_none_idx as u32,
-                (now - self.tsbpd_instant_from(now, first_pack_ts_us)).as_millis()
+                first_non_none_idx,
+                now - self.tsbpd_instant_from(now, first_pack_ts_us)
             );
             // start dropping packets
             self.head += first_non_none_idx as u32;

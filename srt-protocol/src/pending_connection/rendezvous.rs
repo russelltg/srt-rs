@@ -215,6 +215,7 @@ impl Rendezvous {
         &mut self,
         info: &HandshakeControlInfo,
         timestamp: TimeStamp,
+        now: Instant,
     ) -> ConnectionResult {
         assert!(matches!(self.state, Waving));
 
@@ -249,6 +250,7 @@ impl Rendezvous {
                             &mut self.init_settings,
                             info,
                             self.remote_public,
+                            now,
                             &mut AllowAllStreamAcceptor::default(),
                         ) {
                             GenHsv5Result::Accept(h, c) => (h, c),
@@ -286,6 +288,7 @@ impl Rendezvous {
         info: &HandshakeControlInfo,
         hsv5: HandshakeVSInfo,
         initiator: StartedInitiator,
+        now: Instant
     ) -> ConnectionResult {
         match info.shake_type {
             ShakeType::Conclusion => match extract_ext_info(info) {
@@ -293,7 +296,7 @@ impl Rendezvous {
                     let agreement =
                         self.gen_packet(ShakeType::Agreement, Rendezvous::empty_flags());
 
-                    let settings = match initiator.finish_hsv5_initiation(info, self.remote_public)
+                    let settings = match initiator.finish_hsv5_initiation(info, self.remote_public, now)
                     {
                         Ok(s) => s,
                         Err(r) => return NotHandled(r),
@@ -316,6 +319,7 @@ impl Rendezvous {
         &mut self,
         info: &HandshakeControlInfo,
         timestamp: TimeStamp,
+        now: Instant,
     ) -> ConnectionResult {
         match info.shake_type {
             ShakeType::Conclusion => {
@@ -329,6 +333,7 @@ impl Rendezvous {
                     &mut self.init_settings,
                     info,
                     self.remote_public,
+                    now,
                     &mut AllowAllStreamAcceptor::default(),
                 ) {
                     GenHsv5Result::Accept(h, c) => (h, c),
@@ -348,13 +353,14 @@ impl Rendezvous {
         info: &HandshakeControlInfo,
         hsv5: HandshakeVSInfo,
         initiator: StartedInitiator,
+        now: Instant,
     ) -> ConnectionResult {
         match info.shake_type {
             ShakeType::Conclusion => match extract_ext_info(info) {
                 Ok(Some(SrtControlPacket::HandshakeResponse(_))) => {
                     let agreement = self.gen_packet(ShakeType::Agreement, hsv5);
 
-                    let settings = match initiator.finish_hsv5_initiation(info, self.remote_public)
+                    let settings = match initiator.finish_hsv5_initiation(info, self.remote_public, now)
                     {
                         Ok(s) => s,
                         Err(r) => return NotHandled(r),
@@ -398,12 +404,13 @@ impl Rendezvous {
         &mut self,
         info: &HandshakeControlInfo,
         initiator: StartedInitiator,
+        now: Instant,
     ) -> ConnectionResult {
         match info.shake_type {
             ShakeType::Conclusion => match extract_ext_info(info) {
                 Ok(Some(SrtControlPacket::HandshakeResponse(_))) => {
                     let connection =
-                        match initiator.finish_hsv5_initiation(info, self.remote_public) {
+                        match initiator.finish_hsv5_initiation(info, self.remote_public, now) {
                             Ok(c) => c,
                             Err(e) => return NotHandled(e),
                         };
@@ -446,26 +453,26 @@ impl Rendezvous {
         )
     }
 
-    pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr)) -> ConnectionResult {
+    pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr), now: Instant) -> ConnectionResult {
         if from != self.remote_public {
             return NotHandled(UnexpectedHost(self.remote_public, from));
         }
 
         let hs = get_handshake(&packet);
         match (self.state.clone(), hs) {
-            (Waving, Ok(hs)) => self.handle_waving(hs, packet.timestamp()),
+            (Waving, Ok(hs)) => self.handle_waving(hs, packet.timestamp(), now),
             (AttentionInitiator(hsv5, initiator), Ok(hs)) => {
-                self.handle_attention_initiator(hs, hsv5, initiator)
+                self.handle_attention_initiator(hs, hsv5, initiator, now)
             }
-            (AttentionResponder, Ok(hs)) => self.handle_attention_responder(hs, packet.timestamp()),
+            (AttentionResponder, Ok(hs)) => self.handle_attention_responder(hs, packet.timestamp(), now),
             (InitiatedInitiator(initiator), Ok(hs)) => {
-                self.handle_initiated_initiator(hs, initiator)
+                self.handle_initiated_initiator(hs, initiator, now)
             }
             (InitiatedResponder(connection), _) => {
                 self.handle_initiated_responder(&packet, connection)
             }
             (FineInitiator(hsv5, initiator), Ok(hs)) => {
-                self.handle_fine_initiator(hs, hsv5, initiator)
+                self.handle_fine_initiator(hs, hsv5, initiator, now)
             }
             (FineResponder(conn), _) => self.handle_fine_responder(&packet, conn),
             (_, Err(e)) => NotHandled(e),

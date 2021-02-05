@@ -1,8 +1,20 @@
-use std::{collections::VecDeque, convert::identity, iter::repeat, time::{Duration, Instant}};
+use std::{
+    collections::VecDeque,
+    convert::identity,
+    iter::repeat,
+    time::{Duration, Instant},
+};
 
 use bytes::Bytes;
 use log::{debug, info, trace};
-use srt_protocol::{ConnectionSettings, SeqNumber, SocketID, protocol::{handshake::Handshake, receiver::{Receiver, ReceiverAlgorithmAction}, sender::{Sender, SenderAlgorithmAction}}};
+use srt_protocol::{
+    protocol::{
+        handshake::Handshake,
+        receiver::{Receiver, ReceiverAlgorithmAction},
+        sender::{Sender, SenderAlgorithmAction},
+    },
+    ConnectionSettings, SeqNumber, SocketID,
+};
 
 #[test]
 fn high_bandwidth_det() {
@@ -22,8 +34,8 @@ fn high_bandwidth_det() {
         init_recv_seq_num: SeqNumber::new_truncate(1234),
         max_packet_size: 1316,
         max_flow_size: 8192,
-        send_tsbpd_latency: Duration::from_secs(8),
-        recv_tsbpd_latency: Duration::from_secs(8),
+        send_tsbpd_latency: Duration::from_millis(20),
+        recv_tsbpd_latency: Duration::from_millis(20),
         crypto_manager: None,
         stream_id: None,
     };
@@ -37,8 +49,8 @@ fn high_bandwidth_det() {
         init_recv_seq_num: s1.init_send_seq_num,
         max_packet_size: 1316,
         max_flow_size: 8192,
-        send_tsbpd_latency: Duration::from_secs(8),
-        recv_tsbpd_latency: Duration::from_secs(8),
+        send_tsbpd_latency: Duration::from_millis(20),
+        recv_tsbpd_latency: Duration::from_millis(20),
         crypto_manager: None,
         stream_id: None,
     };
@@ -47,7 +59,7 @@ fn high_bandwidth_det() {
     let mut recvr = Receiver::new(s2, Handshake::Connector);
 
     let message = Bytes::from(vec![5; 1024]);
-    let spacing = Duration::from_micros(1);
+    let spacing = Duration::from_micros(10); // 100MB/s
 
     let mut next_send_time = start + spacing;
     let mut current_time = start;
@@ -61,7 +73,6 @@ fn high_bandwidth_det() {
             sendr.handle_data((current_time, message.clone()), current_time);
             next_send_time += spacing
         }
-
 
         let sender_next_time = match sendr.next_action(current_time) {
             SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => None,
@@ -77,7 +88,9 @@ fn high_bandwidth_det() {
             match recvr.next_algorithm_action(current_time) {
                 ReceiverAlgorithmAction::TimeBoundedReceive(time) => break Some(time),
                 ReceiverAlgorithmAction::SendControl(cp, _) => {
-                    sendr.handle_packet((cp.into(), receiver_addr), current_time).unwrap();
+                    sendr
+                        .handle_packet((cp.into(), receiver_addr), current_time)
+                        .unwrap();
                 }
                 ReceiverAlgorithmAction::OutputData((_, payload)) => {
                     bytes_received += payload.len();
@@ -95,25 +108,22 @@ fn high_bandwidth_det() {
                     // dbg!(window.len(), current_time - window.front().unwrap_or(&(current_time, 0)).0);
 
                     print!(
-                        "Received {:20.3}MB, rate={:20.3}MB/s\r",
+                        "Received {:20.3}MB, rate={:20.3}MB/s snd={:?}\r",
                         bytes_received as f64 / 1024. / 1024.,
                         bytes_received as f64 / 1024. / 1024. / window_size.as_secs_f64(),
+                        sendr.snd_timer.period()
                     );
                 } // xxx
                 ReceiverAlgorithmAction::Close => break None,
             }
         };
 
-        let new_current = [
-            Some(next_send_time),
-            sender_next_time,
-            receiver_next_time,
-        ]
-        .iter()
-        .copied()
-        .filter_map(identity)
-        .min()
-        .unwrap();
+        let new_current = [Some(next_send_time), sender_next_time, receiver_next_time]
+            .iter()
+            .copied()
+            .filter_map(identity)
+            .min()
+            .unwrap();
 
         if next_send_time == new_current {
             trace!("Waking up to give data to sender");

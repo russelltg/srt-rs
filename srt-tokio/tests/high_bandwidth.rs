@@ -1,12 +1,16 @@
-use std::{collections::VecDeque, iter::repeat, time::{Duration, Instant}};
+use std::{
+    collections::VecDeque,
+    iter::repeat,
+    time::{Duration, Instant},
+};
 
 use anyhow::Error;
 use bytes::Bytes;
-use futures::{SinkExt, Stream, StreamExt, TryStreamExt, stream};
+use futures::{stream, SinkExt, Stream, StreamExt, TryStreamExt};
 use log::info;
 use srt_tokio::SrtSocketBuilder;
 
-fn stream_exact(duration: Duration) -> impl Stream<Item=Bytes> {
+fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
     let message = Bytes::from(vec![5; 1024]);
     let last = tokio::time::Instant::now();
     stream::unfold((message, last, duration), |(message, last, d)| async move {
@@ -25,9 +29,9 @@ async fn high_bandwidth() -> Result<(), Error> {
             .await?;
 
         // send 1gbps (125 MB/s)
-        let mut stream_gbps = stream_exact(Duration::from_micros(1_000_000 / 1024 / 15)) 
-        .map(|bytes| Ok((Instant::now(), bytes)))
-        .boxed();
+        let mut stream_gbps = stream_exact(Duration::from_micros(1_000_000 / 1024 / 1))
+            .map(|bytes| Ok((Instant::now(), bytes)))
+            .boxed();
 
         info!("Sender all connected");
 
@@ -46,7 +50,7 @@ async fn high_bandwidth() -> Result<(), Error> {
         let mut window = VecDeque::new();
         let mut bytes_received = 0;
         let window_size = Duration::from_secs(1);
-        
+
         while let Some((_, bytes)) = sock.try_next().await? {
             bytes_received += bytes.len();
             window.push_back((Instant::now(), bytes.len()));
