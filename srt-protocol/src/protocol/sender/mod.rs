@@ -104,7 +104,6 @@ pub struct Sender {
 
     /// How many can you send currently without running into CC
     // num_can_send: u64,
-
     pub snd_timer: Timer,
 
     close_requested: bool,
@@ -146,11 +145,15 @@ impl Sender {
     }
 
     pub fn handle_data(&mut self, data: (Instant, Bytes), now: Instant) {
-        let earliest_delivery_time = now + Duration::from_micros(self.metrics.rtt.as_micros() as u64);
+        let earliest_delivery_time =
+            now + Duration::from_micros(self.metrics.rtt.as_micros() as u64);
         let requested_delivery_time = data.0 + self.settings.send_tsbpd_latency;
 
         if earliest_delivery_time > requested_delivery_time {
-            info!("Packet impossible to deliver in time {:?} too late", earliest_delivery_time - requested_delivery_time);
+            info!(
+                "Packet impossible to deliver in time {:?} too late",
+                earliest_delivery_time - requested_delivery_time
+            );
         }
 
         let data_length = data.1.len();
@@ -159,21 +162,17 @@ impl Sender {
             .on_input(now, packet_count, data_length);
     }
 
-    pub fn handle_packet(
-        &mut self,
-        (packet, from): (Packet, SocketAddr),
-        now: Instant,
-    ) -> SenderResult {
+    pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr), now: Instant) {
         // TODO: record/report packets from invalid hosts?
         if from != self.settings.remote {
-            return Ok(());
+            return;
         }
 
         debug!("Received packet {:?}", packet);
 
         match packet {
             Packet::Control(control) => self.handle_control_packet(control, now),
-            Packet::Data(data) => self.handle_data_packet(data, now),
+            Packet::Data(_) => {}
         }
     }
 
@@ -195,7 +194,6 @@ impl Sender {
 
     pub fn next_action(&mut self, now: Instant) -> SenderAlgorithmAction {
         use SenderAlgorithmAction::*;
-
 
         // don't return close until fully flushed
         if self.close_requested && self.is_flushed() {
@@ -253,7 +251,8 @@ impl Sender {
             //        b. Pack a new data packet and send it out.
             // TODO: account for looping here <--- WAT?
             else if self.lr_acked_packet
-                < self.transmit_buffer.next_sequence_number_to_send() - self.congestion_control.window_size()
+                < self.transmit_buffer.next_sequence_number_to_send()
+                    - self.congestion_control.window_size()
             {
                 // flow window exceeded, wait for ACK
                 trace!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}",
@@ -265,7 +264,6 @@ impl Sender {
                 if matches!(self.handshake, Handshake::Connector) {
                     //    dbg!(self.transmit_buffer.next_sequence_number_to_send() - self.lr_acked_packet, self.lr_acked_packet);
                 }
-                
 
                 return WaitUntilAck;
             } else if let Some(p) = self.pop_transmit_buffer() {
@@ -291,22 +289,19 @@ impl Sender {
             //   6) Wait (SND - t) time, where SND is the inter-packet interval
             //      updated by congestion control and t is the total time used by step
             //      1 to step 5. Go to 1).
-                if matches!(self.handshake, Handshake::Connector) {
-                    // dbg!("hi");
-                }
+            if matches!(self.handshake, Handshake::Connector) {
+                // dbg!("hi");
+            }
         }
     }
 
-    fn handle_data_packet(&mut self, _packet: DataPacket, _now: Instant) -> SenderResult {
-        Ok(())
-    }
-
-    fn handle_control_packet(&mut self, packet: ControlPacket, now: Instant) -> SenderResult {
+    fn handle_control_packet(&mut self, packet: ControlPacket, now: Instant) {
         match packet.control_type {
-            ControlTypes::Ack(info) => self.handle_ack_packet(now, &info),
+            ControlTypes::Ack(info) => {
+                self.handle_ack_packet(now, &info);
+            }
             ControlTypes::Ack2(_) => {
                 warn!("Sender received ACK2, unusual");
-                Ok(())
             }
             ControlTypes::DropRequest { .. } => unimplemented!(),
             ControlTypes::Handshake(shake) => self.handle_handshake_packet(shake, now),
@@ -321,26 +316,28 @@ impl Sender {
             // TODO: case UMSG_PEERERROR: // 1000 - An error has happened to the peer side
             // TODO: case UMSG_EXT: // 0x7FFF - reserved and user defined messages
             ControlTypes::Nak(nack) => self.handle_nack_packet(nack),
-            ControlTypes::Shutdown => self.handle_shutdown_packet(),
+            ControlTypes::Shutdown => {
+                self.handle_shutdown_packet();
+            }
             ControlTypes::Srt(srt_packet) => self.handle_srt_control_packet(srt_packet),
             // The only purpose of keep-alive packet is to tell that the peer is still alive
             // nothing needs to be done.
             // TODO: is this actually true? check reference implementation
-            ControlTypes::KeepAlive => Ok(()),
+            ControlTypes::KeepAlive => {}
         }
     }
 
-    fn handle_ack_packet(&mut self, now: Instant, info: &AckControlInfo) -> SenderResult {
+    fn handle_ack_packet(&mut self, now: Instant, info: &AckControlInfo) {
         // if this ack number is less than (but NOT equal--equal could just mean lost ACK2 that needs to be retransmitted)
         // the largest received ack number, than discard it
         // this can happen thorough packet reordering OR losing an ACK2 packet
         if info.ack_number < self.lr_acked_packet {
-            return Ok(());
+            return;
         }
 
         if info.ack_seq_num <= self.lr_acked_ack {
             // warn!("Ack sequence number '{}' less than or equal to the previous one recieved: '{}'", ack_seq_num, self.lr_acked_ack);
-            return Ok(());
+            return;
         }
         self.lr_acked_ack = info.ack_seq_num;
 
@@ -386,16 +383,13 @@ impl Sender {
         // 10) Update sender's loss list (by removing all those that has been
         //     acknowledged).
         self.metrics.retrans_packets += self.loss_list.remove_acknowledged_packets(info.ack_number);
-
-        Ok(())
     }
 
-    fn handle_shutdown_packet(&mut self) -> SenderResult {
+    fn handle_shutdown_packet(&mut self) {
         self.close_requested = true;
-        Ok(())
     }
 
-    fn handle_nack_packet(&mut self, nack: Vec<u32>) -> SenderResult {
+    fn handle_nack_packet(&mut self, nack: Vec<u32>) {
         // 1) Add all sequence numbers carried in the NAK into the sender's loss list.
         // 2) Update the SND period by rate control (see section 3.6).
         // 3) Reset the EXP time variable.
@@ -408,7 +402,7 @@ impl Sender {
                 Ok(p) => p,
                 Err(n) => {
                     debug!("NAK received for packet {} that's not in the buffer, maybe it's already been ACKed", n);
-                    return Ok(());
+                    return;
                 }
             };
 
@@ -426,21 +420,15 @@ impl Sender {
         }
 
         // TODO: reset EXP
-        Ok(())
     }
 
-    fn handle_handshake_packet(
-        &mut self,
-        handshake: HandshakeControlInfo,
-        now: Instant,
-    ) -> SenderResult {
+    fn handle_handshake_packet(&mut self, handshake: HandshakeControlInfo, now: Instant) {
         if let Some(control_type) = self.handshake.handle_handshake(handshake) {
             self.send_control(control_type, now);
         }
-        Ok(())
     }
 
-    fn handle_srt_control_packet(&mut self, packet: SrtControlPacket) -> SenderResult {
+    fn handle_srt_control_packet(&mut self, packet: SrtControlPacket) {
         use self::SrtControlPacket::*;
 
         match packet {
@@ -449,8 +437,6 @@ impl Sender {
             }
             _ => unimplemented!(),
         }
-
-        Ok(())
     }
 
     fn pop_transmit_buffer(&mut self) -> Option<DataPacket> {
@@ -476,11 +462,17 @@ impl Sender {
     }
 
     fn send_data(&mut self, p: DataPacket, now: Instant) {
-        let earliest_delivery_time = now + Duration::from_micros(self.metrics.rtt.as_micros() as u64);
-        let requested_delivery_time = self.transmit_buffer.instant_from(now, p.timestamp) + self.settings.send_tsbpd_latency;
+        let earliest_delivery_time =
+            now + Duration::from_micros(self.metrics.rtt.as_micros() as u64);
+        let requested_delivery_time =
+            self.transmit_buffer.instant_from(now, p.timestamp) + self.settings.send_tsbpd_latency;
 
         if earliest_delivery_time > requested_delivery_time {
-            info!("Packet {:?} impossible to deliver in time {:?} too late", p.seq_number, earliest_delivery_time - requested_delivery_time);
+            info!(
+                "Packet {:?} impossible to deliver in time {:?} too late",
+                p.seq_number,
+                earliest_delivery_time - requested_delivery_time
+            );
         }
         self.output_buffer.push_back(Packet::Data(p));
     }

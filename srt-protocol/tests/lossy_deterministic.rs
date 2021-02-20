@@ -140,9 +140,7 @@ fn do_lossy_test(seed: u64, count: usize) {
             let pack = r2s.pop().unwrap().packet;
 
             trace!("r->s {:?}", pack);
-            sendr
-                .handle_packet((pack, ([127, 0, 0, 1], 2222).into()), current_time)
-                .unwrap(); // uhhhh
+            sendr.handle_packet((pack, ([127, 0, 0, 1], 2222).into()), current_time)
         }
 
         let sender_next_time = match sendr.next_action(current_time) {
