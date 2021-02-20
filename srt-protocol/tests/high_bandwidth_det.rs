@@ -88,9 +88,7 @@ fn high_bandwidth_det() {
             match recvr.next_algorithm_action(current_time) {
                 ReceiverAlgorithmAction::TimeBoundedReceive(time) => break Some(time),
                 ReceiverAlgorithmAction::SendControl(cp, _) => {
-                    sendr
-                        .handle_packet((cp.into(), receiver_addr), current_time)
-                        .unwrap();
+                    sendr.handle_packet((cp.into(), receiver_addr), current_time)
                 }
                 ReceiverAlgorithmAction::OutputData((_, payload)) => {
                     bytes_received += payload.len();
