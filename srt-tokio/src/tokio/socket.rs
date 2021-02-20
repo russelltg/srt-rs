@@ -254,15 +254,13 @@ where
                                 Control(cp) => match &cp.control_type {
                                     // sender-responsble packets
                                     Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
-                                        sender.handle_packet((pack, from), Instant::now()).unwrap();
+                                        sender.handle_packet((pack, from), Instant::now());
                                     }
                                     // receiver-respnsible
                                     Ack2(_) => receiver.handle_packet(Instant::now(), (pack, from)),
                                     // both
                                     Shutdown => {
-                                        sender
-                                            .handle_packet((pack.clone(), from), Instant::now())
-                                            .unwrap();
+                                        sender.handle_packet((pack.clone(), from), Instant::now());
                                         receiver.handle_packet(Instant::now(), (pack, from));
                                     }
                                     // neither--this exists just to keep the connection alive
