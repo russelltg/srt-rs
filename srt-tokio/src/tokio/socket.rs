@@ -8,7 +8,6 @@ use crate::protocol::TimeBase;
 use crate::Packet::*;
 use crate::{ConnectionSettings, ControlPacket, Packet};
 
-use std::{net::SocketAddr, sync::atomic::{AtomicU64, AtomicUsize, Ordering}, time::Duration};
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 use std::{
@@ -16,13 +15,20 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
+use std::{
+    net::SocketAddr,
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
+    time::Duration,
+};
 
 use bytes::Bytes;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::{future, ready, select};
 use log::{debug, error, info, trace};
+use tokio::sync::mpsc::channel;
 use tokio::time::sleep_until;
+use tokio_stream::wrappers::ReceiverStream;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
@@ -83,7 +89,15 @@ where
         let mut close_receiver = close_oneshot.fuse();
         let _close_sender = close_send; // exists for drop
         let mut new_data = new_data.fuse();
-        let mut sock = sock.fuse();
+        let (mut sock_sink, sock_stream) = sock.split();
+        let mut sock_stream = sock_stream.fuse();
+
+        let (send_to_sock, recv_to_sock) = channel(1024);
+        tokio::spawn(async move {
+            sock_sink
+                .send_all(&mut ReceiverStream::new(recv_to_sock))
+                .await
+        });
 
         let time_base = TimeBase::new(conn_copy.settings.socket_start_time);
         let mut connection = Connection::new(conn_copy.settings.clone());
@@ -108,12 +122,12 @@ where
                 }
             };
             while let Some(out) = sender.pop_output() {
-                if let Err(e) = sock.send(out).await {
+                if let Err(e) = send_to_sock.send(Ok(out)).await {
                     error!("Error while seding packet: {:?}", e); // TODO: real error handling
                 }
-                    // dbg!((Instant::now() - start).as_secs_f64() * 1e6 / packets_sent as f64);
-                    packets_sent += 1;
-                    last_send = Instant::now();
+                // dbg!((Instant::now() - start).as_secs_f64() * 1e6 / packets_sent as f64);
+                packets_sent += 1;
+                last_send = Instant::now();
             }
 
             if close && receiver.is_flushed() {
@@ -135,7 +149,7 @@ where
                         break Some(t2);
                     }
                     ReceiverAlgorithmAction::SendControl(cp, addr) => {
-                        if let Err(e) = sock.send((Packet::Control(cp), addr)).await {
+                        if let Err(e) = send_to_sock.send(Ok((Packet::Control(cp), addr))).await {
                             error!("Error while sending packet {:?}", e);
                         }
                     }
@@ -177,15 +191,15 @@ where
 
                         break None;
                     } // timeout
-                    ConnectionAction::SendKeepAlive => sock
-                        .send((
+                    ConnectionAction::SendKeepAlive => send_to_sock
+                        .send(Ok((
                             Control(ControlPacket {
                                 timestamp: time_base.timestamp_from(Instant::now()),
                                 dest_sockid: sender.settings().remote_sockid,
                                 control_type: KeepAlive,
                             }),
                             sender.settings().remote,
-                        ))
+                        )))
                         .await
                         .unwrap(), // todo
                 }
@@ -212,7 +226,6 @@ where
                     // dbg!();
                     continue;
                 }
-
             }
 
             let timeout_fut = async {
@@ -248,7 +261,7 @@ where
                 // one of the entities requested wakeup
                 _ = timeout_fut.fuse() => Action::Nothing,
                 // new packet received
-                res = sock.next() =>
+                res = sock_stream.next() =>
                     Action::DelegatePacket(res),
                 // new packet queued
                 res = new_data.next() => {

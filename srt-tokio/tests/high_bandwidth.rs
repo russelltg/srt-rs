@@ -29,7 +29,7 @@ async fn high_bandwidth() -> Result<(), Error> {
             .await?;
 
         // send 1gbps (125 MB/s)
-        let mut stream_gbps = stream_exact(Duration::from_micros(1_000_000 / 1024 / 1))
+        let mut stream_gbps = stream_exact(Duration::from_micros(1_000_000 / 1024 / 35))
             .map(|bytes| Ok((Instant::now(), bytes)))
             .boxed();
 
@@ -74,7 +74,10 @@ async fn high_bandwidth() -> Result<(), Error> {
         Ok::<_, Error>(())
     };
 
-    futures::try_join!(tokio::spawn(sender_fut), tokio::spawn(recv_fut))?;
+    tokio::spawn(sender_fut);
+    tokio::spawn(recv_fut);
+
+    tokio::time::sleep(Duration::from_secs(60)).await;
 
     Ok(())
 }

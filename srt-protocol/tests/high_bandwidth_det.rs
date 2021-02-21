@@ -63,6 +63,7 @@ fn high_bandwidth_det() {
 
     let mut next_send_time = start + spacing;
     let mut current_time = start;
+    let mut last_delta = Duration::default();
 
     let mut window = VecDeque::new();
     let mut bytes_received = 0;
@@ -106,10 +107,11 @@ fn high_bandwidth_det() {
                     // dbg!(window.len(), current_time - window.front().unwrap_or(&(current_time, 0)).0);
 
                     print!(
-                        "Received {:20.3}MB, rate={:20.3}MB/s snd={:?}\r",
+                        "Received {:20.3}MB, rate={:20.3}MB/s snd={:?} delta={:?}\r",
                         bytes_received as f64 / 1024. / 1024.,
                         bytes_received as f64 / 1024. / 1024. / window_size.as_secs_f64(),
-                        sendr.snd_timer.period()
+                        sendr.snd_timer.period(),
+                        last_delta
                     );
                 } // xxx
                 ReceiverAlgorithmAction::Close => break None,
@@ -133,7 +135,8 @@ fn high_bandwidth_det() {
             trace!("Waking up from receiver")
         }
 
-        debug!("Delta = {:?}", new_current - current_time);
+        last_delta = new_current - current_time;
+        debug!("Delta = {:?}", last_delta);
         current_time = new_current;
     }
 }
