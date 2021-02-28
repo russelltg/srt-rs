@@ -7,6 +7,7 @@ use std::{
 
 use bytes::Bytes;
 use log::{debug, info, trace};
+use rand::{prelude::StdRng, Rng, SeedableRng};
 use srt_protocol::{
     protocol::{
         handshake::Handshake,
@@ -55,6 +56,8 @@ fn high_bandwidth_det() {
         stream_id: None,
     };
 
+    let mut rand = StdRng::seed_from_u64(1234);
+
     let mut sendr = Sender::new(s1, Handshake::Connector);
     let mut recvr = Receiver::new(s2, Handshake::Connector);
 
@@ -82,7 +85,10 @@ fn high_bandwidth_det() {
         };
 
         while let Some((packet, _)) = sendr.pop_output() {
-            recvr.handle_packet(current_time, (packet, sender_addr));
+            // drop?
+            if rand.gen::<f64>() > 0.01 {
+                recvr.handle_packet(current_time, (packet, sender_addr));
+            }
         }
 
         let receiver_next_time = loop {
@@ -107,11 +113,11 @@ fn high_bandwidth_det() {
                     // dbg!(window.len(), current_time - window.front().unwrap_or(&(current_time, 0)).0);
 
                     print!(
-                        "Received {:20.3}MB, rate={:20.3}MB/s snd={:?} delta={:?}\r",
+                        "Received {:20.3}MB, rate={:20.3}MB/s snd={:?} delta={:>10}\r",
                         bytes_received as f64 / 1024. / 1024.,
                         bytes_received as f64 / 1024. / 1024. / window_size.as_secs_f64(),
                         sendr.snd_timer.period(),
-                        last_delta
+                        format!("{:?}", last_delta)
                     );
                 } // xxx
                 ReceiverAlgorithmAction::Close => break None,
