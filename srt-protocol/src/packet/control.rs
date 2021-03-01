@@ -527,11 +527,14 @@ impl ControlTypes {
                             };
 
                             // parse out extensions
-                            let ext_hs = if extensions.contains(ExtFlags::HS) {
-                                if buf.remaining() < 4 {
-                                    return Err(PacketParseError::NotEnoughData);
-                                }
+
+                            let mut sid = None;
+                            let mut ext_hs = None;
+                            let mut ext_km = None;
+
+                            while buf.remaining() > 4 {
                                 let pack_type = buf.get_u16();
+
                                 let pack_size_words = buf.get_u16();
                                 let pack_size = usize::from(pack_size_words) * 4;
 
@@ -539,61 +542,49 @@ impl ControlTypes {
                                     return Err(PacketParseError::NotEnoughData);
                                 }
 
-                                let mut srt_pack_rd = buf.take(pack_size);
-
-                                let ret = match pack_type {
-                                    // 1 and 2 are handshake response and requests
-                                    1 | 2 => {
-                                        Some(SrtControlPacket::parse(pack_type, &mut srt_pack_rd)?)
-                                    }
-                                    e => return Err(PacketParseError::BadSRTHsExtensionType(e)),
-                                };
-                                buf = srt_pack_rd.into_inner();
-
-                                ret
-                            } else {
-                                None
-                            };
-                            let ext_km = if extensions.contains(ExtFlags::KM) {
-                                if buf.remaining() < 4 {
-                                    return Err(PacketParseError::NotEnoughData);
-                                }
-                                let pack_type = buf.get_u16();
-                                let _pack_size = buf.get_u16(); // TODO: why exactly is this needed?
+                                let mut buffer = buf.take(pack_size);
                                 match pack_type {
-                                    // 3 and 4 are km packets
-                                    3 | 4 => Some(SrtControlPacket::parse(pack_type, &mut buf)?),
-                                    e => return Err(PacketParseError::BadSRTKmExtensionType(e)),
-                                }
-                            } else {
-                                None
-                            };
-                            let mut sid = None;
-
-                            if extensions.contains(ExtFlags::CONFIG) {
-                                while buf.remaining() > 4 {
-                                    let pack_type = buf.get_u16();
-
-                                    let pack_size_words = buf.get_u16();
-                                    let pack_size = usize::from(pack_size_words) * 4;
-
-                                    if buf.remaining() < pack_size {
-                                        return Err(PacketParseError::NotEnoughData);
-                                    }
-
-                                    let mut buffer = buf.take(pack_size);
-
-                                    match SrtControlPacket::parse(pack_type, &mut buffer)? {
-                                        // 5 is sid 6 is smoother
-                                        SrtControlPacket::StreamId(stream_id) => {
-                                            sid = Some(stream_id)
+                                    1 | 2 => {
+                                        if !extensions.contains(ExtFlags::HS) {
+                                            warn!("Handshake contains handshake extension type {} without HSREQ flag!", pack_type);
                                         }
-                                        _ => unimplemented!("Implement other kinds"),
+                                        if ext_hs != None {
+                                            warn!("Handshake contains multiple handshake extensions, only the last will be applied!");
+                                        }
+                                        ext_hs = Some(SrtControlPacket::parse(pack_type, &mut buffer)?);
                                     }
-
-                                    buf = buffer.into_inner();
+                                    3 | 4 => {
+                                        if !extensions.contains(ExtFlags::KM) {
+                                            warn!("Handshake contains key material extension type {} without KMREQ flag!", pack_type);
+                                        }
+                                        if ext_km != None {
+                                            warn!("Handshake contains multiple key material extensions, only the last will be applied!");
+                                        }
+                                        ext_km = Some(SrtControlPacket::parse(pack_type, &mut buffer)?);
+                                    }
+                                    _ => {
+                                        if !extensions.contains(ExtFlags::CONFIG) {
+                                            warn!("Handshake contains config extension type {} without CONFIG flag!", pack_type);
+                                        }
+                                        match SrtControlPacket::parse(pack_type, &mut buffer)? {
+                                            SrtControlPacket::StreamId(stream_id) => { //5 = sid
+                                                sid = Some(stream_id)
+                                            }
+                                            _ => unimplemented!("Implement other kinds"),
+                                        }
+                                    }
                                 }
+
+                                buf = buffer.into_inner();
                             }
+
+                            if ext_hs.is_none() && extensions.contains(ExtFlags::HS) {
+                                warn!("Handshake has HSREQ flag, but contains no handshake extensions!");
+                            }
+                            if ext_km.is_none() && extensions.contains(ExtFlags::KM) {
+                                warn!("Handshake has KMREQ flag, but contains no key material extensions!");
+                            }
+                            
                             HandshakeVSInfo::V5(HSV5Info {
                                 crypto_size,
                                 ext_hs,
