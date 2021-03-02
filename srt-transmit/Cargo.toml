@@ -22,7 +22,7 @@ futures = { version = "0.3", default-features = false, features = ["std", "async
 
 [dependencies.tokio]
 version = "1"
-features = ["net", "time",  "fs", "test-util", "macros", "io-util", "io-std", "sync", "rt-multi-thread"]
+features = ["net", "time",  "fs", "test-util", "macros", "io-util", "io-std", "sync", "rt-multi-thread", "process"]
 
 [dependencies.tokio-util]
 version = "0.6"
