@@ -498,7 +498,7 @@ impl ControlTypes {
                             0 | 16 | 24 | 32 => crypto_size as u8,
                             c => {
                                 warn!(
-                                    "Unrecognized crypto key length: {}, disabling encryption. Should be 0, 16, 24, or 32 bytes. Disabling crypto.",
+                                    "Unrecognized crypto key length: {}, disabling encryption. Should be 0, 16, 24, or 32 bytes.",
                                     c
                                 );
                                 0
@@ -551,7 +551,8 @@ impl ControlTypes {
                                         if ext_hs != None {
                                             warn!("Handshake contains multiple handshake extensions, only the last will be applied!");
                                         }
-                                        ext_hs = Some(SrtControlPacket::parse(pack_type, &mut buffer)?);
+                                        ext_hs =
+                                            Some(SrtControlPacket::parse(pack_type, &mut buffer)?);
                                     }
                                     3 | 4 => {
                                         if !extensions.contains(ExtFlags::KM) {
@@ -560,31 +561,37 @@ impl ControlTypes {
                                         if ext_km != None {
                                             warn!("Handshake contains multiple key material extensions, only the last will be applied!");
                                         }
-                                        ext_km = Some(SrtControlPacket::parse(pack_type, &mut buffer)?);
+                                        ext_km =
+                                            Some(SrtControlPacket::parse(pack_type, &mut buffer)?);
                                     }
                                     _ => {
                                         if !extensions.contains(ExtFlags::CONFIG) {
                                             warn!("Handshake contains config extension type {} without CONFIG flag!", pack_type);
                                         }
                                         match SrtControlPacket::parse(pack_type, &mut buffer)? {
-                                            SrtControlPacket::StreamId(stream_id) => { //5 = sid
+                                            //5 = sid:
+                                            SrtControlPacket::StreamId(stream_id) => {
                                                 sid = Some(stream_id)
                                             }
                                             _ => unimplemented!("Implement other kinds"),
                                         }
                                     }
                                 }
-
                                 buf = buffer.into_inner();
                             }
 
+                            if buf.remaining() != 0 {
+                                warn!(
+                                    "Handshake has data left, but not enough for an extension!"
+                                );
+                            }
                             if ext_hs.is_none() && extensions.contains(ExtFlags::HS) {
                                 warn!("Handshake has HSREQ flag, but contains no handshake extensions!");
                             }
                             if ext_km.is_none() && extensions.contains(ExtFlags::KM) {
                                 warn!("Handshake has KMREQ flag, but contains no key material extensions!");
                             }
-                            
+
                             HandshakeVSInfo::V5(HSV5Info {
                                 crypto_size,
                                 ext_hs,
@@ -1516,5 +1523,69 @@ mod test {
                 RejectReason::Server(ServerRejectReason::Unimplemented).into()
             )
         );
+    }
+
+    #[test]
+    fn test_unordered_hs_extensions() {
+        //Taken from Wireshark dump of FFMPEG connection handshake
+        let packet_data = hex::decode(concat!(
+            "80000000000000000000dea800000000",
+            "000000050004000751dca3b8000005b8",
+            "00002000ffffffff025c84b8da7ee4e7",
+            "0100007f000000000000000000000000",
+            "0001000300010402000000bf003c003c",
+            "000500033a3a212365683d7500000078",
+            "00030012122029010000000002000200",
+            "00000408437937d8c23ce2090754c5a7",
+            "a9e608c14631aef7ac0b8a46b77b8c0b",
+            "97d4061e565dcb86e4c5cc3701e1f992",
+            "a5b2de3651c937c94f3333a6"
+        ))
+        .unwrap();
+
+        let packet = ControlPacket::parse(&mut Cursor::new(packet_data), false).unwrap();
+        let reference = ControlPacket {
+            timestamp: TimeStamp::from_micros(57000),
+            dest_sockid: SocketID(0),
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                init_seq_num: SeqNumber(1373414328),
+                max_packet_size: 1464,
+                max_flow_size: 8192,
+                shake_type: ShakeType::Conclusion,
+                socket_id: SocketID(0x025C84B8),
+                syn_cookie: 0xda7ee4e7u32 as i32,
+                peer_addr: [127, 0, 0, 1].into(),
+                info: HandshakeVSInfo::V5(HSV5Info {
+                    crypto_size: 32,
+                    ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
+                        version: SrtVersion::new(1, 4, 2),
+                        flags: SrtShakeFlags::TSBPDSND
+                            | SrtShakeFlags::TSBPDRCV
+                            | SrtShakeFlags::HAICRYPT
+                            | SrtShakeFlags::TLPKTDROP
+                            | SrtShakeFlags::NAKREPORT
+                            | SrtShakeFlags::REXMITFLG
+                            | SrtShakeFlags::FILTERCAP,
+                        send_latency: Duration::from_millis(60),
+                        recv_latency: Duration::from_millis(60)
+                    })),
+                    ext_km: Some(SrtControlPacket::KeyManagerRequest(SrtKeyMessage {
+                        pt: PacketType::KeyingMaterial,
+                        key_flags: KeyFlags::EVEN,
+                        keki: 0,
+                        cipher: CipherType::CTR,
+                        auth: Auth::None,
+                        salt: hex::decode("437937d8c23ce2090754c5a7a9e608c1").unwrap(),
+                        wrapped_keys: hex::decode(
+                            "4631aef7ac0b8a46b77b8c0b97d4061e565dcb86e4c5cc3701e1f992a5b2de3651c937c94f3333a6"
+                        )
+                        .unwrap()
+                    })),
+                    sid: Some("#!::u=hex".into()),
+                }),
+            }),
+        };
+
+        assert_eq!(packet, reference);
     }
 }
