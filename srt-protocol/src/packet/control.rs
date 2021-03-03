@@ -581,9 +581,7 @@ impl ControlTypes {
                             }
 
                             if buf.remaining() != 0 {
-                                warn!(
-                                    "Handshake has data left, but not enough for an extension!"
-                                );
+                                warn!("Handshake has data left, but not enough for an extension!");
                             }
                             if ext_hs.is_none() && extensions.contains(ExtFlags::HS) {
                                 warn!("Handshake has HSREQ flag, but contains no handshake extensions!");
