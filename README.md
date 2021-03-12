@@ -18,7 +18,7 @@ Reference implementation is available at https://github.com/haivision/srt
 # Features
 
 - Fast (heap allocations are rare, uses async IO)
-- Full safety garuntees of rust
+- Full safety guarantees of rust
 
 # What works
 
