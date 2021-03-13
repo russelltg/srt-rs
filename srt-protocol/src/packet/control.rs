@@ -326,7 +326,7 @@ impl HandshakeVSInfo {
                 if hs.sid.is_some() {
                     flags |= ExtFlags::CONFIG;
                 }
-                // take the crypto size, get rid of the frist three (garunteed zero) bits, then shift it into the
+                // take the crypto size, get rid of the frist three (guaranteed zero) bits, then shift it into the
                 // most significant 2-byte word
                 (u32::from(hs.crypto_size) >> 3 << 16)
                     // when this is an induction packet, includ the magic code instead of flags
