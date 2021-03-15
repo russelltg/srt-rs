@@ -111,6 +111,7 @@ mod synchronized_remote_clock {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct RTT {
     mean: TimeSpan,
     variance: TimeSpan,
@@ -152,6 +153,7 @@ impl RTT {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct ReceiveTimers {
     pub(crate) ack: Timer,
     pub(crate) nak: Timer,

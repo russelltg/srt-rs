@@ -76,6 +76,7 @@ pub enum SenderAlgorithmStep {
     Step6,
 }
 
+#[derive(Debug)]
 pub struct Sender {
     /// The settings, including remote sockid and address
     settings: ConnectionSettings,

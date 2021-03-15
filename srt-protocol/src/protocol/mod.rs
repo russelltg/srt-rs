@@ -291,6 +291,7 @@ mod timestamp {
 //   of its period, depending on the context. For example, ACK can mean
 //   either the ACK event or the value of ACK period.
 
+#[derive(Debug)]
 pub struct Timer {
     period: Duration,
     last: Instant,

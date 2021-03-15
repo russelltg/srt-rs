@@ -1,9 +1,9 @@
-use std::cmp::max;
 use std::cmp::{min, Ordering};
 use std::collections::VecDeque;
 use std::iter::Iterator;
 use std::net::SocketAddr;
 use std::time::Instant;
+use std::{cmp::max, fmt};
 
 use bytes::{Bytes, BytesMut};
 use log::{debug, error, info, trace, warn};
@@ -33,6 +33,7 @@ pub enum ReceiverAlgorithmAction {
     Close,
 }
 
+#[derive(Debug)]
 struct LossListEntry {
     seq_num: SeqNumber,
 
@@ -43,6 +44,7 @@ struct LossListEntry {
     k: i32,
 }
 
+#[derive(Debug)]
 struct AckHistoryEntry {
     /// the highest packet sequence number received that this ACK packet ACKs + 1
     ack_number: SeqNumber,
@@ -54,6 +56,7 @@ struct AckHistoryEntry {
     timestamp: TimeStamp,
 }
 
+#[derive(Debug)]
 pub struct Receiver {
     settings: ConnectionSettings,
 

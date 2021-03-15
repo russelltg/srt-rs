@@ -9,6 +9,7 @@ use crate::{
     crypto::CryptoManager, ConnectionSettings, DataPacket, MsgNumber, SeqNumber, SocketID,
 };
 
+#[derive(Debug)]
 pub struct TransmitBuffer {
     remote_socket_id: SocketID,
     max_packet_size: usize,
@@ -135,6 +136,7 @@ impl TransmitBuffer {
     }
 }
 
+#[derive(Debug)]
 pub struct SendBuffer {
     /// The buffer to store packets for retransmision, sorted chronologically
     buffer: VecDeque<DataPacket>,
@@ -184,6 +186,7 @@ impl SendBuffer {
     }
 }
 
+#[derive(Debug)]
 pub struct LossList {
     pub list: VecDeque<DataPacket>,
 }
