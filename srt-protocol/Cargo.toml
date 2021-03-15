@@ -24,7 +24,7 @@ sha-1 = "0.9"
 bitflags = "1"
 
 [dev-dependencies]
-proptest = "0.10"
+proptest = "1.0"
 hex = "0.4"
 rand_distr = "0.4"
 pretty_env_logger = { version = "0.4", default-features = false }

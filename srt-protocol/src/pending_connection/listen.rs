@@ -303,14 +303,15 @@ mod test {
                 Connected(
                     Some(_),
                     Connection {
-                        handshake:
-                            Handshake::Listener(ControlTypes::Handshake(HandshakeControlInfo {
-                                info:
-                                    HandshakeVSInfo::V5(HSV5Info {
-                                        ext_hs: Some(_), ..
-                                    }),
+                        handshake: Handshake::Listener(ControlTypes::Handshake(
+                            HandshakeControlInfo {
+                                info: HandshakeVSInfo::V5(HSV5Info {
+                                    ext_hs: Some(_),
+                                    ..
+                                }),
                                 ..
-                            })),
+                            }
+                        )),
                         ..
                     },
                 )

@@ -233,7 +233,7 @@ impl SrtControlPacket {
                     Err(e) => Err(PacketParseError::StreamTypeNotUTF8(e.utf8_error())),
                 }
             }
-            _ => Err(PacketParseError::BadSRTConfigExtensionType(packet_type)), // TODO: that's not really the right error...
+            _ => Err(PacketParseError::UnsupportedSRTExtensionType(packet_type)),
         }
     }
 

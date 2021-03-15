@@ -322,7 +322,7 @@ impl Receiver {
                     / filtered
                         .iter()
                         .map(|dt| i64::from(dt.as_micros()))
-                        .sum::<i64>() as u64 // all these dts are garunteed to be positive
+                        .sum::<i64>() as u64 // all these dts are guaranteed to be positive
             } else {
                 0
             }

@@ -22,10 +22,11 @@ use futures::{
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
+    net::TcpListener,
+    net::TcpStream,
     net::UdpSocket,
 };
-use tokio_util::codec::FramedWrite;
-use tokio_util::{codec::BytesCodec, udp::UdpFramed};
+use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
 
 use log::info;
 use srt_tokio::{ConnInitMethod, SrtSocketBuilder, StreamerServer};
@@ -178,22 +179,22 @@ fn get_conn_init_method(
 }
 
 #[derive(Copy, Clone)]
-enum UdpKind {
+enum ConnectionKind {
     Send,
     Listen(u16),
 }
 
-fn parse_udp_options<C>(
+fn parse_connection_options<C>(
     args: impl Iterator<Item = (C, C)>,
-    kind: UdpKind,
+    kind: ConnectionKind,
 ) -> Result<SocketAddr, Error>
 where
     C: Deref<Target = str>,
 {
     // defaults
     let mut addr = match kind {
-        UdpKind::Send => "0.0.0.0:0".parse().unwrap(),
-        UdpKind::Listen(port) => SocketAddr::new("0.0.0.0".parse().unwrap(), port),
+        ConnectionKind::Send => "0.0.0.0:0".parse().unwrap(),
+        ConnectionKind::Listen(port) => SocketAddr::new("0.0.0.0".parse().unwrap(), port),
     };
 
     for (k, v) in args {
@@ -206,7 +207,7 @@ where
                     err
                 ),
             }),
-            ("local_port", port, UdpKind::Send) => addr.set_port(match port.parse() {
+            ("local_port", port, ConnectionKind::Send) => addr.set_port(match port.parse() {
                 Ok(port) => port,
                 Err(err) => bail!(
                     "Failed to parse local_port parameter '{}' as 16 bit integer: {}",
@@ -214,7 +215,7 @@ where
                     err
                 ),
             }),
-            ("local_port", _, UdpKind::Listen(_)) => {
+            ("local_port", _, ConnectionKind::Listen(_)) => {
                 bail!("local_port is incompatiable with udp listen mode")
             }
             (unrecog, _, _) => bail!("Unrecognized udp flag: {}", unrecog),
@@ -266,9 +267,9 @@ fn resolve_input<'a>(
                 ),
                 "udp" => once(async move {
                     Ok(UdpFramed::new(
-                        UdpSocket::bind(&parse_udp_options(
+                        UdpSocket::bind(&parse_connection_options(
                             input_url.query_pairs(),
-                            UdpKind::Listen(input_local_port),
+                            ConnectionKind::Listen(input_local_port),
                         )?)
                         .await?,
                         BytesCodec::new(),
@@ -293,6 +294,38 @@ fn resolve_input<'a>(
                         .boxed()
                     } else {
                         once(make_srt_input(input_addr, input_url, input_local_port)).boxed()
+                    }
+                }
+                "tcp" => {
+                    if let Some(input) = input_addr {
+                        once(async move {
+                            loop {
+                                match TcpStream::connect(input).await {
+                                    Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+                                    Ok(stream) => {
+                                        return Ok(Framed::new(stream, BytesCodec::new())
+                                            .map(Result::unwrap)
+                                            .map(|b| b.freeze())
+                                            .boxed())
+                                    }
+                                }
+                            }
+                        })
+                        .boxed()
+                    } else {
+                        once(async move {
+                            let input = &parse_connection_options(
+                                input_url.query_pairs(),
+                                ConnectionKind::Listen(input_local_port),
+                            )?;
+                            let listener = TcpListener::bind(input).await?;
+                            let (stream, _) = listener.accept().await?;
+                            Ok(Framed::new(stream, BytesCodec::new())
+                                .map(Result::unwrap)
+                                .map(|b| b.freeze())
+                                .boxed())
+                        })
+                        .boxed()
                     }
                 }
                 s => bail!("unrecognized scheme: {} designated in input url", s),
@@ -376,9 +409,9 @@ fn resolve_output(output_url: DataType) -> Result<SinkStream, Error> {
                 ),
                 "udp" => once(async move {
                     Ok(UdpFramed::new(
-                        UdpSocket::bind(&parse_udp_options(
+                        UdpSocket::bind(&parse_connection_options(
                             output_url.query_pairs(),
-                            UdpKind::Send,
+                            ConnectionKind::Send,
                         )?)
                         .await?,
                         BytesCodec::new(),
@@ -406,6 +439,36 @@ fn resolve_output(output_url: DataType) -> Result<SinkStream, Error> {
                         .boxed()
                     } else {
                         once(make_srt_ouput(output_addr, output_url, output_local_port)).boxed()
+                    }
+                }
+                "tcp" => {
+                    if let Some(output) = output_addr {
+                        once(async move {
+                            loop {
+                                match TcpStream::connect(output).await {
+                                    Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+                                    Ok(stream) => {
+                                        return Ok(Framed::new(stream, BytesCodec::new())
+                                            .with(move |b| future::ready(Ok(b)))
+                                            .boxed_sink())
+                                    }
+                                }
+                            }
+                        })
+                        .boxed()
+                    } else {
+                        once(async move {
+                            let output = &parse_connection_options(
+                                output_url.query_pairs(),
+                                ConnectionKind::Listen(output_local_port),
+                            )?;
+                            let listener = TcpListener::bind(output).await?;
+                            let (stream, _) = listener.accept().await?;
+                            Ok(Framed::new(stream, BytesCodec::new())
+                                .with(move |b| future::ready(Ok(b)))
+                                .boxed_sink())
+                        })
+                        .boxed()
                     }
                 }
                 s => bail!("unrecognized scheme '{}' designated in output url", s),

@@ -121,7 +121,7 @@ impl DataPacket {
         into.put_u32(self.seq_number.as_raw());
 
         // the format is first two bits are the message location, third is in order delivery, and the rest is message number
-        // message number is garunteed have it's first three bits as zero
+        // message number is guaranteed to have it's first three bits as zero
         into.put_u32(
             self.message_number.as_raw()
                 | ((u32::from(
