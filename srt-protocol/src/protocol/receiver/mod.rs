@@ -1,9 +1,9 @@
+use std::cmp::max;
 use std::cmp::{min, Ordering};
 use std::collections::VecDeque;
 use std::iter::Iterator;
 use std::net::SocketAddr;
 use std::time::Instant;
-use std::{cmp::max};
 
 use bytes::{Bytes, BytesMut};
 use log::{debug, error, info, trace, warn};
