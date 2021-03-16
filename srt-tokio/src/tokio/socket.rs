@@ -24,6 +24,7 @@ use futures::{future, ready, select_biased};
 use log::{debug, error, info, trace};
 use srt_protocol::EventReceiver;
 use tokio::time::delay_until;
+use tokio::time::sleep_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
@@ -32,6 +33,7 @@ use tokio::time::delay_until;
 ///
 /// The sockets yield and consume `(Instant, Bytes)`, representng the data and the origin instant. This instant
 /// defines when the packet will be released on the receiving side, at more or less one latency later.
+#[derive(Debug)]
 pub struct SrtSocket {
     // receiver datastructures
     recvr: mpsc::Receiver<(Instant, Bytes)>,
@@ -222,7 +224,7 @@ where
                             ""
                         }
                     );
-                    delay_until(to.into()).await
+                    sleep_until(to.into()).await
                 } else {
                     trace!(
                         "{:?} not scheduling wakeup!!!",
@@ -268,7 +270,6 @@ where
                                                 Instant::now(),
                                                 &mut event_receiver,
                                             )
-                                            .unwrap();
                                     }
                                     // receiver-respnsible
                                     Ack2(_) => receiver.handle_packet(
@@ -283,8 +284,7 @@ where
                                                 (pack.clone(), from),
                                                 Instant::now(),
                                                 &mut event_receiver,
-                                            )
-                                            .unwrap();
+                                            );
                                         receiver.handle_packet(
                                             Instant::now(),
                                             (pack, from),

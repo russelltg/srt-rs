@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use futures::{stream::iter, SinkExt, StreamExt};
 use log::{debug, info};
-use tokio::time::interval;
 
 use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
 
@@ -15,17 +14,18 @@ use srt_protocol::NullEventReceiver;
 
 #[tokio::test]
 async fn not_enough_latency() {
-    env_logger::init();
+    let _ = pretty_env_logger::try_init();
 
     const INIT_SEQ_NUM: u32 = 12314;
     const PACKETS: u32 = 1_000;
 
     // a stream of ascending stringified integers
     // 1 ms between packets
-    let counting_stream = iter(INIT_SEQ_NUM..INIT_SEQ_NUM + PACKETS)
-        .map(|i| Bytes::from(i.to_string()))
-        .zip(interval(Duration::from_millis(1)))
-        .map(|(b, _)| b);
+    let counting_stream = tokio_stream::StreamExt::throttle(
+        iter(INIT_SEQ_NUM..INIT_SEQ_NUM + PACKETS).map(|i| Bytes::from(i.to_string())),
+        Duration::from_millis(1),
+    )
+    .boxed();
 
     // 4% packet loss, 4 sec latency with 0.2 s variance
     let (send, recv) = LossyConn::channel(
@@ -36,10 +36,10 @@ async fn not_enough_latency() {
         "127.0.0.1:1",
     );
 
-    let sender = SrtSocketBuilder::new(ConnInitMethod::Listen)
+    let sender = SrtSocketBuilder::new_listen()
         .local_port(1000)
         .connect_with_sock::<NullEventReceiver, _>(send);
-    let recvr = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:1000".parse().unwrap()))
+    let recvr = SrtSocketBuilder::new_connect("127.0.0.1:1000")
         .connect_with_sock::<NullEventReceiver, _>(recv);
 
     tokio::spawn(async move {

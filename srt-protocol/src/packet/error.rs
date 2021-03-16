@@ -8,9 +8,7 @@ pub enum PacketParseError {
     BadConnectionType(i32),
     BadSocketType(u16),
     BadControlType(u16),
-    BadSRTHsExtensionType(u16),
-    BadSRTKmExtensionType(u16),
-    BadSRTConfigExtensionType(u16),
+    UnsupportedSRTExtensionType(u16),
     BadSRTExtensionMessage, // could be split
     BadCryptoLength(u32),
     BadCipherKind(u8),

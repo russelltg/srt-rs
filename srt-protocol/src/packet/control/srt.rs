@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, str, time::Duration};
+use std::{convert::TryFrom, time::Duration};
 
 use bitflags::bitflags;
 use bytes::{Buf, BufMut};
@@ -183,7 +183,7 @@ bitflags! {
         /// One bit in payload packet msgno is "retransmitted" flag
         const REXMITFLG = 0x20;
 
-        /// Not entirely sure what this means.... TODO:
+        /// This entity supports stream ID packets
         const STREAM = 0x40;
 
         /// Again not sure... TODO:
@@ -208,21 +208,32 @@ impl SrtControlPacket {
             3 => Ok(KeyManagerRequest(SrtKeyMessage::parse(buf)?)),
             4 => Ok(KeyManagerResponse(SrtKeyMessage::parse(buf)?)),
             5 => {
-                // cut off null bytes at end
-                let bytes = buf.bytes();
-                let end = bytes.len()
-                    - bytes
-                        .iter()
-                        .rev()
-                        .position(|a| *a != 0)
-                        .unwrap_or(bytes.len());
+                // the stream id string is stored as 32-bit little endian words
+                // https://tools.ietf.org/html/draft-sharabayko-mops-srt-01#section-3.2.1.3
+                if buf.remaining() % 4 != 0 {
+                    return Err(PacketParseError::NotEnoughData);
+                }
 
-                match str::from_utf8(&bytes[0..end]) {
-                    Ok(s) => Ok(StreamId(s.into())),
-                    Err(e) => Err(PacketParseError::StreamTypeNotUTF8(e)),
+                let mut bytes = Vec::with_capacity(buf.remaining());
+
+                while buf.remaining() > 4 {
+                    bytes.extend(&buf.get_u32_le().to_be_bytes());
+                }
+
+                // make sure to skip padding bytes if any for the last word
+                match buf.get_u32_le().to_be_bytes() {
+                    [a, 0, 0, 0] => bytes.push(a),
+                    [a, b, 0, 0] => bytes.extend(&[a, b]),
+                    [a, b, c, 0] => bytes.extend(&[a, b, c]),
+                    _ => {}
+                }
+
+                match String::from_utf8(bytes) {
+                    Ok(s) => Ok(StreamId(s)),
+                    Err(e) => Err(PacketParseError::StreamTypeNotUTF8(e.utf8_error())),
                 }
             }
-            _ => Err(PacketParseError::BadSRTConfigExtensionType(packet_type)), // TODO: that's not really the right error...
+            _ => Err(PacketParseError::UnsupportedSRTExtensionType(packet_type)),
         }
     }
 
@@ -251,11 +262,21 @@ impl SrtControlPacket {
                 k.serialize(into);
             }
             StreamId(sid) => {
-                into.put(sid.as_bytes());
+                // the stream id string is stored as 32-bit little endian words
+                // https://tools.ietf.org/html/draft-sharabayko-mops-srt-01#section-3.2.1.3
+                let mut chunks = sid.as_bytes().chunks_exact(4);
 
-                // add padding bytes to be aligned to 32-bit boundary
-                let pad_bytes = (((sid.len() + 3) / 4) * 4) - sid.len();
-                into.put(&[0; 4][..pad_bytes]);
+                while let Some(&[a, b, c, d]) = chunks.next() {
+                    into.put(&[d, c, b, a][..]);
+                }
+
+                // add padding bytes for the final word if needed
+                match *chunks.remainder() {
+                    [a, b, c] => into.put(&[0, c, b, a][..]),
+                    [a, b] => into.put(&[0, 0, b, a][..]),
+                    [a] => into.put(&[0, 0, 0, a][..]),
+                    _ => {}
+                }
             }
             _ => unimplemented!(),
         }
@@ -537,7 +558,7 @@ mod tests {
         let mut buf = Vec::new();
         handshake.serialize(&mut buf);
 
-        let deserialized = Packet::parse(&mut Cursor::new(buf)).unwrap();
+        let deserialized = Packet::parse(&mut Cursor::new(buf), false).unwrap();
 
         assert_eq!(handshake, deserialized);
     }
@@ -553,7 +574,7 @@ mod tests {
         let mut buf = Vec::new();
         sid.serialize(&mut buf);
 
-        let deser = Packet::parse(&mut Cursor::new(buf)).unwrap();
+        let deser = Packet::parse(&mut Cursor::new(buf), false).unwrap();
 
         assert_eq!(sid, deser);
     }

@@ -12,7 +12,7 @@ pub mod stats;
 
 /// Timestamp in us after creation
 /// These wrap every 2^32 microseconds
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct TimeStamp(Wrapping<u32>);
 
 /// Signed duration in us, e.g. RTT
@@ -71,9 +71,15 @@ impl TryInto<Duration> for TimeSpan {
 
 impl PartialOrd<TimeStamp> for TimeStamp {
     fn partial_cmp(&self, other: &TimeStamp) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TimeStamp {
+    fn cmp(&self, other: &Self) -> Ordering {
         // this is a "best effort" implementation, and goes for close
         // if timestamps are very far apart, this will not work (and cannot)
-        Some((*self - *other).as_micros().cmp(&0))
+        (*self - *other).as_micros().cmp(&0)
     }
 }
 

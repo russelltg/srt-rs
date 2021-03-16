@@ -1,6 +1,6 @@
 use srt_tokio::SrtSocketBuilder;
 use std::io::Error;
-use tokio::stream::StreamExt;
+use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -9,10 +9,12 @@ async fn main() -> Result<(), Error> {
         .await?;
     let mut count = 0;
 
-    loop {
-        if let Some((_instant, _bytes)) = srt_socket.try_next().await? {
-            print!("\rReceived {:?} packets", count);
-            count += 1;
-        }
+    while let Some((_instant, _bytes)) = srt_socket.try_next().await? {
+        count += 1;
+        print!("\rReceived {:?} packets", count);
     }
+
+    println!("\nConnection closed");
+
+    Ok(())
 }

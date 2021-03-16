@@ -39,7 +39,7 @@ impl Ord for HeapEntry {
 
 #[test]
 fn lossy_deterministic() {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     let once_failing_seeds = [
         (7843866891970470107, 10),
@@ -74,6 +74,7 @@ fn do_lossy_test(seed: u64, count: usize) {
         send_tsbpd_latency: Duration::from_secs(8),
         recv_tsbpd_latency: Duration::from_secs(8),
         crypto_manager: None,
+        stream_id: None,
     };
 
     let s2 = ConnectionSettings {
@@ -88,6 +89,7 @@ fn do_lossy_test(seed: u64, count: usize) {
         send_tsbpd_latency: Duration::from_secs(8),
         recv_tsbpd_latency: Duration::from_secs(8),
         crypto_manager: None,
+        stream_id: None,
     };
 
     let mut sendr = Sender::new(s1, Handshake::Connector);
@@ -149,7 +151,6 @@ fn do_lossy_test(seed: u64, count: usize) {
                     current_time,
                     &mut NullEventReceiver,
                 )
-                .unwrap(); // uhhhh
         }
 
         let sender_next_time = match sendr.next_action(current_time, &mut NullEventReceiver) {

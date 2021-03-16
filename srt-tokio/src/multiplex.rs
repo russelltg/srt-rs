@@ -2,32 +2,33 @@ mod streamer_server;
 
 pub use self::streamer_server::StreamerServer;
 
-use std::collections::HashMap;
-use std::io;
-use std::net::SocketAddr;
+use std::{collections::HashMap, io, net::SocketAddr};
 
-use futures::future::{pending, select_all};
-use futures::prelude::*;
-use futures::select;
-use futures::stream::unfold;
+use futures::{
+    future::{pending, select_all},
+    prelude::*,
+    select,
+    stream::unfold,
+};
 
-use log::warn;
+use log::{info, warn};
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 
-use crate::channel::Channel;
-use crate::protocol::handshake::Handshake;
-use crate::{Connection, Packet, PacketCodec, SocketID};
-use srt_protocol::pending_connection::{
-    listen::{Listen, ListenState},
-    ConnInitSettings,
+use crate::{
+    channel::Channel, tokio::create_bidrectional_srt, Packet, PacketCodec, SocketID, SrtSocket,
+};
+use srt_protocol::{
+    accesscontrol::StreamAcceptor,
+    pending_connection::{listen::Listen, ConnInitSettings, ConnectionResult},
 };
 
-pub type PackChan = Channel<(Packet, SocketAddr)>;
+type PackChan = Channel<(Packet, SocketAddr)>;
 
-struct MultiplexState {
+struct MultiplexState<A: StreamAcceptor> {
     sock: UdpFramed<PacketCodec>,
     pending: HashMap<SocketAddr, Listen>,
+    acceptor: A,
     conns: HashMap<SocketID, PackChan>,
     init_settings: ConnInitSettings,
 }
@@ -39,8 +40,8 @@ enum Action {
     Send((Packet, SocketAddr)),
 }
 
-impl MultiplexState {
-    async fn next_conn(&mut self) -> Result<Option<(Connection, PackChan)>, io::Error> {
+impl<T: StreamAcceptor> MultiplexState<T> {
+    async fn next_conn(&mut self) -> Result<Option<SrtSocket>, io::Error> {
         loop {
             // impl Future<Output = (Packet, SocketAddr)
             let conns = &mut self.conns;
@@ -95,7 +96,7 @@ impl MultiplexState {
         &mut self,
         pack: Packet,
         from: SocketAddr,
-    ) -> Result<Option<(Connection, PackChan)>, io::Error> {
+    ) -> Result<Option<SrtSocket>, io::Error> {
         // fast path--an already established connection
         if let Some(chan) = self.conns.get_mut(&pack.dest_sockid()) {
             let dst_sockid = pack.dest_sockid();
@@ -107,41 +108,60 @@ impl MultiplexState {
 
         // new connection?
         let this_conn_settings = self.init_settings.clone();
+
         let listen = self
             .pending
             .entry(from)
             .or_insert_with(|| Listen::new(this_conn_settings.copy_randomize()));
 
         // already started connection?
-        match listen.handle_packet((pack, from)) {
-            Ok(Some(pa)) => self.sock.send(pa).await?,
-            Err(e) => warn!("{:?}", e),
-            _ => {}
-        }
-        if let ListenState::Connected(resp_handshake, settings) = listen.state().clone() {
-            let (s, r) = Channel::channel(100);
+        let conn = match listen.handle_packet((pack, from), &mut self.acceptor) {
+            ConnectionResult::SendPacket(pa) => {
+                self.sock.send(pa).await?;
+                return Ok(None);
+            }
+            ConnectionResult::Reject(pa, rej) => {
+                if let Some(pa) = pa {
+                    self.sock.send(pa).await?;
+                }
+                info!("Rejected connection from {}: {}", from, rej);
+                self.pending.remove(&from);
+                return Ok(None);
+            }
+            ConnectionResult::NotHandled(e) => {
+                warn!("{:?}", e);
+                return Ok(None);
+            }
+            ConnectionResult::NoAction => return Ok(None),
+            ConnectionResult::Connected(pa, c) => {
+                if let Some(pa) = pa {
+                    self.sock.send(pa).await?;
+                }
+                c
+            }
+        };
+        let (s, r) = Channel::channel(100);
 
-            self.conns.insert(settings.local_sockid, r);
+        self.conns.insert(conn.settings.local_sockid, r);
 
-            let conn = Connection {
-                settings,
-                handshake: Handshake::Listener(resp_handshake.control_type),
-            };
-            self.pending.remove(&from); // remove from pending connections, it's been resolved
-            return Ok(Some((conn, s)));
-        }
-        Ok(None)
+        self.pending.remove(&from); // remove from pending connections, it's been resolved
+        return Ok(Some(create_bidrectional_srt(s, conn)));
     }
 }
 
 pub async fn multiplex(
     addr: SocketAddr,
     init_settings: ConnInitSettings,
-) -> Result<impl Stream<Item = Result<(Connection, PackChan), io::Error>>, io::Error> {
+    acceptor: impl StreamAcceptor,
+) -> Result<impl Stream<Item = Result<SrtSocket, io::Error>>, io::Error> {
     Ok(unfold(
         MultiplexState {
-            sock: UdpFramed::new(UdpSocket::bind(addr).await?, PacketCodec),
+            sock: UdpFramed::new(
+                UdpSocket::bind(addr).await?,
+                PacketCodec::new(addr.is_ipv6()),
+            ),
             pending: HashMap::new(),
+            acceptor,
             conns: HashMap::new(),
             init_settings,
         },

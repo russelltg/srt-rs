@@ -10,10 +10,9 @@ const PACKET_SIZE: usize = 1 << 19;
 
 #[tokio::test]
 async fn message_splitting() -> Result<()> {
-    env_logger::init();
+    let _ = pretty_env_logger::try_init();
 
-    let sender = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:11124".parse().unwrap()))
-        .connect();
+    let sender = SrtSocketBuilder::new_connect("127.0.0.1:11124").connect();
 
     let recvr = SrtSocketBuilder::new(ConnInitMethod::Listen)
         .local_port(11124)

@@ -1,11 +1,15 @@
 use std::net::SocketAddr;
 
-use crate::packet::*;
 use crate::protocol::TimeStamp;
-use crate::{ConnectionSettings, SocketID};
+use crate::{accesscontrol::StreamAcceptor, SocketID};
+use crate::{packet::*, protocol::handshake::Handshake, Connection};
 
-use super::{cookie::gen_cookie, hsv5::gen_hsv5_response, ConnInitSettings, ConnectError};
-use ConnectError::*;
+use super::{
+    cookie::gen_cookie,
+    hsv5::{gen_hsv5_response, GenHsv5Result},
+    ConnInitSettings, ConnectError, ConnectionReject, ConnectionResult,
+};
+use ConnectionResult::*;
 use ListenState::*;
 
 pub struct Listen {
@@ -23,13 +27,10 @@ pub struct ConclusionWaitState {
 
 #[derive(Clone)]
 #[allow(clippy::large_enum_variant)]
-pub enum ListenState {
+enum ListenState {
     InductionWait,
     ConclusionWait(ConclusionWaitState),
-    Connected(ControlPacket, ConnectionSettings),
 }
-
-type ListenResult = Result<Option<(Packet, SocketAddr)>, ConnectError>;
 
 impl Listen {
     pub fn new(init_settings: ConnInitSettings) -> Listen {
@@ -43,7 +44,7 @@ impl Listen {
         from: SocketAddr,
         timestamp: TimeStamp,
         shake: HandshakeControlInfo,
-    ) -> ListenResult {
+    ) -> ConnectionResult {
         match shake.shake_type {
             ShakeType::Induction => {
                 // https://tools.ietf.org/html/draft-gg-udt-03#page-9
@@ -77,19 +78,45 @@ impl Listen {
                     cookie,
                     induction_response: save_induction_response,
                 });
-                Ok(Some((induction_response, from)))
+                SendPacket((induction_response, from))
             }
-            _ => Err(InductionExpected(shake)),
+            _ => NotHandled(ConnectError::InductionExpected(shake)),
         }
     }
 
-    fn wait_for_conclusion(
+    fn make_rejection(
+        &self,
+        response_to: &HandshakeControlInfo,
+        from: SocketAddr,
+        timestamp: TimeStamp,
+        r: ConnectionReject,
+    ) -> ConnectionResult {
+        ConnectionResult::Reject(
+            Some((
+                ControlPacket {
+                    timestamp,
+                    dest_sockid: response_to.socket_id,
+                    control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                        shake_type: ShakeType::Rejection(r.reason()),
+                        socket_id: self.init_settings.local_sockid,
+                        ..response_to.clone()
+                    }),
+                }
+                .into(),
+                from,
+            )),
+            r,
+        )
+    }
+
+    fn wait_for_conclusion<A: StreamAcceptor>(
         &mut self,
         from: SocketAddr,
         timestamp: TimeStamp,
         state: ConclusionWaitState,
         shake: HandshakeControlInfo,
-    ) -> ListenResult {
+        acceptor: &mut A,
+    ) -> ConnectionResult {
         // https://tools.ietf.org/html/draft-gg-udt-03#page-10
         // The server, when receiving a handshake packet and the correct cookie,
         // compares the packet size and maximum window size with its own values
@@ -103,12 +130,18 @@ impl Listen {
         const VERSION_5: u32 = 5;
 
         match (shake.shake_type, shake.info.version(), shake.syn_cookie) {
-            (ShakeType::Induction, _, _) => Ok(Some((state.induction_response, from))),
+            (ShakeType::Induction, _, _) => SendPacket((state.induction_response, from)),
             // first induction received, wait for response (with cookie)
             (ShakeType::Conclusion, VERSION_5, syn_cookie) if syn_cookie == state.cookie => {
                 // construct a packet to send back
-                let (hsv5, connection) =
-                    gen_hsv5_response(self.init_settings.clone(), &shake, from)?;
+                let (hsv5, settings) =
+                    match gen_hsv5_response(&mut self.init_settings, &shake, from, acceptor) {
+                        GenHsv5Result::Accept(h, c) => (h, c),
+                        GenHsv5Result::NotHandled(e) => return NotHandled(e),
+                        GenHsv5Result::Reject(r) => {
+                            return self.make_rejection(&shake, from, timestamp, r);
+                        }
+                    };
 
                 let resp_handshake = ControlPacket {
                     timestamp,
@@ -128,42 +161,52 @@ impl Listen {
                 // use the remote ones
 
                 // finish the connection
-                self.state = Connected(resp_handshake.clone(), connection);
-
-                Ok(Some((Packet::Control(resp_handshake), from)))
+                Connected(
+                    Some((resp_handshake.clone().into(), from)),
+                    Connection {
+                        settings,
+                        handshake: Handshake::Listener(resp_handshake.control_type),
+                    },
+                )
             }
-            (ShakeType::Conclusion, VERSION_5, syn_cookie) => {
-                Err(InvalidHandshakeCookie(state.cookie, syn_cookie))
+            (ShakeType::Conclusion, VERSION_5, syn_cookie) => NotHandled(
+                ConnectError::InvalidHandshakeCookie(state.cookie, syn_cookie),
+            ),
+            (ShakeType::Conclusion, version, _) => {
+                NotHandled(ConnectError::UnsupportedProtocolVersion(version))
             }
-            (ShakeType::Conclusion, version, _) => Err(UnsupportedProtocolVersion(version)),
-            (_, _, _) => Err(ConclusionExpected(shake)),
+            (_, _, _) => NotHandled(ConnectError::ConclusionExpected(shake)),
         }
     }
 
-    fn handle_control_packets(&mut self, control: ControlPacket, from: SocketAddr) -> ListenResult {
+    fn handle_control_packets(
+        &mut self,
+        control: ControlPacket,
+        from: SocketAddr,
+        acceptor: &mut impl StreamAcceptor,
+    ) -> ConnectionResult {
         match (self.state.clone(), control.control_type) {
             (InductionWait, ControlTypes::Handshake(shake)) => {
                 self.wait_for_induction(from, control.timestamp, shake)
             }
             (ConclusionWait(state), ControlTypes::Handshake(shake)) => {
-                self.wait_for_conclusion(from, control.timestamp, state, shake)
+                self.wait_for_conclusion(from, control.timestamp, state, shake, acceptor)
             }
             (InductionWait, control_type) | (ConclusionWait(_), control_type) => {
-                Err(HandshakeExpected(control_type))
+                NotHandled(ConnectError::HandshakeExpected(control_type))
             }
-            (Connected(_, _), _) => Ok(None),
         }
     }
 
-    pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr)) -> ListenResult {
+    pub fn handle_packet(
+        &mut self,
+        (packet, from): (Packet, SocketAddr),
+        acceptor: &mut impl StreamAcceptor,
+    ) -> ConnectionResult {
         match packet {
-            Packet::Control(control) => self.handle_control_packets(control, from),
-            Packet::Data(data) => Err(ControlExpected(data)),
+            Packet::Control(control) => self.handle_control_packets(control, from, acceptor),
+            Packet::Data(data) => NotHandled(ConnectError::ControlExpected(data)),
         }
-    }
-
-    pub fn state(&self) -> &ListenState {
-        &self.state
     }
 }
 
@@ -171,18 +214,30 @@ impl Listen {
 mod test {
     use super::*;
 
-    use std::{net::IpAddr, time::Duration};
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        time::Duration,
+    };
 
     use bytes::Bytes;
     use rand::random;
 
     use crate::{
+        accesscontrol::{AcceptParameters, AllowAllStreamAcceptor},
         packet::{ControlPacket, DataPacket, HandshakeControlInfo, Packet, ShakeType},
+        pending_connection::ConnectionReject,
         SrtVersion,
     };
 
-    fn test_listen() -> Listen {
-        Listen::new(ConnInitSettings::default())
+    fn conn_addr() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8765)
+    }
+
+    fn test_listen() -> (Listen, impl StreamAcceptor) {
+        (
+            Listen::new(ConnInitSettings::default()),
+            AllowAllStreamAcceptor::default(),
+        )
     }
 
     fn test_induction() -> HandshakeControlInfo {
@@ -205,7 +260,7 @@ mod test {
             max_flow_size: 256_000,
             shake_type: ShakeType::Conclusion,
             socket_id: random(),
-            syn_cookie: gen_cookie(&"127.0.0.1:8765".parse().unwrap()),
+            syn_cookie: gen_cookie(&conn_addr()),
             peer_addr: IpAddr::from([127, 0, 0, 1]),
             info: HandshakeVSInfo::V5(HSV5Info {
                 crypto_size: 0,
@@ -231,27 +286,40 @@ mod test {
 
     #[test]
     fn correct() {
-        let mut l = test_listen();
+        let (mut l, mut a) = test_listen();
 
-        let resp = l.handle_packet((
-            build_hs_pack(test_induction()),
-            "127.0.0.1:8765".parse().unwrap(),
-        ));
-        assert!(matches!(resp, Ok(Some(_))));
+        let resp = l.handle_packet((build_hs_pack(test_induction()), conn_addr()), &mut a);
+        assert!(matches!(resp, SendPacket(_)));
 
-        let resp = l.handle_packet((
-            build_hs_pack(test_conclusion()),
-            "127.0.0.1:8765".parse().unwrap(),
-        ));
+        let resp = l.handle_packet((build_hs_pack(test_conclusion()), conn_addr()), &mut a);
         // make sure it returns hs_ext
-        assert!(matches!(resp,
-            Ok(Some((Packet::Control(ControlPacket{control_type: ControlTypes::Handshake(HandshakeControlInfo{info: HandshakeVSInfo::V5(HSV5Info{ext_hs: Some(_), ..}), ..}), ..}), _)))), "{:?}", resp
+        assert!(
+            matches!(
+                resp,
+                Connected(
+                    Some(_),
+                    Connection {
+                        handshake: Handshake::Listener(ControlTypes::Handshake(
+                            HandshakeControlInfo {
+                                info: HandshakeVSInfo::V5(HSV5Info {
+                                    ext_hs: Some(_),
+                                    ..
+                                }),
+                                ..
+                            }
+                        )),
+                        ..
+                    },
+                )
+            ),
+            "{:?}",
+            resp
         );
     }
 
     #[test]
     fn send_data_packet() {
-        let mut l = test_listen();
+        let (mut l, mut a) = test_listen();
 
         let dp = DataPacket {
             seq_number: random(),
@@ -264,17 +332,15 @@ mod test {
             dest_sockid: random(),
             payload: Bytes::from(&b"asdf"[..]),
         };
-        assert!(
-            matches!(
-                l.handle_packet((Packet::Data(dp.clone()), "127.0.0.1:8765".parse().unwrap())),
-                Err(ConnectError::ControlExpected(d)) if d == dp
-            )
-        );
+        assert!(matches!(
+            l.handle_packet((Packet::Data(dp.clone()), conn_addr()),             &mut a),
+            NotHandled(ConnectError::ControlExpected(d)) if d == dp
+        ));
     }
 
     #[test]
     fn send_ack2() {
-        let mut l = test_listen();
+        let (mut l, mut a) = test_listen();
 
         let a2 = ControlTypes::Ack2(random());
         assert!(matches!(
@@ -284,15 +350,15 @@ mod test {
                     dest_sockid: random(),
                     control_type: a2.clone()
                 }),
-                "127.0.0.1:8765".parse().unwrap()
-            )),
-            Err(ConnectError::HandshakeExpected(pack)) if pack == a2
+                conn_addr()
+            ), &mut a),
+            NotHandled(ConnectError::HandshakeExpected(pack)) if pack == a2
         ));
     }
 
     #[test]
     fn send_wrong_handshake() {
-        let mut l = test_listen();
+        let (mut l, mut a) = test_listen();
 
         // listen expects an induction first, send a conclustion first
 
@@ -300,52 +366,48 @@ mod test {
         assert!(matches!(
             l.handle_packet((
                 build_hs_pack(shake.clone()),
-                "127.0.0.1:8765".parse().unwrap()
-            )),
-            Err(ConnectError::InductionExpected(s)) if s == shake
+                conn_addr()
+            ), &mut a),
+            NotHandled(ConnectError::InductionExpected(s)) if s == shake
         ));
     }
 
     #[test]
     fn send_induction_twice() {
-        let mut l = test_listen();
+        let (mut l, mut a) = test_listen();
 
         // send a rendezvous handshake after an induction
-        let resp = l.handle_packet((
-            build_hs_pack(test_induction()),
-            "127.0.0.1:8765".parse().unwrap(),
-        ));
-        assert!(resp.is_ok());
-        assert!(resp.unwrap().is_some());
+        let resp = l.handle_packet((build_hs_pack(test_induction()), conn_addr()), &mut a);
+        assert!(matches!(resp, SendPacket(_)));
 
         let mut shake = test_induction();
         shake.shake_type = ShakeType::Waveahand;
         assert!(matches!(
             l.handle_packet((
                 build_hs_pack(shake.clone()),
-                "127.0.0.1:8765".parse().unwrap()
-            )),
-            Err(ConnectError::ConclusionExpected(nc)) if nc == shake
+                conn_addr()
+            ), &mut a),
+            NotHandled(ConnectError::ConclusionExpected(nc)) if nc == shake
         ))
     }
 
     #[test]
     fn send_v4_conclusion() {
-        let mut l = test_listen();
+        let (mut l, mut a) = test_listen();
 
-        let resp = l.handle_packet((
-            build_hs_pack(test_induction()),
-            "127.0.0.1:8765".parse().unwrap(),
-        ));
-        assert!(matches!(resp, Ok(Some(_))));
+        let resp = l.handle_packet((build_hs_pack(test_induction()), conn_addr()), &mut a);
+        assert!(matches!(resp, SendPacket(_)));
 
         let mut c = test_conclusion();
         c.info = HandshakeVSInfo::V4(SocketType::Datagram);
 
-        let resp = l.handle_packet((build_hs_pack(c), "127.0.0.1:8765".parse().unwrap()));
+        let resp = l.handle_packet((build_hs_pack(c), conn_addr()), &mut a);
 
         assert!(
-            matches!(resp, Err(ConnectError::UnsupportedProtocolVersion(4))),
+            matches!(
+                resp,
+                NotHandled(ConnectError::UnsupportedProtocolVersion(4))
+            ),
             "{:?}",
             resp
         );
@@ -353,23 +415,47 @@ mod test {
 
     #[test]
     fn send_no_ext_hs_conclusion() {
-        let mut l = test_listen();
+        let (mut l, mut a) = test_listen();
 
-        let resp = l.handle_packet((
-            build_hs_pack(test_induction()),
-            "127.0.0.1:8765".parse().unwrap(),
-        ));
-        assert!(matches!(resp, Ok(Some(_))));
+        let resp = l.handle_packet((build_hs_pack(test_induction()), conn_addr()), &mut a);
+        assert!(matches!(resp, SendPacket(_)));
 
         let mut c = test_conclusion();
         c.info = HandshakeVSInfo::V5(HSV5Info::default());
 
-        let resp = l.handle_packet((build_hs_pack(c), "127.0.0.1:8765".parse().unwrap()));
+        let resp = l.handle_packet((build_hs_pack(c), conn_addr()), &mut a);
 
         assert!(
-            matches!(resp, Err(ConnectError::ExpectedExtFlags)),
+            matches!(resp, NotHandled(ConnectError::ExpectedExtFlags)),
             "{:?}",
             resp
         );
+    }
+    struct Rejector;
+    impl StreamAcceptor for Rejector {
+        fn accept(
+            &mut self,
+            _streamid: Option<&str>,
+            _ip: SocketAddr,
+        ) -> Result<AcceptParameters, RejectReason> {
+            return Err(RejectReason::Server(ServerRejectReason::Overload));
+        }
+    }
+
+    #[test]
+    fn reject() {
+        let (mut l, _) = test_listen();
+        let mut a = Rejector;
+        let resp = l.handle_packet((build_hs_pack(test_induction()), conn_addr()), &mut a);
+        assert!(matches!(resp, SendPacket(_)));
+
+        let resp = l.handle_packet((build_hs_pack(test_conclusion()), conn_addr()), &mut a);
+        assert!(matches!(
+            resp,
+            Reject(
+                _,
+                ConnectionReject::Rejecting(RejectReason::Server(ServerRejectReason::Overload)),
+            )
+        ));
     }
 }

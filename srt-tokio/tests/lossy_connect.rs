@@ -76,7 +76,7 @@ fn chan_seeded(
 
 #[tokio::test]
 async fn connect() {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     let (send, recv) = chan("127.0.0.1:1111", "127.0.0.1:0");
 
@@ -91,7 +91,7 @@ async fn connect() {
 
 #[tokio::test]
 async fn rendezvous() {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     async fn test_rendezvous(send: LossyConn<Packet>, recv: LossyConn<Packet>) {
         let a = SrtSocketBuilder::new_rendezvous("127.0.0.1:1511")

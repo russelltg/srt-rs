@@ -1,9 +1,9 @@
 //! Aes key wrapping is availble in OpenSSL rust, but it's the only thing we need from openssl...so I just ported OpenSSL's code to Rust
 //! If a third-party library offers, this it would be better...
 
-use block_cipher::generic_array::typenum::consts::U16;
-use block_cipher::generic_array::{ArrayLength, GenericArray};
-use block_cipher::BlockCipher;
+use cipher::generic_array::typenum::consts::U16;
+use cipher::generic_array::{ArrayLength, GenericArray};
+use cipher::BlockCipher;
 
 pub const DEFAULT_IV: [u8; 8] = [0xA6; 8];
 
@@ -157,7 +157,7 @@ where
 mod test {
     use super::*;
 
-    use aes_soft::block_cipher::NewBlockCipher;
+    use aes_soft::cipher::NewBlockCipher;
     use aes_soft::*;
 
     // these are from https://tools.ietf.org/html/rfc3394#page-8

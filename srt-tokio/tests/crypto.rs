@@ -6,11 +6,9 @@ use bytes::Bytes;
 use futures::{SinkExt, TryStreamExt};
 use log::info;
 
-use tokio::{spawn, time::delay_for};
+use tokio::{spawn, time::sleep};
 
 async fn test_crypto(size: u8) {
-    let _ = env_logger::try_init();
-
     let sender = SrtSocketBuilder::new_listen()
         .crypto(size, "password123")
         .local_port(2000)
@@ -42,10 +40,12 @@ async fn test_crypto(size: u8) {
 
 #[tokio::test]
 async fn crypto_exchange() {
+    let _ = pretty_env_logger::try_init();
+
     test_crypto(16).await;
-    delay_for(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(100)).await;
     test_crypto(24).await;
-    delay_for(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(100)).await;
     test_crypto(32).await;
 }
 

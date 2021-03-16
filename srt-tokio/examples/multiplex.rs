@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::stream;
 use futures::{SinkExt, StreamExt};
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 use srt_protocol::NullEventReceiver;
 use srt_tokio::SrtSocketBuilder;
@@ -39,7 +39,7 @@ async fn main() -> Result<(), Error> {
                     if count % 100 == 0 {
                         println!("Sent to client: {} {:?} packets", client_desc, count);
                     }
-                    delay_for(Duration::from_millis(10)).await;
+                    sleep(Duration::from_millis(10)).await;
                     return Some((
                         Ok((Instant::now(), Bytes::from(vec![0; 8000]))),
                         (count + 1, client_desc),

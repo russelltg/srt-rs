@@ -22,8 +22,13 @@ use futures::{
     stream::{self, once, unfold, BoxStream},
     try_join,
 };
-use tokio::{io::AsyncReadExt, net::UdpSocket, prelude::AsyncRead};
-use tokio_util::{codec::BytesCodec, udp::UdpFramed};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    net::TcpListener,
+    net::TcpStream,
+    net::UdpSocket,
+};
+use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
 
 use log::info;
 use srt_tokio::{ConnInitMethod, Event, EventReceiver, SocketID, SrtSocketBuilder, StreamerServer};
@@ -48,25 +53,6 @@ trait MySinkExt<Item>: Sink<Item> {
     }
 }
 impl<T, Item> MySinkExt<Item> for T where T: Sink<Item> {}
-
-// futures::AsyncWrite impl for tokio::io::AsyncWrite
-struct FutAsyncWrite<T>(T);
-impl<T: tokio::io::AsyncWrite + Unpin> futures::AsyncWrite for FutAsyncWrite<T> {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &[u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        <T as tokio::io::AsyncWrite>::poll_write(Pin::new(&mut self.0), cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        <T as tokio::io::AsyncWrite>::poll_flush(Pin::new(&mut self.0), cx)
-    }
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        <T as tokio::io::AsyncWrite>::poll_shutdown(Pin::new(&mut self.0), cx)
-    }
-}
 
 // INPUT and OUTPUT can be either a Url of a File
 enum DataType<'a> {
@@ -164,7 +150,7 @@ fn local_port_addr(url: &Url, kind: &str) -> Result<(u16, Option<SocketAddr>), E
     Ok(match url.host() {
         // no host means bind to the port specified
         None => (port, None),
-        Some(Host::Domain(d)) if d == "" => (port, None),
+        Some(Host::Domain(d)) if d.is_empty() => (port, None),
 
         // if host is specified, bind to 0
         Some(Host::Domain(d)) => (
@@ -191,7 +177,7 @@ fn get_conn_init_method(
 ) -> Result<ConnInitMethod, Error> {
     Ok(match (addr, rendezvous_v) {
         // address but not rendezvous -> connect
-        (Some(addr), None) => ConnInitMethod::Connect(addr),
+        (Some(addr), None) => ConnInitMethod::Connect(addr, None),
         // no address or rendezvous -> listen
         (None, None) => ConnInitMethod::Listen,
         // address and rendezvous flag -> rendezvous
@@ -203,7 +189,7 @@ fn get_conn_init_method(
 }
 
 #[derive(Copy, Clone)]
-enum UdpKind {
+enum ConnectionKind {
     Send,
     Listen(u16),
 }
@@ -360,17 +346,17 @@ impl EventReceiver for PrometheusEventReceiver {
     }
 }
 
-fn parse_udp_options<C>(
+fn parse_connection_options<C>(
     args: impl Iterator<Item = (C, C)>,
-    kind: UdpKind,
+    kind: ConnectionKind,
 ) -> Result<SocketAddr, Error>
 where
     C: Deref<Target = str>,
 {
     // defaults
     let mut addr = match kind {
-        UdpKind::Send => "0.0.0.0:0".parse().unwrap(),
-        UdpKind::Listen(port) => SocketAddr::new("0.0.0.0".parse().unwrap(), port),
+        ConnectionKind::Send => "0.0.0.0:0".parse().unwrap(),
+        ConnectionKind::Listen(port) => SocketAddr::new("0.0.0.0".parse().unwrap(), port),
     };
 
     for (k, v) in args {
@@ -383,7 +369,7 @@ where
                     err
                 ),
             }),
-            ("local_port", port, UdpKind::Send) => addr.set_port(match port.parse() {
+            ("local_port", port, ConnectionKind::Send) => addr.set_port(match port.parse() {
                 Ok(port) => port,
                 Err(err) => bail!(
                     "Failed to parse local_port parameter '{}' as 16 bit integer: {}",
@@ -391,7 +377,7 @@ where
                     err
                 ),
             }),
-            ("local_port", _, UdpKind::Listen(_)) => {
+            ("local_port", _, ConnectionKind::Listen(_)) => {
                 bail!("local_port is incompatiable with udp listen mode")
             }
             (unrecog, _, _) => bail!("Unrecognized udp flag: {}", unrecog),
@@ -437,28 +423,76 @@ fn resolve_input<'a>(
         DataType::Url(input_url) => {
             let (input_local_port, input_addr) = local_port_addr(&input_url, "input")?;
             match input_url.scheme() {
-                    "udp" if input_local_port == 0 => 
-                        bail!("Must not designate a ip to receive UDP. Example: udp://:1234, not udp://127.0.0.1:1234. If you with to bind to a specific adapter, use the adapter setting instead."),
-                    "udp" => {
-                        once(async move {
-                            Ok(UdpFramed::new(
-                                UdpSocket::bind(&parse_udp_options(
-                                    input_url.query_pairs(),
-                                    UdpKind::Listen(input_local_port),
-                                )?).await?,
-                                BytesCodec::new(),
-                            ).map(Result::unwrap).map(|(b, _)| b.freeze()).boxed())
-                        }).boxed()
+                "udp" if input_local_port == 0 => bail!(
+                    "Must not designate a ip to receive UDP. \
+                     Example: udp://:1234, not udp://127.0.0.1:1234. \
+                     If you with to bind to a specific adapter, use the adapter setting instead."
+                ),
+                "udp" => once(async move {
+                    Ok(UdpFramed::new(
+                        UdpSocket::bind(&parse_connection_options(
+                            input_url.query_pairs(),
+                            ConnectionKind::Listen(input_local_port),
+                        )?)
+                        .await?,
+                        BytesCodec::new(),
+                    )
+                    .map(Result::unwrap)
+                    .map(|(b, _)| b.freeze())
+                    .boxed())
+                })
+                .boxed(),
+                "srt" => {
+                    if input_url.query_pairs().any(|(k, _)| k == "autoreconnect") {
+                        unfold(
+                            (input_addr, input_url, input_local_port),
+                            move |(input_addr, input_url, input_local_port)| async move {
+                                Some((
+                                    make_srt_input(input_addr, input_url.clone(), input_local_port)
+                                        .await,
+                                    (input_addr, input_url, input_local_port),
+                                ))
+                            },
+                        )
+                        .boxed()
+                    } else {
+                        once(make_srt_input(input_addr, input_url, input_local_port)).boxed()
                     }
-                    "srt" => {
-                        if input_url.query_pairs().any(|(k, _)| k == "autoreconnect") {
-                            unfold((input_addr, input_url, input_local_port), move |(input_addr, input_url, input_local_port)| async move { Some((make_srt_input(input_addr, input_url.clone(), input_local_port).await, (input_addr, input_url, input_local_port))) }).boxed()
-                        } else {
-                            once(make_srt_input(input_addr, input_url, input_local_port)).boxed()
-                        }
-                    }
-                    s => bail!("unrecognized scheme: {} designated in input url", s),
                 }
+                "tcp" => {
+                    if let Some(input) = input_addr {
+                        once(async move {
+                            loop {
+                                match TcpStream::connect(input).await {
+                                    Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+                                    Ok(stream) => {
+                                        return Ok(Framed::new(stream, BytesCodec::new())
+                                            .map(Result::unwrap)
+                                            .map(|b| b.freeze())
+                                            .boxed())
+                                    }
+                                }
+                            }
+                        })
+                        .boxed()
+                    } else {
+                        once(async move {
+                            let input = &parse_connection_options(
+                                input_url.query_pairs(),
+                                ConnectionKind::Listen(input_local_port),
+                            )?;
+                            let listener = TcpListener::bind(input).await?;
+                            let (stream, _) = listener.accept().await?;
+                            Ok(Framed::new(stream, BytesCodec::new())
+                                .map(Result::unwrap)
+                                .map(|b| b.freeze())
+                                .boxed())
+                        })
+                        .boxed()
+                    }
+                }
+                s => bail!("unrecognized scheme: {} designated in input url", s),
+            }
         }
         DataType::File(file) if file == Path::new("-") => once(async move {
             Ok(read_to_stream(tokio::io::stdin())
@@ -532,41 +566,89 @@ fn resolve_output(output_url: DataType) -> Result<SinkStream, Error> {
             let (output_local_port, output_addr) = local_port_addr(&output_url, "output")?;
 
             match output_url.scheme() {
-                    "udp" if output_addr.is_none() => 
-                        bail!("Must designate a ip to send to to send UDP. Example: udp://127.0.0.1:1234, not udp://:1234"),
-                    "udp" => once(async move {
-                        Ok(UdpFramed::new(
-                            UdpSocket::bind(&parse_udp_options(
-                                output_url.query_pairs(),
-                                UdpKind::Send,
-                            )?).await?,
-                            BytesCodec::new(),
+                "udp" if output_addr.is_none() => bail!(
+                    "Must designate a ip to send to to send UDP. \
+                     Example: udp://127.0.0.1:1234, not udp://:1234"
+                ),
+                "udp" => once(async move {
+                    Ok(UdpFramed::new(
+                        UdpSocket::bind(&parse_connection_options(
+                            output_url.query_pairs(),
+                            ConnectionKind::Send,
+                        )?)
+                        .await?,
+                        BytesCodec::new(),
+                    )
+                    .with(move |b| future::ready(Ok((b, output_addr.unwrap()))))
+                    .boxed_sink())
+                })
+                .boxed(),
+                "srt" => {
+                    if output_url.query_pairs().any(|(k, _)| k == "autoreconnect") {
+                        unfold(
+                            (output_addr, output_url, output_local_port),
+                            |(output_addr, output_url, output_local_port)| async move {
+                                Some((
+                                    make_srt_ouput(
+                                        output_addr,
+                                        output_url.clone(),
+                                        output_local_port,
+                                    )
+                                    .await,
+                                    (output_addr, output_url, output_local_port),
+                                ))
+                            },
                         )
-                        .with(move |b| future::ready(Ok((b, output_addr.unwrap())))).boxed_sink())
-                    }).boxed(),
-                    "srt" => {
-                        if output_url.query_pairs().any(|(k, _)| k == "autoreconnect") {
-                            unfold((output_addr, output_url, output_local_port), |(output_addr, output_url, output_local_port)| async move { Some((make_srt_ouput(output_addr, output_url.clone(), output_local_port).await, (output_addr, output_url, output_local_port))) }).boxed()
-                        } else {
-                            once(make_srt_ouput(output_addr, output_url, output_local_port)).boxed()
-                        }
-                    },
-                  s => bail!("unrecognized scheme '{}' designated in output url", s),
+                        .boxed()
+                    } else {
+                        once(make_srt_ouput(output_addr, output_url, output_local_port)).boxed()
+                    }
                 }
+                "tcp" => {
+                    if let Some(output) = output_addr {
+                        once(async move {
+                            loop {
+                                match TcpStream::connect(output).await {
+                                    Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+                                    Ok(stream) => {
+                                        return Ok(Framed::new(stream, BytesCodec::new())
+                                            .with(move |b| future::ready(Ok(b)))
+                                            .boxed_sink())
+                                    }
+                                }
+                            }
+                        })
+                        .boxed()
+                    } else {
+                        once(async move {
+                            let output = &parse_connection_options(
+                                output_url.query_pairs(),
+                                ConnectionKind::Listen(output_local_port),
+                            )?;
+                            let listener = TcpListener::bind(output).await?;
+                            let (stream, _) = listener.accept().await?;
+                            Ok(Framed::new(stream, BytesCodec::new())
+                                .with(move |b| future::ready(Ok(b)))
+                                .boxed_sink())
+                        })
+                        .boxed()
+                    }
+                }
+                s => bail!("unrecognized scheme '{}' designated in output url", s),
+            }
         }
         DataType::File(file) if file == Path::new("-") => once(async move {
-            Ok(FutAsyncWrite(tokio::io::stdout())
-                .into_sink()
-                .sink_map_err(Error::from)
+            Ok(FramedWrite::new(tokio::io::stdout(), BytesCodec::new())
+                .with(move |b| future::ready(Ok(b)))
                 .boxed_sink())
         })
         .boxed(),
         DataType::File(file) => {
             let file = file.to_owned();
             once(async move {
-                Ok(FutAsyncWrite(tokio::fs::File::create(file).await?)
-                    .into_sink()
-                    .sink_map_err(Error::from)
+                let output = tokio::fs::File::create(file).await?;
+                Ok(FramedWrite::new(output, BytesCodec::new())
+                    .with(move |b| future::ready(Ok(b)))
                     .boxed_sink())
             })
             .boxed()
@@ -678,7 +760,7 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Error> {
-    env_logger::Builder::from_default_env()
+    pretty_env_logger::formatted_builder()
         // .format(|buf, record| writeln!(buf, "{} [{}] {}", record.args()))
         .format_timestamp_micros()
         .init();

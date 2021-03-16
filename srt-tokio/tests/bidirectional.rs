@@ -4,11 +4,10 @@ use bytes::Bytes;
 use futures::{stream, SinkExt, StreamExt, TryStreamExt};
 use std::time::{Duration, Instant};
 use tokio::spawn;
-use tokio::time::interval;
 
 #[tokio::test]
 async fn bidirectional() {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     const ITERS: u32 = 1_000;
 
@@ -28,9 +27,10 @@ async fn bidirectional() {
                 }
                 assert_eq!(r.try_next().await.unwrap(), None);
             });
-            let mut counting_stream = stream::iter(0..ITERS)
-                .zip(interval(Duration::from_millis(1)))
-                .map(|(i, _)| Ok((Instant::now(), Bytes::from(i.to_string()))));
+            let mut counting_stream =
+                tokio_stream::StreamExt::throttle(stream::iter(0..ITERS), Duration::from_millis(1))
+                    .map(|i| Ok((Instant::now(), Bytes::from(i.to_string()))))
+                    .boxed();
 
             s.send_all(&mut counting_stream).await.unwrap();
             s.close().await.unwrap();
