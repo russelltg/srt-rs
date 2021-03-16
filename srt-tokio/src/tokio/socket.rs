@@ -20,8 +20,9 @@ use std::{
 use bytes::Bytes;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
-use futures::{future, ready, select};
+use futures::{future, ready, select_biased};
 use log::{debug, error, info, trace};
+use srt_protocol::EventReceiver;
 use tokio::time::sleep_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
@@ -62,13 +63,14 @@ enum Action {
 /// 1. Receive packets and send them to either the sender or the receiver through
 ///    a channel
 /// 2. Take outgoing packets and send them on the socket
-pub fn create_bidrectional_srt<T>(sock: T, conn: crate::Connection) -> SrtSocket
+pub fn create_bidrectional_srt<ER, T>(sock: T, conn: crate::Connection) -> SrtSocket
 where
     T: Stream<Item = (Packet, SocketAddr)>
         + Sink<(Packet, SocketAddr), Error = io::Error>
         + Send
         + Unpin
         + 'static,
+    ER: EventReceiver + Send,
 {
     let (mut release, recvr) = mpsc::channel(128);
     let (sender, new_data) = mpsc::channel(128);
@@ -80,6 +82,8 @@ where
     let flush_wakeup = fw.clone();
 
     tokio::spawn(async move {
+        let mut event_receiver = ER::create(conn_copy.settings.local_sockid);
+
         let mut close_receiver = close_oneshot.fuse();
         let _close_sender = close_send; // exists for drop
         let mut new_data = new_data.fuse();
@@ -92,16 +96,17 @@ where
 
         let mut flushed = true;
         loop {
-            let (sender_timeout, close) = match sender.next_action(Instant::now()) {
-                SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {
-                    (None, false)
-                }
-                SenderAlgorithmAction::WaitUntil(t) => (Some(t), false),
-                SenderAlgorithmAction::Close => {
-                    trace!("{:?} Send returned close", sender.settings().local_sockid);
-                    (None, true)
-                }
-            };
+            let (sender_timeout, close) =
+                match sender.next_action(Instant::now(), &mut event_receiver) {
+                    SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {
+                        (None, false)
+                    }
+                    SenderAlgorithmAction::WaitUntil(t) => (Some(t), false),
+                    SenderAlgorithmAction::Close => {
+                        trace!("{:?} Send returned close", sender.settings().local_sockid);
+                        (None, true)
+                    }
+                };
             while let Some(out) = sender.pop_output() {
                 if let Err(e) = sock.send(out).await {
                     error!("Error while seding packet: {:?}", e); // TODO: real error handling
@@ -122,7 +127,7 @@ where
             }
 
             let recvr_timeout = loop {
-                match receiver.next_algorithm_action(Instant::now()) {
+                match receiver.next_algorithm_action(Instant::now(), &mut event_receiver) {
                     ReceiverAlgorithmAction::TimeBoundedReceive(t2) => {
                         break Some(t2);
                     }
@@ -228,17 +233,17 @@ where
                 }
             };
 
-            let action = select! {
-                // one of the entities requested wakeup
-                _ = timeout_fut.fuse() => Action::Nothing,
-                // new packet received
+            let action = select_biased! {
+                // new packet received--highest priority
                 res = sock.next() =>
                     Action::DelegatePacket(res),
-                // new packet queued
+                // new packet queued--second higest priority
                 res = new_data.next() => {
                     Action::Send(res)
                 }
-                // socket closed
+                // one of the entities requested wakeup
+                _ = timeout_fut.fuse() => Action::Nothing,
+                // socket closed-lowest priority
                 _ = close_receiver =>  {
                     Action::CloseSender
                 }
@@ -250,18 +255,40 @@ where
                         Some((pack, from)) => {
                             connection.on_packet(Instant::now());
                             match &pack {
-                                Data(_) => receiver.handle_packet(Instant::now(), (pack, from)),
+                                Data(_) => receiver.handle_packet(
+                                    Instant::now(),
+                                    (pack, from),
+                                    &mut event_receiver,
+                                ),
                                 Control(cp) => match &cp.control_type {
                                     // sender-responsble packets
                                     Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
-                                        sender.handle_packet((pack, from), Instant::now());
+                                        sender
+                                            .handle_packet(
+                                                (pack, from),
+                                                Instant::now(),
+                                                &mut event_receiver,
+                                            )
                                     }
                                     // receiver-respnsible
-                                    Ack2(_) => receiver.handle_packet(Instant::now(), (pack, from)),
+                                    Ack2(_) => receiver.handle_packet(
+                                        Instant::now(),
+                                        (pack, from),
+                                        &mut event_receiver,
+                                    ),
                                     // both
                                     Shutdown => {
-                                        sender.handle_packet((pack.clone(), from), Instant::now());
-                                        receiver.handle_packet(Instant::now(), (pack, from));
+                                        sender
+                                            .handle_packet(
+                                                (pack.clone(), from),
+                                                Instant::now(),
+                                                &mut event_receiver,
+                                            );
+                                        receiver.handle_packet(
+                                            Instant::now(),
+                                            (pack, from),
+                                            &mut event_receiver,
+                                        );
                                     }
                                     // neither--this exists just to keep the connection alive
                                     KeepAlive => {}
@@ -284,7 +311,7 @@ where
                 Action::Send(res) => match res {
                     Some(item) => {
                         trace!("{:?} queued packet to send", sender.settings().local_sockid);
-                        sender.handle_data(item, Instant::now());
+                        sender.handle_data(item, Instant::now(), &mut event_receiver);
                     }
                     None => {
                         debug!("Incoming data stream closed");

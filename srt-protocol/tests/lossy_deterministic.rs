@@ -10,7 +10,7 @@ use srt_protocol::{
         receiver::{Receiver, ReceiverAlgorithmAction},
         sender::{Sender, SenderAlgorithmAction},
     },
-    ConnectionSettings, Packet,
+    ConnectionSettings, NullEventReceiver, Packet,
 };
 use std::{
     collections::BinaryHeap,
@@ -118,6 +118,7 @@ fn do_lossy_test(seed: u64, count: usize) {
             sendr.handle_data(
                 (current_time, Bytes::from(next_packet_id.to_string())),
                 current_time,
+                &mut NullEventReceiver,
             );
 
             next_packet_id += 1;
@@ -133,17 +134,26 @@ fn do_lossy_test(seed: u64, count: usize) {
             let pack = s2r.pop().unwrap().packet;
 
             trace!("s->r {:?}", pack);
-            recvr.handle_packet(current_time, (pack, ([127, 0, 0, 1], 2223).into()));
+            recvr.handle_packet(
+                current_time,
+                (pack, ([127, 0, 0, 1], 2223).into()),
+                &mut NullEventReceiver,
+            );
         }
 
         if matches!(r2s.peek(), Some(&HeapEntry{ release_at, ..}) if release_at == current_time) {
             let pack = r2s.pop().unwrap().packet;
 
             trace!("r->s {:?}", pack);
-            sendr.handle_packet((pack, ([127, 0, 0, 1], 2222).into()), current_time)
+            sendr
+                .handle_packet(
+                    (pack, ([127, 0, 0, 1], 2222).into()),
+                    current_time,
+                    &mut NullEventReceiver,
+                )
         }
 
-        let sender_next_time = match sendr.next_action(current_time) {
+        let sender_next_time = match sendr.next_action(current_time, &mut NullEventReceiver) {
             SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => None,
             SenderAlgorithmAction::WaitUntil(time) => Some(time),
             SenderAlgorithmAction::Close => None, // xxx
@@ -161,7 +171,7 @@ fn do_lossy_test(seed: u64, count: usize) {
         }
 
         let receiver_next_time = loop {
-            match recvr.next_algorithm_action(current_time) {
+            match recvr.next_algorithm_action(current_time, &mut NullEventReceiver) {
                 ReceiverAlgorithmAction::TimeBoundedReceive(time) => break Some(time),
                 ReceiverAlgorithmAction::SendControl(cp, _) => {
                     if rng.gen::<f64>() < DROP_RATE {

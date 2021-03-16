@@ -1,6 +1,7 @@
 use std::cmp::max;
 use std::cmp::{min, Ordering};
 use std::collections::VecDeque;
+use std::convert::TryInto;
 use std::iter::Iterator;
 use std::net::SocketAddr;
 use std::time::Instant;
@@ -16,7 +17,7 @@ use crate::packet::{
 };
 use crate::protocol::handshake::Handshake;
 use crate::protocol::TimeStamp;
-use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber};
+use crate::{seq_number::seq_num_range, ConnectionSettings, Event, EventReceiver, SeqNumber};
 
 mod buffer;
 mod time;
@@ -151,7 +152,12 @@ impl Receiver {
     }
 
     // handles an incoming a packet
-    pub fn handle_packet(&mut self, now: Instant, (packet, from): (Packet, SocketAddr)) {
+    pub fn handle_packet(
+        &mut self,
+        now: Instant,
+        (packet, from): (Packet, SocketAddr),
+        er: &mut impl EventReceiver,
+    ) {
         // We don't care about packets from elsewhere
         if from != self.settings.remote {
             info!("Packet received from unknown address: {:?}", from);
@@ -177,7 +183,7 @@ impl Receiver {
                 // handle the control packet
                 match ctrl.control_type {
                     ControlTypes::Ack { .. } => warn!("Receiver received ACK packet, unusual"),
-                    ControlTypes::Ack2(seq_num) => self.handle_ack2(seq_num, now),
+                    ControlTypes::Ack2(seq_num) => self.handle_ack2(seq_num, now, er),
                     ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(shake) => self.handle_handshake_packet(now, shake),
                     ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
@@ -194,12 +200,16 @@ impl Receiver {
                     }
                 }
             }
-            Packet::Data(data) => self.handle_data_packet(data, now),
+            Packet::Data(data) => self.handle_data_packet(data, now, er),
         };
     }
 
     /// 6.2 The Receiver's Algorithm
-    pub fn next_algorithm_action(&mut self, now: Instant) -> ReceiverAlgorithmAction {
+    pub fn next_algorithm_action(
+        &mut self,
+        now: Instant,
+        er: &mut impl EventReceiver,
+    ) -> ReceiverAlgorithmAction {
         use ReceiverAlgorithmAction::*;
 
         //   Data Sending Algorithm:
@@ -214,7 +224,7 @@ impl Receiver {
             self.on_nak_event(now);
         }
 
-        if let Some(data) = self.pop_data(now) {
+        if let Some(data) = self.pop_data(now, er) {
             OutputData(data)
         } else if let Some(Packet::Control(packet)) = self.pop_conotrol_packet() {
             SendControl(packet, self.settings.remote)
@@ -429,7 +439,7 @@ impl Receiver {
         }
     }
 
-    fn handle_ack2(&mut self, seq_num: i32, now: Instant) {
+    fn handle_ack2(&mut self, seq_num: i32, now: Instant, er: &mut impl EventReceiver) {
         // 1) Locate the related ACK in the ACK History Window according to the
         //    ACK sequence number in this ACK2.
         let id_in_wnd = match self
@@ -458,6 +468,8 @@ impl Receiver {
             self.rtt
                 .update(self.receive_buffer.timestamp_from(now) - send_timestamp);
 
+            er.on_event(&Event::RttUpdated(self.rtt.mean().try_into().unwrap()), now);
+
             // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
             self.timers.update_rtt(&self.rtt);
         } else {
@@ -468,7 +480,17 @@ impl Receiver {
         }
     }
 
-    fn handle_data_packet(&mut self, mut data: DataPacket, now: Instant) {
+    fn handle_data_packet(
+        &mut self,
+        mut data: DataPacket,
+        now: Instant,
+        er: &mut impl EventReceiver,
+    ) {
+        er.on_event(&Event::Recvd(data.payload.len()), now);
+        if data.retransmitted {
+            er.on_event(&Event::RecvdRetrans(data.payload.len()), now)
+        }
+
         let ts_now = self.receive_buffer.timestamp_from(now);
 
         // 2&3 don't apply
@@ -545,7 +567,7 @@ impl Receiver {
             self.decrypt_packet(&mut data);
         }
 
-        self.receive_buffer.add(data);
+        self.receive_buffer.add(data, now, er);
     }
 
     fn decrypt_packet(&self, data: &mut DataPacket) {
@@ -576,15 +598,15 @@ impl Receiver {
         );
     }
 
-    fn pop_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
+    fn pop_data(&mut self, now: Instant, er: &mut impl EventReceiver) -> Option<(Instant, Bytes)> {
         // try to release packets
-        while let Some(d) = self.receive_buffer.next_msg_tsbpd(now) {
+        while let Some(d) = self.receive_buffer.next_msg_tsbpd(now, er) {
             self.data_release.push_back(d);
         }
 
         // drop packets
         // TODO: do something with this
-        let _dropped = self.receive_buffer.drop_too_late_packets(now);
+        let _dropped = self.receive_buffer.drop_too_late_packets(now, er);
 
         self.data_release.pop_front()
     }

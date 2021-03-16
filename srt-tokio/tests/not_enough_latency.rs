@@ -10,6 +10,7 @@ use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
 
 mod lossy_conn;
 use crate::lossy_conn::LossyConn;
+use srt_protocol::NullEventReceiver;
 
 #[tokio::test]
 async fn not_enough_latency() {
@@ -35,10 +36,11 @@ async fn not_enough_latency() {
         "127.0.0.1:1",
     );
 
-    let sender = SrtSocketBuilder::new(ConnInitMethod::Listen)
+    let sender = SrtSocketBuilder::new_listen()
         .local_port(1000)
-        .connect_with_sock(send);
-    let recvr = SrtSocketBuilder::new_connect("127.0.0.1:1000").connect_with_sock(recv);
+        .connect_with_sock::<NullEventReceiver, _>(send);
+    let recvr = SrtSocketBuilder::new_connect("127.0.0.1:1000")
+        .connect_with_sock::<NullEventReceiver, _>(recv);
 
     tokio::spawn(async move {
         let mut sender = sender.await.unwrap();

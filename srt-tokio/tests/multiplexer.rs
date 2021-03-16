@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use srt_tokio::{SrtSocket, SrtSocketBuilder};
+use srt_tokio::SrtSocketBuilder;
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -25,11 +25,9 @@ async fn multiplexer() -> Result<()> {
             .boxed();
 
         let mut fused_finish = finished_recv.fuse();
-        while let Some(Ok(result)) =
+        while let Some(Ok(mut sender)) =
             futures::select!(res = server.next().fuse() => res, _ = fused_finish => None)
         {
-            let mut sender: SrtSocket = result.into();
-
             let mut stream =
                 stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());
 

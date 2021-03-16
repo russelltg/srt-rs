@@ -4,10 +4,11 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use futures::{stream, SinkExt, StreamExt};
 
-use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
+use srt_tokio::{SrtSocketBuilder};
 
 mod lossy_conn;
 use crate::lossy_conn::LossyConn;
+use srt_protocol::NullEventReceiver;
 
 #[tokio::test]
 async fn lossy() {
@@ -30,11 +31,12 @@ async fn lossy() {
         "127.0.0.1:0",
     );
 
-    let sender = SrtSocketBuilder::new(ConnInitMethod::Listen)
+    let sender = SrtSocketBuilder::new_listen()
         .local_port(1111)
         .latency(Duration::from_secs(8))
-        .connect_with_sock(send);
-    let recvr = SrtSocketBuilder::new_connect("127.0.0.1:1111").connect_with_sock(recv);
+        .connect_with_sock::<NullEventReceiver, _>(send);
+    let recvr = SrtSocketBuilder::new_connect("127.0.0.1:1111")
+        .connect_with_sock::<NullEventReceiver, _>(recv);
 
     let sender = async move {
         let mut sender = sender.await.unwrap();

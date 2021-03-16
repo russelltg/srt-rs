@@ -1,6 +1,9 @@
 use std::collections::VecDeque;
 use std::fmt;
-use std::time::{Duration, Instant};
+use std::{
+    convert::identity,
+    time::{Duration, Instant},
+};
 
 use bytes::{Bytes, BytesMut};
 use log::{debug, info};
@@ -8,12 +11,15 @@ use log::{debug, info};
 use crate::packet::PacketLocation;
 use crate::protocol::receiver::time::SynchronizedRemoteClock;
 use crate::protocol::{TimeBase, TimeStamp};
-use crate::{ConnectionSettings, DataPacket, SeqNumber};
+use crate::{ConnectionSettings, DataPacket, Event, EventReceiver, SeqNumber};
 
 pub struct RecvBuffer {
     // stores the incoming packets as they arrive
     // `buffer[0]` will hold sequence number `head`
     buffer: VecDeque<Option<DataPacket>>,
+
+    // total number of bytes in `buffer`
+    total_size: usize,
 
     // The next to be released sequence number
     head: SeqNumber,
@@ -42,6 +48,7 @@ impl RecvBuffer {
     pub fn new(head: SeqNumber, start: Instant, tsbpd_latency: Duration) -> Self {
         Self {
             buffer: VecDeque::new(),
+            total_size: 0,
             head,
             time_base: TimeBase::new(start),
             remote_clock: SynchronizedRemoteClock::new(start),
@@ -56,7 +63,7 @@ impl RecvBuffer {
 
     /// Adds a packet to the buffer
     /// If `pack.seq_number < self.head`, this is nop (ie it appears before an already released packet)
-    pub fn add(&mut self, pack: DataPacket) {
+    pub fn add(&mut self, pack: DataPacket, now: Instant, er: &mut impl EventReceiver) {
         if pack.seq_number < self.head {
             return; // packet is too late
         }
@@ -66,6 +73,9 @@ impl RecvBuffer {
         if idx >= self.buffer.len() {
             self.buffer.resize(idx + 1, None);
         }
+
+        self.total_size += pack.payload.len();
+        er.on_event(&Event::ReceiverBufferUpdated(self.total_size), now);
 
         // add the new element
         self.buffer[idx] = Some(pack);
@@ -79,7 +89,7 @@ impl RecvBuffer {
     /// IE: there is a packet after it that is ready to be released
     ///
     /// Returns the number of packets dropped
-    pub fn drop_too_late_packets(&mut self, now: Instant) -> usize {
+    pub fn drop_too_late_packets(&mut self, now: Instant, er: &mut impl EventReceiver) -> usize {
         // Not only does it have to be non-none, it also has to be a First (don't drop half messages)
         let first_non_none_idx = self.buffer.iter().position(|a| {
             a.is_some()
@@ -109,7 +119,20 @@ impl RecvBuffer {
             );
             // start dropping packets
             self.head += first_non_none_idx as u32;
-            self.buffer.drain(0..first_non_none_idx).count()
+
+            let mut dropped_packets = 0;
+            for dropped in self
+                .buffer
+                .drain(0..first_non_none_idx)
+                .filter_map(identity)
+            {
+                dropped_packets += 1;
+                self.total_size -= dropped.payload.len();
+                er.on_event(&Event::Dropped(dropped.payload.len()), now);
+            }
+            er.on_event(&Event::ReceiverBufferUpdated(self.total_size), now);
+
+            dropped_packets
         } else {
             0 // the next available packet isn't ready to be sent yet
         }
@@ -181,13 +204,21 @@ impl RecvBuffer {
 
     /// A convenience function for
     /// `self.next_msg_ready_tsbpd(...).map(|_| self.next_msg().unwrap()`
-    pub fn next_msg_tsbpd(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
+    pub fn next_msg_tsbpd(
+        &mut self,
+        now: Instant,
+        er: &mut impl EventReceiver,
+    ) -> Option<(Instant, Bytes)> {
         self.next_msg_ready_tsbpd(now)
-            .map(|_| self.next_msg(now).unwrap())
+            .map(|_| self.next_msg(now, er).unwrap())
     }
 
     /// Check if there is an available message, returning, and its origin timestamp it if found
-    pub fn next_msg(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
+    pub fn next_msg(
+        &mut self,
+        now: Instant,
+        er: &mut impl EventReceiver,
+    ) -> Option<(Instant, Bytes)> {
         let count = self.next_msg_ready()?;
 
         self.head += count as u32;
@@ -198,23 +229,30 @@ impl RecvBuffer {
 
         // optimize for single packet messages
         if count == 1 {
-            return Some((
-                origin_time,
-                self.buffer.pop_front().unwrap().unwrap().payload,
-            ));
+            let payload = self.buffer.pop_front().unwrap().unwrap().payload;
+
+            er.on_event(&Event::ReceiverBufferUpdated(self.total_size), now);
+            er.on_event(&Event::Released(payload.len()), now);
+
+            return Some((origin_time, payload));
         }
 
+        let payload = self
+            .buffer
+            .drain(0..count)
+            .fold(BytesMut::new(), |mut bytes, pack| {
+                bytes.extend(pack.unwrap().payload);
+                bytes
+            })
+            .freeze();
+
+        er.on_event(&Event::ReceiverBufferUpdated(self.total_size), now);
+        er.on_event(&Event::Released(payload.len()), now);
+
+        self.total_size -= payload.len();
+
         // accumulate the rest
-        Some((
-            origin_time,
-            self.buffer
-                .drain(0..count)
-                .fold(BytesMut::new(), |mut bytes, pack| {
-                    bytes.extend(pack.unwrap().payload);
-                    bytes
-                })
-                .freeze(),
-        ))
+        Some((origin_time, payload))
     }
 
     fn tsbpd_instant_from(&self, now: Instant, timestamp: TimeStamp) -> Instant {
@@ -248,7 +286,7 @@ mod test {
     use crate::{
         packet::{DataEncryption, PacketLocation},
         protocol::TimeStamp,
-        DataPacket, MsgNumber, SeqNumber, SocketID,
+        DataPacket, MsgNumber, NullEventReceiver, SeqNumber, SocketID,
     };
     use bytes::Bytes;
     use std::time::{Duration, Instant};
@@ -276,81 +314,109 @@ mod test {
         let mut buf = new_buffer(SeqNumber::new_truncate(3));
 
         assert_eq!(buf.next_msg_ready(), None);
-        assert_eq!(buf.next_msg(Instant::now()), None);
+        assert_eq!(buf.next_msg(Instant::now(), &mut NullEventReceiver), None);
         assert_eq!(buf.next_release(), SeqNumber(3));
     }
 
     #[test]
     fn not_ready_no_more() {
         let mut buf = new_buffer(SeqNumber::new_truncate(5));
-        buf.add(DataPacket {
-            seq_number: SeqNumber(5),
-            message_loc: PacketLocation::FIRST,
-            ..basic_pack()
-        });
+        buf.add(
+            DataPacket {
+                seq_number: SeqNumber(5),
+                message_loc: PacketLocation::FIRST,
+                ..basic_pack()
+            },
+            Instant::now(),
+            &mut NullEventReceiver,
+        );
 
         assert_eq!(buf.next_msg_ready(), None);
-        assert_eq!(buf.next_msg(Instant::now()), None);
+        assert_eq!(buf.next_msg(Instant::now(), &mut NullEventReceiver), None);
         assert_eq!(buf.next_release(), SeqNumber(5));
     }
 
     #[test]
     fn not_ready_none() {
         let mut buf = new_buffer(SeqNumber::new_truncate(5));
-        buf.add(DataPacket {
-            seq_number: SeqNumber(5),
-            message_loc: PacketLocation::FIRST,
-            ..basic_pack()
-        });
-        buf.add(DataPacket {
-            seq_number: SeqNumber(7),
-            message_loc: PacketLocation::FIRST,
-            ..basic_pack()
-        });
+        buf.add(
+            DataPacket {
+                seq_number: SeqNumber(5),
+                message_loc: PacketLocation::FIRST,
+                ..basic_pack()
+            },
+            Instant::now(),
+            &mut NullEventReceiver,
+        );
+        buf.add(
+            DataPacket {
+                seq_number: SeqNumber(7),
+                message_loc: PacketLocation::FIRST,
+                ..basic_pack()
+            },
+            Instant::now(),
+            &mut NullEventReceiver,
+        );
 
         assert_eq!(buf.next_msg_ready(), None);
-        assert_eq!(buf.next_msg(Instant::now()), None);
+        assert_eq!(buf.next_msg(Instant::now(), &mut NullEventReceiver), None);
         assert_eq!(buf.next_release(), SeqNumber(5));
     }
 
     #[test]
     fn not_ready_middle() {
         let mut buf = new_buffer(SeqNumber::new_truncate(5));
-        buf.add(DataPacket {
-            seq_number: SeqNumber(5),
-            message_loc: PacketLocation::FIRST,
-            ..basic_pack()
-        });
-        buf.add(DataPacket {
-            seq_number: SeqNumber(6),
-            message_loc: PacketLocation::empty(),
-            ..basic_pack()
-        });
+        buf.add(
+            DataPacket {
+                seq_number: SeqNumber(5),
+                message_loc: PacketLocation::FIRST,
+                ..basic_pack()
+            },
+            Instant::now(),
+            &mut NullEventReceiver,
+        );
+        buf.add(
+            DataPacket {
+                seq_number: SeqNumber(6),
+                message_loc: PacketLocation::empty(),
+                ..basic_pack()
+            },
+            Instant::now(),
+            &mut NullEventReceiver,
+        );
 
         assert_eq!(buf.next_msg_ready(), None);
-        assert_eq!(buf.next_msg(Instant::now()), None);
+        assert_eq!(buf.next_msg(Instant::now(), &mut NullEventReceiver), None);
         assert_eq!(buf.next_release(), SeqNumber(5));
     }
 
     #[test]
     fn ready_single() {
         let mut buf = new_buffer(SeqNumber::new_truncate(5));
-        buf.add(DataPacket {
-            seq_number: SeqNumber(5),
-            message_loc: PacketLocation::FIRST | PacketLocation::LAST,
-            payload: From::from(&b"hello"[..]),
-            ..basic_pack()
-        });
-        buf.add(DataPacket {
-            seq_number: SeqNumber(6),
-            message_loc: PacketLocation::empty(),
-            payload: From::from(&b"no"[..]),
-            ..basic_pack()
-        });
+        buf.add(
+            DataPacket {
+                seq_number: SeqNumber(5),
+                message_loc: PacketLocation::FIRST | PacketLocation::LAST,
+                payload: From::from(&b"hello"[..]),
+                ..basic_pack()
+            },
+            Instant::now(),
+            &mut NullEventReceiver,
+        );
+        buf.add(
+            DataPacket {
+                seq_number: SeqNumber(6),
+                message_loc: PacketLocation::empty(),
+                payload: From::from(&b"no"[..]),
+                ..basic_pack()
+            },
+            Instant::now(),
+            &mut NullEventReceiver,
+        );
 
         assert_eq!(buf.next_msg_ready(), Some(1));
         assert_eq!(
-            buf.next_msg(Instant::now()),
+            buf.next_msg(Instant::now(), &mut NullEventReceiver),
             Some((buf.remote_clock.origin_time(), From::from(&b"hello"[..])))
         );
         assert_eq!(buf.next_release(), SeqNumber(6));
@@ -360,28 +426,40 @@ mod test {
     #[test]
     fn ready_multi() {
         let mut buf = new_buffer(SeqNumber::new_truncate(5));
-        buf.add(DataPacket {
-            seq_number: SeqNumber(5),
-            message_loc: PacketLocation::FIRST,
-            payload: From::from(&b"hello"[..]),
-            ..basic_pack()
-        });
-        buf.add(DataPacket {
-            seq_number: SeqNumber(6),
-            message_loc: PacketLocation::empty(),
-            payload: From::from(&b"yas"[..]),
-            ..basic_pack()
-        });
-        buf.add(DataPacket {
-            seq_number: SeqNumber(7),
-            message_loc: PacketLocation::LAST,
-            payload: From::from(&b"nas"[..]),
-            ..basic_pack()
-        });
+        buf.add(
+            DataPacket {
+                seq_number: SeqNumber(5),
+                message_loc: PacketLocation::FIRST,
+                payload: From::from(&b"hello"[..]),
+                ..basic_pack()
+            },
+            Instant::now(),
+            &mut NullEventReceiver,
+        );
+        buf.add(
+            DataPacket {
+                seq_number: SeqNumber(6),
+                message_loc: PacketLocation::empty(),
+                payload: From::from(&b"yas"[..]),
+                ..basic_pack()
+            },
+            Instant::now(),
+            &mut NullEventReceiver,
+        );
+        buf.add(
+            DataPacket {
+                seq_number: SeqNumber(7),
+                message_loc: PacketLocation::LAST,
+                payload: From::from(&b"nas"[..]),
+                ..basic_pack()
+            },
+            Instant::now(),
+            &mut NullEventReceiver,
+        );
 
         assert_eq!(buf.next_msg_ready(), Some(3));
         assert_eq!(
-            buf.next_msg(Instant::now()),
+            buf.next_msg(Instant::now(), &mut NullEventReceiver),
             Some((
                 buf.remote_clock.origin_time(),
                 From::from(&b"helloyasnas"[..])

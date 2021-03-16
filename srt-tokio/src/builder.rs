@@ -16,6 +16,7 @@ use srt_protocol::{
     accesscontrol::{AllowAllStreamAcceptor, StreamAcceptor},
     pending_connection::ConnInitSettings,
 };
+use srt_protocol::{EventReceiver, NullEventReceiver};
 
 /// Struct to build sockets.
 ///
@@ -55,7 +56,6 @@ use srt_protocol::{
 ///
 /// # Panics:
 /// * There is no tokio runtime
-#[derive(Debug, Clone)]
 #[must_use]
 pub struct SrtSocketBuilder {
     local_addr: Option<IpAddr>,
@@ -187,7 +187,7 @@ impl SrtSocketBuilder {
         self
     }
 
-    /// Se the crypto paramters. However, this is currently unimplemented.
+    /// Set the crypto paramters.
     ///
     /// # Panics:
     /// * size is not 16, 24, or 32.
@@ -207,13 +207,14 @@ impl SrtSocketBuilder {
     }
 
     /// Connect with a custom socket. Not typically used, see [`connect`](SrtSocketBuilder::connect) instead.
-    pub async fn connect_with_sock<T>(self, mut socket: T) -> Result<SrtSocket, io::Error>
+    pub async fn connect_with_sock<ER, T>(self, mut socket: T) -> Result<SrtSocket, io::Error>
     where
         T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
             + Sink<(Packet, SocketAddr), Error = io::Error>
             + Unpin
             + Send
             + 'static,
+        ER: EventReceiver + Send,
     {
         let conn = match self.conn_type {
             ConnInitMethod::Listen => {
@@ -256,7 +257,7 @@ impl SrtSocketBuilder {
             }
         };
 
-        Ok(create_bidrectional_srt(
+        Ok(create_bidrectional_srt::<ER, _>(
             socket.filter_map(|res| {
                 ready(res.map_err(|e| warn!("Error parsing packet: {}", e)).ok())
             }),
@@ -266,6 +267,12 @@ impl SrtSocketBuilder {
 
     /// Connects to the remote socket. Resolves when it has been connected successfully.
     pub async fn connect(self) -> Result<SrtSocket, io::Error> {
+        self.connect_event_receiver::<NullEventReceiver>().await
+    }
+
+    pub async fn connect_event_receiver<ER: EventReceiver + Send>(
+        self,
+    ) -> Result<SrtSocket, io::Error> {
         let is_ipv4 = match self.conn_type {
             ConnInitMethod::Connect(addr, _) => addr.is_ipv4(),
             ConnInitMethod::Rendezvous(addr) => addr.is_ipv4(),
@@ -277,7 +284,7 @@ impl SrtSocketBuilder {
             self.local_port,
         );
         Ok(self
-            .connect_with_sock(UdpFramed::new(
+            .connect_with_sock::<ER, _>(UdpFramed::new(
                 UdpSocket::bind(&la).await?,
                 PacketCodec::new(la.is_ipv6()),
             ))

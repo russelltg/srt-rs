@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     ops::Deref,
     path::Path,
@@ -29,7 +30,15 @@ use tokio::{
 use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
 
 use log::info;
-use srt_tokio::{ConnInitMethod, SrtSocketBuilder, StreamerServer};
+use srt_tokio::{ConnInitMethod, Event, EventReceiver, SocketID, SrtSocketBuilder, StreamerServer};
+
+use prometheus::{
+    register_gauge_vec, register_int_gauge_vec, Encoder, Gauge, GaugeVec, IntGauge, IntGaugeVec,
+    TextEncoder,
+};
+use warp::{hyper::header::CONTENT_TYPE, hyper::Response, Filter, Rejection};
+
+use lazy_static::lazy_static;
 
 const AFTER_HELPTEXT: &str = include_str!("helptext.txt");
 
@@ -184,6 +193,158 @@ enum ConnectionKind {
     Listen(u16),
 }
 
+struct RollingDeriv {
+    data: VecDeque<(Instant, usize)>,
+    sum: usize,
+    window: Duration,
+    gauge: Gauge,
+}
+
+impl RollingDeriv {
+    fn new(window: Duration, gauge: Gauge) -> Self {
+        RollingDeriv {
+            data: VecDeque::new(),
+            sum: Default::default(),
+            window,
+            gauge,
+        }
+    }
+
+    fn add(&mut self, data: usize, at: Instant) {
+        self.data.push_back((at, data));
+        self.sum += data;
+
+        self.gauge.set(self.sum as f64 / self.window.as_secs_f64())
+    }
+
+    fn drop_old(&mut self, now: Instant) {
+        while let Some((old_at, old_data)) = self.data.front() {
+            if now.duration_since(*old_at) > self.window {
+                self.sum -= *old_data;
+                self.data.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+lazy_static! {
+    static ref RETRANSMITTED_GAUGE: GaugeVec = register_gauge_vec!(
+        "retransmitted",
+        "retransmitted bytes per second",
+        &["socket_id"]
+    )
+    .unwrap();
+    static ref SENT_GAUGE: GaugeVec =
+        register_gauge_vec!("sent", "sent bytes per second", &["socket_id"]).unwrap();
+    static ref RECEIVED_GAUGE: GaugeVec =
+        register_gauge_vec!("received", "received bytes per second", &["socket_id"]).unwrap();
+    static ref DROPPED_GAUGE: GaugeVec =
+        register_gauge_vec!("dropped", "dropped bytes per second", &["socket_id"]).unwrap();
+    static ref TRANSMIT_BUFFER_SIZE_GAUGE: IntGaugeVec = register_int_gauge_vec!(
+        "transmit_buffer_size",
+        "how much data is waiting to be sent",
+        &["socket_id"]
+    )
+    .unwrap();
+    static ref RECEIVE_BUFFER_SIZE_GAUGE: IntGaugeVec = register_int_gauge_vec!(
+        "receive_buffer_size",
+        "how much data is waiting to be released",
+        &["socket_id"]
+    )
+    .unwrap();
+    static ref SND_GAUGE: GaugeVec =
+        register_gauge_vec!("snd_time", "snd time, in milliseconds", &["socket_id"]).unwrap();
+    static ref IN_FLIGHT_BYTES_GAUGE: IntGaugeVec = register_int_gauge_vec!(
+        "in_flight_bytes",
+        "bytes sent but not acknowledged",
+        &["socket_id"]
+    )
+    .unwrap();
+    static ref RTT_GAUGE: GaugeVec =
+        register_gauge_vec!("rtt", "rtt in milliseconds", &["socket_id"]).unwrap();
+}
+
+struct PrometheusEventReceiver {
+    // "rates"
+    retrans: RollingDeriv,
+    sent: RollingDeriv,
+    received: RollingDeriv,
+    dropped: RollingDeriv,
+
+    // "buffers"
+    tbs: IntGauge,
+    rbs: IntGauge,
+    in_flight: IntGauge,
+
+    // "times"
+    snd: Gauge,
+    rtt: Gauge,
+}
+
+impl EventReceiver for PrometheusEventReceiver {
+    fn create(sockid: SocketID) -> Self {
+        let lv: &[&str] = &[&format!("{:?}", sockid)];
+        PrometheusEventReceiver {
+            retrans: RollingDeriv::new(
+                Duration::from_millis(500),
+                RETRANSMITTED_GAUGE
+                    .get_metric_with_label_values(lv)
+                    .unwrap(),
+            ),
+            sent: RollingDeriv::new(
+                Duration::from_millis(500),
+                SENT_GAUGE.get_metric_with_label_values(lv).unwrap(),
+            ),
+            received: RollingDeriv::new(
+                Duration::from_millis(500),
+                RECEIVED_GAUGE.get_metric_with_label_values(lv).unwrap(),
+            ),
+            dropped: RollingDeriv::new(
+                Duration::from_millis(500),
+                DROPPED_GAUGE.get_metric_with_label_values(lv).unwrap(),
+            ),
+
+            tbs: TRANSMIT_BUFFER_SIZE_GAUGE
+                .get_metric_with_label_values(lv)
+                .unwrap(),
+            rbs: RECEIVE_BUFFER_SIZE_GAUGE
+                .get_metric_with_label_values(lv)
+                .unwrap(),
+            in_flight: IN_FLIGHT_BYTES_GAUGE
+                .get_metric_with_label_values(lv)
+                .unwrap(),
+
+            snd: SND_GAUGE.get_metric_with_label_values(lv).unwrap(),
+            rtt: RTT_GAUGE.get_metric_with_label_values(lv).unwrap(),
+        }
+    }
+    fn on_event(&mut self, event: &Event, timestamp: Instant) {
+        match event {
+            Event::RecvdRetrans(size) | Event::SentRetrans(size) => {
+                self.retrans.add(*size, timestamp)
+            }
+            Event::Sent(size) => {
+                self.sent.add(*size, timestamp);
+                self.in_flight.add(*size as i64)
+            }
+            Event::Dropped(size) => self.dropped.add(*size, timestamp),
+            Event::Recvd(size) => self.received.add(*size, timestamp),
+            Event::TransmitBufferUpdated(size) => self.tbs.set(*size as i64),
+            Event::ReceiverBufferUpdated(size) => self.rbs.set(*size as i64),
+            Event::SndTimeUpdated(time) => self.snd.set(time.as_secs_f64() * 1e3),
+            Event::Ackd(size) => self.in_flight.sub(*size as i64),
+            Event::RttUpdated(rtt) => self.rtt.set(rtt.as_secs_f64() * 1e3),
+            _ => {}
+        }
+        self.retrans.drop_old(timestamp);
+        self.sent.drop_old(timestamp);
+        self.received.drop_old(timestamp);
+        self.dropped.drop_old(timestamp);
+    }
+}
+
 fn parse_connection_options<C>(
     args: impl Iterator<Item = (C, C)>,
     kind: ConnectionKind,
@@ -245,8 +406,9 @@ async fn make_srt_input(
     if input_url.query_pairs().any(|(k, _)| &*k == "multiplex") {
         bail!("multiplex is not a valid option for input urls");
     }
+
     Ok(builder
-        .connect()
+        .connect_event_receiver::<PrometheusEventReceiver>()
         .await?
         .map(Result::unwrap)
         .map(|(_, b)| b)
@@ -390,7 +552,7 @@ async fn make_srt_ouput(
             .boxed_sink())
     } else {
         Ok(builder
-            .connect()
+            .connect_event_receiver::<PrometheusEventReceiver>()
             .await?
             .with(|b| future::ok((Instant::now(), b)))
             .boxed_sink())
@@ -607,6 +769,11 @@ async fn run() -> Result<(), Error> {
         .author("Russell Greene")
         .about("SRT sender and receiver written in rust")
         .arg(
+            Arg::with_name("prometheus")
+                .long("prometheus")
+                .value_name("PORT"),
+        )
+        .arg(
             Arg::with_name("FROM")
                 .help("Sets the input url")
                 .required(true),
@@ -640,8 +807,32 @@ async fn run() -> Result<(), Error> {
     // Resolve the sender side
     // similar to the receiver side, except a sink instead of a stream
     let mut sink_streams = vec![];
+
     for to in output_urls_iter.map(resolve_output) {
         sink_streams.push(to?);
+    }
+
+    if let Some(val) = matches.value_of("prometheus") {
+        let port = val.parse().unwrap();
+
+        // warp
+        let c = warp::path("metrics")
+            .and(warp::path::tail())
+            .and_then(|_| async move {
+                let encoder = TextEncoder::new();
+
+                let metric_familes = prometheus::gather();
+                let mut buf = vec![];
+                encoder.encode(&metric_familes, &mut buf).unwrap();
+
+                Ok::<_, Rejection>(
+                    Response::builder()
+                        .header(CONTENT_TYPE, encoder.format_type())
+                        .body(buf),
+                )
+            });
+
+        tokio::spawn(warp::serve(c).run(([0, 0, 0, 0], port)));
     }
 
     let mut sinks = MultiSinkFlatten::new(sink_streams.drain(..));

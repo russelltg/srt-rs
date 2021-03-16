@@ -18,10 +18,7 @@ use tokio_util::udp::UdpFramed;
 use crate::{
     channel::Channel, tokio::create_bidrectional_srt, Packet, PacketCodec, SocketID, SrtSocket,
 };
-use srt_protocol::{
-    accesscontrol::StreamAcceptor,
-    pending_connection::{listen::Listen, ConnInitSettings, ConnectionResult},
-};
+use srt_protocol::{NullEventReceiver, accesscontrol::StreamAcceptor, pending_connection::{listen::Listen, ConnInitSettings, ConnectionResult}};
 
 type PackChan = Channel<(Packet, SocketAddr)>;
 
@@ -145,7 +142,7 @@ impl<T: StreamAcceptor> MultiplexState<T> {
         self.conns.insert(conn.settings.local_sockid, r);
 
         self.pending.remove(&from); // remove from pending connections, it's been resolved
-        return Ok(Some(create_bidrectional_srt(s, conn)));
+        return Ok(Some(create_bidrectional_srt::<NullEventReceiver, _>(s, conn)));
     }
 }
 

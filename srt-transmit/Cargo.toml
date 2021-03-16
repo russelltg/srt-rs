@@ -19,6 +19,10 @@ bytes = "1.0"
 anyhow = "1"
 pretty_env_logger = { version = "0.4", default-features = false }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+lazy_static = "1"
+
+prometheus = "0.9"
+warp = "0.2"
 
 [dependencies.tokio]
 version = "1"
