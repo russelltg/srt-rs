@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use srt_tokio::{SrtSocket, SrtSocketBuilder};
+use srt_tokio::SrtSocketBuilder;
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -9,7 +9,6 @@ use futures::future::join_all;
 use futures::stream;
 use futures::{FutureExt, SinkExt, StreamExt};
 use log::info;
-use srt_protocol::NullEventReceiver;
 
 #[tokio::test]
 async fn multiplexer() -> Result<()> {
@@ -26,11 +25,9 @@ async fn multiplexer() -> Result<()> {
             .boxed();
 
         let mut fused_finish = finished_recv.fuse();
-        while let Some(Ok(result)) =
+        while let Some(Ok(mut sender)) =
             futures::select!(res = server.next().fuse() => res, _ = fused_finish => None)
         {
-            let mut sender = create_bidrectional_srt::<NullEventReceiver, _>(channel, settings); // TODO: stats here
-
             let mut stream =
                 stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());
 

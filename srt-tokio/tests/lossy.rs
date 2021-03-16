@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use futures::{stream, SinkExt, StreamExt};
 
-use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
+use srt_tokio::{SrtSocketBuilder};
 
 mod lossy_conn;
 use crate::lossy_conn::LossyConn;

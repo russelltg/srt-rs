@@ -9,8 +9,7 @@ use futures::{ready, SinkExt, StreamExt};
 
 use bytes::Bytes;
 
-use crate::{Connection, SrtSocket, tokio::create_bidrectional_srt};
-use srt_protocol::NullEventReceiver;
+use crate::SrtSocket;
 
 type BoxConnStream = Pin<Box<dyn Stream<Item = Result<SrtSocket, io::Error>> + Send>>;
 pub struct StreamerServer {

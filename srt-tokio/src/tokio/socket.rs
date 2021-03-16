@@ -23,7 +23,6 @@ use futures::prelude::*;
 use futures::{future, ready, select_biased};
 use log::{debug, error, info, trace};
 use srt_protocol::EventReceiver;
-use tokio::time::delay_until;
 use tokio::time::sleep_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).

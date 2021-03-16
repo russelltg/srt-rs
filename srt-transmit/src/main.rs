@@ -1,6 +1,5 @@
 use std::{
     collections::VecDeque,
-    io,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     ops::Deref,
     path::Path,
