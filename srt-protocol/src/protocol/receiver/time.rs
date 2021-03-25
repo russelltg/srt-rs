@@ -111,12 +111,12 @@ mod synchronized_remote_clock {
     }
 }
 
-pub(crate) struct RTT {
+pub(crate) struct Rtt {
     mean: TimeSpan,
     variance: TimeSpan,
 }
 
-impl RTT {
+impl Rtt {
     pub fn new() -> Self {
         Self {
             mean: TimeSpan::from_micros(10_000),
@@ -161,7 +161,7 @@ impl ReceiveTimers {
     const SYN: Duration = Duration::from_millis(10);
 
     pub fn new(now: Instant) -> ReceiveTimers {
-        let (ack, nak) = Self::calculate_periods(&RTT::new());
+        let (ack, nak) = Self::calculate_periods(&Rtt::new());
         ReceiveTimers {
             ack: Timer::new(ack, now),
             nak: Timer::new(nak, now),
@@ -172,13 +172,13 @@ impl ReceiveTimers {
         max(now, min(self.nak.next_instant(), self.ack.next_instant()))
     }
 
-    pub fn update_rtt(&mut self, rtt: &RTT) {
+    pub fn update_rtt(&mut self, rtt: &Rtt) {
         let (ack, nak) = Self::calculate_periods(rtt);
         self.ack.set_period(ack);
         self.nak.set_period(nak);
     }
 
-    fn calculate_periods(rtt: &RTT) -> (Duration, Duration) {
+    fn calculate_periods(rtt: &Rtt) -> (Duration, Duration) {
         let rtt_period = 4 * rtt.mean_as_duration() + rtt.variance_as_duration() + Self::SYN;
 
         let ack_period = rtt_period;
@@ -247,7 +247,7 @@ mod receive_timers {
         #[test]
         fn update_rtt(simulated_rtt in 45_000i32..) {
             prop_assume!(simulated_rtt >= 0);
-            let mut rtt = RTT::new();
+            let mut rtt = Rtt::new();
             for _ in 0..1000 {
                 rtt.update(TimeSpan::from_micros(simulated_rtt));
             }
@@ -275,7 +275,7 @@ mod receive_timers {
         #[test]
         fn update_rtt_exp_lower_bound(simulated_rtt in 0i32..50_000) {
             prop_assume!(simulated_rtt >= 0);
-            let mut rtt = RTT::new();
+            let mut rtt = Rtt::new();
             for _ in 0..1000 {
                 rtt.update(TimeSpan::from_micros(simulated_rtt));
             }

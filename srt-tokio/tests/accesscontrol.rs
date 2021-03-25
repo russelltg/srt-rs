@@ -37,7 +37,7 @@ impl StreamAcceptor for AccessController {
                     _ => return Err(ServerRejectReason::BadRequest.into()),
                 },
                 StandardAccessControlEntry::HostName(_) => {}
-                StandardAccessControlEntry::SessionID(_) => {}
+                StandardAccessControlEntry::SessionId(_) => {}
                 StandardAccessControlEntry::Type(_) => {}
                 StandardAccessControlEntry::Mode(_) => {}
             }

@@ -328,10 +328,10 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?))
     }
     fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Self::Error> {
-        Ok(self
+        self
             .sender
             .start_send(item)
-            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?)
+            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         ready!(Pin::new(&mut self.sender).poll_flush(cx))

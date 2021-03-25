@@ -9,7 +9,7 @@ use bytes::{Buf, BufMut};
 use log::warn;
 
 use crate::protocol::{TimeSpan, TimeStamp};
-use crate::{MsgNumber, SeqNumber, SocketID};
+use crate::{MsgNumber, SeqNumber, SocketId};
 
 mod srt;
 pub use self::srt::*;
@@ -43,7 +43,7 @@ pub struct ControlPacket {
     pub timestamp: TimeStamp,
 
     /// The dest socket ID, used for multiplexing
-    pub dest_sockid: SocketID,
+    pub dest_sockid: SocketId,
 
     /// The extra data
     pub control_type: ControlTypes,
@@ -107,7 +107,7 @@ bitflags! {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct HSV5Info {
+pub struct HsV5Info {
     /// the crypto size in bytes, either 0 (no encryption), 16, 24, or 32 (stored /8)
     /// source: https://github.com/Haivision/srt/blob/master/docs/stransmit.md#medium-srt
     pub crypto_size: u8,
@@ -125,9 +125,9 @@ pub struct HSV5Info {
 /// HS-version dependenent data
 #[derive(Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
-pub enum HandshakeVSInfo {
+pub enum HandshakeVsInfo {
     V4(SocketType),
-    V5(HSV5Info),
+    V5(HsV5Info),
 }
 
 /// The control info for handshake packets
@@ -146,7 +146,7 @@ pub struct HandshakeControlInfo {
     pub shake_type: ShakeType,
 
     /// The socket ID that this request is originating from
-    pub socket_id: SocketID,
+    pub socket_id: SocketId,
 
     /// SYN cookie
     ///
@@ -159,7 +159,7 @@ pub struct HandshakeControlInfo {
     pub peer_addr: IpAddr,
 
     /// The rest of the data, which is HS version specific
-    pub info: HandshakeVSInfo,
+    pub info: HandshakeVsInfo,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -300,13 +300,13 @@ pub enum RejectReason {
     User(i32),
 }
 
-impl HandshakeVSInfo {
+impl HandshakeVsInfo {
     /// Get the type (V4) or ext flags (V5)
     /// the shake_type is required to decide to encode the magic code
     fn type_flags(&self, shake_type: ShakeType) -> u32 {
         match self {
-            HandshakeVSInfo::V4(ty) => *ty as u32,
-            HandshakeVSInfo::V5(hs) => {
+            HandshakeVsInfo::V4(ty) => *ty as u32,
+            HandshakeVsInfo::V5(hs) => {
                 if shake_type == ShakeType::Induction
                     && (hs.ext_hs.is_some() || hs.ext_km.is_some() || hs.sid.is_some())
                 {
@@ -342,8 +342,8 @@ impl HandshakeVSInfo {
     /// Get the UDT version
     pub fn version(&self) -> u32 {
         match self {
-            HandshakeVSInfo::V4(_) => 4,
-            HandshakeVSInfo::V5 { .. } => 5,
+            HandshakeVsInfo::V4(_) => 4,
+            HandshakeVsInfo::V5 { .. } => 5,
         }
     }
 }
@@ -371,7 +371,7 @@ impl ControlPacket {
 
         Ok(ControlPacket {
             timestamp,
-            dest_sockid: SocketID(dest_sockid),
+            dest_sockid: SocketId(dest_sockid),
             // just match against the second byte, as everything is in that
             control_type: ControlTypes::deserialize(
                 control_type,
@@ -450,7 +450,7 @@ impl ControlTypes {
 
                 let udt_version = buf.get_i32();
                 if udt_version != 4 && udt_version != 5 {
-                    return Err(PacketParseError::BadUDTVersion(udt_version));
+                    return Err(PacketParseError::BadUdtVersion(udt_version));
                 }
 
                 // the second 32 bit word is always socket type under UDT4
@@ -472,7 +472,7 @@ impl ControlTypes {
                     Ok(ct) => ct,
                     Err(err_ct) => return Err(PacketParseError::BadConnectionType(err_ct)),
                 };
-                let socket_id = SocketID(buf.get_u32());
+                let socket_id = SocketId(buf.get_u32());
                 let syn_cookie = buf.get_i32();
 
                 let peer_addr = if !is_ipv6 {
@@ -488,7 +488,7 @@ impl ControlTypes {
                 };
 
                 let info = match udt_version {
-                    4 => HandshakeVSInfo::V4(match SocketType::from_u16(type_ext_socket_type) {
+                    4 => HandshakeVsInfo::V4(match SocketType::from_u16(type_ext_socket_type) {
                         Ok(t) => t,
                         Err(e) => return Err(PacketParseError::BadSocketType(e)),
                     }),
@@ -511,7 +511,7 @@ impl ControlTypes {
                                 warn!("HSv5 induction response did not have SRT_MAGIC_CODE, which is suspicious")
                             }
 
-                            HandshakeVSInfo::V5(HSV5Info::default())
+                            HandshakeVsInfo::V5(HsV5Info::default())
                         } else {
                             // if this is not induction, this is the extension flags
                             let extensions = match ExtFlags::from_bits(type_ext_socket_type) {
@@ -590,7 +590,7 @@ impl ControlTypes {
                                 warn!("Handshake has KMREQ flag, but contains no key material extensions!");
                             }
 
-                            HandshakeVSInfo::V5(HSV5Info {
+                            HandshakeVsInfo::V5(HsV5Info {
                                 crypto_size,
                                 ext_hs,
                                 ext_km,
@@ -764,7 +764,7 @@ impl ControlTypes {
                 }
 
                 // serialzie extensions
-                if let HandshakeVSInfo::V5(hs) = &c.info {
+                if let HandshakeVsInfo::V5(hs) = &c.info {
                     for ext in [
                         &hs.ext_hs,
                         &hs.ext_km,
@@ -900,9 +900,9 @@ impl Debug for HandshakeControlInfo {
     }
 }
 
-impl Default for HSV5Info {
+impl Default for HsV5Info {
     fn default() -> Self {
-        HSV5Info {
+        HsV5Info {
             crypto_size: 0,
             ext_hs: None,
             ext_km: None,
@@ -911,11 +911,11 @@ impl Default for HSV5Info {
     }
 }
 
-impl Debug for HandshakeVSInfo {
+impl Debug for HandshakeVsInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            HandshakeVSInfo::V4(stype) => write!(f, "UDT: {:?}", stype),
-            HandshakeVSInfo::V5(hs) => {
+            HandshakeVsInfo::V4(stype) => write!(f, "UDT: {:?}", stype),
+            HandshakeVsInfo::V5(hs) => {
                 write!(f, "SRT: crypto={:?}", hs.crypto_size)?;
                 if let Some(pack) = &hs.ext_hs {
                     write!(f, " hs={:?}", pack)?;
@@ -947,9 +947,9 @@ impl TryFrom<i32> for ShakeType {
     }
 }
 
-impl Into<i32> for ShakeType {
-    fn into(self) -> i32 {
-        match self {
+impl From<ShakeType> for i32 {
+    fn from(st: ShakeType) -> i32 {
+        match st {
             ShakeType::Induction => 1,
             ShakeType::Waveahand => 0,
             ShakeType::Conclusion => -1,
@@ -978,9 +978,9 @@ impl TryFrom<i32> for RejectReason {
     }
 }
 
-impl Into<i32> for RejectReason {
-    fn into(self) -> i32 {
-        match self {
+impl From<RejectReason> for i32 {
+    fn from(rr: RejectReason) -> i32 {
+        match rr {
             RejectReason::Core(c) => c.into(),
             RejectReason::CoreUnrecognized(c) => c,
             RejectReason::Server(s) => s.into(),
@@ -1002,9 +1002,9 @@ impl Display for RejectReason {
     }
 }
 
-impl Into<RejectReason> for CoreRejectReason {
-    fn into(self) -> RejectReason {
-        RejectReason::Core(self)
+impl From<CoreRejectReason> for RejectReason {
+    fn from(rr: CoreRejectReason) -> RejectReason {
+        RejectReason::Core(rr)
     }
 }
 
@@ -1034,9 +1034,9 @@ impl TryFrom<i32> for CoreRejectReason {
     }
 }
 
-impl Into<i32> for CoreRejectReason {
-    fn into(self) -> i32 {
-        self as i32
+impl From<CoreRejectReason> for i32 {
+    fn from(rr: CoreRejectReason) -> i32 {
+        rr as i32
     }
 }
 
@@ -1065,9 +1065,9 @@ impl Display for CoreRejectReason {
     }
 }
 
-impl Into<RejectReason> for ServerRejectReason {
-    fn into(self) -> RejectReason {
-        RejectReason::Server(self)
+impl From<ServerRejectReason> for RejectReason{
+    fn from(rr: ServerRejectReason) -> RejectReason {
+        RejectReason::Server(rr)
     }
 }
 
@@ -1101,9 +1101,9 @@ impl TryFrom<i32> for ServerRejectReason {
     }
 }
 
-impl Into<i32> for ServerRejectReason {
-    fn into(self) -> i32 {
-        self as i32
+impl From<ServerRejectReason> for i32 {
+    fn from(rr: ServerRejectReason) -> i32 {
+        rr as i32
     }
 }
 
@@ -1143,7 +1143,7 @@ mod test {
     use bytes::BytesMut;
 
     use super::*;
-    use crate::{SeqNumber, SocketID, SrtVersion};
+    use crate::{SeqNumber, SocketId, SrtVersion};
     use std::time::Duration;
     use std::{convert::TryInto, io::Cursor};
 
@@ -1151,16 +1151,16 @@ mod test {
     fn handshake_ser_des_test() {
         let pack = ControlPacket {
             timestamp: TimeStamp::from_micros(0),
-            dest_sockid: SocketID(0),
+            dest_sockid: SocketId(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber::new_truncate(1_827_131),
                 max_packet_size: 1500,
                 max_flow_size: 25600,
                 shake_type: ShakeType::Conclusion,
-                socket_id: SocketID(1231),
+                socket_id: SocketId(1231),
                 syn_cookie: 0,
                 peer_addr: "127.0.0.1".parse().unwrap(),
-                info: HandshakeVSInfo::V5(HSV5Info {
+                info: HandshakeVsInfo::V5(HsV5Info {
                     crypto_size: 0, // TODO: implement
                     ext_hs: Some(SrtControlPacket::HandshakeResponse(SrtHandshake {
                         version: SrtVersion::CURRENT,
@@ -1186,7 +1186,7 @@ mod test {
     fn ack_ser_des_test() {
         let pack = ControlPacket {
             timestamp: TimeStamp::from_micros(113_703),
-            dest_sockid: SocketID(2_453_706_529),
+            dest_sockid: SocketId(2_453_706_529),
             control_type: ControlTypes::Ack(AckControlInfo {
                 ack_seq_num: 1,
                 ack_number: SeqNumber::new_truncate(282_049_186),
@@ -1210,7 +1210,7 @@ mod test {
     fn ack2_ser_des_test() {
         let pack = ControlPacket {
             timestamp: TimeStamp::from_micros(125_812),
-            dest_sockid: SocketID(8313),
+            dest_sockid: SocketId(8313),
             control_type: ControlTypes::Ack2(831),
         };
         assert_eq!(pack.control_type.additional_info(), 831);
@@ -1239,7 +1239,7 @@ mod test {
             packet,
             ControlPacket {
                 timestamp: TimeStamp::from_micros(100_720),
-                dest_sockid: SocketID(738_193_394),
+                dest_sockid: SocketId(738_193_394),
                 control_type: ControlTypes::Srt(SrtControlPacket::Reject)
             }
         )
@@ -1252,16 +1252,16 @@ mod test {
 
         let r = ControlPacket {
             timestamp: TimeStamp::from_micros(688),
-            dest_sockid: SocketID(0),
+            dest_sockid: SocketId(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber(1010500246),
                 max_packet_size: 1500,
                 max_flow_size: 8192,
                 shake_type: ShakeType::Induction,
-                socket_id: SocketID(0x0669EAD2),
+                socket_id: SocketId(0x0669EAD2),
                 syn_cookie: 0,
                 peer_addr: "::1.0.0.0".parse().unwrap(),
-                info: HandshakeVSInfo::V4(SocketType::Datagram),
+                info: HandshakeVsInfo::V4(SocketType::Datagram),
             }),
         };
 
@@ -1283,16 +1283,16 @@ mod test {
             packet,
             ControlPacket {
                 timestamp: TimeStamp::from_micros(1_023_684),
-                dest_sockid: SocketID(0),
+                dest_sockid: SocketId(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: SeqNumber(1_153_345_037),
                     max_packet_size: 1500,
                     max_flow_size: 8192,
                     shake_type: ShakeType::Conclusion,
-                    socket_id: SocketID(1_030_305_462),
+                    socket_id: SocketId(1_030_305_462),
                     syn_cookie: -471_595_555,
                     peer_addr: "127.0.0.1".parse().unwrap(),
-                    info: HandshakeVSInfo::V5(HSV5Info {
+                    info: HandshakeVsInfo::V5(HsV5Info {
                         crypto_size: 0,
                         ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                             version: SrtVersion::new(1, 3, 1),
@@ -1328,16 +1328,16 @@ mod test {
             packet,
             ControlPacket {
                 timestamp: TimeStamp::from_micros(2836),
-                dest_sockid: SocketID(0),
+                dest_sockid: SocketId(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: SeqNumber(1_665_420_078),
                     max_packet_size: 1500,
                     max_flow_size: 8192,
                     shake_type: ShakeType::Conclusion,
-                    socket_id: SocketID(0x37eb0ee5),
+                    socket_id: SocketId(0x37eb0ee5),
                     syn_cookie: 559_217_622,
                     peer_addr: "127.0.0.1".parse().unwrap(),
-                    info: HandshakeVSInfo::V5(HSV5Info {
+                    info: HandshakeVsInfo::V5(HsV5Info {
                         crypto_size: 0,
                         ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                             version: SrtVersion::new(1, 4, 1),
@@ -1375,16 +1375,16 @@ mod test {
             packet,
             ControlPacket {
                 timestamp: TimeStamp::from_micros(1_531_530),
-                dest_sockid: SocketID(0),
+                dest_sockid: SocketId(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: SeqNumber(1_877_981_400),
                     max_packet_size: 1_500,
                     max_flow_size: 8_192,
                     shake_type: ShakeType::Conclusion,
-                    socket_id: SocketID(904_368_365),
+                    socket_id: SocketId(904_368_365),
                     syn_cookie: 1_561_775_338,
                     peer_addr: "127.0.0.1".parse().unwrap(),
-                    info: HandshakeVSInfo::V5(HSV5Info {
+                    info: HandshakeVsInfo::V5(HsV5Info {
                         crypto_size: 0,
                         ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                             version: SrtVersion::new(1, 3, 1),
@@ -1400,7 +1400,7 @@ mod test {
                             pt: PacketType::KeyingMaterial,
                             key_flags: KeyFlags::EVEN,
                             keki: 0,
-                            cipher: CipherType::CTR,
+                            cipher: CipherType::Ctr,
                             auth: Auth::None,
                             salt: hex::decode("9D75B0AC924C6E4C9EC40FEB4FE973DB").unwrap(),
                             wrapped_keys: hex::decode(
@@ -1441,16 +1441,16 @@ mod test {
     fn test_enc_size() {
         let pack = ControlPacket {
             timestamp: TimeStamp::from_micros(0),
-            dest_sockid: SocketID(0),
+            dest_sockid: SocketId(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber(0),
                 max_packet_size: 1816,
                 max_flow_size: 0,
                 shake_type: ShakeType::Conclusion,
-                socket_id: SocketID(0),
+                socket_id: SocketId(0),
                 syn_cookie: 0,
                 peer_addr: [127, 0, 0, 1].into(),
-                info: HandshakeVSInfo::V5(HSV5Info {
+                info: HandshakeVsInfo::V5(HsV5Info {
                     crypto_size: 16,
                     ext_km: None,
                     ext_hs: None,
@@ -1471,16 +1471,16 @@ mod test {
     fn test_sid() {
         let pack = ControlPacket {
             timestamp: TimeStamp::from_micros(0),
-            dest_sockid: SocketID(0),
+            dest_sockid: SocketId(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber(0),
                 max_packet_size: 1816,
                 max_flow_size: 0,
                 shake_type: ShakeType::Conclusion,
-                socket_id: SocketID(0),
+                socket_id: SocketId(0),
                 syn_cookie: 0,
                 peer_addr: [127, 0, 0, 1].into(),
-                info: HandshakeVSInfo::V5(HSV5Info {
+                info: HandshakeVsInfo::V5(HsV5Info {
                     crypto_size: 0,
                     ext_km: None,
                     ext_hs: None,
@@ -1501,7 +1501,7 @@ mod test {
     fn test_keepalive() {
         let pack = ControlPacket {
             timestamp: TimeStamp::from_micros(0),
-            dest_sockid: SocketID(0),
+            dest_sockid: SocketId(0),
             control_type: ControlTypes::KeepAlive,
         };
 
@@ -1544,16 +1544,16 @@ mod test {
         let packet = ControlPacket::parse(&mut Cursor::new(packet_data), false).unwrap();
         let reference = ControlPacket {
             timestamp: TimeStamp::from_micros(57000),
-            dest_sockid: SocketID(0),
+            dest_sockid: SocketId(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber(1373414328),
                 max_packet_size: 1464,
                 max_flow_size: 8192,
                 shake_type: ShakeType::Conclusion,
-                socket_id: SocketID(0x025C84B8),
+                socket_id: SocketId(0x025C84B8),
                 syn_cookie: 0xda7ee4e7u32 as i32,
                 peer_addr: [127, 0, 0, 1].into(),
-                info: HandshakeVSInfo::V5(HSV5Info {
+                info: HandshakeVsInfo::V5(HsV5Info {
                     crypto_size: 32,
                     ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                         version: SrtVersion::new(1, 4, 2),
@@ -1571,7 +1571,7 @@ mod test {
                         pt: PacketType::KeyingMaterial,
                         key_flags: KeyFlags::EVEN,
                         keki: 0,
-                        cipher: CipherType::CTR,
+                        cipher: CipherType::Ctr,
                         auth: Auth::None,
                         salt: hex::decode("437937d8c23ce2090754c5a7a9e608c1").unwrap(),
                         wrapped_keys: hex::decode(

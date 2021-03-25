@@ -4,12 +4,12 @@ use std::{error::Error, fmt, io, str::Utf8Error};
 #[non_exhaustive]
 pub enum PacketParseError {
     NotEnoughData,
-    BadUDTVersion(i32),
+    BadUdtVersion(i32),
     BadConnectionType(i32),
     BadSocketType(u16),
     BadControlType(u16),
-    UnsupportedSRTExtensionType(u16),
-    BadSRTExtensionMessage, // could be split
+    UnsupportedSrtExtensionType(u16),
+    BadSrtExtensionMessage, // could be split
     BadCryptoLength(u32),
     BadCipherKind(u8),
     BadKeyPacketType(u8),
@@ -18,7 +18,7 @@ pub enum PacketParseError {
     BadStreamEncapsulation(u8),
     StreamEncapsulationNotSrt,
     BadDataEncryption(u8),
-    StreamTypeNotUTF8(Utf8Error),
+    StreamTypeNotUtf8(Utf8Error),
     Io(io::Error),
 }
 

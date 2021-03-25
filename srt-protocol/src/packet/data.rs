@@ -6,7 +6,7 @@ use std::{convert::TryFrom, fmt};
 
 use super::PacketParseError;
 use crate::protocol::TimeStamp;
-use crate::{MsgNumber, SeqNumber, SocketID};
+use crate::{MsgNumber, SeqNumber, SocketId};
 
 /// A UDT packet carrying data
 ///
@@ -55,7 +55,7 @@ pub struct DataPacket {
     pub timestamp: TimeStamp,
 
     /// The dest socket id, used for UDP multiplexing
-    pub dest_sockid: SocketID,
+    pub dest_sockid: SocketId,
 
     /// The rest of the packet, the payload
     pub payload: Bytes,
@@ -100,7 +100,7 @@ impl DataPacket {
 
         let message_number = MsgNumber::new_truncate(second_word_first_byte);
         let timestamp = TimeStamp::from_micros(buf.get_u32());
-        let dest_sockid = SocketID(buf.get_u32());
+        let dest_sockid = SocketId(buf.get_u32());
 
         Ok(DataPacket {
             seq_number,
@@ -200,7 +200,7 @@ mod tests {
                 retransmitted,
                 message_number: MsgNumber::new_truncate(123),
                 timestamp: TimeStamp::from_micros(0),
-                dest_sockid: SocketID(0),
+                dest_sockid: SocketId(0),
                 payload: Bytes::new(),
             };
             let mut v = vec![];
