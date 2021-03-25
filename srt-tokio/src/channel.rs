@@ -25,9 +25,9 @@ impl<T: Send + Sync + 'static> Sink<T> for Channel<T> {
     type Error = io::Error;
 
     fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
-        Ok(Pin::new(&mut self.sender)
+        Pin::new(&mut self.sender)
             .start_send(item)
-            .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?)
+            .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))
     }
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {

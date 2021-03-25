@@ -161,7 +161,7 @@ impl CryptoManager {
                 (None, None) => panic!("No keys!"),
             },
             keki: 0, // xxx
-            cipher: CipherType::CTR,
+            cipher: CipherType::Ctr,
             auth: Auth::None,
             salt: self.salt[..].into(),
             wrapped_keys: self.wrap_keys(),
@@ -335,7 +335,7 @@ mod test {
                 pt: PacketType::KeyingMaterial,
                 key_flags: KeyFlags::ODD,
                 keki: 0,
-                cipher: CipherType::CTR,
+                cipher: CipherType::Ctr,
                 auth: Auth::None,
                 salt: manager.salt.into(),
                 wrapped_keys: wrapped,
@@ -359,7 +359,7 @@ mod test {
                 pt: PacketType::KeyingMaterial,
                 key_flags: KeyFlags::ODD,
                 keki: 0,
-                cipher: CipherType::CTR,
+                cipher: CipherType::Ctr,
                 auth: Auth::None,
                 salt: b"\x00\x00\x00\x00\x00\x00\x00\x00\x85\x2c\x3c\xcd\x02\x65\x1a\x22"[..]
                     .into(),
@@ -393,7 +393,7 @@ mod test {
                 pt: PacketType::KeyingMaterial,
                 key_flags: KeyFlags::ODD,
                 keki: 0,
-                cipher: CipherType::CTR,
+                cipher: CipherType::Ctr,
                 auth: Auth::None,
                 salt: manager.salt.into(),
                 wrapped_keys:

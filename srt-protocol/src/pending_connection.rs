@@ -7,7 +7,7 @@ pub mod rendezvous;
 use crate::{
     crypto::CryptoOptions,
     packet::{ControlTypes, HandshakeControlInfo, RejectReason},
-    Connection, DataPacket, Packet, SeqNumber, SocketID,
+    Connection, DataPacket, Packet, SeqNumber, SocketId,
 };
 use rand::random;
 use std::{error::Error, fmt, net::SocketAddr, time::Duration};
@@ -24,8 +24,8 @@ pub enum ConnectError {
     InvalidHandshakeCookie(i32, i32),
     RendezvousExpected(HandshakeControlInfo),
     CookiesMatched(i32),
-    ExpectedHSReq,
-    ExpectedHSResp,
+    ExpectedHsReq,
+    ExpectedHsResp,
     ExpectedExtFlags,
     ExpectedNoExtFlags,
 }
@@ -52,7 +52,7 @@ pub enum ConnectionResult {
 #[derive(Debug, Clone)]
 pub struct ConnInitSettings {
     pub starting_send_seqnum: SeqNumber,
-    pub local_sockid: SocketID,
+    pub local_sockid: SocketId,
     pub crypto: Option<CryptoOptions>,
     pub send_latency: Duration,
     pub recv_latency: Duration,
@@ -89,11 +89,11 @@ impl fmt::Display for ConnectError {
                 "Cookies matched, waiting for a new cookie to resolve contest. Cookie: {}",
                 cookie
             ),
-            ExpectedHSReq => write!(
+            ExpectedHsReq => write!(
                 f,
                 "Responder got handshake flags, but expected request, not response"
             ),
-            ExpectedHSResp => write!(
+            ExpectedHsResp => write!(
                 f,
                 "Initiator got handshake flags, but expected response, not request"
             ),

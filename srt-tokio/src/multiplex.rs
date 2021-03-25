@@ -16,7 +16,7 @@ use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 
 use crate::{
-    channel::Channel, tokio::create_bidrectional_srt, Packet, PacketCodec, SocketID, SrtSocket,
+    channel::Channel, tokio::create_bidrectional_srt, Packet, PacketCodec, SocketId, SrtSocket,
 };
 use srt_protocol::{
     accesscontrol::StreamAcceptor,
@@ -29,14 +29,14 @@ struct MultiplexState<A: StreamAcceptor> {
     sock: UdpFramed<PacketCodec>,
     pending: HashMap<SocketAddr, Listen>,
     acceptor: A,
-    conns: HashMap<SocketID, PackChan>,
+    conns: HashMap<SocketId, PackChan>,
     init_settings: ConnInitSettings,
 }
 
 #[allow(clippy::large_enum_variant)]
 enum Action {
     Delegate(Packet, SocketAddr),
-    Remove(SocketID),
+    Remove(SocketId),
     Send((Packet, SocketAddr)),
 }
 

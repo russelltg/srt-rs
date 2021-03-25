@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::protocol::handshake::Handshake;
-use crate::{crypto::CryptoManager, SeqNumber, SocketID};
+use crate::{crypto::CryptoManager, SeqNumber, SocketId};
 
 #[derive(Clone, Debug)]
 pub struct Connection {
@@ -18,10 +18,10 @@ pub struct ConnectionSettings {
     pub remote: SocketAddr,
 
     /// The socket id of the UDT entity on the other side
-    pub remote_sockid: SocketID,
+    pub remote_sockid: SocketId,
 
     /// The local UDT socket id
-    pub local_sockid: SocketID,
+    pub local_sockid: SocketId,
 
     /// The time that this socket started at, used to develop timestamps
     pub socket_start_time: Instant,
