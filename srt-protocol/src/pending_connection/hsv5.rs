@@ -5,7 +5,7 @@ use crate::{
     accesscontrol::StreamAcceptor,
     crypto::CryptoManager,
     packet::{
-        HsV5Info, HandshakeControlInfo, HandshakeVsInfo, ServerRejectReason, SrtControlPacket,
+        HandshakeControlInfo, HandshakeVsInfo, HsV5Info, ServerRejectReason, SrtControlPacket,
         SrtHandshake, SrtShakeFlags,
     },
     ConnectionSettings, SrtVersion,

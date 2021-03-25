@@ -328,8 +328,7 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?))
     }
     fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Self::Error> {
-        self
-            .sender
+        self.sender
             .start_send(item)
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
     }

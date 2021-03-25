@@ -438,7 +438,7 @@ mod test {
             _streamid: Option<&str>,
             _ip: SocketAddr,
         ) -> Result<AcceptParameters, RejectReason> {
-            return Err(RejectReason::Server(ServerRejectReason::Overload));
+            Err(RejectReason::Server(ServerRejectReason::Overload))
         }
     }
 

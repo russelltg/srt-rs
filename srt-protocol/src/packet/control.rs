@@ -1065,7 +1065,7 @@ impl Display for CoreRejectReason {
     }
 }
 
-impl From<ServerRejectReason> for RejectReason{
+impl From<ServerRejectReason> for RejectReason {
     fn from(rr: ServerRejectReason) -> RejectReason {
         RejectReason::Server(rr)
     }

@@ -9,7 +9,7 @@ use super::{
 use log::debug;
 
 use crate::packet::{
-    ControlTypes, HsV5Info, HandshakeControlInfo, HandshakeVsInfo, ShakeType, SrtControlPacket,
+    ControlTypes, HandshakeControlInfo, HandshakeVsInfo, HsV5Info, ShakeType, SrtControlPacket,
 };
 use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::{

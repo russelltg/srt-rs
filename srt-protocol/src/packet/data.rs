@@ -181,7 +181,7 @@ mod tests {
                     assert_eq!(i & 0b0001_1000, e);
                     assert_eq!(e, 0b0001_1000);
                 }
-                Err(e) => panic!(e),
+                Err(e) => panic!("{}", e),
                 Ok(de) => {
                     assert_eq!(de as u8, i & 0b0001_1000);
                 }
