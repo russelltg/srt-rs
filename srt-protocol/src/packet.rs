@@ -14,7 +14,7 @@ pub use self::data::*;
 pub use error::PacketParseError;
 
 use crate::protocol::TimeStamp;
-use crate::SocketID;
+use crate::SocketId;
 
 /// Represents A UDT/SRT packet
 #[derive(Clone, PartialEq, Eq)]
@@ -31,7 +31,7 @@ impl Packet {
         }
     }
 
-    pub fn dest_sockid(&self) -> SocketID {
+    pub fn dest_sockid(&self) -> SocketId {
         match *self {
             Packet::Data(DataPacket { dest_sockid, .. })
             | Packet::Control(ControlPacket { dest_sockid, .. }) => dest_sockid,

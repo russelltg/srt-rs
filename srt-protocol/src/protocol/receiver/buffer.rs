@@ -250,7 +250,7 @@ mod test {
     use crate::{
         packet::{DataEncryption, PacketLocation},
         protocol::TimeStamp,
-        DataPacket, MsgNumber, SeqNumber, SocketID,
+        DataPacket, MsgNumber, SeqNumber, SocketId,
     };
     use bytes::Bytes;
     use std::time::{Duration, Instant};
@@ -264,7 +264,7 @@ mod test {
             retransmitted: false,
             message_number: MsgNumber(0),
             timestamp: TimeStamp::from_micros(0),
-            dest_sockid: SocketID(4),
+            dest_sockid: SocketId(4),
             payload: Bytes::new(),
         }
     }

@@ -5,7 +5,7 @@ use crate::{
     accesscontrol::StreamAcceptor,
     crypto::CryptoManager,
     packet::{
-        HSV5Info, HandshakeControlInfo, HandshakeVSInfo, ServerRejectReason, SrtControlPacket,
+        HandshakeControlInfo, HandshakeVsInfo, HsV5Info, ServerRejectReason, SrtControlPacket,
         SrtHandshake, SrtShakeFlags,
     },
     ConnectionSettings, SrtVersion,
@@ -16,7 +16,7 @@ use std::{
 };
 
 pub enum GenHsv5Result {
-    Accept(HandshakeVSInfo, ConnectionSettings),
+    Accept(HandshakeVsInfo, ConnectionSettings),
     NotHandled(ConnectError),
     Reject(ConnectionReject),
 }
@@ -29,7 +29,7 @@ pub fn gen_hsv5_response(
     acceptor: &mut impl StreamAcceptor,
 ) -> GenHsv5Result {
     let incoming = match &with_hsv5.info {
-        HandshakeVSInfo::V5(hs) => hs,
+        HandshakeVsInfo::V5(hs) => hs,
         _ => {
             return GenHsv5Result::Reject(ConnectionReject::Rejecting(
                 ServerRejectReason::Version.into(), // TODO: this error is tehcnially reserved for access control handlers, as the ref impl supports hsv4+5, while we only support 5
@@ -49,7 +49,7 @@ pub fn gen_hsv5_response(
 
     let hs = match incoming.ext_hs {
         Some(SrtControlPacket::HandshakeRequest(hs)) => hs,
-        Some(_) => return GenHsv5Result::NotHandled(ConnectError::ExpectedHSReq),
+        Some(_) => return GenHsv5Result::NotHandled(ConnectError::ExpectedHsReq),
         None => return GenHsv5Result::NotHandled(ConnectError::ExpectedExtFlags),
     };
 
@@ -77,14 +77,14 @@ pub fn gen_hsv5_response(
     } else {
         None
     };
-    let sid = if let HandshakeVSInfo::V5(info) = &with_hsv5.info {
+    let sid = if let HandshakeVsInfo::V5(info) = &with_hsv5.info {
         info.sid.clone()
     } else {
         None
     };
 
     GenHsv5Result::Accept(
-        HandshakeVSInfo::V5(HSV5Info {
+        HandshakeVsInfo::V5(HsV5Info {
             crypto_size: cm.as_ref().map(|c| c.key_length()).unwrap_or(0),
             ext_hs: Some(SrtControlPacket::HandshakeResponse(SrtHandshake {
                 version: SrtVersion::CURRENT,
@@ -122,7 +122,7 @@ pub struct StartedInitiator {
 pub fn start_hsv5_initiation(
     settings: ConnInitSettings,
     streamid: Option<String>,
-) -> (HandshakeVSInfo, StartedInitiator) {
+) -> (HandshakeVsInfo, StartedInitiator) {
     let self_crypto_size = settings.crypto.as_ref().map(|co| co.size).unwrap_or(0);
 
     // if peer_crypto_size != self_crypto_size {
@@ -138,7 +138,7 @@ pub fn start_hsv5_initiation(
     };
 
     (
-        HandshakeVSInfo::V5(HSV5Info {
+        HandshakeVsInfo::V5(HsV5Info {
             crypto_size: self_crypto_size,
             ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                 version: SrtVersion::CURRENT,
@@ -166,13 +166,13 @@ impl StartedInitiator {
     ) -> Result<ConnectionSettings, ConnectError> {
         // TODO: factor this out with above...
         let incoming = match &response.info {
-            HandshakeVSInfo::V5(hs) => hs,
+            HandshakeVsInfo::V5(hs) => hs,
             i => return Err(ConnectError::UnsupportedProtocolVersion(i.version())),
         };
 
         let hs = match incoming.ext_hs {
             Some(SrtControlPacket::HandshakeResponse(hs)) => hs,
-            Some(_) => return Err(ConnectError::ExpectedHSResp),
+            Some(_) => return Err(ConnectError::ExpectedHsResp),
             None => return Err(ConnectError::ExpectedExtFlags),
         };
 

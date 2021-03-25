@@ -402,7 +402,7 @@ mod stransmit_rs_snd_rcv {
 
         futures::try_join!(recvr, sender).unwrap();
 
-        let failure_str = format!("Failed reconnect test",);
+        let failure_str = "Failed reconnect test";
 
         // it worked, restart b, send again
         b.kill().await.expect(&failure_str);

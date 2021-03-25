@@ -9,12 +9,12 @@ use super::{
 use log::debug;
 
 use crate::packet::{
-    ControlTypes, HSV5Info, HandshakeControlInfo, HandshakeVSInfo, ShakeType, SrtControlPacket,
+    ControlTypes, HandshakeControlInfo, HandshakeVsInfo, HsV5Info, ShakeType, SrtControlPacket,
 };
 use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::{
     accesscontrol::AllowAllStreamAcceptor, Connection, ConnectionSettings, ControlPacket, Packet,
-    SocketID,
+    SocketId,
 };
 
 use ConnectError::*;
@@ -36,12 +36,12 @@ pub struct Rendezvous {
 #[allow(clippy::large_enum_variant)]
 enum RendezvousState {
     Waving,
-    AttentionInitiator(HandshakeVSInfo, StartedInitiator),
+    AttentionInitiator(HandshakeVsInfo, StartedInitiator),
     AttentionResponder,
     InitiatedResponder(ConnectionSettings), // responders always have the handshake when they transition to initiated
     InitiatedInitiator(StartedInitiator),
     FineResponder(ConnectionSettings),
-    FineInitiator(HandshakeVSInfo, StartedInitiator),
+    FineInitiator(HandshakeVsInfo, StartedInitiator),
 }
 
 impl Rendezvous {
@@ -53,7 +53,7 @@ impl Rendezvous {
         let cookie = gen_cookie(&local_addr);
         let last_packet = (
             ControlPacket {
-                dest_sockid: SocketID(0),
+                dest_sockid: SocketId(0),
                 timestamp: TimeStamp::from_micros(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: init_settings.starting_send_seqnum,
@@ -82,11 +82,11 @@ impl Rendezvous {
 }
 
 #[derive(Debug, Clone)]
-enum RendezvousHSV5 {
+enum RendezvousHsV5 {
     Initiator,
     Responder,
 }
-use RendezvousHSV5::*;
+use RendezvousHsV5::*;
 
 fn get_handshake(packet: &Packet) -> Result<&HandshakeControlInfo, ConnectError> {
     match packet {
@@ -105,14 +105,14 @@ fn extract_ext_info(
     info: &HandshakeControlInfo,
 ) -> Result<Option<&SrtControlPacket>, ConnectError> {
     match &info.info {
-        HandshakeVSInfo::V5(hs) => Ok(hs.ext_hs.as_ref()),
+        HandshakeVsInfo::V5(hs) => Ok(hs.ext_hs.as_ref()),
         _ => Err(UnsupportedProtocolVersion(4)),
     }
 }
 
 impl Rendezvous {
-    fn empty_flags() -> HandshakeVSInfo {
-        HandshakeVSInfo::V5(HSV5Info::default())
+    fn empty_flags() -> HandshakeVsInfo {
+        HandshakeVsInfo::V5(HsV5Info::default())
     }
 
     fn transition(&mut self, state: RendezvousState) {
@@ -123,7 +123,7 @@ impl Rendezvous {
         self.state = state
     }
 
-    fn gen_packet(&self, shake_type: ShakeType, info: HandshakeVSInfo) -> HandshakeControlInfo {
+    fn gen_packet(&self, shake_type: ShakeType, info: HandshakeVsInfo) -> HandshakeControlInfo {
         HandshakeControlInfo {
             init_seq_num: self.init_settings.starting_send_seqnum,
             max_packet_size: 1500, // TODO: take as a parameter
@@ -136,7 +136,7 @@ impl Rendezvous {
         }
     }
 
-    fn send(&mut self, dest_sockid: SocketID, packet: HandshakeControlInfo) -> ConnectionResult {
+    fn send(&mut self, dest_sockid: SocketId, packet: HandshakeControlInfo) -> ConnectionResult {
         let pack_pair = (
             ControlPacket {
                 timestamp: TimeStamp::from_micros(0),
@@ -152,8 +152,8 @@ impl Rendezvous {
 
     fn send_conclusion(
         &mut self,
-        dest_sockid: SocketID,
-        info: HandshakeVSInfo,
+        dest_sockid: SocketId,
+        info: HandshakeVsInfo,
     ) -> ConnectionResult {
         self.send(dest_sockid, self.gen_packet(ShakeType::Conclusion, info))
     }
@@ -270,7 +270,7 @@ impl Rendezvous {
                         hsv5
                     }
                     (Responder, Some(_)) => {
-                        return NotHandled(ExpectedHSReq);
+                        return NotHandled(ExpectedHsReq);
                     }
                     (Initiator, Some(_)) => return NotHandled(ExpectedNoExtFlags),
                     (Responder, None) => return NotHandled(ExpectedExtFlags),
@@ -286,7 +286,7 @@ impl Rendezvous {
     fn handle_attention_initiator(
         &mut self,
         info: &HandshakeControlInfo,
-        hsv5: HandshakeVSInfo,
+        hsv5: HandshakeVsInfo,
         initiator: StartedInitiator,
         now: Instant
     ) -> ConnectionResult {
@@ -304,7 +304,7 @@ impl Rendezvous {
 
                     self.set_connected(settings, Some(agreement.clone()), Some(agreement))
                 }
-                Ok(Some(_)) => NotHandled(ExpectedHSResp),
+                Ok(Some(_)) => NotHandled(ExpectedHsResp),
                 Ok(None) => {
                     self.transition(InitiatedInitiator(initiator));
                     self.send_conclusion(info.socket_id, hsv5)
@@ -325,7 +325,7 @@ impl Rendezvous {
             ShakeType::Conclusion => {
                 match extract_ext_info(info) {
                     Ok(Some(SrtControlPacket::HandshakeRequest(_))) => {} // ok, continue
-                    Ok(Some(_)) => return NotHandled(ExpectedHSReq),
+                    Ok(Some(_)) => return NotHandled(ExpectedHsReq),
                     Ok(None) => return NotHandled(ExpectedExtFlags),
                     Err(e) => return NotHandled(e),
                 };
@@ -351,7 +351,7 @@ impl Rendezvous {
     fn handle_fine_initiator(
         &mut self,
         info: &HandshakeControlInfo,
-        hsv5: HandshakeVSInfo,
+        hsv5: HandshakeVsInfo,
         initiator: StartedInitiator,
         now: Instant,
     ) -> ConnectionResult {
@@ -368,7 +368,7 @@ impl Rendezvous {
 
                     self.set_connected(settings, Some(agreement.clone()), Some(agreement))
                 }
-                Ok(Some(_)) => NotHandled(ExpectedHSResp),
+                Ok(Some(_)) => NotHandled(ExpectedHsResp),
                 Ok(None) => NotHandled(ExpectedExtFlags),
                 Err(e) => NotHandled(e),
             },
@@ -421,7 +421,7 @@ impl Rendezvous {
                         Some(self.gen_packet(ShakeType::Agreement, Rendezvous::empty_flags())),
                     )
                 }
-                Ok(Some(_)) => NotHandled(ExpectedHSResp),
+                Ok(Some(_)) => NotHandled(ExpectedHsResp),
                 Ok(None) => NotHandled(ExpectedExtFlags), // spec says stay in this state
                 Err(e) => NotHandled(e),
             },
@@ -441,7 +441,7 @@ impl Rendezvous {
                 (ShakeType::Conclusion, Ok(Some(SrtControlPacket::HandshakeRequest(_)))) => {
                     return NoAction; // TODO: this is a pretty roundabout way to do this...just waits for another tick
                 }
-                (ShakeType::Conclusion, Ok(Some(_))) => return NotHandled(ExpectedHSReq),
+                (ShakeType::Conclusion, Ok(Some(_))) => return NotHandled(ExpectedHsReq),
                 _ => {}
             }
         }

@@ -2,7 +2,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 
 use crate::protocol::{handshake::Handshake, TimeStamp};
-use crate::SocketID;
+use crate::SocketId;
 use crate::{packet::*, Connection};
 
 use super::{
@@ -60,7 +60,7 @@ impl Connect {
     }
     fn on_start(&mut self) -> ConnectionResult {
         let packet = Packet::Control(ControlPacket {
-            dest_sockid: SocketID(0),
+            dest_sockid: SocketId(0),
             timestamp: TimeStamp::from_micros(0), // TODO: this is not zero in the reference implementation
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: self.init_settings.starting_send_seqnum,
@@ -70,7 +70,7 @@ impl Connect {
                 shake_type: ShakeType::Induction,
                 peer_addr: self.local_addr,
                 syn_cookie: 0,
-                info: HandshakeVSInfo::V4(SocketType::Datagram),
+                info: HandshakeVsInfo::V4(SocketType::Datagram),
             }),
         });
         self.state = InductionResponseWait(packet.clone());
@@ -84,14 +84,14 @@ impl Connect {
         info: HandshakeControlInfo,
     ) -> ConnectionResult {
         match (info.shake_type, &info.info, from) {
-            (ShakeType::Induction, HandshakeVSInfo::V5 { .. }, from) if from == self.remote => {
+            (ShakeType::Induction, HandshakeVsInfo::V5 { .. }, from) if from == self.remote => {
                 let (hsv5, cm) =
                     start_hsv5_initiation(self.init_settings.clone(), self.streamid.clone());
 
                 // send back a packet with the same syn cookie
                 let packet = Packet::Control(ControlPacket {
                     timestamp,
-                    dest_sockid: SocketID(0),
+                    dest_sockid: SocketId(0),
                     control_type: ControlTypes::Handshake(HandshakeControlInfo {
                         shake_type: ShakeType::Conclusion,
                         socket_id: self.init_settings.local_sockid,
@@ -103,7 +103,7 @@ impl Connect {
                 self.state = ConclusionResponseWait(packet.clone(), cm);
                 SendPacket((packet, from))
             }
-            (ShakeType::Induction, HandshakeVSInfo::V5 { .. }, from) => {
+            (ShakeType::Induction, HandshakeVsInfo::V5 { .. }, from) => {
                 NotHandled(UnexpectedHost(self.remote, from))
             }
             (ShakeType::Induction, version, _) => {
@@ -189,7 +189,7 @@ mod test {
 
     use super::*;
 
-    const TEST_SOCKID: SocketID = SocketID(7655);
+    const TEST_SOCKID: SocketId = SocketId(7655);
 
     #[test]
     fn reject() {
@@ -201,8 +201,8 @@ mod test {
             dest_sockid: TEST_SOCKID,
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 syn_cookie: 5554,
-                socket_id: SocketID(5678),
-                info: HandshakeVSInfo::V5(HSV5Info::default()),
+                socket_id: SocketId(5678),
+                info: HandshakeVsInfo::V5(HsV5Info::default()),
                 init_seq_num: random(),
                 max_packet_size: 8192,
                 max_flow_size: 1234,
@@ -237,10 +237,10 @@ mod test {
                 max_packet_size: 8192,
                 max_flow_size: 1234,
                 shake_type: ShakeType::Rejection(RejectReason::Server(ServerRejectReason::BadMode)),
-                socket_id: SocketID(5678),
+                socket_id: SocketId(5678),
                 syn_cookie: 2222,
                 peer_addr: [127, 0, 0, 1].into(),
-                info: HandshakeVSInfo::V5(HSV5Info::default()),
+                info: HandshakeVsInfo::V5(HsV5Info::default()),
             }),
         });
 

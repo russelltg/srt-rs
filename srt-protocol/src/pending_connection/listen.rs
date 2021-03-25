@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, time::Instant};
 
 use crate::protocol::TimeStamp;
-use crate::{accesscontrol::StreamAcceptor, SocketID};
+use crate::{accesscontrol::StreamAcceptor, SocketId};
 use crate::{packet::*, protocol::handshake::Handshake, Connection};
 
 use super::{
@@ -20,7 +20,7 @@ pub struct Listen {
 #[derive(Clone)]
 pub struct ConclusionWaitState {
     timestamp: TimeStamp,
-    from: (SocketAddr, SocketID),
+    from: (SocketAddr, SocketId),
     cookie: i32,
     induction_response: Packet,
 }
@@ -64,7 +64,7 @@ impl Listen {
                     control_type: ControlTypes::Handshake(HandshakeControlInfo {
                         syn_cookie: cookie,
                         socket_id: self.init_settings.local_sockid,
-                        info: HandshakeVSInfo::V5(HSV5Info::default()),
+                        info: HandshakeVsInfo::V5(HsV5Info::default()),
                         init_seq_num: self.init_settings.starting_send_seqnum,
                         ..shake
                     }),
@@ -252,7 +252,7 @@ mod test {
             socket_id: random(),
             syn_cookie: 0,
             peer_addr: IpAddr::from([127, 0, 0, 1]),
-            info: HandshakeVSInfo::V5(HSV5Info::default()),
+            info: HandshakeVsInfo::V5(HsV5Info::default()),
         }
     }
 
@@ -265,7 +265,7 @@ mod test {
             socket_id: random(),
             syn_cookie: gen_cookie(&conn_addr()),
             peer_addr: IpAddr::from([127, 0, 0, 1]),
-            info: HandshakeVSInfo::V5(HSV5Info {
+            info: HandshakeVsInfo::V5(HsV5Info {
                 crypto_size: 0,
                 ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                     version: SrtVersion::CURRENT,
@@ -305,7 +305,7 @@ mod test {
                     Connection {
                         handshake: Handshake::Listener(ControlTypes::Handshake(
                             HandshakeControlInfo {
-                                info: HandshakeVSInfo::V5(HSV5Info {
+                                info: HandshakeVsInfo::V5(HsV5Info {
                                     ext_hs: Some(_),
                                     ..
                                 }),
@@ -408,7 +408,7 @@ mod test {
         assert!(matches!(resp, SendPacket(_)));
 
         let mut c = test_conclusion();
-        c.info = HandshakeVSInfo::V4(SocketType::Datagram);
+        c.info = HandshakeVsInfo::V4(SocketType::Datagram);
 
         let resp = l.handle_packet((build_hs_pack(c), conn_addr()), now, &mut a);
 
@@ -431,7 +431,7 @@ mod test {
         assert!(matches!(resp, SendPacket(_)));
 
         let mut c = test_conclusion();
-        c.info = HandshakeVSInfo::V5(HSV5Info::default());
+        c.info = HandshakeVsInfo::V5(HsV5Info::default());
 
         let resp = l.handle_packet((build_hs_pack(c), conn_addr()), now, &mut a);
 
@@ -448,7 +448,7 @@ mod test {
             _streamid: Option<&str>,
             _ip: SocketAddr,
         ) -> Result<AcceptParameters, RejectReason> {
-            return Err(RejectReason::Server(ServerRejectReason::Overload));
+            Err(RejectReason::Server(ServerRejectReason::Overload))
         }
     }
 
