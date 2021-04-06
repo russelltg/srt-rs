@@ -12,15 +12,17 @@ use srt_protocol::{
         receiver::{Receiver, ReceiverAlgorithmAction},
         sender::{Sender, SenderAlgorithmAction},
     },
-    ConnectionSettings, ControlPacket, SeqNumber, SocketID,
+    ConnectionSettings, ControlPacket, SeqNumber, SocketId,
 };
+
+const DATA: [u8; 1024] = [5; 1024];
 
 #[test]
 fn timestamp_rollover() {
     let _ = pretty_env_logger::try_init();
 
-    let s1_sockid = SocketID(1234);
-    let s2_sockid = SocketID(5678);
+    let s1_sockid = SocketId(1234);
+    let s2_sockid = SocketId(5678);
 
     let s1_addr = ([127, 0, 0, 1], 2223).into();
     let s2_addr = ([127, 0, 0, 1], 2222).into();
@@ -62,10 +64,11 @@ fn timestamp_rollover() {
     let mut sendr = Sender::new(s1, Handshake::Connector);
     let mut recvr = Receiver::new(s2, Handshake::Connector);
 
-    // send 1 packet/s for 24 hours
-    let packs_to_send = 60 * 60 * 24;
+    // send 100 packet/s for 24 hours
+    const PACKET_RATE: u32 = 100;
+    let packs_to_send = 60 * 60 * 24 * PACKET_RATE;
     let mut send_time = (1..=packs_to_send)
-        .map(|i| (i, start + i * Duration::from_secs(1)))
+        .map(|i| (i, start + i * Duration::from_secs(1) / PACKET_RATE))
         .peekable();
 
     let mut current_time = start;
@@ -75,10 +78,10 @@ fn timestamp_rollover() {
     loop {
         if let Some((idx, rel_time)) = send_time.peek() {
             if *rel_time <= current_time {
-                sendr.handle_data((current_time, Bytes::from_static(b"1234")), current_time);
+                sendr.handle_data((current_time, Bytes::from_static(&DATA)), current_time);
 
                 if idx % (60 * 20) == 0 {
-                    info!("{}h{}m passed", idx / 60 / 60, (idx / 60) % 60);
+                    info!("{}h{}m passed", idx / 60 / 60 / PACKET_RATE, (idx / 60 / PACKET_RATE) % 60);
                 }
 
                 send_time.next();

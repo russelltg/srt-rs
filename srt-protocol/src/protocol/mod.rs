@@ -20,6 +20,8 @@ pub struct TimeStamp(Wrapping<u32>);
 pub struct TimeSpan(i32);
 
 const TIMESTAMP_MASK: u128 = u32::MAX as u128;
+const MAX_DIFF_US: u32 = u32::MAX / 2;
+const WRAP_US: u64 = (u32::MAX as u64) + 1;
 
 #[derive(Copy, Clone, Debug)]
 pub struct TimeBase(Instant);
@@ -169,9 +171,17 @@ impl TimeBase {
     // Get Instant closest to `now` that is consistent with `timestamp`
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn instant_from(&self, now: Instant, timestamp: TimeStamp) -> Instant {
-        let wraps = ((now - self.0).as_micros() >> 32) as u64;
-        self.0
-            + Duration::from_micros(wraps * u64::from(std::u32::MAX) + timestamp.as_micros() as u64)
+        let mut wraps = ((now - self.0).as_micros() >> 32) as u64;
+
+        // find the smallest difference
+        let diff = wraps as i64 * WRAP_US as i64 + i64::from(timestamp.as_micros()) - (now - self.0).as_micros() as i64;
+        if diff < -i64::from(MAX_DIFF_US) {
+            wraps += 1;
+        } else if diff > i64::from(MAX_DIFF_US) {
+            wraps -= 1;
+        }
+
+        self.0 + Duration::from_micros(wraps * WRAP_US + timestamp.as_micros() as u64)
     }
 
     pub fn adjust(&mut self, delta: TimeSpan) {
@@ -225,6 +235,21 @@ mod timebase {
             assert_eq!(ts, original_ts - drift + TimeSpan::from_micros(1_000_000));
         }
 
+    }
+
+    #[test]
+    fn to_from_instant() {
+        let tb = TimeBase::new(Instant::now());
+
+        let before = tb.origin_time() + Duration::from_micros(u64::from(u32::MAX));
+        let after = tb.origin_time() + Duration::from_micros(u64::from(u32::MAX) + 2);
+
+        let b_ts = tb.timestamp_from(before);
+        let a_ts = tb.timestamp_from(after);
+
+        assert_eq!(before, tb.instant_from(after, b_ts));
+        assert_eq!(after, tb.instant_from(before, a_ts));
+        
     }
 }
 
