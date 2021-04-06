@@ -70,6 +70,7 @@ pub enum SenderAlgorithmAction {
     Close,
 }
 
+#[derive(Debug)]
 pub struct Sender {
     /// The settings, including remote sockid and address
     settings: ConnectionSettings,

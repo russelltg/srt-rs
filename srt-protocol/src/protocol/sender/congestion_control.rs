@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use crate::protocol::stats::*;
 use crate::SeqNumber;
 
+#[derive(Debug)]
 struct MessageStats {
     pub message_count: usize,
     pub packet_count: usize,
@@ -53,6 +54,7 @@ type DataRate = usize;
 // TODO: move data rate algorithm configuration to a public protocol configuration module
 //       for now, just ignore that it's never used
 #[allow(dead_code)]
+#[derive(Debug)]
 pub(crate) enum LiveDataRate {
     Fixed {
         // m_llInputBW != 0
@@ -67,6 +69,7 @@ pub(crate) enum LiveDataRate {
     Unlimited,
 }
 
+#[derive(Debug)]
 pub(crate) struct SenderCongestionControl {
     message_stats_window: OnlineWindowedStats<MessageStats>,
     message_stats: StatsWindow<MessageStats>,
