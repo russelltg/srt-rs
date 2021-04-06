@@ -22,6 +22,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::{future, ready, select};
 use log::{debug, error, info, trace};
+use srt_protocol::packet::{PacketType, SrtControlPacket};
 use tokio::time::sleep_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
@@ -266,8 +267,19 @@ where
                                     // neither--this exists just to keep the connection alive
                                     KeepAlive => {}
                                     Srt(s) => {
-                                        dbg!(s);
-                                        // unimplemented!("{:?}", s);
+                                        match s {
+                                            SrtControlPacket::KeyManagerRequest(req) => {
+                                                if req.pt == PacketType::KeyingMaterial {
+                                                    if let Err(e) = receiver.rekey(req) {
+                                                        debug!("Rekeying failed {:?}", e);
+                                                    }
+                                                }
+                                            }
+                                            _ => {
+                                                dbg!(s);
+                                                // unimplemented!("{:?}", s);
+                                            }
+                                        }
                                     }
                                 },
                             }

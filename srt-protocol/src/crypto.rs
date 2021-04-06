@@ -270,6 +270,68 @@ impl CryptoManager {
 
         ret
     }
+
+    pub fn rekey(&mut self, kmreq: &SrtKeyMessage) -> Result<(), ConnectionReject> {
+        assert_eq!(kmreq.pt, PacketType::KeyingMaterial);
+
+        let salt = kmreq.salt[..].try_into().unwrap();
+        let kek = CryptoManager::gen_kek(&self.options, &salt);
+
+        assert_eq!(
+            kmreq.wrapped_keys.len(),
+            kmreq.key_flags.bits().count_ones() as usize * usize::from(self.options.size) + 8
+        );
+
+        let mut keys = vec![0; kmreq.wrapped_keys.len() - 8];
+
+        let mut iv = [0; 8];
+        match kek.len() {
+            16 => wrap::aes_unwrap(
+                &Aes128::new(kek[..].into()),
+                &mut iv,
+                &mut keys,
+                &kmreq.wrapped_keys,
+            ),
+            24 => wrap::aes_unwrap(
+                &Aes192::new(kek[..].into()),
+                &mut iv,
+                &mut keys,
+                &kmreq.wrapped_keys,
+            ),
+            32 => wrap::aes_unwrap(
+                &Aes256::new(kek[..].into()),
+                &mut iv,
+                &mut keys,
+                &kmreq.wrapped_keys,
+            ),
+            _ => panic!("Invalid key size"),
+        }
+
+        if iv != wrap::DEFAULT_IV {
+            return Err(ConnectionReject::Rejecting(
+                CoreRejectReason::BadSecret.into(),
+            ));
+        }
+
+        let even = if kmreq.key_flags.contains(KeyFlags::EVEN) {
+            Some(keys[0..usize::from(self.options.size)].into())
+        } else {
+            None
+        };
+        let odd = if kmreq.key_flags.contains(KeyFlags::ODD) {
+            Some((keys[keys.len() - usize::from(self.options.size)..]).into())
+        } else {
+            None
+        };
+
+        self.salt = salt;
+        self.odd_sek = odd;
+        self.even_sek = even;
+
+        log::info!("Re-key complete");
+
+        Ok(())
+    }
 }
 
 // don't print sensetive info
