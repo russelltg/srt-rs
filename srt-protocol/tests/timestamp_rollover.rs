@@ -64,8 +64,8 @@ fn timestamp_rollover() {
     let mut sendr = Sender::new(s1, Handshake::Connector);
     let mut recvr = Receiver::new(s2, Handshake::Connector);
 
-    // send 100 packet/s for 24 hours
-    const PACKET_RATE: u32 = 100;
+    // send 10 packet/s for 24 hours
+    const PACKET_RATE: u32 = 10;
     let packs_to_send = 60 * 60 * 24 * PACKET_RATE;
     let mut send_time = (1..=packs_to_send)
         .map(|i| (i, start + i * Duration::from_secs(1) / PACKET_RATE))

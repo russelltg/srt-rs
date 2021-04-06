@@ -179,7 +179,7 @@ impl TimeBase {
         if diff < -i64::from(MAX_DIFF_US) {
             wraps += 1;
         } else if diff > i64::from(MAX_DIFF_US) {
-            wraps -= 1;
+            wraps = wraps.saturating_sub(1);
         }
 
         self.0 + Duration::from_micros(wraps * WRAP_US + timestamp.as_micros() as u64)
