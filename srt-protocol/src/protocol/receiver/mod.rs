@@ -22,7 +22,7 @@ mod buffer;
 mod time;
 
 use buffer::RecvBuffer;
-use time::{ReceiveTimers, RTT};
+use time::{ReceiveTimers, Rtt};
 
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
@@ -70,7 +70,7 @@ pub struct Receiver {
 
     /// the round trip time
     /// is calculated each ACK2
-    rtt: RTT,
+    rtt: Rtt,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Receiver's Loss List: It is a list of tuples whose values include:
@@ -135,7 +135,7 @@ impl Receiver {
             control_packets: VecDeque::new(),
             data_release: VecDeque::new(),
             handshake,
-            rtt: RTT::new(),
+            rtt: Rtt::new(),
             loss_list: Vec::new(),
             ack_history_window: Vec::new(),
             packet_history_window: Vec::new(),

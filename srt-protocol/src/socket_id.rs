@@ -5,15 +5,15 @@ use std::fmt;
 
 /// A newtype wrapper for strongly-typed SocketIDs
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct SocketID(pub u32);
+pub struct SocketId(pub u32);
 
-impl Distribution<SocketID> for Standard {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> SocketID {
-        SocketID(rng.sample(self))
+impl Distribution<SocketId> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> SocketId {
+        SocketId(rng.sample(self))
     }
 }
 
-impl fmt::Debug for SocketID {
+impl fmt::Debug for SocketId {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "SRT#{:08X}", self.0)
     }

@@ -6,12 +6,12 @@ use bytes::{Bytes, BytesMut};
 use crate::packet::{DataEncryption, PacketLocation};
 use crate::protocol::{TimeBase, TimeStamp};
 use crate::{
-    crypto::CryptoManager, ConnectionSettings, DataPacket, MsgNumber, SeqNumber, SocketID,
+    crypto::CryptoManager, ConnectionSettings, DataPacket, MsgNumber, SeqNumber, SocketId,
 };
 
 #[derive(Debug)]
 pub struct TransmitBuffer {
-    remote_socket_id: SocketID,
+    remote_socket_id: SocketId,
     max_packet_size: usize,
     time_base: TimeBase,
 

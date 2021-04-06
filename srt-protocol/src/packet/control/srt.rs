@@ -136,9 +136,9 @@ impl TryFrom<u8> for PacketType {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum CipherType {
     None = 0,
-    ECB = 1,
-    CTR = 2,
-    CBC = 3,
+    Ecb = 1,
+    Ctr = 2,
+    Cbc = 3,
 }
 
 /// The SRT handshake object
@@ -230,10 +230,10 @@ impl SrtControlPacket {
 
                 match String::from_utf8(bytes) {
                     Ok(s) => Ok(StreamId(s)),
-                    Err(e) => Err(PacketParseError::StreamTypeNotUTF8(e.utf8_error())),
+                    Err(e) => Err(PacketParseError::StreamTypeNotUtf8(e.utf8_error())),
                 }
             }
-            _ => Err(PacketParseError::UnsupportedSRTExtensionType(packet_type)),
+            _ => Err(PacketParseError::UnsupportedSrtExtensionType(packet_type)),
         }
     }
 
@@ -359,14 +359,14 @@ impl SrtKeyMessage {
 
         // make sure the first bit is zero
         if (vers_pt & 0b1000_0000) != 0 {
-            return Err(PacketParseError::BadSRTExtensionMessage);
+            return Err(PacketParseError::BadSrtExtensionMessage);
         }
 
         // upper 4 bits are version
         let version = vers_pt >> 4;
 
         if version != 1 {
-            return Err(PacketParseError::BadSRTExtensionMessage);
+            return Err(PacketParseError::BadSrtExtensionMessage);
         }
 
         // lower 4 bits are pt
@@ -525,9 +525,9 @@ impl TryFrom<u8> for CipherType {
     fn try_from(from: u8) -> Result<CipherType, PacketParseError> {
         match from {
             0 => Ok(CipherType::None),
-            1 => Ok(CipherType::ECB),
-            2 => Ok(CipherType::CTR),
-            3 => Ok(CipherType::CBC),
+            1 => Ok(CipherType::Ecb),
+            2 => Ok(CipherType::Ctr),
+            3 => Ok(CipherType::Cbc),
             e => Err(PacketParseError::BadCipherKind(e)),
         }
     }
@@ -537,7 +537,7 @@ impl TryFrom<u8> for CipherType {
 mod tests {
     use super::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
     use crate::packet::ControlTypes;
-    use crate::{protocol::TimeStamp, ControlPacket, Packet, SocketID, SrtVersion};
+    use crate::{protocol::TimeStamp, ControlPacket, Packet, SocketId, SrtVersion};
 
     use std::io::Cursor;
     use std::time::Duration;
@@ -546,7 +546,7 @@ mod tests {
     fn deser_ser_shake() {
         let handshake = Packet::Control(ControlPacket {
             timestamp: TimeStamp::from_micros(123_141),
-            dest_sockid: SocketID(123),
+            dest_sockid: SocketId(123),
             control_type: ControlTypes::Srt(SrtControlPacket::HandshakeRequest(SrtHandshake {
                 version: SrtVersion::CURRENT,
                 flags: SrtShakeFlags::empty(),
@@ -567,7 +567,7 @@ mod tests {
     fn ser_deser_sid() {
         let sid = Packet::Control(ControlPacket {
             timestamp: TimeStamp::from_micros(123),
-            dest_sockid: SocketID(1234),
+            dest_sockid: SocketId(1234),
             control_type: ControlTypes::Srt(SrtControlPacket::StreamId("Hellohelloheloo".into())),
         });
 

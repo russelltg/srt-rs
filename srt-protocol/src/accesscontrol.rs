@@ -38,7 +38,7 @@ pub enum StandardAccessControlEntry {
     UserName(String),
     ResourceName(String),
     HostName(String),
-    SessionID(String),
+    SessionId(String),
     Type(ConnectionType),
     Mode(ConnectionMode),
 }
@@ -161,7 +161,7 @@ impl TryFrom<AccessControlEntry> for StandardAccessControlEntry {
             "u" => Ok(StandardAccessControlEntry::UserName(value.value)),
             "r" => Ok(StandardAccessControlEntry::ResourceName(value.value)),
             "h" => Ok(StandardAccessControlEntry::HostName(value.value)),
-            "s" => Ok(StandardAccessControlEntry::SessionID(value.value)),
+            "s" => Ok(StandardAccessControlEntry::SessionId(value.value)),
             "t" => Ok(StandardAccessControlEntry::Type(value.value.parse()?)),
             "m" => Ok(StandardAccessControlEntry::Mode(value.value.parse()?)),
             _ => Err(()),
@@ -175,7 +175,7 @@ impl From<StandardAccessControlEntry> for AccessControlEntry {
             StandardAccessControlEntry::UserName(un) => AccessControlEntry::new("u", un),
             StandardAccessControlEntry::ResourceName(rn) => AccessControlEntry::new("r", rn),
             StandardAccessControlEntry::HostName(hn) => AccessControlEntry::new("h", hn),
-            StandardAccessControlEntry::SessionID(sid) => AccessControlEntry::new("s", sid),
+            StandardAccessControlEntry::SessionId(sid) => AccessControlEntry::new("s", sid),
             StandardAccessControlEntry::Type(ty) => AccessControlEntry::new("t", format!("{}", ty)),
             StandardAccessControlEntry::Mode(m) => AccessControlEntry::new("m", format!("{}", m)),
         }
