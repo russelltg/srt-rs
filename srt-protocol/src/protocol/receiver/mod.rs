@@ -33,6 +33,7 @@ pub enum ReceiverAlgorithmAction {
     Close,
 }
 
+#[derive(Debug)]
 struct LossListEntry {
     seq_num: SeqNumber,
 
@@ -43,6 +44,7 @@ struct LossListEntry {
     k: i32,
 }
 
+#[derive(Debug)]
 struct AckHistoryEntry {
     /// the highest packet sequence number received that this ACK packet ACKs + 1
     ack_number: SeqNumber,
@@ -54,6 +56,7 @@ struct AckHistoryEntry {
     timestamp: TimeStamp,
 }
 
+#[derive(Debug)]
 pub struct Receiver {
     settings: ConnectionSettings,
 
