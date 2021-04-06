@@ -174,7 +174,8 @@ impl TimeBase {
         let mut wraps = ((now - self.0).as_micros() >> 32) as u64;
 
         // find the smallest difference
-        let diff = wraps as i64 * WRAP_US as i64 + i64::from(timestamp.as_micros()) - (now - self.0).as_micros() as i64;
+        let diff = wraps as i64 * WRAP_US as i64 + i64::from(timestamp.as_micros())
+            - (now - self.0).as_micros() as i64;
         if diff < -i64::from(MAX_DIFF_US) {
             wraps += 1;
         } else if diff > i64::from(MAX_DIFF_US) {
@@ -249,7 +250,6 @@ mod timebase {
 
         assert_eq!(before, tb.instant_from(after, b_ts));
         assert_eq!(after, tb.instant_from(before, a_ts));
-        
     }
 }
 

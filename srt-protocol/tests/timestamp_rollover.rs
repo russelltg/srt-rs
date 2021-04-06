@@ -81,7 +81,11 @@ fn timestamp_rollover() {
                 sendr.handle_data((current_time, Bytes::from_static(&DATA)), current_time);
 
                 if idx % (60 * 20) == 0 {
-                    info!("{}h{}m passed", idx / 60 / 60 / PACKET_RATE, (idx / 60 / PACKET_RATE) % 60);
+                    info!(
+                        "{}h{}m passed",
+                        idx / 60 / 60 / PACKET_RATE,
+                        (idx / 60 / PACKET_RATE) % 60
+                    );
                 }
 
                 send_time.next();
