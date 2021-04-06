@@ -14,7 +14,7 @@ use srt_protocol::{
         receiver::{Receiver, ReceiverAlgorithmAction},
         sender::{Sender, SenderAlgorithmAction},
     },
-    ConnectionSettings, SeqNumber, SocketID,
+    ConnectionSettings, SeqNumber, SocketId,
 };
 
 #[test]
@@ -28,8 +28,8 @@ fn high_bandwidth_det() {
 
     let s1 = ConnectionSettings {
         remote: receiver_addr,
-        remote_sockid: SocketID(1234),
-        local_sockid: SocketID(5678),
+        remote_sockid: SocketId(1234),
+        local_sockid: SocketId(5678),
         socket_start_time: start,
         init_send_seq_num: SeqNumber::new_truncate(1234),
         init_recv_seq_num: SeqNumber::new_truncate(1234),
