@@ -6,14 +6,15 @@ use stats::OnlineStats;
 use crate::protocol::{TimeBase, TimeSpan, TimeStamp, Timer};
 
 pub(crate) struct SynchronizedRemoteClock {
-    tolerance: Duration,
+    drift_deviation_tolerance: Duration,
     time_base: TimeBase,
+    last_monotonic_instant: Option<Instant>,
     stats: Option<OnlineStats>,
 }
 
 impl SynchronizedRemoteClock {
     const MAX_SAMPLES: usize = 1_000;
-    const DRIFT_TOLERANCE: Duration = Duration::from_millis(5);
+    const DRIFT_DEVIATION_TOLERANCE: Duration = Duration::from_millis(5);
 
     pub fn new(now: Instant) -> Self {
         Self {
@@ -21,8 +22,9 @@ impl SynchronizedRemoteClock {
             //       It wasn't in the reference implementation, but I added it because the reference
             //       implementation is susceptible to invalid clock adjustments during periods of
             //       acute network latency
-            tolerance: Self::DRIFT_TOLERANCE,
+            drift_deviation_tolerance: Self::DRIFT_DEVIATION_TOLERANCE,
             time_base: TimeBase::new(now),
+            last_monotonic_instant: None,
             stats: None,
         }
     }
@@ -31,7 +33,7 @@ impl SynchronizedRemoteClock {
         let drift = self.time_base.timestamp_from(now) - ts;
         match &mut self.stats {
             None => {
-                self.time_base.adjust(drift);
+                self.time_base.adjust(now, drift);
             }
             Some(stats) => {
                 stats.add(drift.as_micros());
@@ -40,17 +42,28 @@ impl SynchronizedRemoteClock {
                     return;
                 }
 
-                if stats.stddev() < self.tolerance.as_micros() as f64 {
+                if stats.stddev() < self.drift_deviation_tolerance.as_micros() as f64 {
                     self.time_base
-                        .adjust(TimeSpan::from_micros(stats.mean() as i32));
+                        .adjust(now, TimeSpan::from_micros(stats.mean() as i32));
                 }
             }
         }
         self.stats = Some(OnlineStats::new());
     }
 
-    pub fn instant_from(&self, now: Instant, ts: TimeStamp) -> Instant {
-        self.time_base.instant_from(now, ts)
+    pub fn monotonic_instant_from(&mut self, ts: TimeStamp) -> Instant {
+        let instant = self.time_base.instant_from(ts);
+        match self.last_monotonic_instant {
+            Some(last) if last >= instant => last,
+            _ => {
+                self.last_monotonic_instant = Some(instant);
+                instant
+            }
+        }
+    }
+
+    pub fn instant_from(&self, ts: TimeStamp) -> Instant {
+        self.time_base.instant_from(ts)
     }
 
     pub fn origin_time(&self) -> Instant {
@@ -77,9 +90,12 @@ mod synchronized_remote_clock {
             let mut clock = SynchronizedRemoteClock::new(start);
 
             clock.synchronize(start, start_ts);
-            let instant = clock.instant_from(start, start_ts);
+            let instant = clock.instant_from(start_ts);
 
             prop_assert_eq!(instant, start, "the clock should be adjusted on the first sample");
+
+
+            let mut last_monotonic_instant = clock.monotonic_instant_from(start_ts);
 
             for tick_ts in 1..1002 {
                 let tick = Duration::from_micros(tick_ts as u64);
@@ -87,13 +103,17 @@ mod synchronized_remote_clock {
                 let now_ts = start_ts + TimeSpan::from_micros(tick_ts);
 
                 clock.synchronize(now, now_ts);
-                let instant = clock.instant_from(start, now_ts);
 
+                let instant = clock.instant_from(now_ts);
                 match tick_ts.cmp(&MAX_SAMPLES) {
-                    Ordering::Less => assert_eq!(instant, start + tick, "the clock should not be adjusted until {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts),
-                    Ordering::Equal => assert_eq!(instant, now, "the clock should be adjusted after {} samples", MAX_SAMPLES),
-                    Ordering::Greater => assert_eq!(instant, now, "the clock should not be adjusted until the next {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts),
+                    Ordering::Less => prop_assert_eq!(instant, start + tick, "the clock should not be adjusted until {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts),
+                    Ordering::Equal => prop_assert_eq!(instant, now, "the clock should be adjusted after {} samples", MAX_SAMPLES),
+                    Ordering::Greater => prop_assert_eq!(instant, now, "the clock should not be adjusted until the next {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts),
                 }
+
+                let monotonic_instant = clock.monotonic_instant_from(now_ts);
+                prop_assert!(monotonic_instant >= last_monotonic_instant);
+                last_monotonic_instant = monotonic_instant;
             }
 
             // simulate drift variance outside tolerance (+/- 5ms)
@@ -103,7 +123,7 @@ mod synchronized_remote_clock {
                 let now_ts = start_ts + TimeSpan::from_micros(tick_ts);
 
                 clock.synchronize(now, now_ts - TimeSpan::from_micros((tick_ts % 2) * 11000)); // constant 5ms drift variance
-                let instant = clock.instant_from(start, now_ts);
+                let instant = clock.instant_from(now_ts);
 
                 prop_assert_eq!(instant, now, "the clock should not be adjusted: tick_ts = {}", tick_ts);
             }
