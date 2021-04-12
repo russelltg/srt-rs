@@ -22,7 +22,13 @@ pub struct TimeSpan(i32);
 
 #[derive(Copy, Clone, Debug)]
 pub struct TimeBase {
+    // this field is only here for diagnostics and debugging
+    // it is similar to start_time in other contexts, but is adjusted for drift
     origin_time: Instant,
+
+    // the two "reference" fields are two equivalent time points from different
+    // time scales they are reference points used for mapping between the Instance
+    // and a sender TimeStamp time scales
     reference_time: Instant,
     reference_ts: TimeStamp,
 }

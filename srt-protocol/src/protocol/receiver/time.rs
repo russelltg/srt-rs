@@ -80,22 +80,17 @@ mod synchronized_remote_clock {
 
     proptest! {
         #[test]
-        fn synchronize(drift_ts in 1u64..5_000_000) {
+        fn synchronize(drift_micros: i32) {
             const MAX_SAMPLES: i32 = 1000;
-
-            let drift = Duration::from_micros(drift_ts);
+            let drift = TimeSpan::from_micros(drift_micros);
             let start = Instant::now();
             let start_ts = TimeStamp::from_micros(100_000_000);
-
             let mut clock = SynchronizedRemoteClock::new(start);
 
             clock.synchronize(start, start_ts);
+
             let instant = clock.instant_from(start_ts);
-
             prop_assert_eq!(instant, start, "the clock should be adjusted on the first sample");
-
-
-            let mut last_monotonic_instant = clock.monotonic_instant_from(start_ts);
 
             for tick_ts in 1..1002 {
                 let tick = Duration::from_micros(tick_ts as u64);
@@ -110,10 +105,6 @@ mod synchronized_remote_clock {
                     Ordering::Equal => prop_assert_eq!(instant, now, "the clock should be adjusted after {} samples", MAX_SAMPLES),
                     Ordering::Greater => prop_assert_eq!(instant, now, "the clock should not be adjusted until the next {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts),
                 }
-
-                let monotonic_instant = clock.monotonic_instant_from(now_ts);
-                prop_assert!(monotonic_instant >= last_monotonic_instant);
-                last_monotonic_instant = monotonic_instant;
             }
 
             // simulate drift variance outside tolerance (+/- 5ms)
@@ -123,9 +114,34 @@ mod synchronized_remote_clock {
                 let now_ts = start_ts + TimeSpan::from_micros(tick_ts);
 
                 clock.synchronize(now, now_ts - TimeSpan::from_micros((tick_ts % 2) * 11000)); // constant 5ms drift variance
-                let instant = clock.instant_from(now_ts);
 
+                let instant = clock.instant_from(now_ts);
                 prop_assert_eq!(instant, now, "the clock should not be adjusted: tick_ts = {}", tick_ts);
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn monotonic_instant(drift_micros: i32) {
+            let drift = TimeSpan::from_micros(drift_micros);
+            let start = Instant::now();
+            let start_ts = TimeStamp::from_micros(100_000_000);
+            let mut clock = SynchronizedRemoteClock::new(start);
+            clock.synchronize(start, start_ts);
+
+            let mut last_monotonic_instant = clock.monotonic_instant_from(start_ts);
+
+            for tick_ts in 1..1002 {
+                let tick = Duration::from_micros(tick_ts as u64);
+                let now = start + tick + drift;
+                let now_ts = start_ts + TimeSpan::from_micros(tick_ts);
+                clock.synchronize(now, now_ts);
+
+                let monotonic_instant = clock.monotonic_instant_from(now_ts);
+
+                prop_assert!(monotonic_instant >= last_monotonic_instant);
+                last_monotonic_instant = monotonic_instant;
             }
         }
     }
