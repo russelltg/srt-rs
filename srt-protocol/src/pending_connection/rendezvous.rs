@@ -12,11 +12,11 @@ use crate::packet::{
     ControlTypes, HandshakeControlInfo, HandshakeVsInfo, HsV5Info, ShakeType, SrtControlPacket,
 };
 use crate::protocol::{handshake::Handshake, TimeStamp};
-use crate::{Connection, ConnectionSettings, ControlPacket, Packet, SeqNumber, SocketID};
 use crate::{
     accesscontrol::AllowAllStreamAcceptor, Connection, ConnectionSettings, ControlPacket, Packet,
     SocketId,
 };
+use crate::{Connection, ConnectionSettings, ControlPacket, Packet, SeqNumber, SocketID};
 
 use ConnectError::*;
 use ConnectionResult::*;
@@ -298,8 +298,11 @@ impl Rendezvous {
                     let agreement =
                         self.gen_packet(ShakeType::Agreement, Rendezvous::empty_flags());
 
-                    let settings = match initiator.finish_hsv5_initiation(info, self.init_send_seq_num, self.remote_public)
-                    {
+                    let settings = match initiator.finish_hsv5_initiation(
+                        info,
+                        self.init_send_seq_num,
+                        self.remote_public,
+                    ) {
                         Ok(s) => s,
                         Err(r) => return NotHandled(r),
                     };
@@ -359,8 +362,11 @@ impl Rendezvous {
                 Ok(Some(SrtControlPacket::HandshakeResponse(_))) => {
                     let agreement = self.gen_packet(ShakeType::Agreement, hsv5);
 
-                    let settings = match initiator.finish_hsv5_initiation(info, self.init_send_seq_num, .remote_public)
-                    {
+                    let settings = match initiator.finish_hsv5_initiation(
+                        info,
+                        self.init_send_seq_num,
+                        self.remote_public,
+                    ) {
                         Ok(s) => s,
                         Err(r) => return NotHandled(r),
                     };
@@ -407,11 +413,14 @@ impl Rendezvous {
         match info.shake_type {
             ShakeType::Conclusion => match extract_ext_info(info) {
                 Ok(Some(SrtControlPacket::HandshakeResponse(_))) => {
-                    let connection =
-                        match initiator.finish_hsv5_initiation(info, self.init_send_seq_num, self.remote_public) {
-                            Ok(c) => c,
-                            Err(e) => return NotHandled(e),
-                        };
+                    let connection = match initiator.finish_hsv5_initiation(
+                        info,
+                        self.init_send_seq_num,
+                        self.remote_public,
+                    ) {
+                        Ok(c) => c,
+                        Err(e) => return NotHandled(e),
+                    };
 
                     self.set_connected(
                         connection,
