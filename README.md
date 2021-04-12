@@ -1,12 +1,6 @@
 # srt-rs
 
-[![codecov][codecov badge]][codecov]
-
-| OS      | Status                                          |
-| ------- | ----------------------------------------------- |
-| Linux   | [![Linux Build Status][linux badge]][build]     |
-| macOS   | [![macOS Build Status][macos badge]][build]     |
-| Windows | [![Windows Build Status][windows badge]][build] |
+[![codecov][codecov badge]][codecov] [![Rust](https://github.com/russelltg/srt-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/russelltg/srt-rs/actions/workflows/rust.yml)
 
 
 > NOTE: THIS IS NOT PRODUCTION READY.
