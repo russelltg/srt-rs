@@ -7,7 +7,7 @@ use srt_protocol::{
     },
     packet::{RejectReason, ServerRejectReason},
 };
-use srt_tokio::{SrtSocket, SrtSocketBuilder};
+use srt_tokio::SrtSocketBuilder;
 use std::{convert::TryFrom, io, net::SocketAddr, time::Instant};
 
 struct AccessController;
@@ -55,9 +55,7 @@ async fn main() -> io::Result<()> {
         .unwrap()
         .boxed();
 
-    while let Some(Ok(result)) = server.next().await {
-        let mut sender: SrtSocket = result.into();
-
+    while let Some(Ok(mut sender)) = server.next().await {
         let mut stream = stream::iter(
             Some(Ok((
                 Instant::now(),

@@ -39,7 +39,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Cargo clippy
-      run: cargo clippy --tests --examples --verbose
+      run: cargo clippy --tests --examples -- -D clippy::ALL
   
   formatting:
     runs-on: ubuntu-latest
