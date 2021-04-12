@@ -36,3 +36,21 @@ jobs:
     - uses: actions/checkout@v2
     - name: Check formatting
       run: cargo fmt -- --check
+
+  coverage:
+    # needs: build
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: install srt
+      run: sudo apt-get install srt-tools
+    - name: Install grcov
+      run: cargo install grcov
+    - name: Build with profdata
+      run: RUSTFLAGS="-Zinstrument-coverage" cargo +nightly build --tests
+    - name: Generate reports
+      run: RUSTFLAGS="-Zinstrument-coverage" LLVM_PROFILE_FILE="srt.%p.profraw" cargo +nightly test
+    - name: Run grcov
+      run: grcov . --binary-path ./target/debug/ -t lcov -s . -o lcov.info
+    - name: Upload results
+      run: bash <(curl -s https://codecov.io/bash) -f lcov.info
