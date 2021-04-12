@@ -226,6 +226,13 @@ impl Receiver {
         } else if self.shutdown_flag && self.is_flushed() {
             Close
         } else {
+            if let Some(nmrt) = self.receive_buffer.next_message_release_time() {
+                if nmrt <= now {
+                    self.receive_buffer.next_message_release_time();
+                }
+                assert!(nmrt > now);
+            }
+
             // 2) Start time bounded UDP receiving. If no packet arrives, go to 1).
             TimeBoundedReceive(self.next_timer(now))
         }
@@ -587,9 +594,26 @@ impl Receiver {
             self.data_release.push_back(d);
         }
 
-        // drop packets
+        // drop packets, remove from loss list
         // TODO: do something with this
         let _dropped = self.receive_buffer.drop_too_late_packets(now);
+        let mut num_to_remove = 0;
+        for pack in &self.loss_list {
+            if pack.seq_num < self.receive_buffer.next_release() {
+                num_to_remove += 1;
+            } else {
+                break;
+            }
+        }
+        self.loss_list.drain(0..num_to_remove);
+
+        while let Some(d) = self.receive_buffer.next_msg_tsbpd(now) {
+            self.data_release.push_back(d);
+        }
+
+        if num_to_remove > 0 {
+            info!("removing {} from loss list", num_to_remove);
+        }
 
         self.data_release.pop_front()
     }

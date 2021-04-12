@@ -2,7 +2,7 @@ mod streamer_server;
 
 pub use self::streamer_server::StreamerServer;
 
-use std::{collections::HashMap, io, net::SocketAddr};
+use std::{collections::HashMap, io, net::SocketAddr, time::Instant};
 
 use futures::{
     future::{pending, select_all},
@@ -115,7 +115,7 @@ impl<T: StreamAcceptor> MultiplexState<T> {
             .or_insert_with(|| Listen::new(this_conn_settings.copy_randomize()));
 
         // already started connection?
-        let conn = match listen.handle_packet((pack, from), &mut self.acceptor) {
+        let conn = match listen.handle_packet((pack, from), Instant::now(), &mut self.acceptor) {
             ConnectionResult::SendPacket(pa) => {
                 self.sock.send(pa).await?;
                 return Ok(None);
