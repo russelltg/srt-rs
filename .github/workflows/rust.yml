@@ -14,12 +14,15 @@ jobs:
 
     runs-on: ${{matrix.os}}-latest
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, windows, macos]
 
     # disable SRT interop tests on windows
     env:
       SRT_ALLOW_NO_INTEROP_TESTS: matrix.os == "windows" && 1 || null
+      RUST_LOG: info
+      RUST_BACKTRACE: 1
 
     steps:
     - uses: actions/checkout@v2
