@@ -48,13 +48,13 @@ jobs:
       run: rustup component add llvm-tools-preview
     - name: install srt
       run: sudo apt-get install srt-tools
-    - name: Install grcov
-      run: cargo install grcov
+    - name: Download grcov
+      run: wget https://github.com/mozilla/grcov/releases/download/v0.7.1/grcov-tcmalloc-linux-x86_64.tar.bz2 -O grcov.tar.bz2 && tar -xf grcov.tar.bz2
     - name: Build with profdata
       run: RUSTFLAGS="-Zinstrument-coverage" cargo +nightly build --tests
     - name: Generate reports
       run: RUSTFLAGS="-Zinstrument-coverage" LLVM_PROFILE_FILE="srt.%p.profraw" cargo +nightly test
     - name: Run grcov
-      run: grcov . --llvm --binary-path ./target/debug/ -t lcov -s . -o lcov.info
+      run: ./grcov . --llvm --binary-path ./target/debug/ -t lcov -s . -o lcov.info
     - name: Upload results
       run: bash <(curl -s https://codecov.io/bash) -f lcov.info
