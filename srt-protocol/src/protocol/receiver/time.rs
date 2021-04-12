@@ -82,8 +82,8 @@ mod synchronized_remote_clock {
         #[test]
         fn synchronize(drift_micros: i32) {
             const MAX_SAMPLES: i32 = 1000;
-            let drift = TimeSpan::from_micros(drift_micros);
-            let start = Instant::now();
+            let drift = TimeSpan::from_micros(drift_micros / 2);
+            let start = Instant::now() + TimeSpan::MAX;
             let start_ts = TimeStamp::from_micros(100_000_000);
             let mut clock = SynchronizedRemoteClock::new(start);
 
@@ -124,8 +124,8 @@ mod synchronized_remote_clock {
     proptest! {
         #[test]
         fn monotonic_instant(drift_micros: i32) {
-            let drift = TimeSpan::from_micros(drift_micros);
-            let start = Instant::now();
+            let drift = TimeSpan::from_micros(drift_micros / 2);
+            let start = Instant::now() + TimeSpan::MAX;
             let start_ts = TimeStamp::from_micros(100_000_000);
             let mut clock = SynchronizedRemoteClock::new(start);
             clock.synchronize(start, start_ts);

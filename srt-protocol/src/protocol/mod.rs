@@ -295,7 +295,7 @@ mod timebase {
     proptest! {
         #[test]
         fn timestamp_roundtrip(expected_ts: u32) {
-            let timebase = TimeBase::new(Instant::now());
+            let timebase = TimeBase::new(Instant::now() + Duration::from_micros(expected_ts as u64));
             let expected_ts = TimeStamp::from_micros(expected_ts);
 
             let ts = timebase.timestamp_from(timebase.instant_from(expected_ts));
@@ -304,23 +304,31 @@ mod timebase {
         }
 
         #[test]
-        fn timestamp_from(expected_offset in 0i32.., n in 0u64..10) {
+        fn timestamp_from(expected_offset: i32, n in -2..2) {
+            let expected_offset = TimeSpan::from_micros(expected_offset);
             let now = Instant::now();
             let timebase = TimeBase::new(now);
-            let delta = ((std::u32::MAX as u64 + 1)* n) + expected_offset as u64;
-            let instant =  now + Duration::from_micros(delta as u64);
+            // adjust the test instant time enough so that
+            // 1) underflow and overflow are avoided
+            // 2) TimeStamp rollover is covered
+            let adjustment = ((std::u32::MAX as u64 + 1) as i64) * (n as i64);
+            let instant = if adjustment > 0 {
+                now + Duration::from_micros(adjustment as u64) + expected_offset
+            } else {
+                now - Duration::from_micros(-adjustment as u64) + expected_offset
+            };
 
             let ts = timebase.timestamp_from(instant);
 
-            prop_assert_eq!(ts, TimeStamp::MIN + TimeSpan::from_micros(expected_offset));
+            prop_assert_eq!(ts, TimeStamp::MIN + expected_offset);
         }
 
         #[test]
-        fn adjust(drift: i16, clock_delta in 0i32..) {
+        fn adjust(drift: i16, clock_delta: i16) {
             let start = Instant::now();
+            let drift = TimeSpan::from_micros(drift as i32);
+            let clock_delta = TimeSpan::from_micros(clock_delta as i32);
             let mut timebase = TimeBase::new(start);
-            let drift = TimeSpan::from_micros(i32::from(drift));
-            let clock_delta = Duration::from_micros(clock_delta as u64);
             let original_ts = timebase.timestamp_from(start);
             let now = start + clock_delta;
 
@@ -339,7 +347,7 @@ mod timebase {
         let now = Instant::now();
         let timebase = TimeBase::new(now);
 
-        let ts = timebase.timestamp_from(now - TimeSpan::MIN);
+        let ts = timebase.timestamp_from(now + TimeSpan::MIN);
 
         assert_eq!(ts, TimeStamp::MIN + TimeSpan::MIN);
     }
@@ -349,7 +357,7 @@ mod timebase {
         let now = Instant::now();
         let timebase = TimeBase::new(now);
 
-        let ts = timebase.timestamp_from(now - TimeSpan::MAX);
+        let ts = timebase.timestamp_from(now + TimeSpan::MAX);
 
         assert_eq!(ts, TimeStamp::MIN + TimeSpan::MAX);
     }
