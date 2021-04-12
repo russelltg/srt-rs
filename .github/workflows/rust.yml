@@ -12,15 +12,15 @@ env:
 jobs:
   build:
 
-    runs-on: 
-      - ubuntu-latest
-      - windows-latest
-      - macos-latest
+    runs-on: ${{matrix.os}}-latest
+    matrix:
+      os: [ubuntu, windows, macos]
 
     steps:
     - uses: actions/checkout@v2
-    - name: install srt
+    - name: install srt (linux)
       run: sudo apt-get install srt-tools
+      if: ${{matrix.os == 'linux'}}
     - name: Build
       run: cargo build --tests --examples --verbose
     - name: Run tests
