@@ -305,8 +305,8 @@ mod timebase {
 
         #[test]
         fn timestamp_from(expected_offset: i32, n in -2..2) {
-            let expected_offset = TimeSpan::from_micros(expected_offset);
-            let now = Instant::now();
+            let expected_offset = TimeSpan::from_micros(expected_offset / 2);
+            let now = Instant::now() + Duration::from_micros(u32::MAX as u64);
             let timebase = TimeBase::new(now);
             // adjust the test instant time enough so that
             // 1) underflow and overflow are avoided
@@ -344,7 +344,7 @@ mod timebase {
 
     #[test]
     fn timestamp_from_past() {
-        let now = Instant::now();
+        let now = Instant::now() + Duration::from_micros(u32::MAX as u64);
         let timebase = TimeBase::new(now);
 
         let ts = timebase.timestamp_from(now + TimeSpan::MIN);
