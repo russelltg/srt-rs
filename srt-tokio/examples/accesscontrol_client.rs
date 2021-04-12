@@ -15,7 +15,7 @@ async fn main() -> Result<(), Error> {
         format!(
             "{}",
             AccessControlList(vec![StandardAccessControlEntry::UserName(
-                args().nth(1).unwrap().into()
+                args().nth(1).unwrap()
             )
             .into(),])
         ),
