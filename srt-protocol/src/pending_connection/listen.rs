@@ -192,7 +192,7 @@ impl Listen {
                 self.wait_for_induction(from, control.timestamp, shake)
             }
             (ConclusionWait(state), ControlTypes::Handshake(shake)) => {
-                self.wait_for_conclusion(from, control.timestamp, state, shake,  now, acceptor)
+                self.wait_for_conclusion(from, control.timestamp, state, shake, now, acceptor)
             }
             (InductionWait, control_type) | (ConclusionWait(_), control_type) => {
                 NotHandled(ConnectError::HandshakeExpected(control_type))

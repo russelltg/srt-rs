@@ -45,4 +45,3 @@ pub struct ConnectionSettings {
 
     pub stream_id: Option<String>,
 }
-

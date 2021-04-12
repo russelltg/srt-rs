@@ -288,7 +288,7 @@ impl Rendezvous {
         info: &HandshakeControlInfo,
         hsv5: HandshakeVsInfo,
         initiator: StartedInitiator,
-        now: Instant
+        now: Instant,
     ) -> ConnectionResult {
         match info.shake_type {
             ShakeType::Conclusion => match extract_ext_info(info) {
@@ -296,11 +296,11 @@ impl Rendezvous {
                     let agreement =
                         self.gen_packet(ShakeType::Agreement, Rendezvous::empty_flags());
 
-                    let settings = match initiator.finish_hsv5_initiation(info, self.remote_public, now)
-                    {
-                        Ok(s) => s,
-                        Err(r) => return NotHandled(r),
-                    };
+                    let settings =
+                        match initiator.finish_hsv5_initiation(info, self.remote_public, now) {
+                            Ok(s) => s,
+                            Err(r) => return NotHandled(r),
+                        };
 
                     self.set_connected(settings, Some(agreement.clone()), Some(agreement))
                 }
@@ -360,11 +360,11 @@ impl Rendezvous {
                 Ok(Some(SrtControlPacket::HandshakeResponse(_))) => {
                     let agreement = self.gen_packet(ShakeType::Agreement, hsv5);
 
-                    let settings = match initiator.finish_hsv5_initiation(info, self.remote_public, now)
-                    {
-                        Ok(s) => s,
-                        Err(r) => return NotHandled(r),
-                    };
+                    let settings =
+                        match initiator.finish_hsv5_initiation(info, self.remote_public, now) {
+                            Ok(s) => s,
+                            Err(r) => return NotHandled(r),
+                        };
 
                     self.set_connected(settings, Some(agreement.clone()), Some(agreement))
                 }
@@ -453,7 +453,11 @@ impl Rendezvous {
         )
     }
 
-    pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr), now: Instant) -> ConnectionResult {
+    pub fn handle_packet(
+        &mut self,
+        (packet, from): (Packet, SocketAddr),
+        now: Instant,
+    ) -> ConnectionResult {
         if from != self.remote_public {
             return NotHandled(UnexpectedHost(self.remote_public, from));
         }
@@ -464,7 +468,9 @@ impl Rendezvous {
             (AttentionInitiator(hsv5, initiator), Ok(hs)) => {
                 self.handle_attention_initiator(hs, hsv5, initiator, now)
             }
-            (AttentionResponder, Ok(hs)) => self.handle_attention_responder(hs, packet.timestamp(), now),
+            (AttentionResponder, Ok(hs)) => {
+                self.handle_attention_responder(hs, packet.timestamp(), now)
+            }
             (InitiatedInitiator(initiator), Ok(hs)) => {
                 self.handle_initiated_initiator(hs, initiator, now)
             }

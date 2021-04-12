@@ -1,7 +1,11 @@
 use futures::select;
 use log::{debug, warn};
 
-use std::{io, net::{IpAddr, SocketAddr}, time::{Duration, Instant}};
+use std::{
+    io,
+    net::{IpAddr, SocketAddr},
+    time::{Duration, Instant},
+};
 
 use srt_protocol::{
     accesscontrol::AllowAllStreamAcceptor,
