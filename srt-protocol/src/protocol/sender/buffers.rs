@@ -87,8 +87,8 @@ impl TransmitBuffer {
         self.time_base.timestamp_from(at)
     }
 
-    pub fn instant_from(&self, now: Instant, at: TimeStamp) -> Instant {
-        self.time_base.instant_from(now, at)
+    pub fn instant_from(&self, at: TimeStamp) -> Instant {
+        self.time_base.instant_from(at)
     }
 
     pub fn next_sequence_number_to_send(&self) -> SeqNumber {

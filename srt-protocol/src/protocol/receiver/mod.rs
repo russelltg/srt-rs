@@ -226,9 +226,9 @@ impl Receiver {
         } else if self.shutdown_flag && self.is_flushed() {
             Close
         } else {
-            if let Some(nmrt) = self.receive_buffer.next_message_release_time(now) {
+            if let Some(nmrt) = self.receive_buffer.next_message_release_time() {
                 if nmrt <= now {
-                    self.receive_buffer.next_message_release_time(now);
+                    self.receive_buffer.next_message_release_time();
                 }
                 assert!(nmrt > now);
             }

@@ -466,7 +466,7 @@ impl Sender {
         let earliest_delivery_time =
             now + Duration::from_micros(self.metrics.rtt.as_micros() as u64);
         let requested_delivery_time =
-            self.transmit_buffer.instant_from(now, p.timestamp) + self.settings.send_tsbpd_latency;
+            self.transmit_buffer.instant_from(p.timestamp) + self.settings.send_tsbpd_latency;
 
         if earliest_delivery_time > requested_delivery_time {
             info!(
