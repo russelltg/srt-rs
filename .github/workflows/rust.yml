@@ -44,6 +44,8 @@ jobs:
     - uses: actions/checkout@v2
     - name: Install rust nightly
       run: rustup install nightly
+    - name: Install llvm-tools-preview
+      run: rustup component add llvm-tools-preview
     - name: install srt
       run: sudo apt-get install srt-tools
     - name: Install grcov
@@ -53,6 +55,6 @@ jobs:
     - name: Generate reports
       run: RUSTFLAGS="-Zinstrument-coverage" LLVM_PROFILE_FILE="srt.%p.profraw" cargo +nightly test
     - name: Run grcov
-      run: grcov . --binary-path ./target/debug/ -t lcov -s . -o lcov.info
+      run: grcov . --llvm --binary-path ./target/debug/ -t lcov -s . -o lcov.info
     - name: Upload results
       run: bash <(curl -s https://codecov.io/bash) -f lcov.info
