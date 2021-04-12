@@ -49,7 +49,7 @@ jobs:
     - name: install srt
       run: sudo apt-get install srt-tools
     - name: Download grcov
-      run: wget https://github.com/mozilla/grcov/releases/download/v0.7.1/grcov-tcmalloc-linux-x86_64.tar.bz2 -O grcov.tar.bz2 && tar -xf grcov.tar.bz2
+      run: wget https://github.com/mozilla/grcov/releases/download/v0.7.1/grcov-linux-x86_64.tar.bz2 -O grcov.tar.bz2 && tar -xf grcov.tar.bz2
     - name: Build with profdata
       run: RUSTFLAGS="-Zinstrument-coverage" cargo +nightly build --tests
     - name: Generate reports
