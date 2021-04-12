@@ -1,0 +1,73 @@
+name: Rust
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+
+    runs-on: ${{matrix.os}}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu, windows, macos]
+
+    # disable SRT interop tests on windows
+    env:
+      SRT_ALLOW_NO_INTEROP_TESTS: matrix.os == "windows" && 1 || null
+      RUST_LOG: info
+      RUST_BACKTRACE: 1
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: install srt (linux)
+      run: sudo apt-get install srt-tools
+      if: matrix.os == 'ubuntu'
+    - name: install srt (macos)
+      run: brew update && brew install srt
+      if: matrix.os == 'macos'
+    - name: Build
+      run: cargo build --tests --examples --verbose
+    - name: Run tests
+      run: cargo test --verbose
+      
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Cargo clippy
+      run: cargo clippy --tests --examples -- -D clippy::all
+  
+  formatting:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Check formatting
+      run: cargo fmt -- --check
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install rust nightly
+      run: rustup install nightly
+    - name: Install llvm-tools-preview
+      run: rustup component add llvm-tools-preview
+    - name: install srt
+      run: sudo apt-get install srt-tools
+    - name: Download grcov
+      run: wget https://github.com/mozilla/grcov/releases/download/v0.7.1/grcov-linux-x86_64.tar.bz2 -O grcov.tar.bz2 && tar -xf grcov.tar.bz2
+    - name: Build with profdata
+      run: RUSTFLAGS="-Zinstrument-coverage" cargo +nightly build --tests
+    - name: Generate reports
+      run: RUSTFLAGS="-Zinstrument-coverage" LLVM_PROFILE_FILE="srt.%p.profraw" cargo +nightly test
+    - name: Run grcov
+      run: ./grcov . --llvm --binary-path ./target/debug/ -t lcov -s . --ignore '*/tests/*' -o lcov.info
+    - name: Upload results
+      run: bash <(curl -s https://codecov.io/bash) -f lcov.info
