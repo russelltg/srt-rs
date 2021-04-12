@@ -10,18 +10,25 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  test:
 
     runs-on: ${{matrix.os}}-latest
     strategy:
       matrix:
         os: [ubuntu, windows, macos]
 
+    # disable SRT interop tests on windows
+    env:
+      SRT_ALLOW_NO_INTEROP_TESTS: matrix.os == "windows" && 1 || null
+
     steps:
     - uses: actions/checkout@v2
     - name: install srt (linux)
       run: sudo apt-get install srt-tools
-      if: ${{matrix.os == 'linux'}}
+      if: matrix.os == 'linux'
+    - name: install srt (macos)
+      run: brew install srt
+      if: matrix.os == 'macos'
     - name: Build
       run: cargo build --tests --examples --verbose
     - name: Run tests
