@@ -1,4 +1,5 @@
 use std::cmp::{max, Ordering};
+use std::fmt;
 use std::num::Wrapping;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::time::{Duration, Instant};
@@ -12,30 +13,48 @@ pub mod stats;
 
 /// Timestamp in us after creation
 /// These wrap every 2^32 microseconds
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct TimeStamp(Wrapping<u32>);
 
 /// Signed duration in us, e.g. RTT
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Copy, Clone, PartialEq, Eq, Ord, PartialOrd)]
 pub struct TimeSpan(i32);
 
-const TIMESTAMP_MASK: u128 = u32::MAX as u128;
-const MAX_DIFF_US: u32 = u32::MAX / 2;
-const WRAP_US: u64 = (u32::MAX as u64) + 1;
-
 #[derive(Copy, Clone, Debug)]
-pub struct TimeBase(Instant);
+pub struct TimeBase {
+    // this field is only here for diagnostics and debugging
+    // it is similar to start_time in other contexts, but is adjusted for drift
+    origin_time: Instant,
+
+    // the two "reference" fields are two equivalent time points from different
+    // time scales they are reference points used for mapping between the Instance
+    // and a sender TimeStamp time scales
+    reference_time: Instant,
+    reference_ts: TimeStamp,
+}
 
 impl TimeSpan {
-    pub fn from_micros(us: i32) -> Self {
+    pub const MAX: TimeSpan = TimeSpan::from_micros(i32::MAX);
+    pub const MIN: TimeSpan = TimeSpan::from_micros(i32::MIN);
+    pub const ZERO: TimeSpan = TimeSpan::from_micros(0);
+
+    pub fn from_interval(begin: Instant, end: Instant) -> Self {
+        if begin <= end {
+            Self::ZERO + (end - begin)
+        } else {
+            Self::ZERO - (begin - end)
+        }
+    }
+
+    pub const fn from_micros(us: i32) -> Self {
         Self(us)
     }
 
-    pub fn as_micros(self) -> i32 {
+    pub const fn as_micros(self) -> i32 {
         self.0
     }
 
-    pub fn abs(self) -> Self {
+    pub const fn abs(self) -> Self {
         Self(self.0.abs())
     }
 
@@ -45,20 +64,25 @@ impl TimeSpan {
 }
 
 impl TimeStamp {
-    pub fn from_micros(us: u32) -> Self {
+    pub const MAX: TimeStamp = TimeStamp::from_micros(u32::MAX);
+    pub const MIN: TimeStamp = TimeStamp::from_micros(u32::MIN);
+
+    pub const fn from_micros(us: u32) -> Self {
         Self(Wrapping(us))
     }
 
-    pub fn as_micros(self) -> u32 {
+    pub const fn as_micros(self) -> u32 {
         (self.0).0
     }
+}
 
-    pub fn as_secs_f64(self) -> f64 {
-        (self.0).0 as f64 / 1e6
-    }
-
-    pub fn as_duration(self) -> Duration {
-        Duration::from_micros(u64::from(self.as_micros()))
+impl fmt::Debug for TimeStamp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let time = (self.0).0;
+        let mins = time / 1_000_000 / 60 % 60;
+        let secs = time / 1_000_000 % 60;
+        let micros = time % 1_000_000;
+        write!(f, "{:02}:{:02}.{:06}", mins, secs, micros)
     }
 }
 
@@ -79,13 +103,12 @@ impl Ord for TimeStamp {
 impl Add<TimeSpan> for TimeStamp {
     type Output = TimeStamp;
 
-    #[allow(clippy::suspicious_arithmetic_impl)]
     fn add(self, rhs: TimeSpan) -> Self::Output {
-        TimeStamp(if rhs.0 > 0 {
-            self.0 + Wrapping(rhs.0 as u32)
+        if rhs < TimeSpan::ZERO {
+            TimeStamp(self.0 - Wrapping((rhs.0 as i64).abs() as u32))
         } else {
-            self.0 - Wrapping(rhs.0.abs() as u32)
-        })
+            TimeStamp(self.0 + Wrapping(rhs.0 as u32))
+        }
     }
 }
 
@@ -93,7 +116,27 @@ impl Sub<TimeSpan> for TimeStamp {
     type Output = TimeStamp;
 
     fn sub(self, rhs: TimeSpan) -> Self::Output {
-        self + -rhs
+        if rhs < TimeSpan::ZERO {
+            TimeStamp(self.0 + Wrapping((rhs.0 as i64).abs() as u32))
+        } else {
+            TimeStamp(self.0 - Wrapping(rhs.0 as u32))
+        }
+    }
+}
+
+impl Add<Duration> for TimeStamp {
+    type Output = TimeStamp;
+
+    fn add(self, rhs: Duration) -> Self::Output {
+        Self(self.0 + Wrapping(rhs.as_micros() as u32))
+    }
+}
+
+impl Sub<Duration> for TimeStamp {
+    type Output = TimeStamp;
+
+    fn sub(self, rhs: Duration) -> Self::Output {
+        Self(self.0 - Wrapping(rhs.as_micros() as u32))
     }
 }
 
@@ -109,6 +152,16 @@ impl Sub<TimeStamp> for TimeStamp {
         } else {
             -TimeSpan(neg_sub.0 as i32)
         }
+    }
+}
+
+impl fmt::Debug for TimeSpan {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let sign = if self.0 < 0 { "-" } else { "" };
+        let mins = self.0.abs() / 1_000_000 / 60 % 60;
+        let secs = self.0.abs() / 1_000_000 % 60;
+        let micros = self.0.abs() % 1_000_000;
+        write!(f, "{}{:02}:{:02}.{:06}", sign, mins, secs, micros)
     }
 }
 
@@ -152,49 +205,85 @@ impl Sub<TimeSpan> for TimeSpan {
     }
 }
 
+impl Add<Duration> for TimeSpan {
+    type Output = TimeSpan;
+
+    fn add(self, rhs: Duration) -> Self::Output {
+        Self(self.0 + rhs.as_micros() as i32)
+    }
+}
+
+impl Sub<Duration> for TimeSpan {
+    type Output = TimeSpan;
+
+    fn sub(self, rhs: Duration) -> Self::Output {
+        Self(self.0 - rhs.as_micros() as i32)
+    }
+}
+
+impl Add<TimeSpan> for Instant {
+    type Output = Instant;
+
+    fn add(self, rhs: TimeSpan) -> Self::Output {
+        let micros = rhs.as_micros() as i64;
+        if micros > 0 {
+            self + Duration::from_micros(micros as u64)
+        } else {
+            self - Duration::from_micros(micros.abs() as u64)
+        }
+    }
+}
+
+impl Sub<TimeSpan> for Instant {
+    type Output = Instant;
+
+    fn sub(self, rhs: TimeSpan) -> Self::Output {
+        let micros = rhs.as_micros() as i64;
+        if micros > 0 {
+            self + Duration::from_micros(micros as u64)
+        } else {
+            self - Duration::from_micros(micros.abs() as u64)
+        }
+    }
+}
+
 impl TimeBase {
     pub fn new(start_time: Instant) -> Self {
-        Self(start_time)
+        Self {
+            origin_time: start_time,
+            reference_time: start_time,
+            reference_ts: TimeStamp::MIN,
+        }
     }
 
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn timestamp_from(&self, instant: Instant) -> TimeStamp {
-        assert!(
-            self.0 <= instant,
-            "Timestamps are only valid after the timebase start time"
-        );
-        TimeStamp(Wrapping(
-            ((instant - self.0).as_micros() & TIMESTAMP_MASK) as u32,
-        ))
-    }
-
-    // Get Instant closest to `now` that is consistent with `timestamp`
-    #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn instant_from(&self, now: Instant, timestamp: TimeStamp) -> Instant {
-        let mut wraps = ((now - self.0).as_micros() >> 32) as u64;
-
-        // find the smallest difference
-        let diff = wraps as i64 * WRAP_US as i64 + i64::from(timestamp.as_micros())
-            - (now - self.0).as_micros() as i64;
-        if diff < -i64::from(MAX_DIFF_US) {
-            wraps += 1;
-        } else if diff > i64::from(MAX_DIFF_US) {
-            wraps = wraps.saturating_sub(1);
-        }
-
-        self.0 + Duration::from_micros(wraps * WRAP_US + timestamp.as_micros() as u64)
-    }
-
-    pub fn adjust(&mut self, delta: TimeSpan) {
-        if delta.0 > 0 {
-            self.0 += Duration::from_micros(delta.0 as u64);
+        if instant < self.reference_time {
+            self.reference_ts - (self.reference_time - instant)
         } else {
-            self.0 -= Duration::from_micros(delta.0.abs() as u64);
+            self.reference_ts + (instant - self.reference_time)
+        }
+    }
+
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    pub fn instant_from(&self, timestamp: TimeStamp) -> Instant {
+        self.reference_time + (timestamp - self.reference_ts)
+    }
+
+    #[allow(clippy::assign_op_pattern)]
+    pub fn adjust(&mut self, now: Instant, drift: TimeSpan) {
+        self.origin_time = self.origin_time - drift;
+        self.reference_time = self.reference_time - drift;
+
+        if now > self.reference_time {
+            let delta = now - self.reference_time;
+            self.reference_time = self.reference_time + delta;
+            self.reference_ts = self.reference_ts + delta;
         }
     }
 
     pub fn origin_time(&self) -> Instant {
-        self.0
+        self.origin_time
     }
 }
 
@@ -206,50 +295,71 @@ mod timebase {
     proptest! {
         #[test]
         fn timestamp_roundtrip(expected_ts: u32) {
-            let timebase = TimeBase::new(Instant::now());
+            let timebase = TimeBase::new(Instant::now() + Duration::from_micros(expected_ts as u64));
             let expected_ts = TimeStamp::from_micros(expected_ts);
 
-            let ts = timebase.timestamp_from(timebase.instant_from(Instant::now(), expected_ts));
-            assert_eq!(ts, expected_ts);
+            let ts = timebase.timestamp_from(timebase.instant_from(expected_ts));
+
+            prop_assert_eq!(ts, expected_ts);
         }
 
         #[test]
-        fn timestamp_from(expected_ts: u32, n in 0u64..10) {
-            let now = Instant::now();
+        fn timestamp_from(expected_offset: i32, n in -2..2) {
+            let expected_offset = TimeSpan::from_micros(expected_offset / 2);
+            let now = Instant::now() + Duration::from_micros(u32::MAX as u64) * 3;
             let timebase = TimeBase::new(now);
-            let delta = ((std::u32::MAX as u64 + 1)* n) + expected_ts as u64;
-            let instant =  now + Duration::from_micros(delta as u64);
+            // adjust the test instant time enough so that
+            // 1) underflow and overflow are avoided
+            // 2) TimeStamp rollover is covered
+            let adjustment = ((std::u32::MAX as u64 + 1) as i64) * (n as i64);
+            let instant = if adjustment > 0 {
+                now + Duration::from_micros(adjustment as u64) + expected_offset
+            } else {
+                now - Duration::from_micros(-adjustment as u64) + expected_offset
+            };
+
             let ts = timebase.timestamp_from(instant);
-            assert_eq!(ts, TimeStamp::from_micros(expected_ts));
+
+            prop_assert_eq!(ts, TimeStamp::MIN + expected_offset);
         }
 
         #[test]
-        fn adjust(drift: i16) {
-            let now = Instant::now();
-            let mut timebase = TimeBase::new(now);
-            let drift = TimeSpan::from_micros(i32::from(drift));
+        fn adjust(drift: i16, clock_delta: i16) {
+            let start = Instant::now();
+            let drift = TimeSpan::from_micros(drift as i32);
+            let clock_delta = TimeSpan::from_micros(clock_delta as i32);
+            let mut timebase = TimeBase::new(start);
+            let original_ts = timebase.timestamp_from(start);
+            let now = start + clock_delta;
 
-            let original_ts = timebase.timestamp_from(now);
-            timebase.adjust(drift);
-            let ts = timebase.timestamp_from(now + Duration::from_micros(1_000_000));
+            timebase.adjust(now, drift);
 
-            assert_eq!(ts, original_ts - drift + TimeSpan::from_micros(1_000_000));
+            let original_time = timebase.instant_from(original_ts);
+            assert_eq!(start - drift - original_time, Duration::from_micros(0));
+
+            let ts = timebase.timestamp_from(start);
+            prop_assert_eq!(ts, original_ts - drift);
         }
-
     }
 
     #[test]
-    fn to_from_instant() {
-        let tb = TimeBase::new(Instant::now());
+    fn timestamp_from_past() {
+        let now = Instant::now() + Duration::from_micros(u32::MAX as u64);
+        let timebase = TimeBase::new(now);
 
-        let before = tb.origin_time() + Duration::from_micros(u64::from(u32::MAX));
-        let after = tb.origin_time() + Duration::from_micros(u64::from(u32::MAX) + 2);
+        let ts = timebase.timestamp_from(now + TimeSpan::MIN);
 
-        let b_ts = tb.timestamp_from(before);
-        let a_ts = tb.timestamp_from(after);
+        assert_eq!(ts, TimeStamp::MIN + TimeSpan::MIN);
+    }
 
-        assert_eq!(before, tb.instant_from(after, b_ts));
-        assert_eq!(after, tb.instant_from(before, a_ts));
+    #[test]
+    fn timestamp_from_future() {
+        let now = Instant::now();
+        let timebase = TimeBase::new(now);
+
+        let ts = timebase.timestamp_from(now + TimeSpan::MAX);
+
+        assert_eq!(ts, TimeStamp::MIN + TimeSpan::MAX);
     }
 }
 
@@ -259,18 +369,37 @@ mod timestamp {
 
     #[test]
     #[allow(clippy::eq_op)]
-    fn subtract_timestamp() {
-        let a = TimeStamp::from_micros(10);
-        let max = a - TimeSpan(11);
-        let b = TimeStamp::from_micros(11);
+    fn timestamp_operators() {
+        let ts = TimeStamp::from_micros(u32::MAX >> 1);
+        let a = ts + Duration::from_micros(10);
+        let b = ts + Duration::from_micros(11);
 
-        assert_eq!(a - a, TimeSpan::from_micros(0));
+        assert_eq!(a - a, TimeSpan::ZERO);
         assert_eq!(b - a, TimeSpan::from_micros(1));
         assert_eq!(a - b, TimeSpan::from_micros(-1));
-        assert!(max < a);
         assert!(b > a);
-        assert!(b > max);
+
+        let max = TimeStamp::MIN - TimeSpan::from_micros(1);
+        let min = TimeStamp::MAX + TimeSpan::from_micros(1);
         assert_eq!(max.as_micros(), u32::MAX);
+        assert_eq!(min.as_micros(), u32::MIN);
+        assert_eq!(max - min, TimeSpan::from_micros(-1));
+        assert_eq!(min - max, TimeSpan::from_micros(1));
+        assert!(max > a);
+        assert!(b < max);
+        // this is counter intuitive, but a modulo counter wraps
+        //  so max + 1 == min and max + 1 > max
+        assert!(min > max);
+        assert!(max < min);
+    }
+
+    #[test]
+    fn debug_fmt() {
+        assert_eq!("00:00.000001", format!("{:?}", TimeStamp::from_micros(1)));
+        assert_eq!(
+            "01:02.030040",
+            format!("{:?}", TimeStamp::from_micros(62030040))
+        );
     }
 }
 
