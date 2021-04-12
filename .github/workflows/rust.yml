@@ -42,6 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
+    - name: Install rust nightly
+      run: rustup install nightly
     - name: install srt
       run: sudo apt-get install srt-tools
     - name: Install grcov
