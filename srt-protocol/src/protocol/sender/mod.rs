@@ -76,6 +76,7 @@ pub enum SenderAlgorithmStep {
     Step6,
 }
 
+#[derive(Debug)]
 pub struct Sender {
     /// The settings, including remote sockid and address
     settings: ConnectionSettings,
@@ -162,21 +163,17 @@ impl Sender {
         self.step = SenderAlgorithmStep::Step1;
     }
 
-    pub fn handle_packet(
-        &mut self,
-        (packet, from): (Packet, SocketAddr),
-        now: Instant,
-    ) -> SenderResult {
+    pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr), now: Instant) {
         // TODO: record/report packets from invalid hosts?
         if from != self.settings.remote {
-            return Ok(());
+            return;
         }
 
         debug!("Received packet {:?}", packet);
 
         match packet {
             Packet::Control(control) => self.handle_control_packet(control, now),
-            Packet::Data(data) => self.handle_data_packet(data, now),
+            Packet::Data(_) => {}
         }
     }
 
@@ -288,16 +285,13 @@ impl Sender {
         WaitUntil(self.snd_timer.next_instant())
     }
 
-    fn handle_data_packet(&mut self, _packet: DataPacket, _now: Instant) -> SenderResult {
-        Ok(())
-    }
-
-    fn handle_control_packet(&mut self, packet: ControlPacket, now: Instant) -> SenderResult {
+    fn handle_control_packet(&mut self, packet: ControlPacket, now: Instant) {
         match packet.control_type {
-            ControlTypes::Ack(info) => self.handle_ack_packet(now, &info),
+            ControlTypes::Ack(info) => {
+                self.handle_ack_packet(now, &info);
+            }
             ControlTypes::Ack2(_) => {
                 warn!("Sender received ACK2, unusual");
-                Ok(())
             }
             ControlTypes::DropRequest { .. } => unimplemented!(),
             ControlTypes::Handshake(shake) => self.handle_handshake_packet(shake, now),
@@ -312,26 +306,28 @@ impl Sender {
             // TODO: case UMSG_PEERERROR: // 1000 - An error has happened to the peer side
             // TODO: case UMSG_EXT: // 0x7FFF - reserved and user defined messages
             ControlTypes::Nak(nack) => self.handle_nack_packet(nack),
-            ControlTypes::Shutdown => self.handle_shutdown_packet(),
+            ControlTypes::Shutdown => {
+                self.handle_shutdown_packet();
+            }
             ControlTypes::Srt(srt_packet) => self.handle_srt_control_packet(srt_packet),
             // The only purpose of keep-alive packet is to tell that the peer is still alive
             // nothing needs to be done.
             // TODO: is this actually true? check reference implementation
-            ControlTypes::KeepAlive => Ok(()),
+            ControlTypes::KeepAlive => {}
         }
     }
 
-    fn handle_ack_packet(&mut self, now: Instant, info: &AckControlInfo) -> SenderResult {
+    fn handle_ack_packet(&mut self, now: Instant, info: &AckControlInfo) {
         // if this ack number is less than (but NOT equal--equal could just mean lost ACK2 that needs to be retransmitted)
         // the largest received ack number, than discard it
         // this can happen thorough packet reordering OR losing an ACK2 packet
         if info.ack_number < self.lr_acked_packet {
-            return Ok(());
+            return;
         }
 
         if info.ack_seq_num <= self.lr_acked_ack {
             // warn!("Ack sequence number '{}' less than or equal to the previous one recieved: '{}'", ack_seq_num, self.lr_acked_ack);
-            return Ok(());
+            return;
         }
         self.lr_acked_ack = info.ack_seq_num;
 
@@ -377,16 +373,13 @@ impl Sender {
         // 10) Update sender's loss list (by removing all those that has been
         //     acknowledged).
         self.metrics.retrans_packets += self.loss_list.remove_acknowledged_packets(info.ack_number);
-
-        Ok(())
     }
 
-    fn handle_shutdown_packet(&mut self) -> SenderResult {
+    fn handle_shutdown_packet(&mut self) {
         self.close_requested = true;
-        Ok(())
     }
 
-    fn handle_nack_packet(&mut self, nack: Vec<u32>) -> SenderResult {
+    fn handle_nack_packet(&mut self, nack: Vec<u32>) {
         // 1) Add all sequence numbers carried in the NAK into the sender's loss list.
         // 2) Update the SND period by rate control (see section 3.6).
         // 3) Reset the EXP time variable.
@@ -399,7 +392,7 @@ impl Sender {
                 Ok(p) => p,
                 Err(n) => {
                     debug!("NAK received for packet {} that's not in the buffer, maybe it's already been ACKed", n);
-                    return Ok(());
+                    return;
                 }
             };
 
@@ -417,21 +410,15 @@ impl Sender {
         }
 
         // TODO: reset EXP
-        Ok(())
     }
 
-    fn handle_handshake_packet(
-        &mut self,
-        handshake: HandshakeControlInfo,
-        now: Instant,
-    ) -> SenderResult {
+    fn handle_handshake_packet(&mut self, handshake: HandshakeControlInfo, now: Instant) {
         if let Some(control_type) = self.handshake.handle_handshake(handshake) {
             self.send_control(control_type, now);
         }
-        Ok(())
     }
 
-    fn handle_srt_control_packet(&mut self, packet: SrtControlPacket) -> SenderResult {
+    fn handle_srt_control_packet(&mut self, packet: SrtControlPacket) {
         use self::SrtControlPacket::*;
 
         match packet {
@@ -440,8 +427,6 @@ impl Sender {
             }
             _ => unimplemented!(),
         }
-
-        Ok(())
     }
 
     fn pop_transmit_buffer(&mut self) -> Option<DataPacket> {

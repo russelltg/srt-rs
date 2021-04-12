@@ -6,14 +6,15 @@ use stats::OnlineStats;
 use crate::protocol::{TimeBase, TimeSpan, TimeStamp, Timer};
 
 pub(crate) struct SynchronizedRemoteClock {
-    tolerance: Duration,
+    drift_deviation_tolerance: Duration,
     time_base: TimeBase,
+    last_monotonic_instant: Option<Instant>,
     stats: Option<OnlineStats>,
 }
 
 impl SynchronizedRemoteClock {
     const MAX_SAMPLES: usize = 1_000;
-    const DRIFT_TOLERANCE: Duration = Duration::from_millis(5);
+    const DRIFT_DEVIATION_TOLERANCE: Duration = Duration::from_millis(5);
 
     pub fn new(now: Instant) -> Self {
         Self {
@@ -21,8 +22,9 @@ impl SynchronizedRemoteClock {
             //       It wasn't in the reference implementation, but I added it because the reference
             //       implementation is susceptible to invalid clock adjustments during periods of
             //       acute network latency
-            tolerance: Self::DRIFT_TOLERANCE,
+            drift_deviation_tolerance: Self::DRIFT_DEVIATION_TOLERANCE,
             time_base: TimeBase::new(now),
+            last_monotonic_instant: None,
             stats: None,
         }
     }
@@ -31,7 +33,7 @@ impl SynchronizedRemoteClock {
         let drift = self.time_base.timestamp_from(now) - ts;
         match &mut self.stats {
             None => {
-                self.time_base.adjust(drift);
+                self.time_base.adjust(now, drift);
             }
             Some(stats) => {
                 stats.add(drift.as_micros());
@@ -40,17 +42,28 @@ impl SynchronizedRemoteClock {
                     return;
                 }
 
-                if stats.stddev() < self.tolerance.as_micros() as f64 {
+                if stats.stddev() < self.drift_deviation_tolerance.as_micros() as f64 {
                     self.time_base
-                        .adjust(TimeSpan::from_micros(stats.mean() as i32));
+                        .adjust(now, TimeSpan::from_micros(stats.mean() as i32));
                 }
             }
         }
         self.stats = Some(OnlineStats::new());
     }
 
-    pub fn instant_from(&self, now: Instant, ts: TimeStamp) -> Instant {
-        self.time_base.instant_from(now, ts)
+    pub fn monotonic_instant_from(&mut self, ts: TimeStamp) -> Instant {
+        let instant = self.time_base.instant_from(ts);
+        match self.last_monotonic_instant {
+            Some(last) if last >= instant => last,
+            _ => {
+                self.last_monotonic_instant = Some(instant);
+                instant
+            }
+        }
+    }
+
+    pub fn instant_from(&self, ts: TimeStamp) -> Instant {
+        self.time_base.instant_from(ts)
     }
 
     pub fn origin_time(&self) -> Instant {
@@ -67,18 +80,16 @@ mod synchronized_remote_clock {
 
     proptest! {
         #[test]
-        fn synchronize(drift_ts in 1u64..5_000_000) {
+        fn synchronize(drift_micros: i32) {
             const MAX_SAMPLES: i32 = 1000;
-
-            let drift = Duration::from_micros(drift_ts);
-            let start = Instant::now();
+            let drift = TimeSpan::from_micros(drift_micros / 2);
+            let start = Instant::now() + TimeSpan::MAX;
             let start_ts = TimeStamp::from_micros(100_000_000);
-
             let mut clock = SynchronizedRemoteClock::new(start);
 
             clock.synchronize(start, start_ts);
-            let instant = clock.instant_from(start, start_ts);
 
+            let instant = clock.instant_from(start_ts);
             prop_assert_eq!(instant, start, "the clock should be adjusted on the first sample");
 
             for tick_ts in 1..1002 {
@@ -87,12 +98,12 @@ mod synchronized_remote_clock {
                 let now_ts = start_ts + TimeSpan::from_micros(tick_ts);
 
                 clock.synchronize(now, now_ts);
-                let instant = clock.instant_from(start, now_ts);
 
+                let instant = clock.instant_from(now_ts);
                 match tick_ts.cmp(&MAX_SAMPLES) {
-                    Ordering::Less => assert_eq!(instant, start + tick, "the clock should not be adjusted until {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts),
-                    Ordering::Equal => assert_eq!(instant, now, "the clock should be adjusted after {} samples", MAX_SAMPLES),
-                    Ordering::Greater => assert_eq!(instant, now, "the clock should not be adjusted until the next {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts),
+                    Ordering::Less => prop_assert_eq!(instant, start + tick, "the clock should not be adjusted until {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts),
+                    Ordering::Equal => prop_assert_eq!(instant, now, "the clock should be adjusted after {} samples", MAX_SAMPLES),
+                    Ordering::Greater => prop_assert_eq!(instant, now, "the clock should not be adjusted until the next {} samples: tick_ts = {}", MAX_SAMPLES, tick_ts),
                 }
             }
 
@@ -103,20 +114,46 @@ mod synchronized_remote_clock {
                 let now_ts = start_ts + TimeSpan::from_micros(tick_ts);
 
                 clock.synchronize(now, now_ts - TimeSpan::from_micros((tick_ts % 2) * 11000)); // constant 5ms drift variance
-                let instant = clock.instant_from(start, now_ts);
 
+                let instant = clock.instant_from(now_ts);
                 prop_assert_eq!(instant, now, "the clock should not be adjusted: tick_ts = {}", tick_ts);
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn monotonic_instant(drift_micros: i32) {
+            let drift = TimeSpan::from_micros(drift_micros / 2);
+            let start = Instant::now() + TimeSpan::MAX;
+            let start_ts = TimeStamp::from_micros(100_000_000);
+            let mut clock = SynchronizedRemoteClock::new(start);
+            clock.synchronize(start, start_ts);
+
+            let mut last_monotonic_instant = clock.monotonic_instant_from(start_ts);
+
+            for tick_ts in 1..1002 {
+                let tick = Duration::from_micros(tick_ts as u64);
+                let now = start + tick + drift;
+                let now_ts = start_ts + TimeSpan::from_micros(tick_ts);
+                clock.synchronize(now, now_ts);
+
+                let monotonic_instant = clock.monotonic_instant_from(now_ts);
+
+                prop_assert!(monotonic_instant >= last_monotonic_instant);
+                last_monotonic_instant = monotonic_instant;
             }
         }
     }
 }
 
-pub(crate) struct RTT {
+#[derive(Debug)]
+pub(crate) struct Rtt {
     mean: TimeSpan,
     variance: TimeSpan,
 }
 
-impl RTT {
+impl Rtt {
     pub fn new() -> Self {
         Self {
             mean: TimeSpan::from_micros(10_000),
@@ -152,6 +189,7 @@ impl RTT {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct ReceiveTimers {
     pub(crate) ack: Timer,
     pub(crate) nak: Timer,
@@ -161,7 +199,7 @@ impl ReceiveTimers {
     const SYN: Duration = Duration::from_millis(10);
 
     pub fn new(now: Instant) -> ReceiveTimers {
-        let (ack, nak) = Self::calculate_periods(&RTT::new());
+        let (ack, nak) = Self::calculate_periods(&Rtt::new());
         ReceiveTimers {
             ack: Timer::new(ack, now),
             nak: Timer::new(nak, now),
@@ -172,13 +210,13 @@ impl ReceiveTimers {
         max(now, min(self.nak.next_instant(), self.ack.next_instant()))
     }
 
-    pub fn update_rtt(&mut self, rtt: &RTT) {
+    pub fn update_rtt(&mut self, rtt: &Rtt) {
         let (ack, nak) = Self::calculate_periods(rtt);
         self.ack.set_period(ack);
         self.nak.set_period(nak);
     }
 
-    fn calculate_periods(rtt: &RTT) -> (Duration, Duration) {
+    fn calculate_periods(rtt: &Rtt) -> (Duration, Duration) {
         let rtt_period = 4 * rtt.mean_as_duration() + rtt.variance_as_duration() + Self::SYN;
 
         let ack_period = rtt_period;
@@ -247,7 +285,7 @@ mod receive_timers {
         #[test]
         fn update_rtt(simulated_rtt in 45_000i32..) {
             prop_assume!(simulated_rtt >= 0);
-            let mut rtt = RTT::new();
+            let mut rtt = Rtt::new();
             for _ in 0..1000 {
                 rtt.update(TimeSpan::from_micros(simulated_rtt));
             }
@@ -275,7 +313,7 @@ mod receive_timers {
         #[test]
         fn update_rtt_exp_lower_bound(simulated_rtt in 0i32..50_000) {
             prop_assume!(simulated_rtt >= 0);
-            let mut rtt = RTT::new();
+            let mut rtt = Rtt::new();
             for _ in 0..1000 {
                 rtt.update(TimeSpan::from_micros(simulated_rtt));
             }

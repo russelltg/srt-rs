@@ -15,14 +15,14 @@ use crate::packet::{
     Packet, SrtControlPacket,
 };
 use crate::protocol::handshake::Handshake;
-use crate::protocol::TimeStamp;
+use crate::protocol::TimeBase;
 use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber};
 
 mod buffer;
 mod time;
 
 use buffer::RecvBuffer;
-use time::{ReceiveTimers, RTT};
+use time::{ReceiveTimers, Rtt};
 
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
@@ -33,16 +33,18 @@ pub enum ReceiverAlgorithmAction {
     Close,
 }
 
+#[derive(Debug)]
 struct LossListEntry {
     seq_num: SeqNumber,
 
     // last time it was feed into NAK
-    feedback_time: TimeStamp,
+    feedback_time: Instant,
 
     // the number of times this entry has been fed back into NAK
     k: i32,
 }
 
+#[derive(Debug)]
 struct AckHistoryEntry {
     /// the highest packet sequence number received that this ACK packet ACKs + 1
     ack_number: SeqNumber,
@@ -50,10 +52,10 @@ struct AckHistoryEntry {
     /// the ack sequence number
     ack_seq_num: i32,
 
-    /// timestamp that it was sent at
-    timestamp: TimeStamp,
+    departure_time: Instant,
 }
 
+#[derive(Debug)]
 pub struct Receiver {
     settings: ConnectionSettings,
 
@@ -61,13 +63,15 @@ pub struct Receiver {
 
     timers: ReceiveTimers,
 
+    time_base: TimeBase,
+
     control_packets: VecDeque<Packet>,
 
     data_release: VecDeque<(Instant, Bytes)>,
 
     /// the round trip time
     /// is calculated each ACK2
-    rtt: RTT,
+    rtt: Rtt,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Receiver's Loss List: It is a list of tuples whose values include:
@@ -88,7 +92,7 @@ pub struct Receiver {
     /// of each data packet.
     ///
     /// First is sequence number, second is timestamp
-    packet_history_window: Vec<(SeqNumber, TimeStamp)>,
+    packet_history_window: Vec<(SeqNumber, Instant)>,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Packet Pair Window: A circular array that records the time
@@ -105,7 +109,7 @@ pub struct Receiver {
 
     /// The timestamp of the probe time
     /// Used to see duration between packets
-    probe_time: Option<TimeStamp>,
+    probe_time: Option<Instant>,
 
     /// The ACK sequence number of the largest ACK2 received, and the ack number
     lr_ack_acked: (i32, SeqNumber),
@@ -129,10 +133,11 @@ impl Receiver {
         Receiver {
             settings: settings.clone(),
             timers: ReceiveTimers::new(settings.socket_start_time),
+            time_base: TimeBase::new(settings.socket_start_time),
             control_packets: VecDeque::new(),
             data_release: VecDeque::new(),
             handshake,
-            rtt: RTT::new(),
+            rtt: Rtt::new(),
             loss_list: Vec::new(),
             ack_history_window: Vec::new(),
             packet_history_window: Vec::new(),
@@ -261,19 +266,20 @@ impl Receiver {
 
         if let Some(&AckHistoryEntry {
             ack_number: last_ack_number,
-            timestamp: last_timestamp,
+            departure_time: last_departure_time,
             ..
         }) = self.ack_history_window.first()
         {
             // or, (b) it is equal to the ACK number in the
             // last ACK
-            if last_ack_number == ack_number &&
-                // and the time interval between this two ACK packets is
+            if ack_number == last_ack_number {
+                // and the time interval between these two ACK packets is
                 // less than 2 RTTs,
-                (self.receive_buffer.timestamp_from(now) - last_timestamp) < (self.rtt.mean() * 2)
-            {
-                // stop (do not send this ACK).
-                return;
+                let interval = TimeSpan::from_interval(last_departure_time, now);
+                if interval < self.rtt.mean() * 2 {
+                    // stop (do not send this ACK).
+                    return;
+                }
             }
         }
 
@@ -291,7 +297,7 @@ impl Receiver {
             let mut last_16: Vec<_> = self.packet_history_window
                 [self.packet_history_window.len() - 16..]
                 .windows(2)
-                .map(|w| w[1].1 - w[0].1) // delta time
+                .map(|w| TimeSpan::from_interval(w[0].1, w[1].1)) // delta time
                 .collect();
             last_16.sort();
 
@@ -315,7 +321,7 @@ impl Receiver {
                     / filtered
                         .iter()
                         .map(|dt| i64::from(dt.as_micros()))
-                        .sum::<i64>() as u64 // all these dts are garunteed to be positive
+                        .sum::<i64>() as u64 // all these dts are guaranteed to be positive
             } else {
                 0
             }
@@ -361,11 +367,10 @@ impl Receiver {
         );
 
         // add it to the ack history
-        let ts_now = self.receive_buffer.timestamp_from(now);
         self.ack_history_window.push(AckHistoryEntry {
             ack_number,
             ack_seq_num,
-            timestamp: ts_now,
+            departure_time: now,
         });
     }
 
@@ -383,8 +388,6 @@ impl Receiver {
         // (according to section 6.4) and send these numbers back to the sender
         // in an NAK packet.
 
-        let ts_now = self.receive_buffer.timestamp_from(now);
-
         // increment k and change feedback time, returning sequence numbers
         let seq_nums = {
             let mut ret = Vec::new();
@@ -393,10 +396,10 @@ impl Receiver {
             for pak in self
                 .loss_list
                 .iter_mut()
-                .filter(|lle| ts_now - lle.feedback_time > rtt * lle.k)
+                .filter(|lle| TimeSpan::from_interval(lle.feedback_time, now) > rtt * lle.k)
             {
                 pak.k += 1;
-                pak.feedback_time = ts_now;
+                pak.feedback_time = now;
 
                 ret.push(pak.seq_num);
             }
@@ -429,7 +432,7 @@ impl Receiver {
         }
     }
 
-    fn handle_ack2(&mut self, seq_num: i32, now: Instant) {
+    fn handle_ack2(&mut self, seq_num: i32, ack2_arrival_time: Instant) {
         // 1) Locate the related ACK in the ACK History Window according to the
         //    ACK sequence number in this ACK2.
         let id_in_wnd = match self
@@ -443,8 +446,8 @@ impl Receiver {
 
         if let Some(id) = id_in_wnd {
             let AckHistoryEntry {
-                timestamp: send_timestamp,
                 ack_number,
+                departure_time: ack_departure_time,
                 ..
             } = self.ack_history_window[id];
 
@@ -452,11 +455,13 @@ impl Receiver {
             self.lr_ack_acked = (seq_num, ack_number);
 
             // 3) Calculate new rtt according to the ACK2 arrival time and the ACK
-            //    departure time, and update the RTT value as: RTT = (RTT * 7 +
+            //    , and update the RTT value as: RTT = (RTT * 7 +
             //    rtt) / 8
             // 4) Update RTTVar by: RTTVar = (RTTVar * 3 + abs(RTT - rtt)) / 4.
-            self.rtt
-                .update(self.receive_buffer.timestamp_from(now) - send_timestamp);
+            self.rtt.update(TimeSpan::from_interval(
+                ack_departure_time,
+                ack2_arrival_time,
+            ));
 
             // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
             self.timers.update_rtt(&self.rtt);
@@ -469,26 +474,26 @@ impl Receiver {
     }
 
     fn handle_data_packet(&mut self, mut data: DataPacket, now: Instant) {
-        let ts_now = self.receive_buffer.timestamp_from(now);
-
         // 2&3 don't apply
 
         // 4) If the sequence number of the current data packet is 16n + 1,
         //     where n is an integer, record the time interval between this
         if data.seq_number % 16 == 0 {
-            self.probe_time = Some(ts_now)
+            self.probe_time = Some(now)
         } else if data.seq_number % 16 == 1 {
             // if there is an entry
             if let Some(pt) = self.probe_time {
                 // calculate and insert
-                self.packet_pair_window.push((data.seq_number, ts_now - pt));
+                let interval = TimeSpan::from_interval(pt, now);
+                self.packet_pair_window.push((data.seq_number, interval));
 
                 // reset
                 self.probe_time = None
             }
         }
+
         // 5) Record the packet arrival time in PKT History Window.
-        self.packet_history_window.push((data.seq_number, ts_now));
+        self.packet_history_window.push((data.seq_number, now));
 
         // 6)
         // a. If the sequence number of the current data packet is greater
@@ -501,7 +506,7 @@ impl Receiver {
                 for i in seq_num_range(self.lrsn, data.seq_number) {
                     self.loss_list.push(LossListEntry {
                         seq_num: i,
-                        feedback_time: ts_now,
+                        feedback_time: now,
                         // k is initialized at 2, as stated on page 12 (very end)
                         k: 2,
                     })
@@ -594,7 +599,7 @@ impl Receiver {
     }
 
     fn next_timer(&self, now: Instant) -> Instant {
-        match self.receive_buffer.next_message_release_time(now) {
+        match self.receive_buffer.next_message_release_time() {
             Some(next_rel_time) => min(self.timers.next_timer(now), next_rel_time),
             None => self.timers.next_timer(now),
         }
@@ -603,7 +608,7 @@ impl Receiver {
     fn send_control(&mut self, now: Instant, control: ControlTypes) {
         self.control_packets
             .push_back(Packet::Control(ControlPacket {
-                timestamp: self.receive_buffer.timestamp_from(now),
+                timestamp: self.time_base.timestamp_from(now),
                 dest_sockid: self.settings.remote_sockid,
                 control_type: control,
             }));

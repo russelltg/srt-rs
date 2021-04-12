@@ -1,3 +1,4 @@
+pub mod accesscontrol;
 pub mod connection;
 pub mod crypto;
 mod loss_compression;
@@ -14,5 +15,5 @@ pub use connection::{Connection, ConnectionSettings};
 pub use msg_number::MsgNumber;
 pub use packet::{ControlPacket, DataPacket, Packet, PacketParseError};
 pub use seq_number::SeqNumber;
-pub use socket_id::SocketID;
+pub use socket_id::SocketId;
 pub use srt_version::SrtVersion;

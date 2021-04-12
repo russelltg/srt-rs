@@ -6,7 +6,7 @@ use std::{convert::TryFrom, fmt};
 
 use super::PacketParseError;
 use crate::protocol::TimeStamp;
-use crate::{MsgNumber, SeqNumber, SocketID};
+use crate::{MsgNumber, SeqNumber, SocketId};
 
 /// A UDT packet carrying data
 ///
@@ -55,7 +55,7 @@ pub struct DataPacket {
     pub timestamp: TimeStamp,
 
     /// The dest socket id, used for UDP multiplexing
-    pub dest_sockid: SocketID,
+    pub dest_sockid: SocketId,
 
     /// The rest of the packet, the payload
     pub payload: Bytes,
@@ -87,17 +87,20 @@ impl DataPacket {
         // get the sequence number, which is the last 31 bits of the header
         let seq_number = SeqNumber::new_truncate(buf.get_u32());
 
+        let second_word_first_byte = buf.get_u32();
+        let [swb1, _, _, _] = second_word_first_byte.to_be_bytes();
+
         // the first two bits of the second line (second_line >> 24) is the location
-        let message_loc = PacketLocation::from_bits_truncate(buf.bytes()[0]);
-        let encryption = DataEncryption::try_from(buf.bytes()[0])?;
-        let retransmitted = (buf.bytes()[0] >> 2) & 1 == 1;
+        let message_loc = PacketLocation::from_bits_truncate(swb1);
+        let encryption = DataEncryption::try_from(swb1)?;
+        let retransmitted = (swb1 >> 2) & 1 == 1;
 
         // in order delivery is the third bit
-        let in_order_delivery = (buf.bytes()[0] & 0b0010_0000) != 0;
+        let in_order_delivery = (swb1 & 0b0010_0000) != 0;
 
-        let message_number = MsgNumber::new_truncate(buf.get_u32());
+        let message_number = MsgNumber::new_truncate(second_word_first_byte);
         let timestamp = TimeStamp::from_micros(buf.get_u32());
-        let dest_sockid = SocketID(buf.get_u32());
+        let dest_sockid = SocketId(buf.get_u32());
 
         Ok(DataPacket {
             seq_number,
@@ -108,7 +111,7 @@ impl DataPacket {
             message_number,
             timestamp,
             dest_sockid,
-            payload: buf.to_bytes(),
+            payload: Buf::copy_to_bytes(buf, buf.remaining()),
         })
     }
 
@@ -118,7 +121,7 @@ impl DataPacket {
         into.put_u32(self.seq_number.as_raw());
 
         // the format is first two bits are the message location, third is in order delivery, and the rest is message number
-        // message number is garunteed have it's first three bits as zero
+        // message number is guaranteed to have it's first three bits as zero
         into.put_u32(
             self.message_number.as_raw()
                 | ((u32::from(
@@ -150,13 +153,13 @@ impl fmt::Debug for DataPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{{DATA sn={} loc={:?} enc={:?} re={:?} msgno={} ts={:.4} dst={:?} payload=[len={}, start={:?}]}}",
+            "{{DATA sn={} loc={:?} enc={:?} re={:?} msgno={} ts={:?} dst={:?} payload=[len={}, start={:?}]}}",
             self.seq_number.0,
             self.message_loc,
             self.encryption,
             self.retransmitted,
             self.message_number.0,
-            self.timestamp.as_secs_f64(),
+            self.timestamp,
             self.dest_sockid,
             self.payload.len(),
             self.payload.slice(..min(8, self.payload.len())),
@@ -178,7 +181,7 @@ mod tests {
                     assert_eq!(i & 0b0001_1000, e);
                     assert_eq!(e, 0b0001_1000);
                 }
-                Err(e) => panic!(e),
+                Err(e) => panic!("{}", e),
                 Ok(de) => {
                     assert_eq!(de as u8, i & 0b0001_1000);
                 }
@@ -197,7 +200,7 @@ mod tests {
                 retransmitted,
                 message_number: MsgNumber::new_truncate(123),
                 timestamp: TimeStamp::from_micros(0),
-                dest_sockid: SocketID(0),
+                dest_sockid: SocketId(0),
                 payload: Bytes::new(),
             };
             let mut v = vec![];

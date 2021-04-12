@@ -1,4 +1,3 @@
-#![deny(clippy::all)]
 #![forbid(unsafe_code)]
 #![recursion_limit = "256"]
 
@@ -54,16 +53,15 @@ mod codec;
 mod multiplex;
 mod pending_connection;
 pub mod tokio;
-mod util;
 
 use codec::PacketCodec;
 
 pub use crate::builder::{ConnInitMethod, SrtSocketBuilder};
-pub use crate::multiplex::{multiplex, PackChan, StreamerServer};
+pub use crate::multiplex::{multiplex, StreamerServer};
 pub use crate::tokio::SrtSocket;
 
-use srt_protocol::connection::{self, Connection, ConnectionSettings};
+use srt_protocol::connection::{Connection, ConnectionSettings};
 use srt_protocol::crypto;
 use srt_protocol::packet::{self, ControlPacket, Packet, PacketParseError};
 use srt_protocol::protocol;
-use srt_protocol::SocketID;
+use srt_protocol::SocketId;

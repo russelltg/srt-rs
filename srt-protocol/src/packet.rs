@@ -14,15 +14,15 @@ pub use self::data::*;
 pub use error::PacketParseError;
 
 use crate::protocol::TimeStamp;
-use crate::SocketID;
+use crate::SocketId;
 
 /// Represents A UDT/SRT packet
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone, PartialEq, Eq)]
 pub enum Packet {
     Data(DataPacket),
     Control(ControlPacket),
 }
+
 impl Packet {
     pub fn timestamp(&self) -> TimeStamp {
         match *self {
@@ -31,7 +31,7 @@ impl Packet {
         }
     }
 
-    pub fn dest_sockid(&self) -> SocketID {
+    pub fn dest_sockid(&self) -> SocketId {
         match *self {
             Packet::Data(DataPacket { dest_sockid, .. })
             | Packet::Control(ControlPacket { dest_sockid, .. }) => dest_sockid,
@@ -54,7 +54,7 @@ impl Packet {
         }
     }
 
-    pub fn parse<T: Buf>(buf: &mut T) -> Result<Packet, PacketParseError> {
+    pub fn parse<T: Buf>(buf: &mut T, is_ipv6: bool) -> Result<Packet, PacketParseError> {
         // Buffer must be at least 16 bytes,
         // the length of a header packet
         if buf.remaining() < 16 {
@@ -62,7 +62,7 @@ impl Packet {
         }
 
         // peek at the first byte to check if it's data or control
-        let first = buf.bytes()[0];
+        let first = buf.chunk()[0];
 
         // Check if the first bit is one or zero;
         // if it's one it's a cotnrol packet,
@@ -70,7 +70,7 @@ impl Packet {
         Ok(if (first & 0x80) == 0 {
             Packet::Data(DataPacket::parse(buf)?)
         } else {
-            Packet::Control(ControlPacket::parse(buf)?)
+            Packet::Control(ControlPacket::parse(buf, is_ipv6)?)
         })
     }
 
@@ -85,6 +85,19 @@ impl Packet {
         }
     }
 }
+
+impl From<DataPacket> for Packet {
+    fn from(dp: DataPacket) -> Self {
+        Packet::Data(dp)
+    }
+}
+
+impl From<ControlPacket> for Packet {
+    fn from(cp: ControlPacket) -> Self {
+        Packet::Control(cp)
+    }
+}
+
 impl Debug for Packet {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         match self {

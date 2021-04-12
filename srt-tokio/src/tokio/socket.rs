@@ -22,7 +22,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::{future, ready, select};
 use log::{debug, error, info, trace};
-use tokio::time::delay_until;
+use tokio::time::sleep_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
@@ -31,6 +31,7 @@ use tokio::time::delay_until;
 ///
 /// The sockets yield and consume `(Instant, Bytes)`, representng the data and the origin instant. This instant
 /// defines when the packet will be released on the receiving side, at more or less one latency later.
+#[derive(Debug)]
 pub struct SrtSocket {
     // receiver datastructures
     recvr: mpsc::Receiver<(Instant, Bytes)>,
@@ -217,7 +218,7 @@ where
                             ""
                         }
                     );
-                    delay_until(to.into()).await
+                    sleep_until(to.into()).await
                 } else {
                     trace!(
                         "{:?} not scheduling wakeup!!!",
@@ -253,15 +254,13 @@ where
                                 Control(cp) => match &cp.control_type {
                                     // sender-responsble packets
                                     Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
-                                        sender.handle_packet((pack, from), Instant::now()).unwrap();
+                                        sender.handle_packet((pack, from), Instant::now());
                                     }
                                     // receiver-respnsible
                                     Ack2(_) => receiver.handle_packet(Instant::now(), (pack, from)),
                                     // both
                                     Shutdown => {
-                                        sender
-                                            .handle_packet((pack.clone(), from), Instant::now())
-                                            .unwrap();
+                                        sender.handle_packet((pack.clone(), from), Instant::now());
                                         receiver.handle_packet(Instant::now(), (pack, from));
                                     }
                                     // neither--this exists just to keep the connection alive
@@ -329,10 +328,9 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?))
     }
     fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Self::Error> {
-        Ok(self
-            .sender
+        self.sender
             .start_send(item)
-            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?)
+            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         ready!(Pin::new(&mut self.sender).poll_flush(cx))

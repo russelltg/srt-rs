@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::stream;
 use futures::{SinkExt, StreamExt};
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 use srt_tokio::SrtSocketBuilder;
 use std::io::Error;
@@ -19,9 +19,7 @@ async fn main() -> Result<(), Error> {
 
     println!("SRT Multiplex Server is listening on port: {}", port);
 
-    while let Some(Ok((conn, pack_chan))) = binding.next().await {
-        let mut srt_socket = srt_tokio::tokio::create_bidrectional_srt(pack_chan, conn);
-
+    while let Some(Ok(mut srt_socket)) = binding.next().await {
         tokio::spawn(async move {
             let client_desc = format!(
                 "(ip_port: {}, sockid: {})",
@@ -37,11 +35,11 @@ async fn main() -> Result<(), Error> {
                     if count % 100 == 0 {
                         println!("Sent to client: {} {:?} packets", client_desc, count);
                     }
-                    delay_for(Duration::from_millis(10)).await;
-                    return Some((
+                    sleep(Duration::from_millis(10)).await;
+                    Some((
                         Ok((Instant::now(), Bytes::from(vec![0; 8000]))),
                         (count + 1, client_desc),
-                    ));
+                    ))
                 },
             )
             .boxed();

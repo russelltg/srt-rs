@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures::{stream, SinkExt, StreamExt};
-use tokio::time::interval;
 
 use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
 
@@ -12,14 +11,15 @@ use crate::lossy_conn::LossyConn;
 
 #[tokio::test]
 async fn lossy() {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     const ITERS: i32 = 1_000;
 
     // a stream of ascending stringified integers
-    let counting_stream = stream::iter(0..ITERS)
-        .zip(interval(Duration::from_millis(10)))
-        .map(|(i, _)| Bytes::from(i.to_string()));
+    let counting_stream =
+        tokio_stream::StreamExt::throttle(stream::iter(0..ITERS), Duration::from_millis(10))
+            .map(|i| Bytes::from(i.to_string()))
+            .boxed();
 
     // 5% packet loss, 20ms delay
     let (send, recv) = LossyConn::channel(
@@ -34,8 +34,7 @@ async fn lossy() {
         .local_port(1111)
         .latency(Duration::from_secs(8))
         .connect_with_sock(send);
-    let recvr = SrtSocketBuilder::new(ConnInitMethod::Connect("127.0.0.1:1111".parse().unwrap()))
-        .connect_with_sock(recv);
+    let recvr = SrtSocketBuilder::new_connect("127.0.0.1:1111").connect_with_sock(recv);
 
     let sender = async move {
         let mut sender = sender.await.unwrap();

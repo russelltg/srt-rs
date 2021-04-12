@@ -1,16 +1,17 @@
 use aes_ctr::{
-    stream_cipher::{NewStreamCipher, SyncStreamCipher},
+    cipher::{NewBlockCipher, NewStreamCipher, SyncStreamCipher},
     Aes128Ctr, Aes192Ctr, Aes256Ctr,
 };
 use aes_soft::{Aes128, Aes192, Aes256};
-use block_cipher::NewBlockCipher;
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
 use sha1::Sha1;
 
 use crate::{
-    packet::{Auth, CipherType, DataEncryption, KeyFlags, PacketType, SrtKeyMessage},
-    pending_connection::ConnectError,
+    packet::{
+        Auth, CipherType, CoreRejectReason, DataEncryption, KeyFlags, PacketType, SrtKeyMessage,
+    },
+    pending_connection::ConnectionReject,
     SeqNumber,
 };
 use fmt::Debug;
@@ -54,7 +55,7 @@ impl CryptoManager {
     pub fn new_from_kmreq(
         options: CryptoOptions,
         kmreq: &SrtKeyMessage,
-    ) -> Result<Self, ConnectError> {
+    ) -> Result<Self, ConnectionReject> {
         let salt = kmreq.salt[..].try_into().unwrap();
         let kek = CryptoManager::gen_kek(&options, &salt);
 
@@ -89,7 +90,9 @@ impl CryptoManager {
         }
 
         if iv != wrap::DEFAULT_IV {
-            return Err(ConnectError::BadSecret);
+            return Err(ConnectionReject::Rejecting(
+                CoreRejectReason::BadSecret.into(),
+            ));
         }
 
         let even = if kmreq.key_flags.contains(KeyFlags::EVEN) {
@@ -158,7 +161,7 @@ impl CryptoManager {
                 (None, None) => panic!("No keys!"),
             },
             keki: 0, // xxx
-            cipher: CipherType::CTR,
+            cipher: CipherType::Ctr,
             auth: Auth::None,
             salt: self.salt[..].into(),
             wrapped_keys: self.wrap_keys(),
@@ -332,7 +335,7 @@ mod test {
                 pt: PacketType::KeyingMaterial,
                 key_flags: KeyFlags::ODD,
                 keki: 0,
-                cipher: CipherType::CTR,
+                cipher: CipherType::Ctr,
                 auth: Auth::None,
                 salt: manager.salt.into(),
                 wrapped_keys: wrapped,
@@ -356,7 +359,7 @@ mod test {
                 pt: PacketType::KeyingMaterial,
                 key_flags: KeyFlags::ODD,
                 keki: 0,
-                cipher: CipherType::CTR,
+                cipher: CipherType::Ctr,
                 auth: Auth::None,
                 salt: b"\x00\x00\x00\x00\x00\x00\x00\x00\x85\x2c\x3c\xcd\x02\x65\x1a\x22"[..]
                     .into(),
@@ -390,7 +393,7 @@ mod test {
                 pt: PacketType::KeyingMaterial,
                 key_flags: KeyFlags::ODD,
                 keki: 0,
-                cipher: CipherType::CTR,
+                cipher: CipherType::Ctr,
                 auth: Auth::None,
                 salt: manager.salt.into(),
                 wrapped_keys:

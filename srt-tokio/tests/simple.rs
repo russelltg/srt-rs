@@ -6,7 +6,7 @@ use std::time::Instant;
 
 #[tokio::test]
 async fn test() {
-    let _ = env_logger::try_init();
+    let _ = pretty_env_logger::try_init();
 
     let sender_fut = async {
         let mut tx = SrtSocketBuilder::new_listen()

@@ -6,6 +6,7 @@ pub(crate) trait Stats: Default {
     fn add(&mut self, measure: Self::Measure);
 }
 
+#[derive(Debug)]
 pub(crate) struct StatsWindow<T: Stats> {
     pub period: Duration,
     pub stats: T,
@@ -20,6 +21,7 @@ impl<T: Stats> Default for StatsWindow<T> {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct OnlineWindowedStats<T: Stats> {
     period: Duration,
     last: Option<Instant>,
@@ -92,9 +94,9 @@ mod online_windowed_stats {
         assert_eq!(
             window,
             vec![
-                (ms(1000), 1000 as usize),
-                (ms(1000), 1000 as usize),
-                (ms(1000), 1000 as usize)
+                (ms(1000), 1000_usize),
+                (ms(1000), 1000_usize),
+                (ms(1000), 1000_usize)
             ]
         );
     }

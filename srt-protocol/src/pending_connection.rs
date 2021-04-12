@@ -6,8 +6,8 @@ pub mod rendezvous;
 
 use crate::{
     crypto::CryptoOptions,
-    packet::{ControlTypes, HandshakeControlInfo},
-    DataPacket, SeqNumber, SocketID,
+    packet::{ControlTypes, HandshakeControlInfo, RejectReason},
+    Connection, DataPacket, Packet, SeqNumber, SocketId,
 };
 use rand::random;
 use std::{error::Error, fmt, net::SocketAddr, time::Duration};
@@ -24,16 +24,35 @@ pub enum ConnectError {
     InvalidHandshakeCookie(i32, i32),
     RendezvousExpected(HandshakeControlInfo),
     CookiesMatched(i32),
-    ExpectedHSReq,
-    ExpectedHSResp,
+    ExpectedHsReq,
+    ExpectedHsResp,
     ExpectedExtFlags,
     ExpectedNoExtFlags,
-    BadSecret,
+}
+
+#[derive(Debug)]
+pub enum ConnectionReject {
+    /// local rejected remote
+    Rejecting(RejectReason),
+
+    /// remote rejected local
+    Rejected(RejectReason),
+}
+
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
+pub enum ConnectionResult {
+    NotHandled(ConnectError),
+    Reject(Option<(Packet, SocketAddr)>, ConnectionReject),
+    SendPacket((Packet, SocketAddr)),
+    Connected(Option<(Packet, SocketAddr)>, Connection),
+    NoAction,
 }
 
 #[derive(Debug, Clone)]
 pub struct ConnInitSettings {
-    pub local_sockid: SocketID,
+    pub starting_send_seqnum: SeqNumber,
+    pub local_sockid: SocketId,
     pub crypto: Option<CryptoOptions>,
     pub send_latency: Duration,
     pub recv_latency: Duration,
@@ -70,11 +89,11 @@ impl fmt::Display for ConnectError {
                 "Cookies matched, waiting for a new cookie to resolve contest. Cookie: {}",
                 cookie
             ),
-            ExpectedHSReq => write!(
+            ExpectedHsReq => write!(
                 f,
                 "Responder got handshake flags, but expected request, not response"
             ),
-            ExpectedHSResp => write!(
+            ExpectedHsResp => write!(
                 f,
                 "Initiator got handshake flags, but expected response, not request"
             ),
@@ -82,11 +101,31 @@ impl fmt::Display for ConnectError {
             ExpectedNoExtFlags => {
                 write!(f, "Initiator did not expect handshake flags, but got some")
             }
-            BadSecret => write!(f, "Wrong password"),
         }
     }
 }
+
 impl Error for ConnectError {}
+
+impl fmt::Display for ConnectionReject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use ConnectionReject::*;
+        match self {
+            Rejecting(rr) => write!(f, "Local server rejected remote: {}", rr),
+            Rejected(rr) => write!(f, "Remote rejected connection: {}", rr),
+        }
+    }
+}
+
+impl ConnectionReject {
+    fn reason(&self) -> RejectReason {
+        match self {
+            ConnectionReject::Rejecting(r) | ConnectionReject::Rejected(r) => *r,
+        }
+    }
+}
+
+impl Error for ConnectionReject {}
 
 impl Default for ConnInitSettings {
     fn default() -> Self {

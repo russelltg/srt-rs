@@ -27,10 +27,11 @@ impl SrtVersion {
 
     /// Parse from an u32
     pub fn parse(from: u32) -> SrtVersion {
+        let [_, major, minor, patch] = from.to_be_bytes();
         SrtVersion {
-            major: (from / 0x10000) as u8,
-            minor: ((from / 0x100) % 0x100) as u8,
-            patch: (from % 0x100) as u8,
+            major,
+            minor,
+            patch,
         }
     }
 

@@ -1,16 +1,35 @@
 use crate::{Packet, PacketParseError};
-use bytes::BytesMut;
-use std::io::{self, Cursor};
+use bytes::{Buf, BytesMut};
+use log::debug;
+use std::io;
 use tokio_util::codec::{Decoder, Encoder};
 
-pub struct PacketCodec;
+pub struct PacketCodec {
+    is_ipv6: bool,
+}
+
+impl PacketCodec {
+    pub fn new(is_ipv6: bool) -> Self {
+        PacketCodec { is_ipv6 }
+    }
+}
 
 impl Decoder for PacketCodec {
     type Item = Packet;
     type Error = PacketParseError;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Packet>, Self::Error> {
-        Packet::parse(&mut Cursor::new(buf)).map(Some)
+        if buf.is_empty() {
+            return Ok(None);
+        }
+
+        let ret = Packet::parse(buf, self.is_ipv6).map(Some);
+
+        if !buf.is_empty() {
+            debug!("Leftover bytes in packet {:?} {:?}", ret, buf.to_vec());
+            buf.advance(buf.remaining()); // discard trailing bytes
+        }
+        ret
     }
 }
 
