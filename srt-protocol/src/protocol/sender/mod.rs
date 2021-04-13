@@ -18,6 +18,7 @@ use crate::{ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
 
 use buffers::*;
 use congestion_control::{LiveDataRate, SenderCongestionControl};
+use crate::packet::ControlTypes::KeepAlive;
 
 #[derive(Debug)]
 pub enum SenderError {}
@@ -154,13 +155,7 @@ impl Sender {
     pub fn handle_data(&mut self, data: (Instant, Bytes), now: Instant) {
         let data_length = data.1.len();
         let packet_count = self.transmit_buffer.push_message(data);
-        self.congestion_control
-            .on_input(now, packet_count, data_length);
-    }
-
-    fn handle_snd_timer(&mut self, now: Instant) {
-        self.snd_timer.reset(now);
-        self.step = SenderAlgorithmStep::Step1;
+        self.congestion_control.on_input(now, packet_count, data_length);
     }
 
     pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr), now: Instant) {
@@ -208,7 +203,7 @@ impl Sender {
         }
 
         if let Some(exp_time) = self.snd_timer.check_expired(now) {
-            self.handle_snd_timer(exp_time);
+            self.on_snd_event(exp_time);
         }
 
         if self.step == Step6 {
@@ -427,6 +422,12 @@ impl Sender {
             }
             _ => unimplemented!(),
         }
+    }
+
+    fn on_snd_event(&mut self, now: Instant) {
+        self.snd_timer.reset(now);
+        self.send_control(KeepAlive, now);
+        self.step = SenderAlgorithmStep::Step1;
     }
 
     fn pop_transmit_buffer(&mut self) -> Option<DataPacket> {

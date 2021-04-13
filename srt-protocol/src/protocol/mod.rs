@@ -5,7 +5,6 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::time::{Duration, Instant};
 use std::u32;
 
-pub mod connection;
 pub mod handshake;
 pub mod receiver;
 pub mod sender;
