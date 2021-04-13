@@ -16,9 +16,9 @@ use crate::protocol::handshake::Handshake;
 use crate::protocol::Timer;
 use crate::{ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
 
+use crate::packet::ControlTypes::KeepAlive;
 use buffers::*;
 use congestion_control::{LiveDataRate, SenderCongestionControl};
-use crate::packet::ControlTypes::KeepAlive;
 
 #[derive(Debug)]
 pub enum SenderError {}
@@ -155,7 +155,8 @@ impl Sender {
     pub fn handle_data(&mut self, data: (Instant, Bytes), now: Instant) {
         let data_length = data.1.len();
         let packet_count = self.transmit_buffer.push_message(data);
-        self.congestion_control.on_input(now, packet_count, data_length);
+        self.congestion_control
+            .on_input(now, packet_count, data_length);
     }
 
     pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr), now: Instant) {
