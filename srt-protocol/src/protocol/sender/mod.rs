@@ -113,6 +113,9 @@ pub struct Sender {
     step: SenderAlgorithmStep,
 
     snd_timer: Timer,
+    // this isn't in the spec, but it's in the reference implementation
+    // https://github.com/Haivision/srt/blob/1d7b391905d7e344d80b86b39ac5c90fda8764a9/srtcore/core.cpp#L10610-L10614
+    keepalive_timer: Timer,
 
     close_requested: bool,
     shutdown_sent: bool,
@@ -139,6 +142,7 @@ impl Sender {
             transmit_buffer: TransmitBuffer::new(&settings),
             step: SenderAlgorithmStep::Step1,
             snd_timer: Timer::new(Duration::from_millis(1), settings.socket_start_time),
+            keepalive_timer: Timer::new(Duration::from_secs(1), settings.socket_start_time),
             close_requested: false,
             shutdown_sent: false,
         }
@@ -205,6 +209,9 @@ impl Sender {
 
         if let Some(exp_time) = self.snd_timer.check_expired(now) {
             self.on_snd_event(exp_time);
+        }
+        if let Some(exp_time) = self.keepalive_timer.check_expired(now) {
+            self.on_keepalive_event(exp_time);
         }
 
         if self.step == Step6 {
@@ -291,8 +298,6 @@ impl Sender {
             }
             ControlTypes::DropRequest { .. } => unimplemented!(),
             ControlTypes::Handshake(shake) => self.handle_handshake_packet(shake, now),
-            // TODO: reset EXP-ish
-
             // TODO: case UMSG_CGWARNING: // 100 - Delay Warning
             //            // One way packet delay is increasing, so decrease the sending rate
             //            ControlTypes::DelayWarning?
@@ -427,8 +432,12 @@ impl Sender {
 
     fn on_snd_event(&mut self, now: Instant) {
         self.snd_timer.reset(now);
-        self.send_control(KeepAlive, now);
         self.step = SenderAlgorithmStep::Step1;
+    }
+
+    fn on_keepalive_event(&mut self, now: Instant) {
+        self.keepalive_timer.reset(now);
+        self.send_control(KeepAlive, now);
     }
 
     fn pop_transmit_buffer(&mut self) -> Option<DataPacket> {
