@@ -436,7 +436,6 @@ impl Sender {
     }
 
     fn on_keepalive_event(&mut self, now: Instant) {
-        self.keepalive_timer.reset(now);
         self.send_control(KeepAlive, now);
     }
 
@@ -455,6 +454,7 @@ impl Sender {
     }
 
     fn send_control(&mut self, control: ControlTypes, now: Instant) {
+        self.keepalive_timer.reset(now);
         self.output_buffer.push_back(Packet::Control(ControlPacket {
             timestamp: self.transmit_buffer.timestamp_from(now),
             dest_sockid: self.settings.remote_sockid,
