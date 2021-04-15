@@ -175,7 +175,7 @@ impl Receiver {
 
         trace!("Received packet: {:?}", packet);
 
-        self.timers.on_input(now);
+        self.timers.reset_exp(now);
         match packet {
             Packet::Control(ctrl) => {
                 self.receive_buffer.synchronize_clock(now, ctrl.timestamp);
@@ -186,7 +186,7 @@ impl Receiver {
                     ControlTypes::Ack2(seq_num) => self.handle_ack2(seq_num, now),
                     ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(shake) => self.handle_handshake_packet(now, shake),
-                    ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
+                    ControlTypes::KeepAlive => {}
                     ControlTypes::Nak { .. } => warn!("Receiver received NAK packet, unusual"),
                     ControlTypes::Shutdown => {
                         info!(

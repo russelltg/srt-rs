@@ -264,7 +264,7 @@ impl ReceiveTimers {
         }
     }
 
-    pub fn on_input(&mut self, now: Instant) {
+    pub fn reset_exp(&mut self, now: Instant) {
         self.exp_count = 1;
         self.last_input = now;
     }
@@ -356,7 +356,7 @@ mod receive_timers {
         assert!(timers.check_nak(actual_timer).is_none());
 
         let last_input = start;
-        timers.on_input(last_input);
+        timers.reset_exp(last_input);
         for exp_count in 1..=16 {
             assert!(timers
                 .check_peer_idle_timeout(last_input + exp_count * exp_lower_bound)

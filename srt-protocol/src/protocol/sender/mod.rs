@@ -222,7 +222,7 @@ impl Sender {
         //      packet in the list and remove it from the list. Go to 5).
         if let Some(p) = self.loss_list.pop_front() {
             debug!("Sending packet in loss list, seq={:?}", p.seq_number);
-            self.send_data(p);
+            self.send_data(p, now);
 
             // TODO: returning here will result in sending all the packets in the loss
             //       list before progressing further through the sender algorithm. This
@@ -263,11 +263,11 @@ impl Sender {
 
             return WaitUntilAck;
         } else if let Some(p) = self.pop_transmit_buffer() {
-            self.send_data(p);
+            self.send_data(p, now);
         } else if self.close_requested {
             // this covers the niche case of dropping the last packet(s)
             if let Some(dp) = self.send_buffer.front().cloned() {
-                self.send_data(dp);
+                self.send_data(dp, now);
             }
         }
 
@@ -276,7 +276,7 @@ impl Sender {
         if let Some(p) = self.pop_transmit_buffer_16n() {
             //      NOTE: to get the closest timing, we ignore congestion control
             //      and send the 16th packet immediately, instead of proceeding to step 2
-            self.send_data(p);
+            self.send_data(p, now);
         }
 
         //   6) Wait (SND - t) time, where SND is the inter-packet interval
@@ -311,9 +311,6 @@ impl Sender {
                 self.handle_shutdown_packet();
             }
             ControlTypes::Srt(srt_packet) => self.handle_srt_control_packet(srt_packet),
-            // The only purpose of keep-alive packet is to tell that the peer is still alive
-            // nothing needs to be done.
-            // TODO: is this actually true? check reference implementation
             ControlTypes::KeepAlive => {}
         }
     }
@@ -462,7 +459,8 @@ impl Sender {
         }));
     }
 
-    fn send_data(&mut self, p: DataPacket) {
+    fn send_data(&mut self, p: DataPacket, now: Instant) {
+        self.keepalive_timer.reset(now);
         self.output_buffer.push_back(Packet::Data(p));
     }
 }
