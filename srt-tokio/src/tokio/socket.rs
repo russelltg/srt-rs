@@ -1,12 +1,10 @@
 use crate::packet::ControlTypes::*;
 
-use crate::protocol::connection::{Connection, ConnectionAction};
 use crate::protocol::handshake::Handshake;
 use crate::protocol::receiver::{Receiver, ReceiverAlgorithmAction};
 use crate::protocol::sender::{Sender, SenderAlgorithmAction};
-use crate::protocol::TimeBase;
 use crate::Packet::*;
-use crate::{ConnectionSettings, ControlPacket, Packet};
+use crate::{ConnectionSettings, Packet};
 
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -85,8 +83,6 @@ where
         let mut new_data = new_data.fuse();
         let mut sock = sock.fuse();
 
-        let time_base = TimeBase::new(conn_copy.settings.socket_start_time);
-        let mut connection = Connection::new(conn_copy.settings.clone());
         let mut sender = Sender::new(conn_copy.settings.clone(), conn_copy.handshake);
         let mut receiver = Receiver::new(conn_copy.settings, Handshake::Connector);
 
@@ -150,38 +146,6 @@ where
                     }
                 };
             };
-            let connection_timeout = loop {
-                match connection.next_action(Instant::now()) {
-                    ConnectionAction::ContinueUntil(timeout) => break Some(timeout),
-                    ConnectionAction::Close => {
-                        if receiver.is_flushed() {
-                            info!(
-                                "{:?} Receiver flush and connection timeout",
-                                sender.settings().local_sockid
-                            );
-                            return;
-                        }
-
-                        trace!(
-                            "{:?} connection closed but waiting for receiver to flush",
-                            sender.settings().local_sockid
-                        );
-
-                        break None;
-                    } // timeout
-                    ConnectionAction::SendKeepAlive => sock
-                        .send((
-                            Control(ControlPacket {
-                                timestamp: time_base.timestamp_from(Instant::now()),
-                                dest_sockid: sender.settings().remote_sockid,
-                                control_type: KeepAlive,
-                            }),
-                            sender.settings().remote,
-                        ))
-                        .await
-                        .unwrap(), // todo
-                }
-            };
             if sender.is_flushed() != flushed {
                 // wakeup
                 let mut l = fw.lock().unwrap();
@@ -194,7 +158,7 @@ where
                 }
             }
 
-            let timeout = [sender_timeout, recvr_timeout, connection_timeout]
+            let timeout = [sender_timeout, recvr_timeout]
                 .iter()
                 .filter_map(|&x| x) // Only take Some(x) timeouts
                 .min();
@@ -248,7 +212,6 @@ where
                 Action::DelegatePacket(res) => {
                     match res {
                         Some((pack, from)) => {
-                            connection.on_packet(Instant::now());
                             match &pack {
                                 Data(_) => receiver.handle_packet(Instant::now(), (pack, from)),
                                 Control(cp) => match &cp.control_type {

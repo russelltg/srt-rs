@@ -29,7 +29,7 @@ fn timestamp_rollover() {
 
     let init_seqnum = SeqNumber::new_truncate(91234);
 
-    let start = Instant::now();
+    let start = Instant::now() + Duration::from_micros(u32::MAX as u64);
 
     let s1 = ConnectionSettings {
         remote: s2_addr,

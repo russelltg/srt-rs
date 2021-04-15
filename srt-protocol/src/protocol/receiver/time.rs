@@ -189,34 +189,95 @@ impl Rtt {
     }
 }
 
+//   The recommended granularity of their periods is microseconds. The
+//   system time is queried after each time bounded UDP receiving (there
+//   will be additional necessary data processing time if a UDP packet is
+//   received) to check if any of the ACK, NAK, or EXP event should be
+//   triggered. The timeout value of UDP receiving should be at least SYN.
 #[derive(Debug)]
 pub(crate) struct ReceiveTimers {
-    pub(crate) ack: Timer,
-    pub(crate) nak: Timer,
+    //   ACK is used to trigger an acknowledgement (ACK). Its period is set by
+    //   the congestion control module. However, UDT will send an ACK no
+    //   longer than every 0.01 second, even though the congestion control
+    //   does not need timer-based ACK. Here, 0.01 second is defined as the
+    //   SYN time, or synchronization time, and it affects many of the other
+    //   timers used in UDT.
+    ack: Timer,
+
+    //   NAK is used to trigger a negative acknowledgement (NAK). Its period
+    //   is dynamically updated to 4 * RTT_+ RTTVar + SYN, where RTTVar is the
+    //   variance of RTT samples.
+    nak: Timer,
+
+    //   EXP is used to trigger data packets retransmission and maintain
+    //   connection status. Its period is dynamically updated to 4 * RTT +
+    //   RTTVar + SYN.
+    exp: Timer,
+    exp_count: u32,
+    last_input: Instant,
+    peer_idle_timeout: Duration,
 }
 
 impl ReceiveTimers {
     const SYN: Duration = Duration::from_millis(10);
+    const EXP_MAX: u32 = 16;
 
     pub fn new(now: Instant) -> ReceiveTimers {
-        let (ack, nak) = Self::calculate_periods(&Rtt::new());
+        let (ack, nak, exp) = Self::calculate_periods(1, &Rtt::new());
         ReceiveTimers {
             ack: Timer::new(ack, now),
             nak: Timer::new(nak, now),
+            exp: Timer::new(exp, now),
+            exp_count: 1,
+            last_input: now,
+            peer_idle_timeout: Duration::from_secs(5),
         }
     }
 
     pub fn next_timer(&self, now: Instant) -> Instant {
-        max(now, min(self.nak.next_instant(), self.ack.next_instant()))
+        max(
+            now,
+            min(
+                self.nak.next_instant(),
+                min(self.ack.next_instant(), self.exp.next_instant()),
+            ),
+        )
+    }
+
+    pub fn check_ack(&mut self, now: Instant) -> Option<Instant> {
+        self.ack.check_expired(now)
+    }
+
+    pub fn check_nak(&mut self, now: Instant) -> Option<Instant> {
+        self.nak.check_expired(now)
+    }
+
+    pub fn check_peer_idle_timeout(&mut self, now: Instant) -> Option<Instant> {
+        self.exp.check_expired(now)?;
+
+        let peer_idle = now - self.last_input;
+        if self.exp_count > Self::EXP_MAX && peer_idle > self.peer_idle_timeout {
+            Some(self.last_input)
+        } else {
+            self.exp_count += 1;
+            None
+        }
+    }
+
+    pub fn reset_exp(&mut self, now: Instant) {
+        self.exp_count = 1;
+        self.last_input = now;
     }
 
     pub fn update_rtt(&mut self, rtt: &Rtt) {
-        let (ack, nak) = Self::calculate_periods(rtt);
+        let (ack, nak, exp) = Self::calculate_periods(self.exp_count, rtt);
         self.ack.set_period(ack);
         self.nak.set_period(nak);
+        self.exp.set_period(exp);
     }
 
-    fn calculate_periods(rtt: &Rtt) -> (Duration, Duration) {
+    fn calculate_periods(exp_count: u32, rtt: &Rtt) -> (Duration, Duration, Duration) {
+        let ms = Duration::from_millis;
         let rtt_period = 4 * rtt.mean_as_duration() + rtt.variance_as_duration() + Self::SYN;
 
         let ack_period = rtt_period;
@@ -224,7 +285,11 @@ impl ReceiveTimers {
         let nak_report_period_accelerator: u32 = 2;
         let nak_period = nak_report_period_accelerator * rtt_period;
 
-        (ack_period, nak_period)
+        // 0.5s minimum, according to page 9
+        // but 0.3s in reference implementation
+        let exp_period = max(exp_count * rtt_period, exp_count * ms(300));
+
+        (ack_period, nak_period, exp_period)
     }
 }
 
@@ -258,8 +323,9 @@ mod receive_timers {
         assert_eq!(diff(actual_timer, now), ack);
 
         // only ack timer should fire
-        assert!(timers.ack.check_expired(actual_timer).is_some());
-        assert!(timers.nak.check_expired(actual_timer).is_none());
+        assert!(timers.check_ack(actual_timer).is_some());
+        assert!(timers.check_nak(actual_timer).is_none());
+        assert!(timers.check_peer_idle_timeout(actual_timer).is_none());
 
         // next timer should be nak
         // NAK accelerator * 4 * RTT + RTTVar + SYN
@@ -269,16 +335,36 @@ mod receive_timers {
         assert_eq!(diff(actual_timer, start), nak);
 
         // both ack and nak should fire because their periods overlap
-        assert!(timers.ack.check_expired(actual_timer).is_some());
-        assert!(timers.nak.check_expired(actual_timer).is_some());
+        assert!(timers.check_ack(actual_timer).is_some());
+        assert!(timers.check_nak(actual_timer).is_some());
+        assert!(timers.check_peer_idle_timeout(actual_timer).is_none());
 
         // exp will have a lower bound period of 500ms
-        let exp = ms(500);
-        let now = start + exp;
+        let exp_lower_bound = ms(300);
+        let now = start + exp_lower_bound;
 
         // push time forward for ack and nak first
-        assert!(timers.ack.check_expired(now).is_some());
-        assert!(timers.nak.check_expired(now).is_some());
+        assert!(timers.check_ack(now).is_some());
+        assert!(timers.check_nak(now).is_some());
+
+        // next timer should be exp
+        let actual_timer = timers.next_timer(now);
+        assert_eq!(diff(actual_timer, start), exp_lower_bound);
+
+        // exp timer should fire
+        assert!(timers.check_ack(actual_timer).is_none());
+        assert!(timers.check_nak(actual_timer).is_none());
+
+        let last_input = start;
+        timers.reset_exp(last_input);
+        for exp_count in 1..=16 {
+            assert!(timers
+                .check_peer_idle_timeout(last_input + exp_count * exp_lower_bound)
+                .is_none());
+        }
+        assert!(timers
+            .check_peer_idle_timeout(last_input + 17 * exp_lower_bound)
+            .is_some());
     }
 
     proptest! {
@@ -296,7 +382,7 @@ mod receive_timers {
             let rtt_variance = rtt.variance_as_duration();
 
             // above lower bound of exp
-            prop_assume!(4 * rtt_mean + rtt_variance + syn > ms(500));
+            prop_assume!(4 * rtt_mean + rtt_variance + syn > ms(300));
 
             let start = Instant::now();
             let mut timers = ReceiveTimers::new(start);
@@ -308,6 +394,9 @@ mod receive_timers {
 
             // NAK accelerator * 4 * RTT + RTTVar + SYN
             assert_eq!(timers.nak.next_instant() - start, 2 * (4 * rtt_mean + rtt_variance + syn));
+
+            // 4 * RTT + RTTVar + SYN
+            assert_eq!(timers.exp.next_instant() - start, 4 * rtt_mean + rtt_variance + syn);
         }
 
         #[test]
@@ -324,7 +413,7 @@ mod receive_timers {
             let rtt_variance = rtt.variance_as_duration();
 
             // below lower bound of exp
-            prop_assume!(4 * rtt_mean + rtt_variance + syn <= ms(500));
+            prop_assume!(4 * rtt_mean + rtt_variance + syn <= ms(300));
 
             let start = Instant::now();
             let mut timers = ReceiveTimers::new(start);
@@ -336,6 +425,9 @@ mod receive_timers {
 
             // NAK accelerator * 4 * RTT + RTTVar + SYN
             assert_eq!(timers.nak.next_instant() - start, 2 * (4 * rtt_mean + rtt_variance + syn));
+
+            // exp has a lower bound period of 300ms
+            assert_eq!(timers.exp.next_instant() - start, ms(300));
         }
     }
 }
