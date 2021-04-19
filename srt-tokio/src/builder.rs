@@ -6,19 +6,12 @@ use std::{
 
 use pending_connection::get_packet;
 use tokio::net::UdpSocket;
-use tokio_util::udp::UdpFramed;
 
-use futures::{
-    future::ready,
-    stream::{try_unfold, unfold},
-    Sink, Stream, StreamExt,
-};
+use futures::{stream::unfold, Stream, StreamExt};
 
 use crate::tokio::create_bidrectional_srt;
-use crate::{
-    crypto::CryptoOptions, multiplex, pending_connection, Packet, PacketParseError, SrtSocket,
-};
-use log::{error, warn};
+use crate::{crypto::CryptoOptions, multiplex, pending_connection, SrtSocket};
+use log::error;
 use srt_protocol::{
     accesscontrol::{AllowAllStreamAcceptor, StreamAcceptor},
     pending_connection::ConnInitSettings,

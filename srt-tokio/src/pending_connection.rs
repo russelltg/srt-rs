@@ -1,3 +1,4 @@
+use bytes::BytesMut;
 use futures::select;
 use log::{debug, warn};
 
@@ -13,7 +14,7 @@ use srt_protocol::{
         connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnInitSettings,
         ConnectionResult,
     },
-    Connection, Packet, PacketParseError,
+    Connection, Packet,
 };
 
 use futures::prelude::*;
@@ -150,9 +151,10 @@ pub async fn rendezvous(
 }
 
 pub async fn get_packet(sock: &UdpSocket) -> Result<(Packet, SocketAddr), io::Error> {
-    let mut deser_buffer = Vec::with_capacity(1024);
+    let mut deser_buffer = BytesMut::with_capacity(1024);
     loop {
         sock.readable().await?;
+        deser_buffer.clear();
 
         match sock.try_recv_buf_from(&mut deser_buffer) {
             Ok((size, t)) => match Packet::parse(

@@ -1,78 +1,78 @@
-mod lossy_conn;
+// mod lossy_conn;
 
-use std::future::Future;
-use std::{
-    io,
-    net::ToSocketAddrs,
-    time::{Duration, Instant},
-};
+// use std::future::Future;
+// use std::{
+//     io,
+//     net::ToSocketAddrs,
+//     time::{Duration, Instant},
+// };
 
-use bytes::Bytes;
-use futures::channel::oneshot;
-use futures::{join, select, FutureExt, SinkExt};
+// use bytes::Bytes;
+// use futures::channel::oneshot;
+// use futures::{join, select, FutureExt, SinkExt};
 
-use srt_protocol::Packet;
-use srt_tokio::{SrtSocket, SrtSocketBuilder};
+// use srt_protocol::Packet;
+// use srt_tokio::{SrtSocket, SrtSocketBuilder};
 
-use lossy_conn::LossyConn;
+// use lossy_conn::LossyConn;
 
-async fn test<A, B>(a: A, b: B)
-where
-    A: Future<Output = io::Result<SrtSocket>>,
-    B: Future<Output = io::Result<SrtSocket>>,
-{
-    let (s1, r1) = oneshot::channel();
-    let (s2, r2) = oneshot::channel();
+// async fn test<A, B>(a: A, b: B)
+// where
+//     A: Future<Output = io::Result<SrtSocket>>,
+//     B: Future<Output = io::Result<SrtSocket>>,
+// {
+//     let (s1, r1) = oneshot::channel();
+//     let (s2, r2) = oneshot::channel();
 
-    // This test is actually pretty involved
-    // The futures don't resolve at the same times, and the senders need to be
-    // polled after so they eventually resolve. But the receivers aren't being
-    // polled, so just cancel after both are resolved, which is what the
-    // oneshots are for.
-    //
-    // There's probably a better way to do it.
-    async fn conn_close(
-        sr: impl Future<Output = std::result::Result<SrtSocket, io::Error>>,
-        s: oneshot::Sender<()>,
-        r: oneshot::Receiver<()>,
-    ) {
-        let mut sock = sr.await.unwrap();
-        sock.send((Instant::now(), Bytes::new())).await.unwrap();
-        s.send(()).unwrap();
+//     // This test is actually pretty involved
+//     // The futures don't resolve at the same times, and the senders need to be
+//     // polled after so they eventually resolve. But the receivers aren't being
+//     // polled, so just cancel after both are resolved, which is what the
+//     // oneshots are for.
+//     //
+//     // There's probably a better way to do it.
+//     async fn conn_close(
+//         sr: impl Future<Output = std::result::Result<SrtSocket, io::Error>>,
+//         s: oneshot::Sender<()>,
+//         r: oneshot::Receiver<()>,
+//     ) {
+//         let mut sock = sr.await.unwrap();
+//         sock.send((Instant::now(), Bytes::new())).await.unwrap();
+//         s.send(()).unwrap();
 
-        select! {
-            _ = sock.close().fuse() => {},
-            _ = r.fuse() => {},
-        };
-    }
-    join!(conn_close(a, s1, r2), conn_close(b, s2, r1));
-}
+//         select! {
+//             _ = sock.close().fuse() => {},
+//             _ = r.fuse() => {},
+//         };
+//     }
+//     join!(conn_close(a, s1, r2), conn_close(b, s2, r1));
+// }
 
-// super lossy channel, lots of reordering
-fn chan(a: impl ToSocketAddrs, b: impl ToSocketAddrs) -> (LossyConn<Packet>, LossyConn<Packet>) {
-    LossyConn::channel(
-        0.70,
-        Duration::from_millis(20),
-        Duration::from_millis(20),
-        a,
-        b,
-    )
-}
+// // super lossy channel, lots of reordering
+// fn chan(a: impl ToSocketAddrs, b: impl ToSocketAddrs) -> (LossyConn<Packet>, LossyConn<Packet>) {
+//     LossyConn::channel(
+//         0.70,
+//         Duration::from_millis(20),
+//         Duration::from_millis(20),
+//         a,
+//         b,
+//     )
+// }
 
-fn chan_seeded(
-    a: impl ToSocketAddrs,
-    b: impl ToSocketAddrs,
-    seed: u64,
-) -> (LossyConn<Packet>, LossyConn<Packet>) {
-    LossyConn::with_seed(
-        0.70,
-        Duration::from_millis(20),
-        Duration::from_micros(20),
-        a,
-        b,
-        seed,
-    )
-}
+// fn chan_seeded(
+//     a: impl ToSocketAddrs,
+//     b: impl ToSocketAddrs,
+//     seed: u64,
+// ) -> (LossyConn<Packet>, LossyConn<Packet>) {
+//     LossyConn::with_seed(
+//         0.70,
+//         Duration::from_millis(20),
+//         Duration::from_micros(20),
+//         a,
+//         b,
+//         seed,
+//     )
+// }
 
 // #[tokio::test]
 // async fn connect() {

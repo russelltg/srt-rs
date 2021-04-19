@@ -1,15 +1,14 @@
-/// A test testing if a connection is setup with not enough latency, ie rtt > 3ish*latency
-use std::str;
-use std::time::{Duration, Instant};
+// use bytes::Bytes;
+// use futures::{stream::iter, SinkExt, StreamExt};
+// use log::{debug, info};
+// use std::str;
+// /// A test testing if a connection is setup with not enough latency, ie rtt > 3ish*latency
+// use std::time::{Duration, Instant};
 
-use bytes::Bytes;
-use futures::{stream::iter, SinkExt, StreamExt};
-use log::{debug, info};
+// use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
 
-use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
-
-mod lossy_conn;
-use crate::lossy_conn::LossyConn;
+// mod lossy_conn;
+// use crate::lossy_conn::LossyConn;
 
 // #[tokio::test]
 // async fn not_enough_latency() {

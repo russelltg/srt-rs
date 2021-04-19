@@ -1,7 +1,7 @@
 // lossy tests based on protocol to be fully deterministic
 
 use bytes::Bytes;
-use log::{debug, info, trace};
+use log::{debug, trace};
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use rand_distr::{Distribution, Normal};
 use srt_protocol::{
@@ -58,7 +58,7 @@ fn lossy_deterministic() {
 }
 
 fn do_lossy_test(seed: u64, count: usize) {
-    info!("Seed is: {}", seed);
+    println!("Seed is: {}", seed);
     let start = Instant::now();
     let mut rng = StdRng::seed_from_u64(seed);
 
