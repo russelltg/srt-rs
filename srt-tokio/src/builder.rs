@@ -1,15 +1,22 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::{io, time::Duration};
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
+    sync::Arc,
+};
 
+use pending_connection::get_packet;
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 
-use futures::{future::ready, Sink, Stream, StreamExt};
+use futures::{
+    future::ready,
+    stream::{try_unfold, unfold},
+    Sink, Stream, StreamExt,
+};
 
 use crate::tokio::create_bidrectional_srt;
 use crate::{
-    crypto::CryptoOptions, multiplex, pending_connection, Packet, PacketCodec, PacketParseError,
-    SrtSocket,
+    crypto::CryptoOptions, multiplex, pending_connection, Packet, PacketParseError, SrtSocket,
 };
 use log::{error, warn};
 use srt_protocol::{
@@ -207,17 +214,22 @@ impl SrtSocketBuilder {
     }
 
     /// Connect with a custom socket. Not typically used, see [`connect`](SrtSocketBuilder::connect) instead.
-    pub async fn connect_with_sock<T>(self, mut socket: T) -> Result<SrtSocket, io::Error>
-    where
-        T: Stream<Item = Result<(Packet, SocketAddr), PacketParseError>>
-            + Sink<(Packet, SocketAddr), Error = io::Error>
-            + Unpin
-            + Send
-            + 'static,
-    {
+    pub async fn connect(self) -> Result<SrtSocket, io::Error> {
+        let is_ipv4 = match self.conn_type {
+            ConnInitMethod::Connect(addr, _) => addr.is_ipv4(),
+            ConnInitMethod::Rendezvous(addr) => addr.is_ipv4(),
+            ConnInitMethod::Listen => true,
+        };
+
+        let la = SocketAddr::new(
+            self.local_addr.unwrap_or_else(|| unspecified(is_ipv4)),
+            self.local_port,
+        );
+        let socket = UdpSocket::bind(&la).await?;
+
         let conn = match self.conn_type {
             ConnInitMethod::Listen => {
-                pending_connection::listen(&mut socket, self.init_settings).await?
+                pending_connection::listen(&socket, self.init_settings).await?
             }
             ConnInitMethod::Connect(addr, sid) => {
                 let local_addr = self
@@ -230,14 +242,9 @@ impl SrtSocketBuilder {
                     error!("Mismatched address and local address ip family");
                     return Err(io::ErrorKind::InvalidInput.into());
                 }
-                let r = pending_connection::connect(
-                    &mut socket,
-                    addr,
-                    local_addr,
-                    self.init_settings,
-                    sid,
-                )
-                .await;
+                let r =
+                    pending_connection::connect(&socket, addr, local_addr, self.init_settings, sid)
+                        .await;
 
                 r?
             }
@@ -247,7 +254,7 @@ impl SrtSocketBuilder {
                     .unwrap_or_else(|| unspecified(remote_public.is_ipv4()));
                 let local_addr = SocketAddr::new(addr, self.local_port);
                 pending_connection::rendezvous(
-                    &mut socket,
+                    &socket,
                     local_addr,
                     remote_public,
                     self.init_settings,
@@ -256,33 +263,22 @@ impl SrtSocketBuilder {
             }
         };
 
-        Ok(create_bidrectional_srt(
-            socket.filter_map(|res| {
-                ready(res.map_err(|e| warn!("Error parsing packet: {}", e)).ok())
-            }),
-            conn,
-        ))
+        let socket = Arc::new(socket);
+        let stream = unfold(socket.clone(), |sock| async {
+            let pa = get_packet(&sock).await.unwrap();
+            Some((pa, sock))
+        })
+        .boxed();
+
+        Ok(create_bidrectional_srt(socket, stream, conn))
     }
 
     /// Connects to the remote socket. Resolves when it has been connected successfully.
-    pub async fn connect(self) -> Result<SrtSocket, io::Error> {
-        let is_ipv4 = match self.conn_type {
-            ConnInitMethod::Connect(addr, _) => addr.is_ipv4(),
-            ConnInitMethod::Rendezvous(addr) => addr.is_ipv4(),
-            ConnInitMethod::Listen => true,
-        };
-
-        let la = SocketAddr::new(
-            self.local_addr.unwrap_or_else(|| unspecified(is_ipv4)),
-            self.local_port,
-        );
-        Ok(self
-            .connect_with_sock(UdpFramed::new(
-                UdpSocket::bind(&la).await?,
-                PacketCodec::new(la.is_ipv6()),
-            ))
-            .await?)
-    }
+    // pub async fn connect(self) -> Result<SrtSocket, io::Error> {
+    //     Ok(self
+    //         .connect_with_sock(UdpFramed::new(PacketCodec::new(la.is_ipv6())))
+    //         .await?)
+    // }
 
     /// Build a multiplexed connection. This acts as a sort of server, allowing many connections to this one socket.
     ///

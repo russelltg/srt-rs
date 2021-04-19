@@ -48,13 +48,9 @@
 //!
 
 mod builder;
-mod channel;
-mod codec;
 mod multiplex;
 mod pending_connection;
 pub mod tokio;
-
-use codec::PacketCodec;
 
 pub use crate::builder::{ConnInitMethod, SrtSocketBuilder};
 pub use crate::multiplex::{multiplex, StreamerServer};

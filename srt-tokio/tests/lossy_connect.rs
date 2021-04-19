@@ -74,44 +74,44 @@ fn chan_seeded(
     )
 }
 
-#[tokio::test]
-async fn connect() {
-    let _ = pretty_env_logger::try_init();
+// #[tokio::test]
+// async fn connect() {
+//     let _ = pretty_env_logger::try_init();
 
-    let (send, recv) = chan("127.0.0.1:1111", "127.0.0.1:0");
+//     let (send, recv) = chan("127.0.0.1:1111", "127.0.0.1:0");
 
-    let a = SrtSocketBuilder::new_listen()
-        .local_port(1111)
-        .connect_with_sock(send);
-    let b = SrtSocketBuilder::new_connect("127.0.0.1:1111").connect_with_sock(recv);
+//     let a = SrtSocketBuilder::new_listen()
+//         .local_port(1111)
+//         .connect_with_sock(send);
+//     let b = SrtSocketBuilder::new_connect("127.0.0.1:1111").connect_with_sock(recv);
 
-    test(a, b).await
-}
+//     test(a, b).await
+// }
 
-#[tokio::test]
-async fn rendezvous() {
-    let _ = pretty_env_logger::try_init();
+// #[tokio::test]
+// async fn rendezvous() {
+//     let _ = pretty_env_logger::try_init();
 
-    async fn test_rendezvous(send: LossyConn<Packet>, recv: LossyConn<Packet>) {
-        let a = SrtSocketBuilder::new_rendezvous("127.0.0.1:1511")
-            .local_port(1512)
-            .connect_with_sock(send);
+//     async fn test_rendezvous(send: LossyConn<Packet>, recv: LossyConn<Packet>) {
+//         let a = SrtSocketBuilder::new_rendezvous("127.0.0.1:1511")
+//             .local_port(1512)
+//             .connect_with_sock(send);
 
-        let b = SrtSocketBuilder::new_rendezvous("127.0.0.1:1512")
-            .local_port(1511)
-            .connect_with_sock(recv);
+//         let b = SrtSocketBuilder::new_rendezvous("127.0.0.1:1512")
+//             .local_port(1511)
+//             .connect_with_sock(recv);
 
-        test(a, b).await
-    }
+//         test(a, b).await
+//     }
 
-    // test previously failing seeds, plus a random one.
-    let once_failed_seeds = [6238456632165205646, 11248772458713142060];
+//     // test previously failing seeds, plus a random one.
+//     let once_failed_seeds = [6238456632165205646, 11248772458713142060];
 
-    for seed in &once_failed_seeds {
-        let (send, recv) = chan_seeded("127.0.0.1:1512", "127.0.0.1:1511", *seed);
-        test_rendezvous(send, recv).await;
-    }
+//     for seed in &once_failed_seeds {
+//         let (send, recv) = chan_seeded("127.0.0.1:1512", "127.0.0.1:1511", *seed);
+//         test_rendezvous(send, recv).await;
+//     }
 
-    let (send, recv) = chan("127.0.0.1:1512", "127.0.0.1:1511");
-    test_rendezvous(send, recv).await;
-}
+//     let (send, recv) = chan("127.0.0.1:1512", "127.0.0.1:1511");
+//     test_rendezvous(send, recv).await;
+// }

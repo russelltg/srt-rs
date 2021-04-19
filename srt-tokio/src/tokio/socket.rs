@@ -20,7 +20,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::{future, ready, select};
 use log::{debug, error, info, trace};
-use tokio::time::sleep_until;
+use tokio::{net::UdpSocket, time::sleep_until};
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
@@ -60,14 +60,11 @@ enum Action {
 /// 1. Receive packets and send them to either the sender or the receiver through
 ///    a channel
 /// 2. Take outgoing packets and send them on the socket
-pub fn create_bidrectional_srt<T>(sock: T, conn: crate::Connection) -> SrtSocket
-where
-    T: Stream<Item = (Packet, SocketAddr)>
-        + Sink<(Packet, SocketAddr), Error = io::Error>
-        + Send
-        + Unpin
-        + 'static,
-{
+pub fn create_bidrectional_srt(
+    sock: Arc<UdpSocket>,
+    packets: impl Stream<Item = (Packet, SocketAddr)> + Unpin + Send + 'static,
+    conn: crate::Connection,
+) -> SrtSocket {
     let (mut release, recvr) = mpsc::channel(128);
     let (sender, new_data) = mpsc::channel(128);
     let (_drop_oneshot, close_oneshot) = oneshot::channel();
@@ -81,12 +78,15 @@ where
         let mut close_receiver = close_oneshot.fuse();
         let _close_sender = close_send; // exists for drop
         let mut new_data = new_data.fuse();
-        let mut sock = sock.fuse();
 
         let mut sender = Sender::new(conn_copy.settings.clone(), conn_copy.handshake);
         let mut receiver = Receiver::new(conn_copy.settings, Handshake::Connector);
 
         let mut flushed = true;
+
+        let mut serialize_buffer = Vec::new();
+        let mut packets = packets.fuse();
+
         loop {
             let (sender_timeout, close) = match sender.next_action(Instant::now()) {
                 SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {
@@ -98,8 +98,11 @@ where
                     (None, true)
                 }
             };
-            while let Some(out) = sender.pop_output() {
-                if let Err(e) = sock.send(out).await {
+            while let Some((packet, to)) = sender.pop_output() {
+                serialize_buffer.clear();
+                packet.serialize(&mut serialize_buffer);
+
+                if let Err(e) = sock.send_to(&serialize_buffer, to).await {
                     error!("Error while seding packet: {:?}", e); // TODO: real error handling
                 }
             }
@@ -123,7 +126,9 @@ where
                         break Some(t2);
                     }
                     ReceiverAlgorithmAction::SendControl(cp, addr) => {
-                        if let Err(e) = sock.send((Packet::Control(cp), addr)).await {
+                        serialize_buffer.clear();
+                        Packet::from(cp).serialize(&mut serialize_buffer);
+                        if let Err(e) = sock.send_to(&serialize_buffer, addr).await {
                             error!("Error while sending packet {:?}", e);
                         }
                     }
@@ -196,7 +201,7 @@ where
                 // one of the entities requested wakeup
                 _ = timeout_fut.fuse() => Action::Nothing,
                 // new packet received
-                res = sock.next() =>
+                res = packets.next() =>
                     Action::DelegatePacket(res),
                 // new packet queued
                 res = new_data.next() => {
