@@ -207,19 +207,7 @@ impl SrtSocketBuilder {
     }
 
     /// Connect with a custom socket. Not typically used, see [`connect`](SrtSocketBuilder::connect) instead.
-    pub async fn connect(self) -> Result<SrtSocket, io::Error> {
-        let is_ipv4 = match self.conn_type {
-            ConnInitMethod::Connect(addr, _) => addr.is_ipv4(),
-            ConnInitMethod::Rendezvous(addr) => addr.is_ipv4(),
-            ConnInitMethod::Listen => true,
-        };
-
-        let la = SocketAddr::new(
-            self.local_addr.unwrap_or_else(|| unspecified(is_ipv4)),
-            self.local_port,
-        );
-        let socket = UdpSocket::bind(&la).await?;
-
+    pub async fn connect_with_sock(self, socket: UdpSocket) -> Result<SrtSocket, io::Error> {
         let conn = match self.conn_type {
             ConnInitMethod::Listen => {
                 pending_connection::listen(&socket, self.init_settings).await?
@@ -267,11 +255,21 @@ impl SrtSocketBuilder {
     }
 
     /// Connects to the remote socket. Resolves when it has been connected successfully.
-    // pub async fn connect(self) -> Result<SrtSocket, io::Error> {
-    //     Ok(self
-    //         .connect_with_sock(UdpFramed::new(PacketCodec::new(la.is_ipv6())))
-    //         .await?)
-    // }
+    pub async fn connect(self) -> Result<SrtSocket, io::Error> {
+        let is_ipv4 = match self.conn_type {
+            ConnInitMethod::Connect(addr, _) => addr.is_ipv4(),
+            ConnInitMethod::Rendezvous(addr) => addr.is_ipv4(),
+            ConnInitMethod::Listen => true,
+        };
+
+        let la = SocketAddr::new(
+            self.local_addr.unwrap_or_else(|| unspecified(is_ipv4)),
+            self.local_port,
+        );
+        let socket = UdpSocket::bind(&la).await?;
+
+        Ok(self.connect_with_sock(socket).await?)
+    }
 
     /// Build a multiplexed connection. This acts as a sort of server, allowing many connections to this one socket.
     ///
