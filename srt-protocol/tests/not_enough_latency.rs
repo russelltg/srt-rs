@@ -14,6 +14,7 @@ use srt_protocol::{
         receiver::{Receiver, ReceiverAlgorithmAction},
         sender::{Sender, SenderAlgorithmAction},
     },
+    SeqNumber,
 };
 use std::{
     net::SocketAddr,
@@ -38,9 +39,9 @@ enum ListRecv {
 #[test]
 fn not_enough_latency() {
     let _ = pretty_env_logger::try_init();
-    let seed = 1234;
+    let seed = 1934;
 
-    const PACKETS: u32 = 1_000;
+    const PACKETS: u32 = 10_000;
 
     let start = Instant::now();
 
@@ -51,9 +52,9 @@ fn not_enough_latency() {
 
     let r_sid = rng.gen();
     let s_sid = rng.gen();
-    let seqno = rng.gen();
+    let seqno = SeqNumber::new_truncate(0); // rng.gen();
 
-    let packet_spacing = Duration::from_millis(1);
+    let packet_spacing = Duration::from_millis(10);
 
     let mut send = ConnSend::Conn(
         Connect::new(
@@ -81,9 +82,9 @@ fn not_enough_latency() {
 
     // 4% packet loss, 4 sec latency with 0.2 s variance
     let mut conn = lossy_conn::SyncLossyConn::new(
-        Duration::from_secs(2),
-        Duration::from_millis(200),
-        0.05,
+        Duration::from_millis(1500),
+        Duration::from_millis(0),
+        0.01,
         rng,
     );
 
@@ -101,6 +102,8 @@ fn not_enough_latency() {
 
                 if let ConnSend::Send(sendr) = &mut send {
                     packets_sent += 1;
+
+                    debug!("Sending {} at {:?}", packets_sent, current_time - start);
 
                     sendr.handle_data(
                         (current_time, Bytes::from(format!("{}", packets_sent))),
@@ -162,9 +165,7 @@ fn not_enough_latency() {
                         }
                         NotHandled(_) | NoAction => {}
                     },
-                    ConnSend::Send(sendr) => {
-                        sendr.handle_packet((pack, ([127, 0, 0, 1], 2222).into()), current_time)
-                    }
+                    ConnSend::Send(sendr) => sendr.handle_packet((pack, r_sa), current_time),
                 },
             }
         };
@@ -184,6 +185,7 @@ fn not_enough_latency() {
 
                             // they don't have to be sequential, but they should be increasing
                             let this_idx = str::from_utf8(&by[..]).unwrap().parse().unwrap();
+                            debug!("received {} at {:?}", this_idx, ts - start);
                             assert!(this_idx > last_index, "Sequence numbers aren't increasing");
                             if this_idx - last_index > 1 {
                                 debug!("{} messages dropped", this_idx - last_index - 1)
