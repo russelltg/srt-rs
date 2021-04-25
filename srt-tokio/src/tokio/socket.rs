@@ -1,24 +1,30 @@
-use crate::packet::ControlTypes::*;
+use crate::{
+    packet::ControlTypes::*,
+    packet::Packet,
+    protocol::{
+        handshake::Handshake,
+        receiver::{Receiver, ReceiverAlgorithmAction},
+        sender::{Sender, SenderAlgorithmAction},
+    },
+    ConnectionSettings,
+};
 
-use crate::protocol::handshake::Handshake;
-use crate::protocol::receiver::{Receiver, ReceiverAlgorithmAction};
-use crate::protocol::sender::{Sender, SenderAlgorithmAction};
-use crate::Packet::*;
-use crate::{ConnectionSettings, Packet};
-
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::task::{Context, Poll, Waker};
 use std::{
     io, mem,
+    net::SocketAddr,
+    pin::Pin,
     sync::{Arc, Mutex},
+    task::{Context, Poll, Waker},
     time::Instant,
 };
 
 use bytes::Bytes;
-use futures::channel::{mpsc, oneshot};
-use futures::prelude::*;
-use futures::{future, ready, select};
+use futures::{
+    channel::{mpsc, oneshot},
+    future,
+    prelude::*,
+    ready, select_biased,
+};
 use log::{debug, error, info, trace};
 use tokio::{net::UdpSocket, time::sleep_until};
 
@@ -197,12 +203,12 @@ pub fn create_bidrectional_srt(
                 }
             };
 
-            let action = select! {
-                // one of the entities requested wakeup
-                _ = timeout_fut.fuse() => Action::Nothing,
-                // new packet received
+            let action = select_biased! {
+                // new packet received--do this first to not exaust the receive buffer
                 res = packets.next() =>
                     Action::DelegatePacket(res),
+                // one of the entities requested wakeup
+                _ = timeout_fut.fuse() => Action::Nothing,
                 // new packet queued
                 res = new_data.next() => {
                     Action::Send(res)
@@ -218,8 +224,10 @@ pub fn create_bidrectional_srt(
                     match res {
                         Some((pack, from)) => {
                             match &pack {
-                                Data(_) => receiver.handle_packet(Instant::now(), (pack, from)),
-                                Control(cp) => match &cp.control_type {
+                                Packet::Data(_) => {
+                                    receiver.handle_packet(Instant::now(), (pack, from))
+                                }
+                                Packet::Control(cp) => match &cp.control_type {
                                     // sender-responsble packets
                                     Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
                                         sender.handle_packet((pack, from), Instant::now());

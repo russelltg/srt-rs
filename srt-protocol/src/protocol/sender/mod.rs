@@ -223,12 +223,6 @@ impl Sender {
         if let Some(p) = self.loss_list.pop_front() {
             debug!("Sending packet in loss list, seq={:?}", p.seq_number);
             self.send_data(p, now);
-
-            // TODO: returning here will result in sending all the packets in the loss
-            //       list before progressing further through the sender algorithm. This
-            //       appears to be inconsistent with the UDT spec. Is it consistent
-            //       with the reference implementation?
-            return WaitForData;
         }
         // TODO: what is messaging mode?
         // TODO: I honestly don't know what this means
@@ -252,7 +246,8 @@ impl Sender {
         //        b. Pack a new data packet and send it out.
         // TODO: account for looping here <--- WAT?
         else if self.lr_acked_packet
-            < self.transmit_buffer.next_sequence_number - self.congestion_control.window_size()
+            < self.transmit_buffer.next_sequence_number_to_send()
+                - self.congestion_control.window_size()
         {
             // flow window exceeded, wait for ACK
             trace!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}",
