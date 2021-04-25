@@ -5,7 +5,7 @@ use log::{debug, warn};
 use std::{
     io::{self, Cursor, ErrorKind},
     net::{IpAddr, SocketAddr},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use srt_protocol::{
@@ -84,7 +84,7 @@ pub async fn listen(
     loop {
         let packet = get_packet(sock).await?;
         debug!("got packet {:?}", packet);
-        match listen.handle_packet(packet, &mut a) {
+        match listen.handle_packet(packet, Instant::now(), &mut a) {
             ConnectionResult::SendPacket((packet, sa)) => {
                 ser_buffer.clear();
                 packet.serialize(&mut ser_buffer);
@@ -122,7 +122,7 @@ pub async fn rendezvous(
     loop {
         let result = select! {
             now = tick_interval.tick().fuse() => rendezvous.handle_tick(now.into()),
-            packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?, ),
+            packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?, Instant::now()),
         };
 
         // trace!("Ticking {:?} {:?}", sockid, rendezvous);

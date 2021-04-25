@@ -7,6 +7,7 @@ use std::{
     io::{self, Cursor},
     net::SocketAddr,
     sync::Arc,
+    time::Instant,
 };
 
 use bytes::BytesMut;
@@ -89,7 +90,7 @@ impl<T: StreamAcceptor> MultiplexState<T> {
             .or_insert_with(|| Listen::new(init_settings.copy_randomize()));
 
         // already started connection?
-        let conn = match listen.handle_packet((pack, from), &mut self.acceptor) {
+        let conn = match listen.handle_packet((pack, from), Instant::now(), &mut self.acceptor) {
             ConnectionResult::SendPacket((packet, addr)) => {
                 self.send_packet(&packet, addr).await?;
                 return Ok(None);
