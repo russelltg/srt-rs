@@ -16,6 +16,7 @@ enum Direction {
     R2S,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Conn<T> {
     Pending(T),
     Done(Connection),
