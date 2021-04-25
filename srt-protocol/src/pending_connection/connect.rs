@@ -82,11 +82,12 @@ impl Connect {
         from: SocketAddr,
         timestamp: TimeStamp,
         info: HandshakeControlInfo,
+        now: Instant,
     ) -> ConnectionResult {
         match (info.shake_type, &info.info, from) {
             (ShakeType::Induction, HandshakeVsInfo::V5 { .. }, from) if from == self.remote => {
                 let (hsv5, cm) =
-                    start_hsv5_initiation(self.init_settings.clone(), self.streamid.clone());
+                    start_hsv5_initiation(self.init_settings.clone(), self.streamid.clone(), now);
 
                 // send back a packet with the same syn cookie
                 let packet = Packet::Control(ControlPacket {
@@ -116,12 +117,13 @@ impl Connect {
     fn wait_for_conclusion(
         &mut self,
         from: SocketAddr,
+        now: Instant,
         info: HandshakeControlInfo,
         initiator: StartedInitiator,
     ) -> ConnectionResult {
         match (info.shake_type, info.info.version(), from) {
             (ShakeType::Conclusion, 5, from) if from == self.remote => {
-                let settings = match initiator.finish_hsv5_initiation(&info, from) {
+                let settings = match initiator.finish_hsv5_initiation(&info, from, now) {
                     Ok(s) => s,
                     Err(rr) => return NotHandled(rr),
                 };
@@ -146,18 +148,18 @@ impl Connect {
         }
     }
 
-    pub fn handle_packet(&mut self, next: (Packet, SocketAddr)) -> ConnectionResult {
+    pub fn handle_packet(&mut self, next: (Packet, SocketAddr), now: Instant) -> ConnectionResult {
         let (packet, from) = next;
         match (self.state.clone(), packet) {
             (InductionResponseWait(_), Packet::Control(control)) => match control.control_type {
                 ControlTypes::Handshake(shake) => {
-                    self.wait_for_induction(from, control.timestamp, shake)
+                    self.wait_for_induction(from, control.timestamp, shake, now)
                 }
                 control_type => NotHandled(HandshakeExpected(control_type)),
             },
             (ConclusionResponseWait(_, cm), Packet::Control(control)) => match control.control_type
             {
-                ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, shake, cm),
+                ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, now, shake, cm),
                 control_type => NotHandled(HandshakeExpected(control_type)),
             },
             (_, Packet::Data(data)) => NotHandled(ControlExpected(data)),
@@ -210,7 +212,7 @@ mod test {
             }),
         });
 
-        let resp = c.handle_packet((first, test_remote()));
+        let resp = c.handle_packet((first, test_remote()), Instant::now());
         assert!(
             matches!(
                 resp,
@@ -243,7 +245,7 @@ mod test {
             }),
         });
 
-        let resp = c.handle_packet((rejection, test_remote()));
+        let resp = c.handle_packet((rejection, test_remote()), Instant::now());
         assert!(
             matches!(
                 resp,

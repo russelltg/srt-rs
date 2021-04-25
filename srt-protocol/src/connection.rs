@@ -24,7 +24,11 @@ pub struct ConnectionSettings {
     pub local_sockid: SocketId,
 
     /// The time that this socket started at, used to develop timestamps
+    /// This is precisely the time that the Initiator sends the first packet (or an approximation if not the initiator, assuming symmetrical latency)
     pub socket_start_time: Instant,
+
+    /// the initial RTT, to be used with TSBPD
+    pub rtt: Duration,
 
     /// The first sequence number that will be sent/received
     pub init_send_seq_num: SeqNumber,
