@@ -80,8 +80,12 @@ fn not_enough_latency() {
     }));
 
     // 4% packet loss, 4 sec latency with 0.2 s variance
-    let mut conn =
-        lossy_conn::SyncLossyConn::new(Duration::from_secs(0), Duration::from_millis(0), 0.00, rng);
+    let mut conn = lossy_conn::SyncLossyConn::new(
+        Duration::from_secs(2),
+        Duration::from_millis(200),
+        0.05,
+        rng,
+    );
 
     let mut packets_sent = 0;
     let mut next_packet_send_time = Some(start);
@@ -189,10 +193,10 @@ fn not_enough_latency() {
                             // make sure the timings are still decent
                             let diff = current_time - ts;
                             assert!(
-                                diff > Duration::from_millis(4900)
-                                    && diff < Duration::from_millis(6000),
-                                "Time difference {:?} not within 4.9 sec and 6 sec",
-                                current_time - ts,
+                                diff > Duration::from_millis(1900)
+                                    && diff < Duration::from_millis(3000),
+                                "Time difference {:?} not within 1.9 sec and 3 sec",
+                                diff
                             );
                         }
                         ReceiverAlgorithmAction::Close => break None,
