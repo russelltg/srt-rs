@@ -37,7 +37,7 @@ where
     loop {
         let result = select! {
             now = tick_interval.tick().fuse() => connect.handle_tick(now.into()),
-            packet = get_packet(sock).fuse() => connect.handle_packet(packet?),
+            packet = get_packet(sock).fuse() => connect.handle_packet(packet?, Instant::now()),
         };
         debug!("sending packet");
 
