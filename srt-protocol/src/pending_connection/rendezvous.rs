@@ -215,6 +215,7 @@ impl Rendezvous {
         &mut self,
         info: &HandshakeControlInfo,
         timestamp: TimeStamp,
+        now: Instant,
     ) -> ConnectionResult {
         assert!(matches!(self.state, Waving));
 
@@ -249,6 +250,7 @@ impl Rendezvous {
                             &mut self.init_settings,
                             info,
                             self.remote_public,
+                            now,
                             &mut AllowAllStreamAcceptor::default(),
                         ) {
                             GenHsv5Result::Accept(h, c) => (h, c),
@@ -316,6 +318,7 @@ impl Rendezvous {
         &mut self,
         info: &HandshakeControlInfo,
         timestamp: TimeStamp,
+        now: Instant,
     ) -> ConnectionResult {
         match info.shake_type {
             ShakeType::Conclusion => {
@@ -329,6 +332,7 @@ impl Rendezvous {
                     &mut self.init_settings,
                     info,
                     self.remote_public,
+                    now,
                     &mut AllowAllStreamAcceptor::default(),
                 ) {
                     GenHsv5Result::Accept(h, c) => (h, c),
@@ -446,18 +450,24 @@ impl Rendezvous {
         )
     }
 
-    pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr)) -> ConnectionResult {
+    pub fn handle_packet(
+        &mut self,
+        (packet, from): (Packet, SocketAddr),
+        now: Instant,
+    ) -> ConnectionResult {
         if from != self.remote_public {
             return NotHandled(UnexpectedHost(self.remote_public, from));
         }
 
         let hs = get_handshake(&packet);
         match (self.state.clone(), hs) {
-            (Waving, Ok(hs)) => self.handle_waving(hs, packet.timestamp()),
+            (Waving, Ok(hs)) => self.handle_waving(hs, packet.timestamp(), now),
             (AttentionInitiator(hsv5, initiator), Ok(hs)) => {
                 self.handle_attention_initiator(hs, hsv5, initiator)
             }
-            (AttentionResponder, Ok(hs)) => self.handle_attention_responder(hs, packet.timestamp()),
+            (AttentionResponder, Ok(hs)) => {
+                self.handle_attention_responder(hs, packet.timestamp(), now)
+            }
             (InitiatedInitiator(initiator), Ok(hs)) => {
                 self.handle_initiated_initiator(hs, initiator)
             }

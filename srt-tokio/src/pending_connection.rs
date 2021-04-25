@@ -4,7 +4,7 @@ use log::{debug, warn};
 use std::{
     io,
     net::{IpAddr, SocketAddr},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use srt_protocol::{
@@ -83,7 +83,7 @@ where
     loop {
         let packet = get_packet(sock).await?;
         debug!("got packet {:?}", packet);
-        match listen.handle_packet(packet, &mut a) {
+        match listen.handle_packet(packet, Instant::now(), &mut a) {
             ConnectionResult::SendPacket(packet) => sock.send(packet).await?,
             ConnectionResult::NotHandled(e) => {
                 warn!("{:?}", e);
@@ -118,7 +118,7 @@ where
     loop {
         let result = select! {
             now = tick_interval.tick().fuse() => rendezvous.handle_tick(now.into()),
-            packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?, ),
+            packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?, Instant::now()),
         };
 
         // trace!("Ticking {:?} {:?}", sockid, rendezvous);
