@@ -41,7 +41,7 @@ fn not_enough_latency() {
     let _ = pretty_env_logger::try_init();
     let seed = 1934;
 
-    const PACKETS: u32 = 10_000;
+    const PACKETS: u32 = 1_000;
 
     let start = Instant::now();
 
