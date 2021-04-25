@@ -72,11 +72,8 @@ pub fn gen_hsv5_response(
         (Some(_), Some(_)) => unimplemented!("Expected kmreq"),
         (Some(_), None) | (None, Some(_)) => unimplemented!("Crypto mismatch"),
     };
-    let outgoing_ext_km = if let Some(cm) = &cm {
-        Some(cm.generate_km())
-    } else {
-        None
-    };
+    let outgoing_ext_km = cm.as_ref().map(|cm| cm.generate_km());
+
     let sid = if let HandshakeVsInfo::V5(info) = &with_hsv5.info {
         info.sid.clone()
     } else {

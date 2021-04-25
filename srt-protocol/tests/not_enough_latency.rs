@@ -15,20 +15,21 @@ use srt_protocol::{
         sender::{Sender, SenderAlgorithmAction},
     },
 };
-use std::{convert::identity, str};
-/// A test testing if a connection is setup with not enough latency, ie rtt > 3ish*latency
 use std::{
     net::SocketAddr,
+    str,
     time::{Duration, Instant},
 };
 
 mod lossy_conn;
 
+#[allow(clippy::large_enum_variant)]
 enum ConnSend {
     Conn(Connect, Instant),
     Send(Sender),
 }
 
+#[allow(clippy::large_enum_variant)]
 enum ListRecv {
     List(Listen),
     Recv(Receiver),
@@ -114,9 +115,11 @@ fn not_enough_latency() {
                 Action::Wait(when) => break when,
                 Action::S2R(pack) => match &mut recv {
                     ListRecv::List(listen) => {
-                        match listen
-                            .handle_packet((pack, s_sa), &mut AllowAllStreamAcceptor::default())
-                        {
+                        match listen.handle_packet(
+                            (pack, s_sa),
+                            Instant::now(),
+                            &mut AllowAllStreamAcceptor::default(),
+                        ) {
                             Reject(_, _) => panic!("Rejected?"),
                             SendPacket((pack, _)) => conn.push_r2s(pack, current_time),
                             Connected(hs, connection) => {
@@ -249,7 +252,7 @@ fn not_enough_latency() {
         ]
         .iter()
         .copied()
-        .filter_map(identity)
+        .flatten()
         .min();
 
         if let Some(nc) = new_current {

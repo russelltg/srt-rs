@@ -26,6 +26,7 @@ anyhow = "1"
 pretty_env_logger = { version = "0.4", default-features = false }
 rand = "0.8"
 rand_distr = "0.4"
+tokio-util = { version = "0.6", features = ["net", "codec"] }
 
 [dev-dependencies.tokio]
 version = "1"

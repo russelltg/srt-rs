@@ -13,7 +13,6 @@ use srt_protocol::{
     ConnectionSettings,
 };
 use std::{
-    convert::identity,
     str,
     time::{Duration, Instant},
 };
@@ -170,7 +169,7 @@ fn do_lossy_test(seed: u64, count: usize) {
         ]
         .iter()
         .copied()
-        .filter_map(identity)
+        .flatten()
         .min()
         .unwrap();
 
