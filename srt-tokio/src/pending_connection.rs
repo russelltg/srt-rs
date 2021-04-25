@@ -151,7 +151,7 @@ pub async fn rendezvous(
 }
 
 pub async fn get_packet(sock: &UdpSocket) -> Result<(Packet, SocketAddr), io::Error> {
-    let mut deser_buffer = BytesMut::with_capacity(1024);
+    let mut deser_buffer = BytesMut::with_capacity(1024 * 1024);
     loop {
         sock.readable().await?;
         deser_buffer.clear();

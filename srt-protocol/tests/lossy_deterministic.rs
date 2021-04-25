@@ -1,41 +1,24 @@
 // lossy tests based on protocol to be fully deterministic
 
 use bytes::Bytes;
-use log::{debug, trace};
+use log::trace;
+use lossy_conn::SyncLossyConn;
 use rand::{prelude::StdRng, Rng, SeedableRng};
-use rand_distr::{Distribution, Normal};
 use srt_protocol::{
     protocol::{
         handshake::Handshake,
         receiver::{Receiver, ReceiverAlgorithmAction},
         sender::{Sender, SenderAlgorithmAction},
     },
-    ConnectionSettings, Packet,
+    ConnectionSettings,
 };
 use std::{
-    collections::BinaryHeap,
     convert::identity,
     str,
     time::{Duration, Instant},
 };
 
-#[derive(Eq, PartialEq)]
-struct HeapEntry {
-    packet: Packet,
-    release_at: Instant,
-}
-
-impl PartialOrd for HeapEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.release_at.cmp(&other.release_at).reverse()) // reverse to make it a min-heap
-    }
-}
-
-impl Ord for HeapEntry {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap()
-    }
-}
+mod lossy_conn;
 
 #[test]
 fn lossy_deterministic() {
@@ -97,18 +80,15 @@ fn do_lossy_test(seed: u64, count: usize) {
 
     const PACKET_SPACING: Duration = Duration::from_millis(10);
     const DROP_RATE: f64 = 0.06;
-    const DELAY_MEAN_S: f64 = 20e-3;
-    const DELAY_STDEV_S: f64 = 4e-3;
+    let delay_mean = Duration::from_secs_f64(20e-3);
+    let delay_stdev = Duration::from_secs_f64(4e-3);
 
-    let delay_distirbution = Normal::new(DELAY_MEAN_S, DELAY_STDEV_S).unwrap();
+    let mut conn = SyncLossyConn::new(delay_mean, delay_stdev, DROP_RATE, rng);
 
     let mut current_time = start;
 
     let mut next_send_time = Some(current_time);
     let mut next_packet_id = 0;
-
-    let mut s2r = BinaryHeap::new();
-    let mut r2s = BinaryHeap::new();
 
     let mut dropped = 0;
     let mut next_data = 0;
@@ -129,19 +109,19 @@ fn do_lossy_test(seed: u64, count: usize) {
             }
         }
 
-        if matches!(s2r.peek(), Some(&HeapEntry { release_at, .. }) if release_at == current_time) {
-            let pack = s2r.pop().unwrap().packet;
-
-            trace!("s->r {:?}", pack);
-            recvr.handle_packet(current_time, (pack, ([127, 0, 0, 1], 2223).into()));
-        }
-
-        if matches!(r2s.peek(), Some(&HeapEntry{ release_at, ..}) if release_at == current_time) {
-            let pack = r2s.pop().unwrap().packet;
-
-            trace!("r->s {:?}", pack);
-            sendr.handle_packet((pack, ([127, 0, 0, 1], 2222).into()), current_time)
-        }
+        let conn_next_time = loop {
+            match conn.action(current_time) {
+                lossy_conn::Action::Wait(until) => break until,
+                lossy_conn::Action::S2R(pack) => {
+                    trace!("s->r {:?}", pack);
+                    recvr.handle_packet(current_time, (pack, ([127, 0, 0, 1], 2223).into()));
+                }
+                lossy_conn::Action::R2S(pack) => {
+                    trace!("r->s {:?}", pack);
+                    sendr.handle_packet((pack, ([127, 0, 0, 1], 2222).into()), current_time)
+                }
+            }
+        };
 
         let sender_next_time = match sendr.next_action(current_time) {
             SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => None,
@@ -149,32 +129,14 @@ fn do_lossy_test(seed: u64, count: usize) {
             SenderAlgorithmAction::Close => None, // xxx
         };
         while let Some((packet, _)) = sendr.pop_output() {
-            if rng.gen::<f64>() < DROP_RATE {
-                debug!("Dropping {:?}", packet);
-            } else {
-                s2r.push(HeapEntry {
-                    packet,
-                    release_at: current_time
-                        + Duration::from_secs_f64(delay_distirbution.sample(&mut rng).abs()),
-                })
-            }
+            conn.push_s2r(packet, current_time);
         }
 
         let receiver_next_time = loop {
             match recvr.next_algorithm_action(current_time) {
                 ReceiverAlgorithmAction::TimeBoundedReceive(time) => break Some(time),
                 ReceiverAlgorithmAction::SendControl(cp, _) => {
-                    if rng.gen::<f64>() < DROP_RATE {
-                        debug!("Dropping {:?}", cp);
-                    } else {
-                        r2s.push(HeapEntry {
-                            packet: Packet::Control(cp),
-                            release_at: current_time
-                                + Duration::from_secs_f64(
-                                    delay_distirbution.sample(&mut rng).abs(),
-                                ),
-                        })
-                    }
+                    conn.push_r2s(cp.into(), current_time);
                 }
                 ReceiverAlgorithmAction::OutputData((ts, payload)) => {
                     let diff_ms = (current_time - ts).as_millis();
@@ -199,16 +161,12 @@ fn do_lossy_test(seed: u64, count: usize) {
             break;
         }
 
-        let s2r_next_time = s2r.peek().map(|he| he.release_at);
-        let r2s_next_time = r2s.peek().map(|he| he.release_at);
-
         // use the next smallest one
         let new_current = [
             next_send_time,
             sender_next_time,
             receiver_next_time,
-            s2r_next_time,
-            r2s_next_time,
+            conn_next_time,
         ]
         .iter()
         .copied()
@@ -225,11 +183,8 @@ fn do_lossy_test(seed: u64, count: usize) {
         if receiver_next_time == Some(new_current) {
             trace!("Waking up from receiver")
         }
-        if s2r_next_time == Some(new_current) {
-            trace!("Waking up for s2r")
-        }
-        if r2s_next_time == Some(new_current) {
-            trace!("Waking up for r2s")
+        if conn.next_release_time() == Some(new_current) {
+            trace!("Waking up for connection")
         }
 
         let delta = new_current - current_time;

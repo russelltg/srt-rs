@@ -216,10 +216,7 @@ impl SrtSocketBuilder {
                 let local_addr = self
                     .local_addr
                     .unwrap_or_else(|| unspecified(addr.is_ipv4()));
-                if matches!(
-                    (addr.ip(), local_addr),
-                    (IpAddr::V4(_), IpAddr::V6(_)) | (IpAddr::V6(_), IpAddr::V4(_))
-                ) {
+                if addr.ip().is_ipv4() != local_addr.is_ipv4() {
                     error!("Mismatched address and local address ip family");
                     return Err(io::ErrorKind::InvalidInput.into());
                 }

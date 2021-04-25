@@ -1,92 +1,264 @@
-// use bytes::Bytes;
-// use futures::{stream::iter, SinkExt, StreamExt};
-// use log::{debug, info};
-// use std::str;
-// /// A test testing if a connection is setup with not enough latency, ie rtt > 3ish*latency
-// use std::time::{Duration, Instant};
+use bytes::Bytes;
+use log::{debug, info};
+use lossy_conn::Action;
+use rand::{prelude::StdRng, Rng, SeedableRng};
+use srt_protocol::{
+    accesscontrol::AllowAllStreamAcceptor,
+    pending_connection::{
+        connect::Connect,
+        listen::Listen,
+        ConnInitSettings,
+        ConnectionResult::{Connected, NoAction, NotHandled, Reject, SendPacket},
+    },
+    protocol::{
+        receiver::{Receiver, ReceiverAlgorithmAction},
+        sender::{Sender, SenderAlgorithmAction},
+    },
+};
+use std::{convert::identity, str};
+/// A test testing if a connection is setup with not enough latency, ie rtt > 3ish*latency
+use std::{
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
-// use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
+mod lossy_conn;
 
-// mod lossy_conn;
-// use crate::lossy_conn::LossyConn;
+enum ConnSend {
+    Conn(Connect, Instant),
+    Send(Sender),
+}
 
-// #[tokio::test]
-// async fn not_enough_latency() {
-//     let _ = pretty_env_logger::try_init();
+enum ListRecv {
+    List(Listen),
+    Recv(Receiver),
+}
 
-//     const INIT_SEQ_NUM: u32 = 12314;
-//     const PACKETS: u32 = 1_000;
+#[test]
+fn not_enough_latency() {
+    let _ = pretty_env_logger::try_init();
+    let seed = 1234;
 
-//     // a stream of ascending stringified integers
-//     // 1 ms between packets
-//     let counting_stream = tokio_stream::StreamExt::throttle(
-//         iter(INIT_SEQ_NUM..INIT_SEQ_NUM + PACKETS).map(|i| Bytes::from(i.to_string())),
-//         Duration::from_millis(1),
-//     )
-//     .boxed();
+    const PACKETS: u32 = 1_000;
 
-//     // 4% packet loss, 4 sec latency with 0.2 s variance
-//     let (send, recv) = LossyConn::channel(
-//         0.04,
-//         Duration::from_secs(4),
-//         Duration::from_millis(200),
-//         "127.0.0.1:1000",
-//         "127.0.0.1:1",
-//     );
+    let start = Instant::now();
 
-//     let sender = SrtSocketBuilder::new(ConnInitMethod::Listen)
-//         .local_port(1000)
-//         .connect_with_sock(send);
-//     let recvr = SrtSocketBuilder::new_connect("127.0.0.1:1000").connect_with_sock(recv);
+    let mut rng = StdRng::seed_from_u64(seed);
 
-//     tokio::spawn(async move {
-//         let mut sender = sender.await.unwrap();
-//         let mut stream = counting_stream.map(|b| Ok((Instant::now(), b)));
-//         sender.send_all(&mut stream).await.unwrap();
-//         sender.close().await.unwrap();
+    let r_sa = ([127, 0, 0, 1], 2222).into();
+    let s_sa: SocketAddr = ([127, 0, 0, 1], 2224).into();
 
-//         info!("Sender exiting");
-//     });
+    let r_sid = rng.gen();
+    let s_sid = rng.gen();
+    let seqno = rng.gen();
 
-//     tokio::spawn(async move {
-//         let mut recvr = recvr.await.unwrap();
-//         let mut last_seq_num = INIT_SEQ_NUM - 1;
+    let packet_spacing = Duration::from_millis(1);
 
-//         let mut total = 0;
+    let mut send = ConnSend::Conn(
+        Connect::new(
+            r_sa,
+            s_sa.ip(),
+            ConnInitSettings {
+                starting_send_seqnum: seqno,
+                local_sockid: s_sid,
+                crypto: None,
+                send_latency: Duration::from_millis(2000),
+                recv_latency: Duration::from_millis(20),
+            },
+            None,
+        ),
+        start,
+    );
 
-//         while let Some(by) = recvr.next().await {
-//             let (ts, by) = by.unwrap();
+    let mut recv = ListRecv::List(Listen::new(ConnInitSettings {
+        starting_send_seqnum: seqno,
+        local_sockid: r_sid,
+        crypto: None,
+        send_latency: Duration::from_millis(20),
+        recv_latency: Duration::from_millis(20),
+    }));
 
-//             total += 1;
+    // 4% packet loss, 4 sec latency with 0.2 s variance
+    let mut conn =
+        lossy_conn::SyncLossyConn::new(Duration::from_secs(0), Duration::from_millis(0), 0.00, rng);
 
-//             // they don't have to be sequential, but they should be increasing
-//             let this_seq_num = str::from_utf8(&by[..]).unwrap().parse().unwrap();
-//             assert!(
-//                 this_seq_num > last_seq_num,
-//                 "Sequence numbers aren't increasing"
-//             );
-//             if this_seq_num - last_seq_num > 1 {
-//                 debug!("{} messages dropped", this_seq_num - last_seq_num - 1)
-//             }
-//             last_seq_num = this_seq_num;
+    let mut packets_sent = 0;
+    let mut next_packet_send_time = Some(start);
 
-//             // make sure the timings are still decent
-//             let diff_ms = ts.elapsed().as_millis();
-//             assert!(
-//                 diff_ms > 4900 && diff_ms < 6000,
-//                 "Time difference {}ms not within 4.7 sec and 6 sec",
-//                 diff_ms,
-//             );
-//         }
+    let mut current_time = start;
+    let mut total_recvd = 0;
+    let mut last_index = 0;
 
-//         // make sure we got 3/4 of the packets
-//         assert!(
-//             total > PACKETS * 3 / 4,
-//             "total={}, expected={}",
-//             total,
-//             PACKETS * 3 / 4
-//         );
+    loop {
+        if let Some(rel_time) = &mut next_packet_send_time {
+            if *rel_time <= current_time {
+                *rel_time += packet_spacing;
 
-//         info!("Reciever exiting");
-//     });
-// }
+                if let ConnSend::Send(sendr) = &mut send {
+                    packets_sent += 1;
+
+                    sendr.handle_data(
+                        (current_time, Bytes::from(format!("{}", packets_sent))),
+                        current_time,
+                    );
+                    if packets_sent == PACKETS {
+                        sendr.handle_close();
+                        next_packet_send_time = None;
+                    }
+                }
+            }
+        }
+
+        let conn_next_time = loop {
+            match conn.action(current_time) {
+                Action::Wait(when) => break when,
+                Action::S2R(pack) => match &mut recv {
+                    ListRecv::List(listen) => {
+                        match listen
+                            .handle_packet((pack, s_sa), &mut AllowAllStreamAcceptor::default())
+                        {
+                            Reject(_, _) => panic!("Rejected?"),
+                            SendPacket((pack, _)) => conn.push_r2s(pack, current_time),
+                            Connected(hs, connection) => {
+                                if let Some((pack, _)) = hs {
+                                    conn.push_r2s(pack, current_time);
+                                }
+
+                                recv = ListRecv::Recv(Receiver::new(
+                                    connection.settings,
+                                    connection.handshake,
+                                ));
+                                info!("Listener connected");
+                            }
+                            NoAction | NotHandled(_) => {}
+                        }
+                    }
+
+                    ListRecv::Recv(recv) => {
+                        recv.handle_packet(current_time, (pack, s_sa));
+                    }
+                },
+                Action::R2S(pack) => match &mut send {
+                    ConnSend::Conn(connect, _) => match connect.handle_packet((pack, r_sa)) {
+                        Reject(_, _) => panic!("Rejected?"),
+                        SendPacket((pack, _)) => conn.push_s2r(pack, current_time),
+                        Connected(hs, connection) => {
+                            if let Some((pack, _)) = hs {
+                                conn.push_s2r(pack, current_time);
+                            }
+
+                            send = ConnSend::Send(Sender::new(
+                                connection.settings,
+                                connection.handshake,
+                            ));
+                            info!("Sender connected");
+                        }
+                        NotHandled(_) | NoAction => {}
+                    },
+                    ConnSend::Send(sendr) => {
+                        sendr.handle_packet((pack, ([127, 0, 0, 1], 2222).into()), current_time)
+                    }
+                },
+            }
+        };
+
+        // handle recv
+        let recv_wakeup_time = match &mut recv {
+            ListRecv::List(_) => None, // listener needs no tick
+            ListRecv::Recv(recv) => {
+                loop {
+                    match recv.next_algorithm_action(current_time) {
+                        ReceiverAlgorithmAction::TimeBoundedReceive(wakeup) => break Some(wakeup),
+                        ReceiverAlgorithmAction::SendControl(cp, _) => {
+                            conn.push_r2s(cp.into(), current_time)
+                        }
+                        ReceiverAlgorithmAction::OutputData((ts, by)) => {
+                            total_recvd += 1;
+
+                            // they don't have to be sequential, but they should be increasing
+                            let this_idx = str::from_utf8(&by[..]).unwrap().parse().unwrap();
+                            assert!(this_idx > last_index, "Sequence numbers aren't increasing");
+                            if this_idx - last_index > 1 {
+                                debug!("{} messages dropped", this_idx - last_index - 1)
+                            }
+                            last_index = this_idx;
+
+                            // make sure the timings are still decent
+                            let diff = current_time - ts;
+                            assert!(
+                                diff > Duration::from_millis(4900)
+                                    && diff < Duration::from_millis(6000),
+                                "Time difference {:?} not within 4.9 sec and 6 sec",
+                                current_time - ts,
+                            );
+                        }
+                        ReceiverAlgorithmAction::Close => break None,
+                    }
+                }
+            }
+        };
+
+        // handle send
+        let send_wakeup_time = loop {
+            match &mut send {
+                ConnSend::Conn(connect, next_time) => {
+                    if current_time >= *next_time {
+                        *next_time += Duration::from_millis(100);
+                        match connect.handle_tick(current_time) {
+                            Reject(_, _) => panic!("Rejected?"),
+                            SendPacket((pack, _)) => conn.push_s2r(pack, current_time),
+                            Connected(hs, connection) => {
+                                if let Some((pack, _)) = hs {
+                                    conn.push_s2r(pack, current_time);
+                                }
+
+                                send = ConnSend::Send(Sender::new(
+                                    connection.settings,
+                                    connection.handshake,
+                                ));
+                                info!("Sender connected");
+                                continue;
+                            }
+                            NotHandled(_) | NoAction => {}
+                        }
+                    }
+                    break Some(*next_time);
+                }
+                ConnSend::Send(sendr) => {
+                    let next_time = match sendr.next_action(current_time) {
+                        SenderAlgorithmAction::WaitUntilAck => None,
+                        SenderAlgorithmAction::WaitForData => None,
+                        SenderAlgorithmAction::WaitUntil(until) => Some(until),
+                        SenderAlgorithmAction::Close => None, // xxx
+                    };
+
+                    while let Some((pack, _)) = sendr.pop_output() {
+                        conn.push_s2r(pack, current_time);
+                    }
+
+                    break next_time;
+                }
+            }
+        };
+
+        let new_current = [
+            next_packet_send_time,
+            recv_wakeup_time,
+            send_wakeup_time,
+            conn_next_time,
+        ]
+        .iter()
+        .copied()
+        .filter_map(identity)
+        .min();
+
+        if let Some(nc) = new_current {
+            assert_ne!(nc, current_time);
+            current_time = nc
+        } else {
+            break;
+        }
+    }
+
+    assert!(total_recvd > PACKETS / 3 * 2);
+}
