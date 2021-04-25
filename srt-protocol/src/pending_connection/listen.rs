@@ -23,6 +23,7 @@ pub struct ConclusionWaitState {
     from: (SocketAddr, SocketId),
     cookie: i32,
     induction_response: Packet,
+    induction_time: Instant,
 }
 
 #[derive(Clone)]
@@ -44,6 +45,7 @@ impl Listen {
         from: SocketAddr,
         timestamp: TimeStamp,
         shake: HandshakeControlInfo,
+        now: Instant,
     ) -> ConnectionResult {
         match shake.shake_type {
             ShakeType::Induction => {
@@ -77,6 +79,7 @@ impl Listen {
                     from: (from, shake.socket_id),
                     cookie,
                     induction_response: save_induction_response,
+                    induction_time: now,
                 });
                 SendPacket((induction_response, from))
             }
@@ -135,14 +138,20 @@ impl Listen {
             // first induction received, wait for response (with cookie)
             (ShakeType::Conclusion, VERSION_5, syn_cookie) if syn_cookie == state.cookie => {
                 // construct a packet to send back
-                let (hsv5, settings) =
-                    match gen_hsv5_response(&mut self.init_settings, &shake, from, now, acceptor) {
-                        GenHsv5Result::Accept(h, c) => (h, c),
-                        GenHsv5Result::NotHandled(e) => return NotHandled(e),
-                        GenHsv5Result::Reject(r) => {
-                            return self.make_rejection(&shake, from, timestamp, r);
-                        }
-                    };
+                let (hsv5, settings) = match gen_hsv5_response(
+                    &mut self.init_settings,
+                    &shake,
+                    from,
+                    state.induction_time,
+                    now,
+                    acceptor,
+                ) {
+                    GenHsv5Result::Accept(h, c) => (h, c),
+                    GenHsv5Result::NotHandled(e) => return NotHandled(e),
+                    GenHsv5Result::Reject(r) => {
+                        return self.make_rejection(&shake, from, timestamp, r);
+                    }
+                };
 
                 let resp_handshake = ControlPacket {
                     timestamp,
@@ -189,7 +198,7 @@ impl Listen {
     ) -> ConnectionResult {
         match (self.state.clone(), control.control_type) {
             (InductionWait, ControlTypes::Handshake(shake)) => {
-                self.wait_for_induction(from, control.timestamp, shake)
+                self.wait_for_induction(from, control.timestamp, shake, now)
             }
             (ConclusionWait(state), ControlTypes::Handshake(shake)) => {
                 self.wait_for_conclusion(from, control.timestamp, state, shake, now, acceptor)
