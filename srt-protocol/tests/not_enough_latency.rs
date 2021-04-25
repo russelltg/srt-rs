@@ -149,22 +149,24 @@ fn not_enough_latency() {
                     }
                 },
                 Action::R2S(pack) => match &mut send {
-                    ConnSend::Conn(connect, _) => match connect.handle_packet((pack, r_sa)) {
-                        Reject(_, _) => panic!("Rejected?"),
-                        SendPacket((pack, _)) => conn.push_s2r(pack, current_time),
-                        Connected(hs, connection) => {
-                            if let Some((pack, _)) = hs {
-                                conn.push_s2r(pack, current_time);
-                            }
+                    ConnSend::Conn(connect, _) => {
+                        match connect.handle_packet((pack, r_sa), current_time) {
+                            Reject(_, _) => panic!("Rejected?"),
+                            SendPacket((pack, _)) => conn.push_s2r(pack, current_time),
+                            Connected(hs, connection) => {
+                                if let Some((pack, _)) = hs {
+                                    conn.push_s2r(pack, current_time);
+                                }
 
-                            send = ConnSend::Send(Sender::new(
-                                connection.settings,
-                                connection.handshake,
-                            ));
-                            info!("Sender connected");
+                                send = ConnSend::Send(Sender::new(
+                                    connection.settings,
+                                    connection.handshake,
+                                ));
+                                info!("Sender connected");
+                            }
+                            NotHandled(_) | NoAction => {}
                         }
-                        NotHandled(_) | NoAction => {}
-                    },
+                    }
                     ConnSend::Send(sendr) => sendr.handle_packet((pack, r_sa), current_time),
                 },
             }
