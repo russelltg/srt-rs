@@ -6,6 +6,7 @@ use log::warn;
 
 use crate::{PacketParseError, SrtVersion};
 use core::fmt;
+use std::fmt::Formatter;
 
 /// The SRT-specific control packets
 /// These are `Packet::Custom` types
@@ -64,7 +65,7 @@ pub enum SrtControlPacket {
 ///       +-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-|-+-+-+-+-+-+-+-+
 /// ```
 ///
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct SrtKeyMessage {
     pub pt: PacketType, // TODO: i think this is always KeyingMaterial....
     pub key_flags: KeyFlags,
@@ -73,6 +74,18 @@ pub struct SrtKeyMessage {
     pub auth: Auth,
     pub salt: Vec<u8>,
     pub wrapped_keys: Vec<u8>,
+}
+
+impl fmt::Debug for SrtKeyMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SrtKeyMessage")
+            .field("pt", &self.pt)
+            .field("key_flags", &self.key_flags)
+            .field("keki", &self.keki)
+            .field("cipher", &self.cipher)
+            .field("auth", &self.auth)
+            .finish()
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -535,8 +548,8 @@ impl TryFrom<u8> for CipherType {
 
 #[cfg(test)]
 mod tests {
-    use super::{SrtControlPacket, SrtHandshake, SrtShakeFlags};
-    use crate::packet::ControlTypes;
+    use super::{SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags};
+    use crate::packet::{Auth, CipherType, ControlTypes, KeyFlags, PacketType};
     use crate::{protocol::TimeStamp, ControlPacket, Packet, SocketId, SrtVersion};
 
     use std::io::Cursor;
@@ -577,5 +590,23 @@ mod tests {
         let deser = Packet::parse(&mut Cursor::new(buf), false).unwrap();
 
         assert_eq!(sid, deser);
+    }
+
+    #[test]
+    fn srt_key_message_debug() {
+        let salt = b"\x00\x00\x00\x00\x00\x00\x00\x00\x85\x2c\x3c\xcd\x02\x65\x1a\x22";
+        let wrapped = b"U\x06\xe9\xfd\xdfd\xf1'nr\xf4\xe9f\x81#(\xb7\xb5D\x19{\x9b\xcdx";
+
+        let km = SrtKeyMessage {
+            pt: PacketType::KeyingMaterial,
+            key_flags: KeyFlags::EVEN,
+            keki: 0,
+            cipher: CipherType::Ctr,
+            auth: Auth::None,
+            salt: salt[..].into(),
+            wrapped_keys: wrapped[..].into(),
+        };
+
+        assert_eq!(format!("{:?}", km), "SrtKeyMessage { pt: KeyingMaterial, key_flags: EVEN, keki: 0, cipher: Ctr, auth: None }")
     }
 }
