@@ -1,6 +1,7 @@
 //! Aes key wrapping is availble in OpenSSL rust, but it's the only thing we need from openssl...so I just ported OpenSSL's code to Rust
 //! If a third-party library offers, this it would be better...
 
+use aes::{BlockDecrypt, BlockEncrypt};
 use cipher::generic_array::typenum::consts::U16;
 use cipher::generic_array::{ArrayLength, GenericArray};
 use cipher::BlockCipher;
@@ -44,7 +45,7 @@ pub const DEFAULT_IV: [u8; 8] = [0xA6; 8];
 // }
 pub fn aes_wrap<K>(key: &K, iv: Option<&[u8; 8]>, out: &mut [u8], input: &[u8])
 where
-    K: BlockCipher<BlockSize = U16>,
+    K: BlockEncrypt,
     <K as BlockCipher>::ParBlocks: ArrayLength<GenericArray<u8, U16>>,
 {
     assert_eq!(input.len() & 0x7, 0);
@@ -116,7 +117,7 @@ where
 // }
 pub fn aes_unwrap<K>(key: &K, iv: &mut [u8; 8], out: &mut [u8], input: &[u8])
 where
-    K: BlockCipher<BlockSize = U16>,
+    K: BlockDecrypt,
     <K as BlockCipher>::ParBlocks: ArrayLength<GenericArray<u8, U16>>,
 {
     assert_eq!(input.len(), out.len() + 8);
@@ -157,14 +158,14 @@ where
 mod test {
     use super::*;
 
-    use aes_soft::cipher::NewBlockCipher;
-    use aes_soft::*;
+    use aes::cipher::NewBlockCipher;
+    use aes::*;
 
     // these are from https://tools.ietf.org/html/rfc3394#page-8
     #[test]
     fn example_4_1() {
-        let kek =
-            Aes128::new_varkey(&hex::decode("000102030405060708090A0B0C0D0E0F").unwrap()).unwrap();
+        let kek = Aes128::new_from_slice(&hex::decode("000102030405060708090A0B0C0D0E0F").unwrap())
+            .unwrap();
         let to_wrap = hex::decode("00112233445566778899AABBCCDDEEFF").unwrap();
 
         let mut out = [0; 24];
@@ -183,7 +184,7 @@ mod test {
 
     #[test]
     fn example_4_2() {
-        let kek = Aes192::new_varkey(
+        let kek = Aes192::new_from_slice(
             &hex::decode("000102030405060708090A0B0C0D0E0F1011121314151617").unwrap(),
         )
         .unwrap();
@@ -205,7 +206,7 @@ mod test {
 
     #[test]
     fn example_4_3() {
-        let kek = Aes256::new_varkey(
+        let kek = Aes256::new_from_slice(
             &hex::decode("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F")
                 .unwrap(),
         )
