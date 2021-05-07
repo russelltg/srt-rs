@@ -15,11 +15,10 @@ log = { version = "0.4", default-features = false }
 bytes = "1"
 streaming-stats = "0.2.3"
 rand = "0.8"
-aes-ctr = "0.6"
-aes-soft = "0.6"
-cipher = "0.2"
-pbkdf2 = { version = "0.7", default-features = false }
-hmac = "0.10"
+aes = { version = "0.7", features = ["ctr"] }
+cipher = "0.3"
+pbkdf2 = { version = "0.8", default-features = false }
+hmac = "0.11"
 sha-1 = "0.9"
 bitflags = "1"
 
