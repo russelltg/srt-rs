@@ -174,7 +174,7 @@ fn precise_ts0() {
 fn lossy_connect() {
     for _ in 0..100 {
         let seed = rand::random();
-        println!("Seed is {}", seed);
+        println!("Connect seed is {}", seed);
         do_lossy_connect(seed);
     }
 }
@@ -232,9 +232,12 @@ fn do_lossy_connect(seed: u64) {
 
 #[test]
 fn lossy_rendezvous() {
+    // run once failing seeds
+    do_lossy_rendezvous(1104041222010949432);
+
     for _ in 0..100 {
         let seed = rand::random();
-        println!("Seed is {}", seed);
+        println!("Rendezvous seed is {}", seed);
         do_lossy_rendezvous(seed);
     }
 }

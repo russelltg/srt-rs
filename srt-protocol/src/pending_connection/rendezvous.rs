@@ -428,11 +428,11 @@ impl Rendezvous {
                             Err(e) => return NotHandled(e),
                         };
 
-                    self.set_connected(
-                        connection,
-                        None,
-                        Some(self.gen_packet(ShakeType::Agreement, Rendezvous::empty_flags())),
-                    )
+                    let agreement =
+                        self.gen_packet(ShakeType::Agreement, Rendezvous::empty_flags());
+
+                    // TODO: not sure if this should return Some for agreement. A test was failing without it but check spec
+                    self.set_connected(connection, Some(agreement.clone()), Some(agreement))
                 }
                 Ok(Some(_)) => NotHandled(ExpectedHsResp),
                 Ok(None) => NotHandled(ExpectedExtFlags), // spec says stay in this state
