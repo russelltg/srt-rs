@@ -1,6 +1,5 @@
 use crate::{
-    packet::ControlTypes::*,
-    packet::Packet,
+    packet::{ControlTypes::*, Packet, PacketType, SrtControlPacket},
     protocol::{
         handshake::Handshake,
         receiver::{Receiver, ReceiverAlgorithmAction},
@@ -26,7 +25,6 @@ use futures::{
     ready, select_biased,
 };
 use log::{debug, error, info, trace};
-use srt_protocol::packet::{PacketType, SrtControlPacket};
 use tokio::{net::UdpSocket, time::sleep_until};
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
