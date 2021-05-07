@@ -16,6 +16,7 @@ use crate::protocol::handshake::Handshake;
 use crate::protocol::Timer;
 use crate::{ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
 
+use crate::packet::ControlTypes::KeepAlive;
 use buffers::*;
 use congestion_control::{LiveDataRate, SenderCongestionControl};
 
@@ -36,7 +37,7 @@ pub struct SenderMetrics {
     pub pkt_arr_rate: u32,
 
     /// estimated link capacity
-    pub est_link_cap: i32,
+    pub est_link_cap: u32,
 
     /// Total lost packets
     pub lost_packets: u32,
@@ -112,6 +113,9 @@ pub struct Sender {
     step: SenderAlgorithmStep,
 
     snd_timer: Timer,
+    // this isn't in the spec, but it's in the reference implementation
+    // https://github.com/Haivision/srt/blob/1d7b391905d7e344d80b86b39ac5c90fda8764a9/srtcore/core.cpp#L10610-L10614
+    keepalive_timer: Timer,
 
     close_requested: bool,
     shutdown_sent: bool,
@@ -138,6 +142,7 @@ impl Sender {
             transmit_buffer: TransmitBuffer::new(&settings),
             step: SenderAlgorithmStep::Step1,
             snd_timer: Timer::new(Duration::from_millis(1), settings.socket_start_time),
+            keepalive_timer: Timer::new(Duration::from_secs(1), settings.socket_start_time),
             close_requested: false,
             shutdown_sent: false,
         }
@@ -156,11 +161,6 @@ impl Sender {
         let packet_count = self.transmit_buffer.push_message(data);
         self.congestion_control
             .on_input(now, packet_count, data_length);
-    }
-
-    fn handle_snd_timer(&mut self, now: Instant) {
-        self.snd_timer.reset(now);
-        self.step = SenderAlgorithmStep::Step1;
     }
 
     pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr), now: Instant) {
@@ -208,7 +208,10 @@ impl Sender {
         }
 
         if let Some(exp_time) = self.snd_timer.check_expired(now) {
-            self.handle_snd_timer(exp_time);
+            self.on_snd_event(exp_time);
+        }
+        if let Some(exp_time) = self.keepalive_timer.check_expired(now) {
+            self.on_keepalive_event(exp_time);
         }
 
         if self.step == Step6 {
@@ -219,13 +222,7 @@ impl Sender {
         //      packet in the list and remove it from the list. Go to 5).
         if let Some(p) = self.loss_list.pop_front() {
             debug!("Sending packet in loss list, seq={:?}", p.seq_number);
-            self.send_data(p);
-
-            // TODO: returning here will result in sending all the packets in the loss
-            //       list before progressing further through the sender algorithm. This
-            //       appears to be inconsistent with the UDT spec. Is it consistent
-            //       with the reference implementation?
-            return WaitForData;
+            self.send_data(p, now);
         }
         // TODO: what is messaging mode?
         // TODO: I honestly don't know what this means
@@ -249,7 +246,8 @@ impl Sender {
         //        b. Pack a new data packet and send it out.
         // TODO: account for looping here <--- WAT?
         else if self.lr_acked_packet
-            < self.transmit_buffer.next_sequence_number - self.congestion_control.window_size()
+            < self.transmit_buffer.next_sequence_number_to_send()
+                - self.congestion_control.window_size()
         {
             // flow window exceeded, wait for ACK
             trace!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}",
@@ -260,11 +258,11 @@ impl Sender {
 
             return WaitUntilAck;
         } else if let Some(p) = self.pop_transmit_buffer() {
-            self.send_data(p);
+            self.send_data(p, now);
         } else if self.close_requested {
             // this covers the niche case of dropping the last packet(s)
             if let Some(dp) = self.send_buffer.front().cloned() {
-                self.send_data(dp);
+                self.send_data(dp, now);
             }
         }
 
@@ -273,7 +271,7 @@ impl Sender {
         if let Some(p) = self.pop_transmit_buffer_16n() {
             //      NOTE: to get the closest timing, we ignore congestion control
             //      and send the 16th packet immediately, instead of proceeding to step 2
-            self.send_data(p);
+            self.send_data(p, now);
         }
 
         //   6) Wait (SND - t) time, where SND is the inter-packet interval
@@ -295,8 +293,6 @@ impl Sender {
             }
             ControlTypes::DropRequest { .. } => unimplemented!(),
             ControlTypes::Handshake(shake) => self.handle_handshake_packet(shake, now),
-            // TODO: reset EXP-ish
-
             // TODO: case UMSG_CGWARNING: // 100 - Delay Warning
             //            // One way packet delay is increasing, so decrease the sending rate
             //            ControlTypes::DelayWarning?
@@ -310,9 +306,6 @@ impl Sender {
                 self.handle_shutdown_packet();
             }
             ControlTypes::Srt(srt_packet) => self.handle_srt_control_packet(srt_packet),
-            // The only purpose of keep-alive packet is to tell that the peer is still alive
-            // nothing needs to be done.
-            // TODO: is this actually true? check reference implementation
             ControlTypes::KeepAlive => {}
         }
     }
@@ -362,8 +355,12 @@ impl Sender {
 
         // 8) Update estimated link capacity: B = (B * 7 + b) / 8, where b is
         //    the value carried in the ACK.
-        self.metrics.est_link_cap =
-            (self.metrics.est_link_cap * 7 + info.est_link_cap.unwrap_or(0)) / 8;
+        self.metrics.est_link_cap = (self
+            .metrics
+            .est_link_cap
+            .saturating_mul(7)
+            .saturating_add(info.est_link_cap.unwrap_or(0)))
+            / 8;
 
         // 9) Update sender's buffer (by releasing the buffer that has been
         //    acknowledged).
@@ -413,7 +410,7 @@ impl Sender {
     }
 
     fn handle_handshake_packet(&mut self, handshake: HandshakeControlInfo, now: Instant) {
-        if let Some(control_type) = self.handshake.handle_handshake(handshake) {
+        if let Some(control_type) = self.handshake.handle_handshake(&handshake) {
             self.send_control(control_type, now);
         }
     }
@@ -427,6 +424,15 @@ impl Sender {
             }
             _ => unimplemented!(),
         }
+    }
+
+    fn on_snd_event(&mut self, now: Instant) {
+        self.snd_timer.reset(now);
+        self.step = SenderAlgorithmStep::Step1;
+    }
+
+    fn on_keepalive_event(&mut self, now: Instant) {
+        self.send_control(KeepAlive, now);
     }
 
     fn pop_transmit_buffer(&mut self) -> Option<DataPacket> {
@@ -444,6 +450,7 @@ impl Sender {
     }
 
     fn send_control(&mut self, control: ControlTypes, now: Instant) {
+        self.keepalive_timer.reset(now);
         self.output_buffer.push_back(Packet::Control(ControlPacket {
             timestamp: self.transmit_buffer.timestamp_from(now),
             dest_sockid: self.settings.remote_sockid,
@@ -451,7 +458,8 @@ impl Sender {
         }));
     }
 
-    fn send_data(&mut self, p: DataPacket) {
+    fn send_data(&mut self, p: DataPacket, now: Instant) {
+        self.keepalive_timer.reset(now);
         self.output_buffer.push_back(Packet::Data(p));
     }
 }

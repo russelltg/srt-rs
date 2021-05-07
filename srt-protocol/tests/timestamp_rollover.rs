@@ -1,7 +1,4 @@
-use std::{
-    convert::identity,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use log::{info, trace};
@@ -29,13 +26,14 @@ fn timestamp_rollover() {
 
     let init_seqnum = SeqNumber::new_truncate(91234);
 
-    let start = Instant::now();
+    let start = Instant::now() + Duration::from_micros(u32::MAX as u64);
 
     let s1 = ConnectionSettings {
         remote: s2_addr,
         remote_sockid: s2_sockid,
         local_sockid: s1_sockid,
         socket_start_time: start,
+        rtt: Duration::default(),
         init_send_seq_num: init_seqnum,
         init_recv_seq_num: init_seqnum,
         max_packet_size: 1316,
@@ -51,6 +49,7 @@ fn timestamp_rollover() {
         remote_sockid: s1_sockid,
         local_sockid: s2_sockid,
         socket_start_time: start,
+        rtt: Duration::default(),
         init_send_seq_num: init_seqnum,
         init_recv_seq_num: init_seqnum,
         max_packet_size: 1316,
@@ -150,7 +149,7 @@ fn timestamp_rollover() {
         ]
         .iter()
         .copied()
-        .filter_map(identity)
+        .flatten()
         .min()
         .unwrap();
 

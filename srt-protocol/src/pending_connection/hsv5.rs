@@ -25,6 +25,8 @@ pub fn gen_hsv5_response(
     settings: &mut ConnInitSettings,
     with_hsv5: &HandshakeControlInfo,
     from: SocketAddr,
+    induction_time: Instant,
+    now: Instant,
     acceptor: &mut impl StreamAcceptor,
 ) -> GenHsv5Result {
     let incoming = match &with_hsv5.info {
@@ -71,11 +73,8 @@ pub fn gen_hsv5_response(
         (Some(_), Some(_)) => unimplemented!("Expected kmreq"),
         (Some(_), None) | (None, Some(_)) => unimplemented!("Crypto mismatch"),
     };
-    let outgoing_ext_km = if let Some(cm) = &cm {
-        Some(cm.generate_km())
-    } else {
-        None
-    };
+    let outgoing_ext_km = cm.as_ref().map(|cm| cm.generate_km());
+
     let sid = if let HandshakeVsInfo::V5(info) = &with_hsv5.info {
         info.sid.clone()
     } else {
@@ -98,7 +97,8 @@ pub fn gen_hsv5_response(
             remote: from,
             remote_sockid: with_hsv5.socket_id,
             local_sockid: settings.local_sockid,
-            socket_start_time: Instant::now(), // xxx?
+            socket_start_time: now - (now - induction_time) / 2, // initiate happened 0.5RTT ago
+            rtt: now - induction_time,
             init_send_seq_num: settings.starting_send_seqnum,
             init_recv_seq_num: with_hsv5.init_seq_num,
             max_packet_size: 1500, // todo: parameters!
@@ -116,11 +116,13 @@ pub struct StartedInitiator {
     cm: Option<CryptoManager>,
     settings: ConnInitSettings,
     streamid: Option<String>,
+    initiate_time: Instant,
 }
 
 pub fn start_hsv5_initiation(
     settings: ConnInitSettings,
     streamid: Option<String>,
+    now: Instant,
 ) -> (HandshakeVsInfo, StartedInitiator) {
     let self_crypto_size = settings.crypto.as_ref().map(|co| co.size).unwrap_or(0);
 
@@ -152,6 +154,7 @@ pub fn start_hsv5_initiation(
             cm,
             settings,
             streamid,
+            initiate_time: now,
         },
     )
 }
@@ -161,6 +164,7 @@ impl StartedInitiator {
         self,
         response: &HandshakeControlInfo,
         from: SocketAddr,
+        now: Instant,
     ) -> Result<ConnectionSettings, ConnectError> {
         // TODO: factor this out with above...
         let incoming = match &response.info {
@@ -181,7 +185,8 @@ impl StartedInitiator {
             remote: from,
             remote_sockid: response.socket_id,
             local_sockid: self.settings.local_sockid,
-            socket_start_time: Instant::now(), // xxx?
+            socket_start_time: self.initiate_time,
+            rtt: now - self.initiate_time,
             init_send_seq_num: self.settings.starting_send_seqnum,
             init_recv_seq_num: response.init_seq_num,
             max_packet_size: 1500, // todo: parameters!

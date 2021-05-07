@@ -175,6 +175,7 @@ impl Receiver {
 
         trace!("Received packet: {:?}", packet);
 
+        self.timers.reset_exp(now);
         match packet {
             Packet::Control(ctrl) => {
                 self.receive_buffer.synchronize_clock(now, ctrl.timestamp);
@@ -185,7 +186,7 @@ impl Receiver {
                     ControlTypes::Ack2(seq_num) => self.handle_ack2(seq_num, now),
                     ControlTypes::DropRequest { .. } => unimplemented!(),
                     ControlTypes::Handshake(shake) => self.handle_handshake_packet(now, shake),
-                    ControlTypes::KeepAlive => {} // TODO: actually reset EXP etc
+                    ControlTypes::KeepAlive => {}
                     ControlTypes::Nak { .. } => warn!("Receiver received NAK packet, unusual"),
                     ControlTypes::Shutdown => {
                         info!(
@@ -212,11 +213,14 @@ impl Receiver {
         //      expired. If there is any, process the event (as described below
         //      in this section) and reset the associated time variables. For
         //      ACK, also check the ACK packet interval.
-        if self.timers.ack.check_expired(now).is_some() {
+        if self.timers.check_ack(now).is_some() {
             self.on_ack_event(now);
         }
-        if self.timers.nak.check_expired(now).is_some() {
+        if self.timers.check_nak(now).is_some() {
             self.on_nak_event(now);
+        }
+        if self.timers.check_peer_idle_timeout(now).is_some() {
+            self.on_peer_idle_timeout(now);
         }
 
         if let Some(data) = self.pop_data(now) {
@@ -346,7 +350,7 @@ impl Receiver {
                     last_16[last_16.len() / 2]
                 };
 
-                (1. / (pi.as_secs_f64())) as i32
+                (1. / (pi.as_secs_f64())) as u32
             }
         };
 
@@ -415,8 +419,13 @@ impl Receiver {
         self.send_nak(now, seq_nums.into_iter());
     }
 
+    fn on_peer_idle_timeout(&mut self, now: Instant) {
+        self.shutdown_flag = true;
+        self.send_control(now, ControlTypes::Shutdown);
+    }
+
     fn handle_handshake_packet(&mut self, now: Instant, control_info: HandshakeControlInfo) {
-        if let Some(c) = self.handshake.handle_handshake(control_info) {
+        if let Some(c) = self.handshake.handle_handshake(&control_info) {
             self.send_control(now, c)
         }
     }

@@ -134,6 +134,13 @@ impl TransmitBuffer {
         self.next_sequence_number += 1;
         self.next_sequence_number - 1
     }
+
+    pub fn next_sequence_number_to_send(&self) -> SeqNumber {
+        self.buffer
+            .front()
+            .map(|p| p.seq_number)
+            .unwrap_or(self.next_sequence_number)
+    }
 }
 
 #[derive(Debug)]
