@@ -31,7 +31,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: install target
-      run: rustup target add i686-unknown-linux-gnu
+      run: rustup target add i686-unknown-linux-gnu && sudo apt-get install gcc-multilib
       if: matrix.extra_flags != ''
     - name: install srt (linux)
       run: sudo apt-get install srt-tools
