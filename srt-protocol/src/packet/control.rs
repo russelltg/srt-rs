@@ -178,13 +178,13 @@ pub struct AckControlInfo {
     pub rtt_variance: Option<TimeSpan>,
 
     /// available buffer
-    pub buffer_available: Option<i32>,
+    pub buffer_available: Option<u32>,
 
     /// receive rate, in packets/sec
     pub packet_recv_rate: Option<u32>,
 
     /// Estimated Link capacity
-    pub est_link_cap: Option<i32>,
+    pub est_link_cap: Option<u32>,
 }
 
 /// The socket type for a handshake.
@@ -645,9 +645,9 @@ impl ControlTypes {
                 };
                 let rtt = opt_read_next_i32(&mut buf).map(TimeSpan::from_micros);
                 let rtt_variance = opt_read_next_i32(&mut buf).map(TimeSpan::from_micros);
-                let buffer_available = opt_read_next_i32(&mut buf);
+                let buffer_available = opt_read_next_u32(&mut buf);
                 let packet_recv_rate = opt_read_next_u32(&mut buf);
-                let est_link_cap = opt_read_next_i32(&mut buf);
+                let est_link_cap = opt_read_next_u32(&mut buf);
 
                 Ok(ControlTypes::Ack(AckControlInfo {
                     ack_seq_num: extra_info,
@@ -790,9 +790,9 @@ impl ControlTypes {
                 into.put_u32(ack_number.as_raw());
                 into.put_i32(rtt.map(|t| t.as_micros()).unwrap_or(10_000));
                 into.put_i32(rtt_variance.map(|t| t.as_micros()).unwrap_or(50_000));
-                into.put_i32(buffer_available.unwrap_or(8175)); // TODO: better defaults
+                into.put_u32(buffer_available.unwrap_or(8175)); // TODO: better defaults
                 into.put_u32(packet_recv_rate.unwrap_or(10_000));
-                into.put_i32(est_link_cap.unwrap_or(1_000));
+                into.put_u32(est_link_cap.unwrap_or(1_000));
             }
             ControlTypes::Nak(ref n) => {
                 for &loss in n {

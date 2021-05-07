@@ -1,8 +1,8 @@
 // lossy tests based on protocol to be fully deterministic
 
 use bytes::Bytes;
+use helpers::{Action, SyncLossyConn};
 use log::trace;
-use lossy_conn::SyncLossyConn;
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use srt_protocol::{
     protocol::{
@@ -17,17 +17,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-mod lossy_conn;
+mod helpers;
 
 #[test]
 fn lossy_deterministic() {
     let _ = pretty_env_logger::try_init();
 
     let once_failing_seeds = [
-        (7843866891970470107, 10),
-        (940980453060602806, 10_000),
-        (10550053401338237831, 10_000),
-        (9602806002654919948, 10),
+        // (7843866891970470107, 10),
+        // (940980453060602806, 10_000),
+        // (10550053401338237831, 10_000),
+        // (9602806002654919948, 10),
+        (10210281456068034833, 10_000),
     ];
     for &(s, size) in &once_failing_seeds {
         do_lossy_test(s, size);
@@ -110,19 +111,21 @@ fn do_lossy_test(seed: u64, count: usize) {
             }
         }
 
-        let conn_next_time = loop {
-            match conn.action(current_time) {
-                lossy_conn::Action::Wait(until) => break until,
-                lossy_conn::Action::S2R(pack) => {
-                    trace!("s->r {:?}", pack);
-                    recvr.handle_packet(current_time, (pack, ([127, 0, 0, 1], 2223).into()));
+        let conn_next_time =
+            loop {
+                match conn.action(current_time) {
+                    Action::Wait(until) => break until,
+                    Action::Release(pack, direction) => {
+                        trace!("{:?} {:?}", direction, pack);
+                        match direction {
+                            helpers::Direction::A2B => recvr
+                                .handle_packet(current_time, (pack, ([127, 0, 0, 1], 2223).into())),
+                            helpers::Direction::B2A => sendr
+                                .handle_packet((pack, ([127, 0, 0, 1], 2222).into()), current_time),
+                        }
+                    }
                 }
-                lossy_conn::Action::R2S(pack) => {
-                    trace!("r->s {:?}", pack);
-                    sendr.handle_packet((pack, ([127, 0, 0, 1], 2222).into()), current_time)
-                }
-            }
-        };
+            };
 
         let sender_next_time = match sendr.next_action(current_time) {
             SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => None,

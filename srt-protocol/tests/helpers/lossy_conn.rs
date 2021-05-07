@@ -8,10 +8,10 @@ use rand::prelude::StdRng;
 use rand_distr::{Bernoulli, Distribution, Normal};
 use srt_protocol::Packet;
 
-#[derive(Eq, PartialEq)]
-enum Direction {
-    S2R,
-    R2S,
+#[derive(Eq, PartialEq, Clone, Copy, Debug)]
+pub enum Direction {
+    A2B,
+    B2A,
 }
 
 #[derive(Eq, PartialEq)]
@@ -41,8 +41,7 @@ pub struct SyncLossyConn {
 
 pub enum Action {
     Wait(Option<Instant>),
-    S2R(Packet),
-    R2S(Packet),
+    Release(Packet, Direction),
 }
 
 impl SyncLossyConn {
@@ -61,19 +60,14 @@ impl SyncLossyConn {
     }
 
     pub fn push_s2r(&mut self, packet: Packet, now: Instant) {
-        if self.drop_dist.sample(&mut self.rng) {
-            debug!("Dropping {:?}", packet);
-            return;
-        }
-
-        let release_at = now + self.get_delay();
-        self.heap.push(HeapEntry {
-            packet,
-            release_at,
-            direction: Direction::S2R,
-        });
+        self.push(packet, now, Direction::A2B)
     }
+
     pub fn push_r2s(&mut self, packet: Packet, now: Instant) {
+        self.push(packet, now, Direction::B2A)
+    }
+
+    pub fn push(&mut self, packet: Packet, now: Instant, direction: Direction) {
         if self.drop_dist.sample(&mut self.rng) {
             debug!("Dropping {:?}", packet);
             return;
@@ -83,7 +77,7 @@ impl SyncLossyConn {
         self.heap.push(HeapEntry {
             packet,
             release_at,
-            direction: Direction::R2S,
+            direction,
         });
     }
 
@@ -98,13 +92,20 @@ impl SyncLossyConn {
     pub fn action(&mut self, now: Instant) -> Action {
         if let Some(entry) = self.heap.peek() {
             if entry.release_at <= now {
-                return match entry.direction {
-                    Direction::S2R => Action::S2R(self.heap.pop().unwrap().packet),
-                    Direction::R2S => Action::R2S(self.heap.pop().unwrap().packet),
-                };
+                let dir = entry.direction;
+                return Action::Release(self.heap.pop().unwrap().packet, dir);
             }
         }
 
         Action::Wait(self.next_release_time())
+    }
+}
+
+impl Direction {
+    pub fn flip(&self) -> Direction {
+        match self {
+            Direction::A2B => Direction::B2A,
+            Direction::B2A => Direction::A2B,
+        }
     }
 }
