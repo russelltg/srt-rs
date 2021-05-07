@@ -30,6 +30,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - name: install target
+      run: rustup target add i686-unknown-linux-gnu
+      if: matrix.extra_flags != ''
     - name: install srt (linux)
       run: sudo apt-get install srt-tools
       if: matrix.os == 'ubuntu'
