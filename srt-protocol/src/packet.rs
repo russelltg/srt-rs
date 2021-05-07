@@ -54,6 +54,16 @@ impl Packet {
         }
     }
 
+    pub fn is_handshake(&self) -> bool {
+        matches!(
+            self,
+            Packet::Control(ControlPacket {
+                control_type: ControlTypes::Handshake(_),
+                ..
+            })
+        )
+    }
+
     pub fn parse<T: Buf>(buf: &mut T, is_ipv6: bool) -> Result<Packet, PacketParseError> {
         // Buffer must be at least 16 bytes,
         // the length of a header packet

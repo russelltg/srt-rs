@@ -350,7 +350,7 @@ impl Receiver {
                     last_16[last_16.len() / 2]
                 };
 
-                (1. / (pi.as_secs_f64())) as i32
+                (1. / (pi.as_secs_f64())) as u32
             }
         };
 
@@ -425,7 +425,7 @@ impl Receiver {
     }
 
     fn handle_handshake_packet(&mut self, now: Instant, control_info: HandshakeControlInfo) {
-        if let Some(c) = self.handshake.handle_handshake(control_info) {
+        if let Some(c) = self.handshake.handle_handshake(&control_info) {
             self.send_control(now, c)
         }
     }

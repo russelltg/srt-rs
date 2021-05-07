@@ -1,26 +1,32 @@
-use crate::packet::ControlTypes::*;
+use crate::{
+    packet::ControlTypes::*,
+    packet::Packet,
+    protocol::{
+        handshake::Handshake,
+        receiver::{Receiver, ReceiverAlgorithmAction},
+        sender::{Sender, SenderAlgorithmAction},
+    },
+    ConnectionSettings,
+};
 
-use crate::protocol::handshake::Handshake;
-use crate::protocol::receiver::{Receiver, ReceiverAlgorithmAction};
-use crate::protocol::sender::{Sender, SenderAlgorithmAction};
-use crate::Packet::*;
-use crate::{ConnectionSettings, Packet};
-
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::task::{Context, Poll, Waker};
 use std::{
     io, mem,
+    net::SocketAddr,
+    pin::Pin,
     sync::{Arc, Mutex},
+    task::{Context, Poll, Waker},
     time::Instant,
 };
 
 use bytes::Bytes;
-use futures::channel::{mpsc, oneshot};
-use futures::prelude::*;
-use futures::{future, ready, select};
+use futures::{
+    channel::{mpsc, oneshot},
+    future,
+    prelude::*,
+    ready, select_biased,
+};
 use log::{debug, error, info, trace};
-use tokio::time::sleep_until;
+use tokio::{net::UdpSocket, time::sleep_until};
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
@@ -60,14 +66,11 @@ enum Action {
 /// 1. Receive packets and send them to either the sender or the receiver through
 ///    a channel
 /// 2. Take outgoing packets and send them on the socket
-pub fn create_bidrectional_srt<T>(sock: T, conn: crate::Connection) -> SrtSocket
-where
-    T: Stream<Item = (Packet, SocketAddr)>
-        + Sink<(Packet, SocketAddr), Error = io::Error>
-        + Send
-        + Unpin
-        + 'static,
-{
+pub fn create_bidrectional_srt(
+    sock: Arc<UdpSocket>,
+    packets: impl Stream<Item = (Packet, SocketAddr)> + Unpin + Send + 'static,
+    conn: crate::Connection,
+) -> SrtSocket {
     let (mut release, recvr) = mpsc::channel(128);
     let (sender, new_data) = mpsc::channel(128);
     let (_drop_oneshot, close_oneshot) = oneshot::channel();
@@ -81,12 +84,15 @@ where
         let mut close_receiver = close_oneshot.fuse();
         let _close_sender = close_send; // exists for drop
         let mut new_data = new_data.fuse();
-        let mut sock = sock.fuse();
 
         let mut sender = Sender::new(conn_copy.settings.clone(), conn_copy.handshake);
         let mut receiver = Receiver::new(conn_copy.settings, Handshake::Connector);
 
         let mut flushed = true;
+
+        let mut serialize_buffer = Vec::new();
+        let mut packets = packets.fuse();
+
         loop {
             let (sender_timeout, close) = match sender.next_action(Instant::now()) {
                 SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {
@@ -98,8 +104,11 @@ where
                     (None, true)
                 }
             };
-            while let Some(out) = sender.pop_output() {
-                if let Err(e) = sock.send(out).await {
+            while let Some((packet, to)) = sender.pop_output() {
+                serialize_buffer.clear();
+                packet.serialize(&mut serialize_buffer);
+
+                if let Err(e) = sock.send_to(&serialize_buffer, to).await {
                     error!("Error while seding packet: {:?}", e); // TODO: real error handling
                 }
             }
@@ -123,7 +132,9 @@ where
                         break Some(t2);
                     }
                     ReceiverAlgorithmAction::SendControl(cp, addr) => {
-                        if let Err(e) = sock.send((Packet::Control(cp), addr)).await {
+                        serialize_buffer.clear();
+                        Packet::from(cp).serialize(&mut serialize_buffer);
+                        if let Err(e) = sock.send_to(&serialize_buffer, addr).await {
                             error!("Error while sending packet {:?}", e);
                         }
                     }
@@ -192,12 +203,12 @@ where
                 }
             };
 
-            let action = select! {
+            let action = select_biased! {
+                // new packet received--do this first to not exaust the receive buffer
+                res = packets.next() =>
+                    Action::DelegatePacket(res),
                 // one of the entities requested wakeup
                 _ = timeout_fut.fuse() => Action::Nothing,
-                // new packet received
-                res = sock.next() =>
-                    Action::DelegatePacket(res),
                 // new packet queued
                 res = new_data.next() => {
                     Action::Send(res)
@@ -213,8 +224,10 @@ where
                     match res {
                         Some((pack, from)) => {
                             match &pack {
-                                Data(_) => receiver.handle_packet(Instant::now(), (pack, from)),
-                                Control(cp) => match &cp.control_type {
+                                Packet::Data(_) => {
+                                    receiver.handle_packet(Instant::now(), (pack, from))
+                                }
+                                Packet::Control(cp) => match &cp.control_type {
                                     // sender-responsble packets
                                     Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
                                         sender.handle_packet((pack, from), Instant::now());

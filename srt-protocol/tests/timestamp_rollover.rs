@@ -1,7 +1,4 @@
-use std::{
-    convert::identity,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use log::{info, trace};
@@ -152,7 +149,7 @@ fn timestamp_rollover() {
         ]
         .iter()
         .copied()
-        .filter_map(identity)
+        .flatten()
         .min()
         .unwrap();
 

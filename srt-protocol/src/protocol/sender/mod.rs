@@ -37,7 +37,7 @@ pub struct SenderMetrics {
     pub pkt_arr_rate: u32,
 
     /// estimated link capacity
-    pub est_link_cap: i32,
+    pub est_link_cap: u32,
 
     /// Total lost packets
     pub lost_packets: u32,
@@ -223,12 +223,6 @@ impl Sender {
         if let Some(p) = self.loss_list.pop_front() {
             debug!("Sending packet in loss list, seq={:?}", p.seq_number);
             self.send_data(p, now);
-
-            // TODO: returning here will result in sending all the packets in the loss
-            //       list before progressing further through the sender algorithm. This
-            //       appears to be inconsistent with the UDT spec. Is it consistent
-            //       with the reference implementation?
-            return WaitForData;
         }
         // TODO: what is messaging mode?
         // TODO: I honestly don't know what this means
@@ -252,7 +246,8 @@ impl Sender {
         //        b. Pack a new data packet and send it out.
         // TODO: account for looping here <--- WAT?
         else if self.lr_acked_packet
-            < self.transmit_buffer.next_sequence_number - self.congestion_control.window_size()
+            < self.transmit_buffer.next_sequence_number_to_send()
+                - self.congestion_control.window_size()
         {
             // flow window exceeded, wait for ACK
             trace!("Flow window exceeded lr_acked={:?}, next_seq={:?}, window_size={}, next_seq-window={:?}",
@@ -360,8 +355,12 @@ impl Sender {
 
         // 8) Update estimated link capacity: B = (B * 7 + b) / 8, where b is
         //    the value carried in the ACK.
-        self.metrics.est_link_cap =
-            (self.metrics.est_link_cap * 7 + info.est_link_cap.unwrap_or(0)) / 8;
+        self.metrics.est_link_cap = (self
+            .metrics
+            .est_link_cap
+            .saturating_mul(7)
+            .saturating_add(info.est_link_cap.unwrap_or(0)))
+            / 8;
 
         // 9) Update sender's buffer (by releasing the buffer that has been
         //    acknowledged).
@@ -411,7 +410,7 @@ impl Sender {
     }
 
     fn handle_handshake_packet(&mut self, handshake: HandshakeControlInfo, now: Instant) {
-        if let Some(control_type) = self.handshake.handle_handshake(handshake) {
+        if let Some(control_type) = self.handshake.handle_handshake(&handshake) {
             self.send_control(control_type, now);
         }
     }
