@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-mod helpers;
+pub mod helpers;
 
 #[test]
 fn lossy_deterministic() {

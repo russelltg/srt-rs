@@ -14,7 +14,7 @@ use srt_protocol::{
     Connection, ControlPacket, Packet, SeqNumber, SocketId,
 };
 
-mod helpers;
+pub mod helpers;
 
 use helpers::{Action, Direction, SyncLossyConn};
 
@@ -133,7 +133,7 @@ fn precise_ts0() {
 
     let start = Instant::now();
 
-    let mut send = Conn::PendingC(
+    let send = Conn::PendingC(
         Direction::A2B,
         Connect::new(
             r_sa,
@@ -150,7 +150,7 @@ fn precise_ts0() {
         start,
     );
 
-    let mut recv = Conn::PendingL(
+    let recv = Conn::PendingL(
         Direction::B2A,
         Listen::new(ConnInitSettings {
             starting_send_seqnum: seqno,
