@@ -382,6 +382,17 @@ mod stransmit_rs_snd_rcv {
     }
 
     #[tokio::test]
+    async fn ipv6() -> Result<(), Error> {
+        test_send(
+            2034,
+            &["udp://:2034", "srt://:2035?interface=::1"],
+            &["srt://[::1]:2035", "udp://localhost:2036"],
+            2036,
+        )
+        .await
+    }
+
+    #[tokio::test]
     async fn reconnect() -> Result<(), Error> {
         let srs_path = find_stransmit_rs();
 
