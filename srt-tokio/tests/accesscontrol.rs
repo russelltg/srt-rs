@@ -53,7 +53,7 @@ async fn streamid() -> io::Result<()> {
 
     let (finished_send, finished_recv) = oneshot::channel();
 
-    tokio::spawn(async {
+    let listener = tokio::spawn(async {
         let mut server = SrtSocketBuilder::new_listen()
             .local_port(2000)
             .build_multiplexed_with_acceptor(AccessController)
@@ -114,5 +114,6 @@ async fn streamid() -> io::Result<()> {
     join_all(join_handles).await;
     info!("all finished");
     finished_send.send(()).unwrap();
+    listener.await.unwrap();
     Ok(())
 }

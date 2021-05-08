@@ -8,6 +8,8 @@ use rand::prelude::StdRng;
 use rand_distr::{Bernoulli, Distribution, Normal};
 use srt_protocol::Packet;
 
+pub mod simulation;
+
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum Direction {
     A2B,

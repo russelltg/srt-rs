@@ -4,7 +4,7 @@ use std::time::Instant;
 use bytes::{Bytes, BytesMut};
 
 use crate::packet::{DataEncryption, PacketLocation};
-use crate::protocol::{TimeBase, TimeStamp};
+use crate::protocol::{TimeBase, TimeSpan, TimeStamp};
 use crate::{
     crypto::CryptoManager, ConnectionSettings, DataPacket, MsgNumber, SeqNumber, SocketId,
 };
@@ -163,9 +163,22 @@ impl SendBuffer {
 
     pub fn release_acknowledged_packets(&mut self, acknowledged: SeqNumber) {
         while acknowledged > self.first_seq {
-            self.buffer.pop_front();
-            self.first_seq += 1;
+            self.drop_front();
         }
+    }
+
+    pub fn release_late_packets(&mut self, now_ts: TimeStamp, window_length: TimeSpan) {
+        while let Some(front) = self.buffer.front() {
+            if now_ts - front.timestamp <= window_length {
+                return;
+            }
+            self.drop_front();
+        }
+    }
+
+    fn drop_front(&mut self) {
+        self.buffer.pop_front();
+        self.first_seq += 1;
     }
 
     pub fn get<'a, I: Iterator<Item = SeqNumber> + 'a>(
@@ -180,8 +193,8 @@ impl SendBuffer {
         )
     }
 
-    pub fn front(&self) -> Option<&DataPacket> {
-        self.buffer.front()
+    pub fn pop(&mut self) -> Option<DataPacket> {
+        self.buffer.pop_front()
     }
 
     pub fn push_back(&mut self, data: DataPacket) {

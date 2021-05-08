@@ -4,19 +4,19 @@ use std::{
 };
 
 use rand::{prelude::StdRng, SeedableRng};
+
+use helpers::{Action, Direction, SyncLossyConn};
 use srt_protocol::{
     accesscontrol::AllowAllStreamAcceptor,
-    packet::ControlTypes,
-    pending_connection::{
-        connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnInitSettings,
-        ConnectionResult,
-    },
-    Connection, ControlPacket, Packet, SeqNumber, SocketId,
+    Connection,
+    ControlPacket,
+    Packet, packet::ControlTypes, pending_connection::{
+        connect::Connect, ConnectionResult, ConnInitSettings, listen::Listen,
+        rendezvous::Rendezvous,
+    }, SeqNumber, SocketId,
 };
 
 pub mod helpers;
-
-use helpers::{Action, Direction, SyncLossyConn};
 
 const CONN_TICK_TIME: Duration = Duration::from_millis(100);
 
@@ -53,7 +53,7 @@ impl Conn {
                     ..
                 }) = &packet
                 {
-                    match c.handshake.handle_handshake(hs) {
+                    match c.handshake.handle_handshake(hs.clone()) {
                         Some(control_type) => (
                             *d,
                             ConnectionResult::SendPacket((

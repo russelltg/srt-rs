@@ -7,18 +7,20 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use log::debug;
-use log::{trace, warn};
+use log::trace;
 
 use super::TimeSpan;
 use crate::loss_compression::decompress_loss_list;
-use crate::packet::{AckControlInfo, ControlTypes, HandshakeControlInfo, SrtControlPacket};
+use crate::packet::{AckControlInfo, ControlTypes, HandshakeControlInfo};
 use crate::protocol::handshake::Handshake;
 use crate::protocol::Timer;
 use crate::{ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
 
+use crate::connection::ConnectionStatus;
 use crate::packet::ControlTypes::KeepAlive;
 use buffers::*;
 use congestion_control::{LiveDataRate, SenderCongestionControl};
+use std::cmp::{max, min};
 
 #[derive(Debug)]
 pub enum SenderError {}
@@ -63,20 +65,6 @@ impl SenderMetrics {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum SenderAlgorithmAction {
-    WaitUntilAck,
-    WaitForData,
-    WaitUntil(Instant),
-    Close,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum SenderAlgorithmStep {
-    Step1,
-    Step6,
-}
-
 #[derive(Debug)]
 pub struct Sender {
     /// The settings, including remote sockid and address
@@ -110,15 +98,12 @@ pub struct Sender {
     /// The ack sequence number that an ack2 has been sent for
     lr_acked_ack: i32,
 
-    step: SenderAlgorithmStep,
-
     snd_timer: Timer,
     // this isn't in the spec, but it's in the reference implementation
     // https://github.com/Haivision/srt/blob/1d7b391905d7e344d80b86b39ac5c90fda8764a9/srtcore/core.cpp#L10610-L10614
     keepalive_timer: Timer,
 
-    close_requested: bool,
-    shutdown_sent: bool,
+    status: ConnectionStatus,
 }
 
 impl Default for SenderMetrics {
@@ -140,11 +125,9 @@ impl Sender {
             lr_acked_ack: -1, // TODO: why magic number?
             output_buffer: VecDeque::new(),
             transmit_buffer: TransmitBuffer::new(&settings),
-            step: SenderAlgorithmStep::Step1,
             snd_timer: Timer::new(Duration::from_millis(1), settings.socket_start_time),
             keepalive_timer: Timer::new(Duration::from_secs(1), settings.socket_start_time),
-            close_requested: false,
-            shutdown_sent: false,
+            status: ConnectionStatus::Open(settings.send_tsbpd_latency),
         }
     }
 
@@ -152,8 +135,8 @@ impl Sender {
         &self.settings
     }
 
-    pub fn handle_close(&mut self) {
-        self.close_requested = true;
+    pub fn handle_close(&mut self, now: Instant) {
+        self.status.shutdown(now);
     }
 
     pub fn handle_data(&mut self, data: (Instant, Bytes), now: Instant) {
@@ -163,50 +146,32 @@ impl Sender {
             .on_input(now, packet_count, data_length);
     }
 
-    pub fn handle_packet(&mut self, (packet, from): (Packet, SocketAddr), now: Instant) {
-        // TODO: record/report packets from invalid hosts?
-        if from != self.settings.remote {
-            return;
-        }
-
-        debug!("Received packet {:?}", packet);
-
-        match packet {
-            Packet::Control(control) => self.handle_control_packet(control, now),
-            Packet::Data(_) => {}
-        }
-    }
-
     pub fn is_flushed(&self) -> bool {
-        trace!("{:?} Checking is flushed: ll.len()={}, tb.len()={}, lrap={}, nsn={}, sb.len()={}, ob.len()={}", self.settings.local_sockid, self.loss_list.len(), 
-            self.transmit_buffer.len(), self.lr_acked_packet, self.transmit_buffer.next_sequence_number, self.send_buffer.len(), self.output_buffer.len());
+        debug!(
+            "{:?}|{:?}|recv - ll.len()={}, tb.len()={}, lrap={}, nsn={}, sb.len()={}, ob.len()={}",
+            TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
+            self.settings.local_sockid,
+            self.loss_list.len(),
+            self.transmit_buffer.len(),
+            self.lr_acked_packet,
+            self.transmit_buffer.next_sequence_number,
+            self.send_buffer.len(),
+            self.output_buffer.len()
+        );
         self.loss_list.is_empty()
             && self.transmit_buffer.is_empty()
             && self.lr_acked_packet == self.transmit_buffer.next_sequence_number
             && self.output_buffer.is_empty()
     }
 
-    pub fn pop_output(&mut self) -> Option<(Packet, SocketAddr)> {
+    pub fn next_packet(&mut self) -> Option<(Packet, SocketAddr)> {
         let to = self.settings.remote;
         self.output_buffer
             .pop_front()
             .map(move |packet| (packet, to))
     }
 
-    pub fn next_action(&mut self, now: Instant) -> SenderAlgorithmAction {
-        use SenderAlgorithmAction::*;
-        use SenderAlgorithmStep::*;
-
-        // don't return close until fully flushed
-        if self.close_requested && self.is_flushed() {
-            if !self.shutdown_sent {
-                debug!("{:?} sending shutdown", self.settings.local_sockid);
-                self.send_control(ControlTypes::Shutdown, now);
-                self.shutdown_sent = true;
-            }
-            return Close;
-        }
-
+    pub fn check_timers(&mut self, now: Instant) {
         if let Some(exp_time) = self.snd_timer.check_expired(now) {
             self.on_snd_event(exp_time);
         }
@@ -214,15 +179,41 @@ impl Sender {
             self.on_keepalive_event(exp_time);
         }
 
-        if self.step == Step6 {
-            return WaitUntil(self.snd_timer.next_instant());
+        // don't return close until fully flushed
+        let flushed = self.is_flushed();
+        if self.status.check_shutdown(now, || flushed) {
+            debug!("{:?} sending shutdown", self.settings.local_sockid);
+            self.send_control(ControlTypes::Shutdown, now);
         }
+    }
+
+    pub fn next_timer(&self, now: Instant) -> Instant {
+        min(
+            max(now, self.snd_timer.next_instant()),
+            max(now, self.snd_timer.next_instant()),
+        )
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.status.is_open()
+    }
+
+    fn on_snd(&mut self, now: Instant) {
+        let now_ts = self.transmit_buffer.timestamp_from(now);
+        let window_length = self.metrics.rtt + self.settings.send_tsbpd_latency;
+        self.send_buffer.release_late_packets(now_ts, window_length);
 
         //   1) If the sender's loss list is not empty, retransmit the first
         //      packet in the list and remove it from the list. Go to 5).
         if let Some(p) = self.loss_list.pop_front() {
             debug!("Sending packet in loss list, seq={:?}", p.seq_number);
             self.send_data(p, now);
+
+            // TODO: returning here will result in sending all the packets in the loss
+            //       list before progressing further through the sender algorithm. This
+            //       appears to be inconsistent with the UDT spec. Is it consistent
+            //       with the reference implementation?
+            return;
         }
         // TODO: what is messaging mode?
         // TODO: I honestly don't know what this means
@@ -233,11 +224,18 @@ impl Sender {
         //      1).
 
         //   3) Wait until there is application data to be sent.
-        else if self.transmit_buffer.is_empty() && !self.close_requested {
+        else if self.transmit_buffer.is_empty() {
             // TODO: the spec for 3) seems to suggest waiting at here for data,
             //       but if execution doesn't jump back to Step1, then many of
             //       the tests don't pass... WAT?
-            return WaitForData;
+
+            if self.status.should_drain() && self.send_buffer.len() == 1 {
+                if let Some(packet) = self.send_buffer.pop() {
+                    self.send_data(packet, now);
+                    self.lr_acked_packet = self.transmit_buffer.next_sequence_number;
+                }
+            }
+            return;
         }
         //   4)
         //        a. If the number of unacknowledged packets exceeds the
@@ -256,13 +254,13 @@ impl Sender {
                    self.congestion_control.window_size(),
                    self.transmit_buffer.next_sequence_number - self.congestion_control.window_size());
 
-            return WaitUntilAck;
+            return;
         } else if let Some(p) = self.pop_transmit_buffer() {
             self.send_data(p, now);
-        } else if self.close_requested {
-            // this covers the niche case of dropping the last packet(s)
-            if let Some(dp) = self.send_buffer.front().cloned() {
-                self.send_data(dp, now);
+        } else if self.status.should_drain() && self.send_buffer.len() == 1 {
+            if let Some(packet) = self.send_buffer.pop() {
+                self.send_data(packet, now);
+                self.lr_acked_packet = self.transmit_buffer.next_sequence_number;
             }
         }
 
@@ -277,40 +275,11 @@ impl Sender {
         //   6) Wait (SND - t) time, where SND is the inter-packet interval
         //      updated by congestion control and t is the total time used by step
         //      1 to step 5. Go to 1).
-        self.step = Step6;
         self.snd_timer
             .set_period(self.congestion_control.snd_period());
-        WaitUntil(self.snd_timer.next_instant())
     }
 
-    fn handle_control_packet(&mut self, packet: ControlPacket, now: Instant) {
-        match packet.control_type {
-            ControlTypes::Ack(info) => {
-                self.handle_ack_packet(now, &info);
-            }
-            ControlTypes::Ack2(_) => {
-                warn!("Sender received ACK2, unusual");
-            }
-            ControlTypes::DropRequest { .. } => unimplemented!(),
-            ControlTypes::Handshake(shake) => self.handle_handshake_packet(shake, now),
-            // TODO: case UMSG_CGWARNING: // 100 - Delay Warning
-            //            // One way packet delay is increasing, so decrease the sending rate
-            //            ControlTypes::DelayWarning?
-
-            // TODO: case UMSG_LOSSREPORT: // 011 - Loss Report is this Nak?
-            // TODO: case UMSG_DROPREQ: // 111 - Msg drop request
-            // TODO: case UMSG_PEERERROR: // 1000 - An error has happened to the peer side
-            // TODO: case UMSG_EXT: // 0x7FFF - reserved and user defined messages
-            ControlTypes::Nak(nack) => self.handle_nack_packet(nack),
-            ControlTypes::Shutdown => {
-                self.handle_shutdown_packet();
-            }
-            ControlTypes::Srt(srt_packet) => self.handle_srt_control_packet(srt_packet),
-            ControlTypes::KeepAlive => {}
-        }
-    }
-
-    fn handle_ack_packet(&mut self, now: Instant, info: &AckControlInfo) {
+    pub fn handle_ack_packet(&mut self, now: Instant, info: AckControlInfo) {
         // if this ack number is less than (but NOT equal--equal could just mean lost ACK2 that needs to be retransmitted)
         // the largest received ack number, than discard it
         // this can happen thorough packet reordering OR losing an ACK2 packet
@@ -372,11 +341,11 @@ impl Sender {
         self.metrics.retrans_packets += self.loss_list.remove_acknowledged_packets(info.ack_number);
     }
 
-    fn handle_shutdown_packet(&mut self) {
-        self.close_requested = true;
+    pub fn handle_shutdown_packet(&mut self, now: Instant) {
+        self.status.drain(now);
     }
 
-    fn handle_nack_packet(&mut self, nack: Vec<u32>) {
+    pub fn handle_nack_packet(&mut self, nack: Vec<u32>) {
         // 1) Add all sequence numbers carried in the NAK into the sender's loss list.
         // 2) Update the SND period by rate control (see section 3.6).
         // 3) Reset the EXP time variable.
@@ -409,26 +378,15 @@ impl Sender {
         // TODO: reset EXP
     }
 
-    fn handle_handshake_packet(&mut self, handshake: HandshakeControlInfo, now: Instant) {
-        if let Some(control_type) = self.handshake.handle_handshake(&handshake) {
+    pub fn handle_handshake_packet(&mut self, handshake: HandshakeControlInfo, now: Instant) {
+        if let Some(control_type) = self.handshake.handle_handshake(handshake) {
             self.send_control(control_type, now);
-        }
-    }
-
-    fn handle_srt_control_packet(&mut self, packet: SrtControlPacket) {
-        use self::SrtControlPacket::*;
-
-        match packet {
-            HandshakeRequest(_) | HandshakeResponse(_) => {
-                warn!("Received handshake request or response for an already setup SRT connection")
-            }
-            _ => unimplemented!(),
         }
     }
 
     fn on_snd_event(&mut self, now: Instant) {
         self.snd_timer.reset(now);
-        self.step = SenderAlgorithmStep::Step1;
+        self.on_snd(now);
     }
 
     fn on_keepalive_event(&mut self, now: Instant) {
