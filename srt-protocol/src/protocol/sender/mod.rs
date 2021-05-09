@@ -224,17 +224,10 @@ impl Sender {
         //      1).
 
         //   3) Wait until there is application data to be sent.
-        else if self.transmit_buffer.is_empty() {
+        else if self.transmit_buffer.is_empty() && !self.status.should_drain() {
             // TODO: the spec for 3) seems to suggest waiting at here for data,
             //       but if execution doesn't jump back to Step1, then many of
             //       the tests don't pass... WAT?
-
-            if self.status.should_drain() && self.send_buffer.len() == 1 {
-                if let Some(packet) = self.send_buffer.pop() {
-                    self.send_data(packet, now);
-                    self.lr_acked_packet = self.transmit_buffer.next_sequence_number;
-                }
-            }
             return;
         }
         //   4)
