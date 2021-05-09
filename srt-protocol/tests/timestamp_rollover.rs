@@ -1,9 +1,9 @@
-use std::time::{Duration, Instant};
-use srt_protocol::{SocketId, SeqNumber, ConnectionSettings, Connection};
+use log::trace;
 use srt_protocol::connection::{DuplexConnection, Input};
 use srt_protocol::protocol::handshake::Handshake;
+use srt_protocol::{Connection, ConnectionSettings, SeqNumber, SocketId};
 use std::cmp::min;
-use log::trace;
+use std::time::{Duration, Instant};
 
 pub mod helpers;
 

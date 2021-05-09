@@ -1,17 +1,17 @@
-use srt_protocol::connection::{Input, DuplexConnection};
-use srt_protocol::{Packet, ConnectionSettings, Connection};
 use bytes::Bytes;
 use log::error;
+use rand::distributions::Bernoulli;
+use rand::prelude::*;
+use rand_distr::Normal;
+use srt_protocol::connection::{DuplexConnection, Input};
+use srt_protocol::protocol::handshake::Handshake;
+use srt_protocol::{Connection, ConnectionSettings, Packet};
 use std::{
     cmp::max,
     collections::BinaryHeap,
     net::SocketAddr,
     time::{Duration, Instant},
 };
-use rand::prelude::*;
-use rand_distr::Normal;
-use srt_protocol::protocol::handshake::Handshake;
-use rand::distributions::Bernoulli;
 
 #[derive(Eq, PartialEq)]
 struct SentPacket(Instant, (Packet, SocketAddr));
@@ -97,8 +97,7 @@ impl PeerSimulator {
     }
 
     pub fn schedule_input(&mut self, release_at: Instant, input: Input) {
-        self.input
-            .push(ScheduledInput(release_at, input));
+        self.input.push(ScheduledInput(release_at, input));
     }
 
     pub fn select_next_input(&mut self, now: Instant, next_timer: Instant) -> (Instant, Input) {
@@ -133,11 +132,15 @@ impl NetworkSimulator {
 
     pub fn send(&mut self, release_at: Instant, (packet, to): (Packet, SocketAddr)) {
         if to == self.sender.addr() {
-            self.sender
-                .schedule_input(release_at, Input::Packet(Some((packet, self.receiver.addr()))));
+            self.sender.schedule_input(
+                release_at,
+                Input::Packet(Some((packet, self.receiver.addr()))),
+            );
         } else if to == self.receiver.addr() {
-            self.receiver
-                .schedule_input(release_at, Input::Packet(Some((packet, self.sender.addr()))));
+            self.receiver.schedule_input(
+                release_at,
+                Input::Packet(Some((packet, self.sender.addr()))),
+            );
         } else {
             error!("Dropping {:?}", packet)
         }
@@ -180,11 +183,7 @@ impl RandomLossSimulation {
 
     pub fn next_packet_schedule(&mut self, now: Instant) -> Option<Instant> {
         if !self.drop_dist.sample(&mut self.rng) {
-            Some(
-                now + Duration::from_secs_f64(
-                    self.delay_dist.sample(&mut self.rng).abs() / 10.0,
-                ),
-            )
+            Some(now + Duration::from_secs_f64(self.delay_dist.sample(&mut self.rng).abs() / 10.0))
         } else {
             None
         }

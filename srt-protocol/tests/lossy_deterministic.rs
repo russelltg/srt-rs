@@ -1,14 +1,14 @@
 // lossy tests based on protocol to be fully deterministic
 
+use std::cmp::min;
 use std::{
     str,
     time::{Duration, Instant},
 };
-use std::cmp::min;
 
 use log::{info, trace};
-use rand::{prelude::StdRng, SeedableRng};
 use rand::distributions::Bernoulli;
+use rand::{prelude::StdRng, SeedableRng};
 use srt_protocol::connection::Input;
 
 pub mod helpers;

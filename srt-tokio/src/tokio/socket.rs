@@ -7,15 +7,15 @@ use std::{io, time::Instant};
 
 use bytes::Bytes;
 use futures::channel::mpsc;
+use futures::channel::mpsc::{Receiver, Sender};
 use futures::prelude::*;
 use futures::{ready, select};
-use log::{error,trace};
+use log::{error, trace};
 use srt_protocol::connection::{Action, DuplexConnection, Input};
-use tokio::time::sleep_until;
-use futures::channel::mpsc::{Sender, Receiver};
 use srt_protocol::Connection;
-use tokio::net::UdpSocket;
 use std::sync::Arc;
+use tokio::net::UdpSocket;
+use tokio::time::sleep_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
@@ -49,9 +49,23 @@ pub fn create_bidrectional_srt(
     let conn_copy = conn.clone();
     tokio::spawn(async move {
         if Instant::now().elapsed().as_nanos() % 2 == 0 {
-            run_handler_loop(socket, packets, output_data_sender, input_data_receiver, conn_copy).await;
+            run_handler_loop(
+                socket,
+                packets,
+                output_data_sender,
+                input_data_receiver,
+                conn_copy,
+            )
+            .await;
         } else {
-            run_input_loop(socket,packets, output_data_sender, input_data_receiver, conn_copy).await;
+            run_input_loop(
+                socket,
+                packets,
+                output_data_sender,
+                input_data_receiver,
+                conn_copy,
+            )
+            .await;
         }
     });
 
@@ -68,8 +82,7 @@ async fn run_handler_loop(
     output_data: Sender<(Instant, Bytes)>,
     input_data: Receiver<(Instant, Bytes)>,
     connection: Connection,
-)
-{
+) {
     let local_sockid = connection.settings.local_sockid;
     let mut input_data = input_data.fuse();
     let mut output_data = output_data;
@@ -108,16 +121,16 @@ async fn run_handler_loop(
         };
 
         let action = select! {
-                // one of the entities requested wakeup
-                _ = timeout_fut.fuse() => Input::Timer,
-                // new packet received
-                packet = packets.next() =>
-                    Input::Packet(packet),
-                // new packet queued
-                data = input_data.next() => {
-                    Input::Data(data)
-                }
-            };
+            // one of the entities requested wakeup
+            _ = timeout_fut.fuse() => Input::Timer,
+            // new packet received
+            packet = packets.next() =>
+                Input::Packet(packet),
+            // new packet queued
+            data = input_data.next() => {
+                Input::Data(data)
+            }
+        };
 
         match action {
             Input::Packet(packet) => connection.handle_packet_input(Instant::now(), packet),
@@ -136,8 +149,7 @@ async fn run_input_loop(
     output_data: Sender<(Instant, Bytes)>,
     input_data: Receiver<(Instant, Bytes)>,
     connection: Connection,
-)
-{
+) {
     let mut input_data = input_data.fuse();
     let mut output_data = output_data;
     let mut packets = packets.fuse();
@@ -165,13 +177,13 @@ async fn run_input_loop(
             Action::WaitForData(wait) => {
                 let timeout = now + wait;
                 select! {
-                        _ = sleep_until(timeout.into()).fuse() => Input::Timer,
-                        packet = packets.next() =>
-                            Input::Packet(packet),
-                        res = input_data.next() => {
-                            Input::Data(res)
-                        }
+                    _ = sleep_until(timeout.into()).fuse() => Input::Timer,
+                    packet = packets.next() =>
+                        Input::Packet(packet),
+                    res = input_data.next() => {
+                        Input::Data(res)
                     }
+                }
             }
         }
     }

@@ -8,12 +8,12 @@ use rand::{prelude::StdRng, SeedableRng};
 use helpers::{Action, Direction, SyncLossyConn};
 use srt_protocol::{
     accesscontrol::AllowAllStreamAcceptor,
-    Connection,
-    ControlPacket,
-    Packet, packet::ControlTypes, pending_connection::{
-        connect::Connect, ConnectionResult, ConnInitSettings, listen::Listen,
-        rendezvous::Rendezvous,
-    }, SeqNumber, SocketId,
+    packet::ControlTypes,
+    pending_connection::{
+        connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnInitSettings,
+        ConnectionResult,
+    },
+    Connection, ControlPacket, Packet, SeqNumber, SocketId,
 };
 
 pub mod helpers;
