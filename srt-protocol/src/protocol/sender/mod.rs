@@ -157,8 +157,8 @@ impl Sender {
     }
 
     pub fn handle_data(&mut self, data: (Instant, Bytes), now: Instant) {
-        let data_length = data.1.len();
-        let packet_count = self.transmit_buffer.push_message(data);
+        let data_length = data.1.len() as u64;
+        let packet_count = self.transmit_buffer.push_message(data) as u64;
         self.congestion_control
             .on_input(now, packet_count, data_length);
     }

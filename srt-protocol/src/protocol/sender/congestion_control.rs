@@ -5,9 +5,9 @@ use crate::SeqNumber;
 
 #[derive(Debug)]
 struct MessageStats {
-    pub message_count: usize,
-    pub packet_count: usize,
-    pub bytes_total: usize,
+    pub message_count: u64,
+    pub packet_count: u64,
+    pub bytes_total: u64,
 }
 
 impl Default for MessageStats {
@@ -21,7 +21,7 @@ impl Default for MessageStats {
 }
 
 impl Stats for MessageStats {
-    type Measure = (usize, usize);
+    type Measure = (u64, u64);
 
     fn add(&mut self, (packets, bytes): Self::Measure) {
         self.message_count += 1;
@@ -31,7 +31,7 @@ impl Stats for MessageStats {
 }
 
 impl StatsWindow<MessageStats> {
-    pub fn mean_payload_size(&self) -> usize {
+    pub fn mean_payload_size(&self) -> DataRate {
         if self.stats.packet_count > 0 {
             self.stats.bytes_total / self.stats.packet_count
         } else {
@@ -39,9 +39,9 @@ impl StatsWindow<MessageStats> {
         }
     }
 
-    pub fn data_rate(&self) -> usize {
+    pub fn data_rate(&self) -> DataRate {
         if self.period.as_nanos() > 0 {
-            (self.stats.bytes_total as f64 / self.period.as_secs_f64()) as usize
+            (self.stats.bytes_total as f64 / self.period.as_secs_f64()) as u64
         } else {
             0
         }
@@ -49,7 +49,7 @@ impl StatsWindow<MessageStats> {
 }
 
 // rate in bytes per second
-type DataRate = usize;
+type DataRate = u64;
 
 // TODO: move data rate algorithm configuration to a public protocol configuration module
 //       for now, just ignore that it's never used
@@ -90,7 +90,7 @@ impl SenderCongestionControl {
         }
     }
 
-    pub fn on_input(&mut self, now: Instant, packets: usize, data_length: usize) {
+    pub fn on_input(&mut self, now: Instant, packets: u64, data_length: u64) {
         let stats = self.message_stats_window.add(now, (packets, data_length));
         if let Some(stats) = stats {
             self.current_data_rate = self.updated_data_rate(stats.data_rate());
@@ -105,7 +105,8 @@ impl SenderCongestionControl {
             const HEADER_SIZE: usize = 16;
             const SRT_DATA_HEADER_SIZE: usize = UDP_HEADER_SIZE + HEADER_SIZE;
 
-            let mean_packet_size = self.message_stats.mean_payload_size() + SRT_DATA_HEADER_SIZE;
+            let mean_packet_size =
+                self.message_stats.mean_payload_size() + SRT_DATA_HEADER_SIZE as u64;
             // multiply packet size to adjust data rate to microseconds (i.e. x 1,000,000)
             let period = mean_packet_size * 1_000_000 / self.current_data_rate;
 
