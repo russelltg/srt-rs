@@ -13,7 +13,6 @@ use helpers::simulation::*;
 // this test runs for way too long. It's not clear why timestamp rollover needs to be tested
 // this way. This could be replaced by a few more focused unit tests.
 #[test]
-#[ignore]
 fn timestamp_rollover() {
     let _ = pretty_env_logger::try_init();
 
