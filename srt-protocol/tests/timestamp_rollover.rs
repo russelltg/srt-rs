@@ -9,9 +9,6 @@ pub mod helpers;
 
 use helpers::simulation::*;
 
-// After the sender algorithm fixed to respect the congestion control abd SND timer limits,
-// this test runs for way too long. It's not clear why timestamp rollover needs to be tested
-// this way. This could be replaced by a few more focused unit tests.
 #[test]
 fn timestamp_rollover() {
     let _ = pretty_env_logger::try_init();
@@ -36,8 +33,8 @@ fn timestamp_rollover() {
         init_recv_seq_num: init_seqnum,
         max_packet_size: 1316,
         max_flow_size: 8192,
-        send_tsbpd_latency: Duration::from_secs(1),
-        recv_tsbpd_latency: Duration::from_secs(1),
+        send_tsbpd_latency: Duration::from_millis(20),
+        recv_tsbpd_latency: Duration::from_millis(20),
         crypto_manager: None,
         stream_id: None,
     };
@@ -53,8 +50,8 @@ fn timestamp_rollover() {
         max_packet_size: 1316,
         max_flow_size: 8192,
 
-        send_tsbpd_latency: Duration::from_secs(1),
-        recv_tsbpd_latency: Duration::from_secs(1),
+        send_tsbpd_latency: Duration::from_millis(20),
+        recv_tsbpd_latency: Duration::from_millis(20),
         crypto_manager: None,
         stream_id: None,
     };
