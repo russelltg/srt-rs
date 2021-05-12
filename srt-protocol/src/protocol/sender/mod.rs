@@ -190,8 +190,7 @@ impl Sender {
     pub fn next_timer(&self, now: Instant) -> Instant {
         if self.transmit_buffer.is_empty() && self.loss_list.is_empty() {
             max(now, self.keepalive_timer.next_instant())
-        }
-        else {
+        } else {
             min(
                 max(now, self.snd_timer.next_instant()),
                 max(now, self.keepalive_timer.next_instant()),
