@@ -158,7 +158,7 @@ impl DuplexConnection {
             _ => {}
         };
 
-        let action = if !self.ensure_open(now) {
+        let action = if self.should_close(now) {
             Action::Close
         } else if let Some(data) = self.next_data(now) {
             Action::ReleaseData(data)
@@ -198,12 +198,12 @@ impl DuplexConnection {
         min(self.sender.next_timer(now), self.receiver.next_timer(now))
     }
 
-    pub fn ensure_open(&mut self, now: Instant) -> bool {
+    pub fn should_close(&mut self, now: Instant) -> bool {
         if !self.is_open() {
-            false
+            true
         } else {
             self.check_timers(now);
-            true
+            false
         }
     }
 
