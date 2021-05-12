@@ -5,7 +5,7 @@ use std::fmt::{self, Debug, Formatter};
 
 use bytes::{Buf, BufMut};
 
-mod control;
+pub(crate) mod control;
 mod data;
 mod error;
 

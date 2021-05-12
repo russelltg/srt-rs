@@ -1,6 +1,5 @@
 use crate::{
-    packet::ControlTypes::*,
-    packet::Packet,
+    packet::{ControlTypes::*, Packet, PacketType, SrtControlPacket},
     protocol::{
         handshake::Handshake,
         receiver::{Receiver, ReceiverAlgorithmAction},
@@ -242,8 +241,19 @@ pub fn create_bidrectional_srt(
                                     // neither--this exists just to keep the connection alive
                                     KeepAlive => {}
                                     Srt(s) => {
-                                        dbg!(s);
-                                        // unimplemented!("{:?}", s);
+                                        match s {
+                                            SrtControlPacket::KeyManagerRequest(req) => {
+                                                if req.pt == PacketType::KeyingMaterial {
+                                                    if let Err(e) = receiver.rekey(req) {
+                                                        debug!("Rekeying failed {:?}", e);
+                                                    }
+                                                }
+                                            }
+                                            _ => {
+                                                dbg!(s);
+                                                // unimplemented!("{:?}", s);
+                                            }
+                                        }
                                     }
                                 },
                             }
