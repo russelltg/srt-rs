@@ -5,9 +5,9 @@ use srt_protocol::{Connection, ConnectionSettings, SeqNumber, SocketId};
 use std::cmp::min;
 use std::time::{Duration, Instant};
 
-pub mod helpers;
+pub mod simulator;
 
-use helpers::simulation::*;
+use simulator::*;
 
 #[test]
 fn timestamp_rollover() {

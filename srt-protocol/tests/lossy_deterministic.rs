@@ -11,10 +11,10 @@ use rand::distributions::Bernoulli;
 use rand::{prelude::StdRng, SeedableRng};
 use srt_protocol::connection::Input;
 
-pub mod helpers;
+pub mod simulator;
 
-use helpers::simulation::*;
 use rand_distr::Normal;
+use simulator::*;
 
 #[test]
 fn lossy_deterministic() {

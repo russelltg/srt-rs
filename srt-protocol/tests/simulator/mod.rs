@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use log::error;
+use log::{error, warn};
 use rand::distributions::Bernoulli;
 use rand::prelude::*;
 use rand_distr::Normal;
@@ -145,6 +145,24 @@ impl NetworkSimulator {
             error!("Dropping {:?}", packet)
         }
     }
+
+    pub fn send_lossy(
+        &mut self,
+        sim: &mut RandomLossSimulation,
+        now: Instant,
+        packet: (Packet, SocketAddr),
+    ) {
+        self.send(
+            match sim.next_packet_schedule(now) {
+                Some(time) => time,
+                None => {
+                    warn!("Dropping {:?} to {}", packet.0, packet.1);
+                    return;
+                }
+            },
+            packet,
+        )
+    }
 }
 
 pub struct RandomLossSimulation {
@@ -183,7 +201,7 @@ impl RandomLossSimulation {
 
     pub fn next_packet_schedule(&mut self, now: Instant) -> Option<Instant> {
         if !self.drop_dist.sample(&mut self.rng) {
-            Some(now + Duration::from_secs_f64(self.delay_dist.sample(&mut self.rng).abs() / 10.0))
+            Some(now + Duration::from_secs_f64(self.delay_dist.sample(&mut self.rng).abs()))
         } else {
             None
         }
