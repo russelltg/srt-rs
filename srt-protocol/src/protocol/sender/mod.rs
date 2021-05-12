@@ -209,15 +209,11 @@ impl Sender {
 
         //   1) If the sender's loss list is not empty, retransmit the first
         //      packet in the list and remove it from the list. Go to 5).
+        //
+        // NOTE: the reference implementation doesn't jump to 5), so we don't either
         if let Some(p) = self.loss_list.pop_front() {
             debug!("Sending packet in loss list, seq={:?}", p.seq_number);
             self.send_data(p, now);
-
-            // TODO: returning here will result in sending all the packets in the loss
-            //       list before progressing further through the sender algorithm. This
-            //       appears to be inconsistent with the UDT spec. Is it consistent
-            //       with the reference implementation?
-            return;
         }
         // TODO: what is messaging mode?
         // TODO: I honestly don't know what this means
@@ -229,10 +225,7 @@ impl Sender {
 
         //   3) Wait until there is application data to be sent.
         else if self.transmit_buffer.is_empty() && !self.status.should_drain() {
-            // TODO: the spec for 3) seems to suggest waiting at here for data,
-            //       but if execution doesn't jump back to Step1, then many of
-            //       the tests don't pass... WAT?
-            return;
+
         }
         //   4)
         //        a. If the number of unacknowledged packets exceeds the
@@ -251,9 +244,16 @@ impl Sender {
                    self.congestion_control.window_size(),
                    self.transmit_buffer.next_sequence_number - self.congestion_control.window_size());
 
-            return;
         } else if let Some(p) = self.pop_transmit_buffer() {
             self.send_data(p, now);
+
+            //   5) If the sequence number of the current packet is 16n, where n is an
+            //      integer, go to 2).
+            if let Some(p) = self.pop_transmit_buffer_16n() {
+                //      NOTE: to get the closest timing, we ignore congestion control
+                //      and send the 16th packet immediately, instead of proceeding to step 2
+                self.send_data(p, now);
+            }
         } else if self.status.should_drain() && self.send_buffer.len() == 1 {
             if let Some(packet) = self.send_buffer.pop() {
                 self.send_data(packet, now);
@@ -261,19 +261,16 @@ impl Sender {
             }
         }
 
-        //   5) If the sequence number of the current packet is 16n, where n is an
-        //      integer, go to 2).
-        if let Some(p) = self.pop_transmit_buffer_16n() {
-            //      NOTE: to get the closest timing, we ignore congestion control
-            //      and send the 16th packet immediately, instead of proceeding to step 2
-            self.send_data(p, now);
-        }
-
         //   6) Wait (SND - t) time, where SND is the inter-packet interval
         //      updated by congestion control and t is the total time used by step
         //      1 to step 5. Go to 1).
-        self.snd_timer
-            .set_period(self.congestion_control.snd_period());
+
+        // NOTE: because this SND event handler code only runs when SND is triggered,
+        // exiting this SND event handler will satisfy 6), though we'll update SND as
+        // well to ensure congestion control is respected.
+
+        let period = self.congestion_control.snd_period();
+        self.snd_timer.set_period(period);
     }
 
     pub fn handle_ack_packet(&mut self, now: Instant, info: AckControlInfo) {
