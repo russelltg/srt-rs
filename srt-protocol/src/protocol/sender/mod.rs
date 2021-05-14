@@ -203,10 +203,6 @@ impl Sender {
     }
 
     fn on_snd(&mut self, now: Instant) {
-        let now_ts = self.transmit_buffer.timestamp_from(now);
-        let window_length = self.metrics.rtt + self.settings.send_tsbpd_latency;
-        self.send_buffer.release_late_packets(now_ts, window_length);
-
         //   1) If the sender's loss list is not empty, retransmit the first
         //      packet in the list and remove it from the list. Go to 5).
         //
