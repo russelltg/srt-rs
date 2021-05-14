@@ -56,10 +56,10 @@ fn timestamp_rollover() {
         stream_id: None,
     };
 
-    // send 10 packet/s for 24 hours
-    const PACKET_RATE: u32 = 10;
+    const PACKET_RATE: u32 = 10; // 10 packet/s
+    const STREAM_DURATION: u32 = 2 * 60 * 60; // 2 hours
 
-    let packs_to_send = 60 * 60 * 24 * 10 * PACKET_RATE;
+    let packs_to_send = STREAM_DURATION * PACKET_RATE;
     let latency = Duration::from_millis(10);
 
     let mut network = NetworkSimulator::new(s1_addr, s2_addr);
