@@ -221,7 +221,6 @@ impl Sender {
 
         //   3) Wait until there is application data to be sent.
         else if self.transmit_buffer.is_empty() && !self.status.should_drain() {
-
         }
         //   4)
         //        a. If the number of unacknowledged packets exceeds the
@@ -239,7 +238,6 @@ impl Sender {
                    self.transmit_buffer.next_sequence_number,
                    self.congestion_control.window_size(),
                    self.transmit_buffer.next_sequence_number - self.congestion_control.window_size());
-
         } else if let Some(p) = self.pop_transmit_buffer() {
             self.send_data(p, now);
 
@@ -250,11 +248,8 @@ impl Sender {
                 //      and send the 16th packet immediately, instead of proceeding to step 2
                 self.send_data(p, now);
             }
-        } else if self.status.should_drain() && self.send_buffer.len() == 1 {
-            if let Some(packet) = self.send_buffer.pop() {
-                self.send_data(packet, now);
-                self.lr_acked_packet = self.transmit_buffer.next_sequence_number;
-            }
+        } else if let Some(packet) = self.flush_send_buffer_on_close() {
+            self.send_data(packet, now);
         }
 
         //   6) Wait (SND - t) time, where SND is the inter-packet interval
@@ -267,6 +262,18 @@ impl Sender {
 
         let period = self.congestion_control.snd_period();
         self.snd_timer.set_period(period);
+    }
+
+    fn flush_send_buffer_on_close(&mut self) -> Option<DataPacket> {
+        if self.status.should_drain() && self.send_buffer.len() == 1 {
+            self.send_buffer.pop().map(|packet| {
+                // sender is closing, there is no need to track ACKs anymore
+                self.lr_acked_packet = self.transmit_buffer.next_sequence_number;
+                packet
+            })
+        } else {
+            None
+        }
     }
 
     pub fn handle_ack_packet(&mut self, now: Instant, info: AckControlInfo) {

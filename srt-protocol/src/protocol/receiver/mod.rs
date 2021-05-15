@@ -20,6 +20,7 @@ use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber};
 mod buffer;
 mod time;
 
+use crate::connection::ConnectionStatus;
 use buffer::RecvBuffer;
 use time::{ReceiveTimers, Rtt};
 
@@ -107,8 +108,7 @@ pub struct Receiver {
     /// The buffer
     receive_buffer: RecvBuffer,
 
-    /// Shutdown flag. This is set so when the buffer is flushed, it returns Async::Ready(None)
-    shutdown_flag: Option<Instant>,
+    status: ConnectionStatus,
 }
 
 impl Receiver {
@@ -137,11 +137,11 @@ impl Receiver {
             probe_time: None,
             lr_ack_acked: (0, init_seq_num),
             receive_buffer: RecvBuffer::with(&settings),
-            shutdown_flag: None,
+            status: ConnectionStatus::Open(settings.recv_tsbpd_latency),
         }
     }
     pub fn is_open(&self) -> bool {
-        !(self.shutdown_flag.is_some() && self.is_flushed())
+        self.status.is_open()
     }
 
     pub fn is_flushed(&self) -> bool {
@@ -175,10 +175,10 @@ impl Receiver {
         if self.timers.check_peer_idle_timeout(now).is_some() {
             self.on_peer_idle_timeout(now);
         }
-        if let Some(timeout) = self.shutdown_flag {
-            if now > timeout {
-                self.lr_ack_acked.1 = self.receive_buffer.next_release()
-            }
+        if self.status.check_close_timeout(now, self.is_flushed()) {
+            debug!("{:?} receiver close timed out", self.settings.local_sockid);
+            // receiver is closing, there is no need to track ACKs anymore
+            self.lr_ack_acked.1 = self.receive_buffer.next_release()
         }
     }
 
@@ -187,7 +187,7 @@ impl Receiver {
             "{:?}: Shutdown packet received, flushing receiver...",
             self.settings.local_sockid
         );
-        self.shutdown_flag = Some(now + self.settings.recv_tsbpd_latency);
+        self.status.drain(now);
     }
 
     pub fn reset_exp(&mut self, now: Instant) {
@@ -378,7 +378,7 @@ impl Receiver {
     }
 
     fn on_peer_idle_timeout(&mut self, now: Instant) {
-        self.shutdown_flag = Some(now);
+        self.status.drain(now);
         self.send_control(now, ControlTypes::Shutdown);
     }
     pub fn handle_ack2_packet(&mut self, seq_num: i32, ack2_arrival_time: Instant) {

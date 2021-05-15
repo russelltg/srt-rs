@@ -103,6 +103,21 @@ impl ConnectionStatus {
             _ => false,
         }
     }
+
+    pub fn check_close_timeout(&mut self, now: Instant, flushed: bool) -> bool {
+        use ConnectionStatus::*;
+        match *self {
+            Shutdown(timeout) | Drain(timeout) if now > timeout => {
+                *self = Closed;
+                true
+            }
+            Shutdown(_) | Drain(_) if flushed => {
+                *self = Closed;
+                false
+            }
+            _ => false,
+        }
+    }
 }
 
 pub struct DuplexConnection {
