@@ -396,27 +396,58 @@ mod duplex_connection {
         let start = Instant::now();
         let mut connection = DuplexConnection::new(new_connection(start));
 
+        use crate::ControlPacket;
         use Action::*;
-        use Packet::*;
         use ControlTypes::*;
-        use crate::packet::ControlPacket;
+        use Packet::*;
 
         let mut now = start;
-        assert_eq!(connection.handle_input(now, Input::Timer), WaitForData(51 * MILLIS));
-        assert_eq!(connection.handle_input(now, Input::Data(Some((start, Bytes::new())))), WaitForData(SND));
+        assert_eq!(
+            connection.handle_input(now, Input::Timer),
+            WaitForData(51 * MILLIS)
+        );
+        assert_eq!(
+            connection.handle_input(now, Input::Data(Some((start, Bytes::new())))),
+            WaitForData(SND)
+        );
 
-        assert_eq!(connection.handle_input(now, Input::Data(None)), WaitForData(SND), "input data 'close' should drain the send buffers");
+        assert_eq!(
+            connection.handle_input(now, Input::Data(None)),
+            WaitForData(SND),
+            "input data 'close' should drain the send buffers"
+        );
 
         // drain
         now += SND;
-        assert!(matches!(connection.handle_input(now, Input::Timer), SendPacket((Data(_), _))));
-        assert_eq!(connection.handle_input(now, Input::Data(None)), WaitForData(50 * MILLIS));
+        assert!(matches!(
+            connection.handle_input(now, Input::Timer),
+            SendPacket((Data(_), _))
+        ));
+        assert_eq!(
+            connection.handle_input(now, Input::Data(None)),
+            WaitForData(50 * MILLIS)
+        );
 
         // closing: drain last item in send buffer
         now += SND;
-        assert!(matches!(connection.handle_input(now, Input::Timer), SendPacket((Data(_), _))));
-        assert!(matches!(connection.handle_input(now, Input::Timer), SendPacket((Control(ControlPacket{control_type: Shutdown, ..}), _))));
-        assert_eq!(connection.handle_input(now, Input::Timer), WaitForData(49 * MILLIS));
+        assert!(matches!(
+            connection.handle_input(now, Input::Timer),
+            SendPacket((Data(_), _))
+        ));
+        assert!(matches!(
+            connection.handle_input(now, Input::Timer),
+            SendPacket((
+                Control(ControlPacket {
+                    control_type: Shutdown,
+                    ..
+                }),
+                _
+            ))
+        ));
+        assert_eq!(
+            connection.handle_input(now, Input::Timer),
+            WaitForData(49 * MILLIS)
+        );
         assert_eq!(connection.handle_input(now, Input::Timer), Close);
     }
 }
