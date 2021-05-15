@@ -352,97 +352,71 @@ impl DuplexConnection {
 // TODO: revisit these unit tests once the desired DuplexConnection API is stabilized
 #[cfg(test)]
 mod duplex_connection {
-    // use super::*;
-    //
-    // const MICROS: Duration = Duration::from_micros(1);
-    // const TSBPD: Duration = Duration::from_millis(20);
-    //
-    // fn remote_addr() -> SocketAddr {
-    //     ([127, 0, 0, 1], 2223).into()
-    // }
-    //
-    // fn remote_sockid() -> SocketId {
-    //     SocketId(2)
-    // }
-    //
-    // fn local_sockid() -> SocketId {
-    //     SocketId(2)
-    // }
-    //
-    // fn new_connection(now: Instant) -> Connection {
-    //     Connection {
-    //         settings: ConnectionSettings {
-    //             remote: remote_addr(),
-    //             remote_sockid: remote_sockid(),
-    //             local_sockid: local_sockid(),
-    //             socket_start_time: now,
-    //             rtt: Duration::default(),
-    //             init_send_seq_num: SeqNumber::new_truncate(0),
-    //             init_recv_seq_num: SeqNumber::new_truncate(0),
-    //             max_packet_size: 1316,
-    //             max_flow_size: 8192,
-    //             send_tsbpd_latency: TSBPD,
-    //             recv_tsbpd_latency: TSBPD,
-    //             crypto_manager: None,
-    //             stream_id: None,
-    //         },
-    //         handshake: Handshake::Connector,
-    //     }
-    // }
-    //
-    // #[test]
-    // fn close_timeout() {
-    //     let start = Instant::now();
-    //     let mut connection = DuplexConnection::new(new_connection(start));
-    //     assert!(connection.is_open());
-    //
-    //     connection.handle_data_input(start, Some((start, Bytes::new())));
-    //     connection.check_timers(start);
-    //
-    //     connection.handle_data_stream_close(start + MICROS);
-    //     connection.check_timers(start + MICROS);
-    //     assert!(connection.is_open());
-    //
-    //     connection.check_timers(start + MICROS + TSBPD);
-    //     assert!(connection.is_open());
-    //
-    //     connection.check_timers(start + MICROS + TSBPD);
-    //     connection.check_timers(start + MICROS + TSBPD * 20);
-    //
-    //     assert!(!connection.is_open());
-    //     assert_ne!(connection.next_packet(), None);
-    // }
+    use super::*;
 
-    // #[test]
-    // fn handle_close() {
-    //     let start = Instant::now();
-    //     let mut connection = DuplexConnection::new(new_connection(start));
-    //     assert!(connection.is_open(start));
-    //
-    //     for packet_id in [1u32,2u32,3u32].iter() {
-    //         let now = start + MICROS * *packet_id;
-    //         connection.handle_data(now, Some((now, Bytes::from(packet_id.to_string()))));
-    //         connection.check_timers(now);
-    //     }
-    //
-    //     connection.check_timers(start + MICROS * 3);
-    //     connection.handle_close(start + MICROS * 4);
-    //
-    //     for packet_id in [0u32,1u32,2u32].iter() {
-    //         assert!(connection.is_open(start + MICROS * 4));
-    //         match connection.next_packet() {
-    //             Some((Packet::Data(_), address )) => assert_eq!(address, remote_addr()),
-    //             p => assert!(false, "expected data {:?}", p),
-    //         };
-    //     }
-    //
-    //     connection.check_timers(start + MICROS * 5);
-    //
-    //     match connection.next_packet() {
-    //         Some((Packet::Control(ControlPacket{ control_type: ControlTypes::Shutdown, ..}), address )) => assert_eq!(address, remote_addr()),
-    //         p => assert!(false, "expected shutdown {:?}", p),
-    //     };
-    //
-    //     assert!(!connection.is_open(start + MICROS * 7));
-    // }
+    const MILLIS: Duration = Duration::from_millis(1);
+    const SND: Duration = MILLIS;
+    const TSBPD: Duration = Duration::from_millis(20);
+
+    fn remote_addr() -> SocketAddr {
+        ([127, 0, 0, 1], 2223).into()
+    }
+
+    fn remote_sockid() -> SocketId {
+        SocketId(2)
+    }
+
+    fn local_sockid() -> SocketId {
+        SocketId(2)
+    }
+
+    fn new_connection(now: Instant) -> Connection {
+        Connection {
+            settings: ConnectionSettings {
+                remote: remote_addr(),
+                remote_sockid: remote_sockid(),
+                local_sockid: local_sockid(),
+                socket_start_time: now,
+                rtt: Duration::default(),
+                init_send_seq_num: SeqNumber::new_truncate(0),
+                init_recv_seq_num: SeqNumber::new_truncate(0),
+                max_packet_size: 1316,
+                max_flow_size: 8192,
+                send_tsbpd_latency: TSBPD,
+                recv_tsbpd_latency: TSBPD,
+                crypto_manager: None,
+                stream_id: None,
+            },
+            handshake: Handshake::Connector,
+        }
+    }
+
+    #[test]
+    fn input_data_close() {
+        let start = Instant::now();
+        let mut connection = DuplexConnection::new(new_connection(start));
+
+        use Action::*;
+        use Packet::*;
+        use ControlTypes::*;
+        use crate::packet::ControlPacket;
+
+        let mut now = start;
+        assert_eq!(connection.handle_input(now, Input::Timer), WaitForData(51 * MILLIS));
+        assert_eq!(connection.handle_input(now, Input::Data(Some((start, Bytes::new())))), WaitForData(SND));
+
+        assert_eq!(connection.handle_input(now, Input::Data(None)), WaitForData(SND), "input data 'close' should drain the send buffers");
+
+        // drain
+        now += SND;
+        assert!(matches!(connection.handle_input(now, Input::Timer), SendPacket((Data(_), _))));
+        assert_eq!(connection.handle_input(now, Input::Data(None)), WaitForData(50 * MILLIS));
+
+        // closing: drain last item in send buffer
+        now += SND;
+        assert!(matches!(connection.handle_input(now, Input::Timer), SendPacket((Data(_), _))));
+        assert!(matches!(connection.handle_input(now, Input::Timer), SendPacket((Control(ControlPacket{control_type: Shutdown, ..}), _))));
+        assert_eq!(connection.handle_input(now, Input::Timer), WaitForData(49 * MILLIS));
+        assert_eq!(connection.handle_input(now, Input::Timer), Close);
+    }
 }
