@@ -269,7 +269,7 @@ fn lossy_rendezvous() {
     do_lossy_rendezvous(1104041222010949432);
     do_lossy_rendezvous(16693786644192575166);
 
-    for _ in 0..10000000 {
+    for _ in 0..100 {
         let seed = rand::random();
         do_lossy_rendezvous(seed);
     }
