@@ -358,6 +358,8 @@ async fn test_c_client_interop() -> Result<(), Error> {
 
 #[tokio::test]
 async fn bidirectional_interop() -> Result<(), Error> {
+    let _ = pretty_env_logger::try_init();
+
     let srt_rs_side = async move {
         let mut sock = SrtSocketBuilder::new_listen()
             .local_port(2012)
@@ -365,20 +367,39 @@ async fn bidirectional_interop() -> Result<(), Error> {
             .await
             .unwrap();
 
-        let (s, r) = sock.split();
+        for _ in 0..10 {
+            debug!("Sending...");
+            sock.send((Instant::now(), Bytes::from_static(b"1234")))
+                .await
+                .unwrap();
+            debug!("Sent");
+
+            let (_, buf) = sock.next().await.unwrap().unwrap();
+            debug!("Recvd");
+            assert_eq!(&*buf, b"1234");
+        }
+
+        Ok(())
     };
+
+    let jh = spawn_blocking(move || haivision_echo(2012));
+
+    try_join(srt_rs_side, jh).await.unwrap();
 
     Ok(())
 }
 
 type SRTSOCKET = i32;
 
+const SRTO_SENDER: c_int = 21;
+
 struct HaivisionSrt<'l> {
     create_socket: Symbol<'l, unsafe extern "C" fn() -> SRTSOCKET>,
     setsockflag: Symbol<'l, unsafe extern "C" fn(SRTSOCKET, c_int, *const (), c_int) -> c_int>,
     connect: Symbol<'l, unsafe extern "C" fn(SRTSOCKET, *const sockaddr, c_int) -> c_int>,
-    sendmsg2: Symbol<'l, unsafe extern "C" fn(i32, *const u8, c_int, *const ()) -> c_int>,
-    close: Symbol<'l, unsafe extern "C" fn(i32) -> c_int>,
+    sendmsg2: Symbol<'l, unsafe extern "C" fn(SRTSOCKET, *const u8, c_int, *const ()) -> c_int>,
+    recvmsg2: Symbol<'l, unsafe extern "C" fn(SRTSOCKET, *const u8, c_int, *const ()) -> c_int>,
+    close: Symbol<'l, unsafe extern "C" fn(SRTSOCKET) -> c_int>,
     startup: Symbol<'l, unsafe extern "C" fn() -> c_int>,
     cleanup: Symbol<'l, unsafe extern "C" fn() -> c_int>,
     getlasterror_str: Symbol<'l, unsafe extern "C" fn() -> *const c_char>,
@@ -391,6 +412,7 @@ impl<'l> HaivisionSrt<'l> {
             setsockflag: lib.get(b"srt_setsockflag").unwrap(),
             connect: lib.get(b"srt_connect").unwrap(),
             sendmsg2: lib.get(b"srt_sendmsg2").unwrap(),
+            recvmsg2: lib.get(b"srt_recvmsg2").unwrap(),
             close: lib.get(b"srt_close").unwrap(),
             startup: lib.get(b"srt_startup").unwrap(),
             cleanup: lib.get(b"srt_cleanup").unwrap(),
@@ -401,10 +423,19 @@ impl<'l> HaivisionSrt<'l> {
 
 const TEST_C_CLIENT_MESSAGE: &[u8] = b"This message should be sent to the other side";
 
+fn make_sockaddr(port: u16) -> sockaddr_in {
+    sockaddr_in {
+        sin_family: AF_INET as u16,
+        sin_port: port.to_be(),
+        sin_addr: in_addr {
+            s_addr: u32::from_be_bytes([127, 0, 0, 1]).to_be(),
+        },
+        sin_zero: [0; 8],
+    }
+}
+
 // this mimics test_c_client from the repository
 fn test_c_client(port: u16) {
-    const SRTO_SENDER: c_int = 21;
-
     unsafe {
         // load symbols
         let lib = Library::new("libsrt.so").unwrap();
@@ -417,14 +448,7 @@ fn test_c_client(port: u16) {
             panic!("Failed to create socket");
         }
 
-        let sa = sockaddr_in {
-            sin_family: AF_INET as u16,
-            sin_port: port.to_be(),
-            sin_addr: in_addr {
-                s_addr: u32::from_be_bytes([127, 0, 0, 1]).to_be(),
-            },
-            sin_zero: [0; 8],
-        };
+        let sa = make_sockaddr(port);
 
         let yes: c_int = 1;
         (srt.setsockflag)(
@@ -469,4 +493,47 @@ fn test_c_client(port: u16) {
     }
 }
 
-fn haivision_bidirectional(port: u16) {}
+fn haivision_echo(port: u16) {
+    unsafe {
+        let lib = Library::new("libsrt.so").unwrap();
+        let srt = HaivisionSrt::new(&lib);
+
+        (srt.startup)();
+
+        let ss = (srt.create_socket)();
+        if ss == -1 {
+            panic!("Failed to create socket");
+        }
+
+        let sa = make_sockaddr(port);
+
+        let st = (srt.connect)(
+            ss,
+            &sa as *const sockaddr_in as *const sockaddr,
+            size_of::<sockaddr_in>() as c_int,
+        );
+
+        if st == -1 {
+            panic!(
+                "Failed to connect {:?}",
+                CStr::from_ptr((srt.getlasterror_str)())
+            );
+        }
+
+        let mut buffer = [0; 1316];
+
+        // receive 100 packets, send 100 packets
+        for _ in 0..10 {
+            let size = (srt.recvmsg2)(ss, buffer.as_mut_ptr(), buffer.len() as c_int, null());
+            if size == -1 {
+                panic!()
+            }
+
+            let st = (srt.sendmsg2)(ss, buffer.as_ptr(), size, null());
+
+            if st == -1 {
+                panic!()
+            }
+        }
+    }
+}
