@@ -1,9 +1,8 @@
 #![recursion_limit = "256"]
 use std::{
-    ffi::{CStr, CString},
+    ffi::CStr,
     io::ErrorKind,
     os::raw::{c_char, c_int},
-    thread,
 };
 use std::{
     mem::size_of,
