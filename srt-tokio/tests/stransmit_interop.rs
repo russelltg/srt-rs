@@ -437,7 +437,7 @@ fn make_sockaddr(port: u16) -> sockaddr_in {
 fn test_c_client(port: u16) {
     unsafe {
         // load symbols
-        let lib = Library::new("libsrt.so").unwrap();
+        let lib = Library::new("libsrt.so.1").unwrap();
         let srt = HaivisionSrt::new(&lib);
 
         (srt.startup)();
@@ -494,7 +494,7 @@ fn test_c_client(port: u16) {
 
 fn haivision_echo(port: u16) {
     unsafe {
-        let lib = Library::new("libsrt.so").unwrap();
+        let lib = Library::new("libsrt.so.1").unwrap();
         let srt = HaivisionSrt::new(&lib);
 
         (srt.startup)();
