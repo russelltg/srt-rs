@@ -470,7 +470,7 @@ fn open_libsrt() -> Option<Library> {
     let possible_names = ["srt.dll"];
 
     #[cfg(target_os = "macos")]
-    let possible_names = ["srt.dylib"];
+    let possible_names = ["libsrt.dylib"];
 
     for name in &possible_names {
         if let Ok(lib) = unsafe { Library::new(*name) } {
@@ -578,6 +578,7 @@ fn haivision_echo(port: u16) {
 
 #[cfg(target_os = "macos")]
 #[test]
+#[ignore]
 fn list_contents() {
     let p = Command::new("brew")
         .args(&["ls", "--verbose", "srt"])
