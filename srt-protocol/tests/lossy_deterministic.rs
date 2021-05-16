@@ -1,33 +1,33 @@
 // lossy tests based on protocol to be fully deterministic
 
-use bytes::Bytes;
-use helpers::{Action, SyncLossyConn};
-use log::trace;
-use rand::{prelude::StdRng, Rng, SeedableRng};
-use srt_protocol::{
-    protocol::{
-        handshake::Handshake,
-        receiver::{Receiver, ReceiverAlgorithmAction},
-        sender::{Sender, SenderAlgorithmAction},
-    },
-    ConnectionSettings,
-};
+use std::cmp::min;
 use std::{
     str,
     time::{Duration, Instant},
 };
 
-pub mod helpers;
+use log::{info, trace};
+use rand::distributions::Bernoulli;
+use rand::{prelude::StdRng, SeedableRng};
+use srt_protocol::connection::Input;
+
+pub mod simulator;
+
+use rand_distr::Normal;
+use simulator::*;
 
 #[test]
 fn lossy_deterministic() {
     let _ = pretty_env_logger::try_init();
 
     let once_failing_seeds = [
-        // (7843866891970470107, 10),
-        // (940980453060602806, 10_000),
-        // (10550053401338237831, 10_000),
-        // (9602806002654919948, 10),
+        (3330590297113083014, 10_000),
+        (11174431011217123256, 10_000),
+        (7843866891970470107, 10_000),
+        (940980453060602806, 10_000),
+        (10550053401338237831, 10_000),
+        (9602806002654919948, 10_000),
+        (11134687271549837280, 10_000),
         (10210281456068034833, 10_000),
     ];
     for &(s, size) in &once_failing_seeds {
@@ -41,160 +41,100 @@ fn lossy_deterministic() {
 }
 
 fn do_lossy_test(seed: u64, count: usize) {
-    println!("Seed is: {}", seed);
-    let start = Instant::now();
-    let mut rng = StdRng::seed_from_u64(seed);
+    info!("Seed is: {}, count is: {}", seed, count);
 
-    let s1 = ConnectionSettings {
-        remote: ([127, 0, 0, 1], 2222).into(),
-        remote_sockid: rng.gen(),
-        local_sockid: rng.gen(),
-        socket_start_time: start,
-        rtt: Duration::default(),
-        init_send_seq_num: rng.gen(),
-        init_recv_seq_num: rng.gen(),
-        max_packet_size: 1316,
-        max_flow_size: 8192,
-        send_tsbpd_latency: Duration::from_secs(8),
-        recv_tsbpd_latency: Duration::from_secs(8),
-        crypto_manager: None,
-        stream_id: None,
-    };
-
-    let s2 = ConnectionSettings {
-        remote: ([127, 0, 0, 1], 2223).into(),
-        remote_sockid: s1.local_sockid,
-        local_sockid: s1.remote_sockid,
-        socket_start_time: start,
-        rtt: Duration::default(),
-        init_send_seq_num: s1.init_recv_seq_num,
-        init_recv_seq_num: s1.init_send_seq_num,
-        max_packet_size: 1316,
-        max_flow_size: 8192,
-        send_tsbpd_latency: Duration::from_secs(8),
-        recv_tsbpd_latency: Duration::from_secs(8),
-        crypto_manager: None,
-        stream_id: None,
-    };
-
-    let mut sendr = Sender::new(s1, Handshake::Connector);
-    let mut recvr = Receiver::new(s2, Handshake::Connector);
-
-    const PACKET_SPACING: Duration = Duration::from_millis(10);
+    const PACKET_SPACING: Duration = Duration::from_millis(1);
     const DROP_RATE: f64 = 0.06;
     let delay_mean = Duration::from_secs_f64(20e-3);
     let delay_stdev = Duration::from_secs_f64(4e-3);
 
-    let mut conn = SyncLossyConn::new(delay_mean, delay_stdev, DROP_RATE, rng);
+    let start = Instant::now();
 
-    let mut current_time = start;
+    let mut simulation = RandomLossSimulation {
+        rng: StdRng::seed_from_u64(seed),
+        delay_dist: Normal::new(delay_mean.as_secs_f64(), delay_stdev.as_secs_f64()).unwrap(),
+        drop_dist: Bernoulli::new(DROP_RATE).unwrap(),
+    };
+    let (mut network, mut sender, mut receiver) = simulation.build(start, Duration::from_secs(1));
+    let mut input_data = InputDataSimulation::new(start, count, PACKET_SPACING);
 
-    let mut next_send_time = Some(current_time);
-    let mut next_packet_id = 0;
-
-    let mut dropped = 0;
-    let mut next_data = 0;
-
+    let mut now = start;
+    let mut next_data = 0i32;
+    let mut dropped = 0i32;
+    let mut received = 0i32;
     loop {
-        if Some(current_time) == next_send_time {
-            sendr.handle_data(
-                (current_time, Bytes::from(next_packet_id.to_string())),
-                current_time,
-            );
+        let sender_next_time = if sender.is_open() {
+            input_data.send_data_to(now, &mut network.sender);
 
-            next_packet_id += 1;
-            if next_packet_id == count {
-                next_send_time = None;
-                sendr.handle_close();
-            } else {
-                next_send_time = Some(current_time + PACKET_SPACING);
-            }
-        }
+            assert_eq!(sender.next_data(now), None);
 
-        let conn_next_time =
-            loop {
-                match conn.action(current_time) {
-                    Action::Wait(until) => break until,
-                    Action::Release(pack, direction) => {
-                        trace!("{:?} {:?}", direction, pack);
-                        match direction {
-                            helpers::Direction::A2B => recvr
-                                .handle_packet(current_time, (pack, ([127, 0, 0, 1], 2223).into())),
-                            helpers::Direction::B2A => sendr
-                                .handle_packet((pack, ([127, 0, 0, 1], 2222).into()), current_time),
-                        }
-                    }
+            while let Some(packet) = sender.next_packet() {
+                match simulation.next_packet_schedule(now) {
+                    Some(release_at) => network.send(release_at, packet),
+                    None => trace!("Dropping {:?}", packet),
                 }
+            }
+
+            let next_timer = sender.check_timers(now);
+            let (next_time, input) = network.sender.select_next_input(now, next_timer);
+            match input {
+                Input::Data(data) => sender.handle_data_input(next_time, data),
+                Input::Packet(packet) => sender.handle_packet_input(next_time, packet),
+                _ => {}
             };
-
-        let sender_next_time = match sendr.next_action(current_time) {
-            SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => None,
-            SenderAlgorithmAction::WaitUntil(time) => Some(time),
-            SenderAlgorithmAction::Close => None, // xxx
+            Some(next_time)
+        } else {
+            None
         };
-        while let Some((packet, _)) = sendr.pop_output() {
-            conn.push_s2r(packet, current_time);
-        }
 
-        let receiver_next_time = loop {
-            match recvr.next_algorithm_action(current_time) {
-                ReceiverAlgorithmAction::TimeBoundedReceive(time) => break Some(time),
-                ReceiverAlgorithmAction::SendControl(cp, _) => {
-                    conn.push_r2s(cp.into(), current_time);
-                }
-                ReceiverAlgorithmAction::OutputData((ts, payload)) => {
-                    let diff_ms = (current_time - ts).as_millis();
+        let receiver_next_time = if receiver.is_open() {
+            while let Some((ts, payload)) = receiver.next_data(now) {
+                let diff_ms = (now - ts).as_millis();
+                assert!(
+                    700 < diff_ms && diff_ms < 1300,
+                    "Latency not in tolerance zone: {}ms",
+                    diff_ms
+                );
 
-                    assert!(
-                        7900 < diff_ms && diff_ms < 8700,
-                        "Latency not in tolerance zone: {}ms",
-                        diff_ms
-                    );
-
-                    let actual: i32 = str::from_utf8(&payload[..]).unwrap().parse().unwrap();
-                    dropped += actual - next_data;
-
-                    next_data = actual + 1;
-                } // xxx
-                ReceiverAlgorithmAction::Close => break None,
+                let actual: i32 = str::from_utf8(&payload[..]).unwrap().parse().unwrap();
+                dropped += actual - next_data;
+                next_data = actual + 1;
+                received += 1;
             }
+
+            while let Some(packet) = receiver.next_packet() {
+                match simulation.next_packet_schedule(now) {
+                    Some(release_at) => network.send(release_at, packet),
+                    None => trace!("Dropping {:?}", packet),
+                }
+            }
+
+            let next_timer = receiver.check_timers(now);
+            let (next_time, input) = network.receiver.select_next_input(now, next_timer);
+            match input {
+                Input::Data(data) => receiver.handle_data_input(now, data),
+                Input::Packet(packet) => receiver.handle_packet_input(now, packet),
+                _ => {}
+            };
+            Some(next_time)
+        } else {
+            None
         };
 
-        // determine if we are done or not
-        if recvr.is_flushed() && sendr.is_flushed() && next_packet_id == count {
-            break;
-        }
+        let next_time = match (sender_next_time, receiver_next_time) {
+            (Some(s), Some(r)) => min(s, r),
+            (Some(s), None) => s,
+            (None, Some(r)) => r,
+            _ => break,
+        };
 
-        // use the next smallest one
-        let new_current = [
-            next_send_time,
-            sender_next_time,
-            receiver_next_time,
-            conn_next_time,
-        ]
-        .iter()
-        .copied()
-        .flatten()
-        .min()
-        .unwrap();
-
-        if next_send_time == Some(new_current) {
-            trace!("Waking up to give data to sender");
-        }
-        if sender_next_time == Some(new_current) {
-            trace!("Waking up from sender")
-        }
-        if receiver_next_time == Some(new_current) {
-            trace!("Waking up from receiver")
-        }
-        if conn.next_release_time() == Some(new_current) {
-            trace!("Waking up for connection")
-        }
-
-        let delta = new_current - current_time;
-        current_time = new_current;
-
+        let delta = next_time - now;
         trace!("Delta = {:?}", delta);
+        now = next_time;
     }
+
+    info!("Received: {}", received);
+
+    assert_ne!(received, 0);
     assert!(dropped < 15, "Expected less than 15 drops, got {}", dropped);
 }

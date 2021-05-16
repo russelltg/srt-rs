@@ -163,9 +163,13 @@ impl SendBuffer {
 
     pub fn release_acknowledged_packets(&mut self, acknowledged: SeqNumber) {
         while acknowledged > self.first_seq {
-            self.buffer.pop_front();
-            self.first_seq += 1;
+            self.drop_front();
         }
+    }
+
+    fn drop_front(&mut self) {
+        self.buffer.pop_front();
+        self.first_seq += 1;
     }
 
     pub fn get<'a, I: Iterator<Item = SeqNumber> + 'a>(
@@ -180,8 +184,8 @@ impl SendBuffer {
         )
     }
 
-    pub fn front(&self) -> Option<&DataPacket> {
-        self.buffer.front()
+    pub fn pop(&mut self) -> Option<DataPacket> {
+        self.buffer.pop_front()
     }
 
     pub fn push_back(&mut self, data: DataPacket) {

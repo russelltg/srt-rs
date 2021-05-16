@@ -39,11 +39,11 @@ fn find_stransmit_rs() -> PathBuf {
 async fn receiver_timeout() {
     let _ = pretty_env_logger::try_init();
 
-    let b = SrtSocketBuilder::new_connect("127.0.0.1:1872").connect();
+    let b = SrtSocketBuilder::new_connect("127.0.0.1:1878").connect();
 
     let stranmsit_rs = find_stransmit_rs();
     let mut a = Command::new(&stranmsit_rs)
-        .args(&["-", "srt://:1872"])
+        .args(&["-", "srt://:1878"])
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();

@@ -108,10 +108,10 @@ impl SenderCongestionControl {
             let mean_packet_size =
                 self.message_stats.mean_payload_size() + SRT_DATA_HEADER_SIZE as u64;
             // multiply packet size to adjust data rate to microseconds (i.e. x 1,000,000)
-            let period = mean_packet_size * 1_000_000 / self.current_data_rate;
+            let period = mean_packet_size as u64 * 1_000_000 / self.current_data_rate as u64;
 
             if period > 0 {
-                return Duration::from_micros(period as u64);
+                return Duration::from_micros(period);
             }
         }
         Duration::from_micros(1)
@@ -188,9 +188,10 @@ mod sender_congestion_control {
         control.on_input(start, 1, mean_payload_size);
         control.on_input(start + micros(1_000_000), 0, 0);
 
-        let expected_snd_period = (expected_mean_packet_size * 1_000_000) / expected_data_rate;
+        let expected_snd_period =
+            (expected_mean_packet_size as u64 * 1_000_000) / expected_data_rate as u64;
 
-        assert_eq!(control.snd_period(), micros(expected_snd_period as u64));
+        assert_eq!(control.snd_period(), micros(expected_snd_period));
     }
 
     #[test]
@@ -212,9 +213,10 @@ mod sender_congestion_control {
         control.on_input(start, 1, mean_payload_size);
         control.on_input(start + micros(1_000_000), 0, 0);
 
-        let expected_snd_period = (expected_mean_packet_size * 1_000_000) / expected_data_rate;
+        let expected_snd_period =
+            (expected_mean_packet_size as u64 * 1_000_000) / expected_data_rate as u64;
 
-        assert_eq!(control.snd_period(), micros(expected_snd_period as u64));
+        assert_eq!(control.snd_period(), micros(expected_snd_period));
     }
 
     #[test]
@@ -238,8 +240,9 @@ mod sender_congestion_control {
         control.on_input(start, 1, mean_payload_size);
         control.on_input(start + micros(1_000_000), 0, 0);
 
-        let expected_snd_period = (expected_mean_packet_size * 1_000_000) / expected_data_rate;
+        let expected_snd_period =
+            (expected_mean_packet_size as u64 * 1_000_000) / expected_data_rate as u64;
 
-        assert_eq!(control.snd_period(), micros(expected_snd_period as u64));
+        assert_eq!(control.snd_period(), micros(expected_snd_period));
     }
 }
