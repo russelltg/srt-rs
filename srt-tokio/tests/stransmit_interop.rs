@@ -388,19 +388,19 @@ async fn bidirectional_interop() -> Result<(), Error> {
     Ok(())
 }
 
-type SRTSOCKET = i32;
+type HaiSocket = i32;
 
 const SRTO_SENDER: c_int = 21;
 
 struct HaivisionSrt<'l> {
-    create_socket: Symbol<'l, unsafe extern "C" fn() -> SRTSOCKET>,
-    setsockflag: Symbol<'l, unsafe extern "C" fn(SRTSOCKET, c_int, *const (), c_int) -> c_int>,
-    connect: Symbol<'l, unsafe extern "C" fn(SRTSOCKET, *const sockaddr, c_int) -> c_int>,
-    sendmsg2: Symbol<'l, unsafe extern "C" fn(SRTSOCKET, *const u8, c_int, *const ()) -> c_int>,
-    recvmsg2: Symbol<'l, unsafe extern "C" fn(SRTSOCKET, *const u8, c_int, *const ()) -> c_int>,
-    close: Symbol<'l, unsafe extern "C" fn(SRTSOCKET) -> c_int>,
+    create_socket: Symbol<'l, unsafe extern "C" fn() -> HaiSocket>,
+    setsockflag: Symbol<'l, unsafe extern "C" fn(HaiSocket, c_int, *const (), c_int) -> c_int>,
+    connect: Symbol<'l, unsafe extern "C" fn(HaiSocket, *const sockaddr, c_int) -> c_int>,
+    sendmsg2: Symbol<'l, unsafe extern "C" fn(HaiSocket, *const u8, c_int, *const ()) -> c_int>,
+    recvmsg2: Symbol<'l, unsafe extern "C" fn(HaiSocket, *const u8, c_int, *const ()) -> c_int>,
+    close: Symbol<'l, unsafe extern "C" fn(HaiSocket) -> c_int>,
     startup: Symbol<'l, unsafe extern "C" fn() -> c_int>,
-    cleanup: Symbol<'l, unsafe extern "C" fn() -> c_int>,
+    // cleanup: Symbol<'l, unsafe extern "C" fn() -> c_int>,
     getlasterror_str: Symbol<'l, unsafe extern "C" fn() -> *const c_char>,
 }
 
@@ -414,7 +414,7 @@ impl<'l> HaivisionSrt<'l> {
             recvmsg2: lib.get(b"srt_recvmsg2").unwrap(),
             close: lib.get(b"srt_close").unwrap(),
             startup: lib.get(b"srt_startup").unwrap(),
-            cleanup: lib.get(b"srt_cleanup").unwrap(),
+            // cleanup: lib.get(b"srt_cleanup").unwrap(),
             getlasterror_str: lib.get(b"srt_getlasterror_str").unwrap(),
         }
     }

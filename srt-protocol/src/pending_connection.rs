@@ -7,7 +7,7 @@ pub mod rendezvous;
 use crate::{
     crypto::CryptoOptions,
     packet::{ControlTypes, HandshakeControlInfo, RejectReason},
-    Connection, DataPacket, Packet, SeqNumber, SocketId,
+    Connection, DataPacket, Packet, SocketId,
 };
 use rand::random;
 use std::{error::Error, fmt, net::SocketAddr, time::Duration};
