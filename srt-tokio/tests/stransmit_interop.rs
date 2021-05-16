@@ -325,6 +325,7 @@ async fn stransmit_decrypt() -> Result<(), Error> {
 
 // reported by @ian-spoonradio
 #[tokio::test]
+#[cfg(not(target_os = "windows"))]
 async fn test_c_client_interop() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
@@ -358,6 +359,7 @@ async fn test_c_client_interop() -> Result<(), Error> {
 }
 
 #[tokio::test]
+#[cfg(not(target_os = "windows"))]
 async fn bidirectional_interop() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
@@ -424,7 +426,7 @@ impl<'l> HaivisionSrt<'l> {
 
 const TEST_C_CLIENT_MESSAGE: &[u8] = b"This message should be sent to the other side";
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 fn make_sockaddr(port: u16) -> sockaddr {
     use libc::{in_addr, sockaddr_in, AF_INET};
     unsafe {
@@ -435,6 +437,22 @@ fn make_sockaddr(port: u16) -> sockaddr {
                 s_addr: u32::from_be_bytes([127, 0, 0, 1]).to_be(),
             },
             sin_zero: [0; 8],
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn make_sockaddr(port: u16) -> sockaddr {
+    use libc::{in_addr, sockaddr_in, AF_INET};
+    unsafe {
+        transmute(sockaddr_in {
+            sin_family: AF_INET as u8,
+            sin_port: port.to_be(),
+            sin_addr: in_addr {
+                s_addr: u32::from_be_bytes([127, 0, 0, 1]).to_be(),
+            },
+            sin_zero: [0; 8],
+            sin_len: size_of::<sockaddr_in>(),
         })
     }
 }
