@@ -19,6 +19,8 @@ fn not_enough_latency() {
 }
 
 fn do_not_enough_latency(seed: u64) {
+    println!("not_enough_latency seed is {}", seed);
+
     let _ = pretty_env_logger::try_init();
 
     const PACKETS: usize = 1_000;
@@ -35,7 +37,7 @@ fn do_not_enough_latency(seed: u64) {
         drop_dist: Bernoulli::new(0.01).unwrap(),
     };
 
-    let (mut network, mut sender, mut receiver) = simulation.build(start);
+    let (mut network, mut sender, mut receiver) = simulation.build(start, Duration::from_secs(2));
 
     let mut input_data = InputDataSimulation::new(start, PACKETS, PACKET_SPACING);
 
@@ -104,10 +106,10 @@ fn do_not_enough_latency(seed: u64) {
     }
 
     assert!(
-        total_recvd > PACKETS / 2,
+        total_recvd > PACKETS * 2 / 3,
         "received {} packtes, expected {}",
         total_recvd,
-        PACKETS / 3 * 2
+        PACKETS * 2 / 3
     );
     assert!(total_recvd < PACKETS);
 }

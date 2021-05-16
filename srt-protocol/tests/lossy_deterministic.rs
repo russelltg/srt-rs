@@ -55,7 +55,7 @@ fn do_lossy_test(seed: u64, count: usize) {
         delay_dist: Normal::new(delay_mean.as_secs_f64(), delay_stdev.as_secs_f64()).unwrap(),
         drop_dist: Bernoulli::new(DROP_RATE).unwrap(),
     };
-    let (mut network, mut sender, mut receiver) = simulation.build(start);
+    let (mut network, mut sender, mut receiver) = simulation.build(start, Duration::from_secs(1));
     let mut input_data = InputDataSimulation::new(start, count, PACKET_SPACING);
 
     let mut now = start;

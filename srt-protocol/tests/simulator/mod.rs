@@ -175,8 +175,9 @@ impl RandomLossSimulation {
     pub fn build(
         &mut self,
         start: Instant,
+        latency: Duration,
     ) -> (NetworkSimulator, DuplexConnection, DuplexConnection) {
-        let sender = self.new_connection_settings(start);
+        let sender = self.new_connection_settings(start, latency);
         let receiver = ConnectionSettings {
             remote: (sender.remote.ip(), sender.remote.port() + 1).into(),
             remote_sockid: sender.local_sockid,
@@ -207,7 +208,7 @@ impl RandomLossSimulation {
         }
     }
 
-    fn new_connection_settings(&mut self, start: Instant) -> ConnectionSettings {
+    fn new_connection_settings(&mut self, start: Instant, latency: Duration) -> ConnectionSettings {
         ConnectionSettings {
             remote: ([127, 0, 0, 1], self.rng.gen()).into(),
             remote_sockid: self.rng.gen(),
@@ -218,8 +219,8 @@ impl RandomLossSimulation {
             init_recv_seq_num: self.rng.gen(),
             max_packet_size: 1316,
             max_flow_size: 8192,
-            send_tsbpd_latency: Duration::from_millis(1000),
-            recv_tsbpd_latency: Duration::from_millis(1000),
+            send_tsbpd_latency: latency,
+            recv_tsbpd_latency: latency,
             crypto_manager: None,
             stream_id: None,
         }
