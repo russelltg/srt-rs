@@ -58,6 +58,5 @@ pub use crate::tokio::SrtSocket;
 
 use srt_protocol::connection::{Connection, ConnectionSettings};
 use srt_protocol::crypto;
-use srt_protocol::packet::{self, Packet};
-use srt_protocol::protocol;
+use srt_protocol::packet::Packet;
 use srt_protocol::SocketId;

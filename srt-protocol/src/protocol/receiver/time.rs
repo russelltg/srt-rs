@@ -255,8 +255,8 @@ impl ReceiveTimers {
     pub fn check_peer_idle_timeout(&mut self, now: Instant) -> Option<Instant> {
         self.exp.check_expired(now)?;
 
-        let peer_idle = now - self.last_input;
-        if self.exp_count > Self::EXP_MAX && peer_idle > self.peer_idle_timeout {
+        let next_timeout = self.last_input + self.peer_idle_timeout;
+        if self.exp_count > Self::EXP_MAX && now > next_timeout {
             Some(self.last_input)
         } else {
             self.exp_count += 1;

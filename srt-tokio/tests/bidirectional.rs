@@ -1,7 +1,7 @@
 use srt_tokio::SrtSocketBuilder;
 
 use bytes::Bytes;
-use futures::{stream, SinkExt, StreamExt, TryStreamExt};
+use futures::{future, stream, SinkExt, StreamExt, TryStreamExt};
 use std::time::{Duration, Instant};
 use tokio::spawn;
 
@@ -14,12 +14,13 @@ async fn bidirectional() {
     let a = SrtSocketBuilder::new_connect("127.0.0.1:5000").connect();
     let b = SrtSocketBuilder::new_listen().local_port(5000).connect();
 
+    let mut join_handles = vec![];
     for fut in vec![a, b] {
-        spawn(async move {
+        join_handles.push(spawn(async move {
             let side = fut.await.unwrap();
             let (mut s, mut r) = side.split();
 
-            spawn(async move {
+            let read = spawn(async move {
                 for i in 0..ITERS {
                     let (_, payload) = r.try_next().await.unwrap().unwrap();
 
@@ -34,6 +35,8 @@ async fn bidirectional() {
 
             s.send_all(&mut counting_stream).await.unwrap();
             s.close().await.unwrap();
-        });
+            read.await.unwrap();
+        }));
     }
+    future::join_all(join_handles).await;
 }

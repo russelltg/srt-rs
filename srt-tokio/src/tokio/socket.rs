@@ -1,32 +1,21 @@
-use crate::{
-    packet::ControlTypes::*,
-    packet::Packet,
-    protocol::{
-        handshake::Handshake,
-        receiver::{Receiver, ReceiverAlgorithmAction},
-        sender::{Sender, SenderAlgorithmAction},
-    },
-    ConnectionSettings,
-};
+use crate::{ConnectionSettings, Packet};
 
-use std::{
-    io, mem,
-    net::SocketAddr,
-    pin::Pin,
-    sync::{Arc, Mutex},
-    task::{Context, Poll, Waker},
-    time::Instant,
-};
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::{io, time::Instant};
 
 use bytes::Bytes;
-use futures::{
-    channel::{mpsc, oneshot},
-    future,
-    prelude::*,
-    ready, select_biased,
-};
-use log::{debug, error, info, trace};
-use tokio::{net::UdpSocket, time::sleep_until};
+use futures::channel::mpsc;
+use futures::channel::mpsc::{Receiver, Sender};
+use futures::prelude::*;
+use futures::{ready, select};
+use log::{error, trace};
+use srt_protocol::connection::{Action, DuplexConnection, Input};
+use srt_protocol::Connection;
+use std::sync::Arc;
+use tokio::net::UdpSocket;
+use tokio::time::sleep_until;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
@@ -38,28 +27,12 @@ use tokio::{net::UdpSocket, time::sleep_until};
 #[derive(Debug)]
 pub struct SrtSocket {
     // receiver datastructures
-    recvr: mpsc::Receiver<(Instant, Bytes)>,
+    output_data: mpsc::Receiver<(Instant, Bytes)>,
 
     // sender datastructures
-    sender: mpsc::Sender<(Instant, Bytes)>,
-
-    // agnostic
-    close: oneshot::Receiver<()>,
+    input_data: mpsc::Sender<(Instant, Bytes)>,
 
     settings: ConnectionSettings,
-
-    // shared state to wake up the
-    flush_wakeup: Arc<Mutex<(Option<Waker>, bool)>>,
-
-    _drop_oneshot: oneshot::Sender<()>,
-}
-
-#[allow(clippy::large_enum_variant)]
-enum Action {
-    Nothing,
-    CloseSender,
-    Send(Option<(Instant, Bytes)>),
-    DelegatePacket(Option<(Packet, SocketAddr)>),
 }
 
 /// This spawns two new tasks:
@@ -67,218 +40,155 @@ enum Action {
 ///    a channel
 /// 2. Take outgoing packets and send them on the socket
 pub fn create_bidrectional_srt(
-    sock: Arc<UdpSocket>,
+    socket: Arc<UdpSocket>,
     packets: impl Stream<Item = (Packet, SocketAddr)> + Unpin + Send + 'static,
     conn: crate::Connection,
 ) -> SrtSocket {
-    let (mut release, recvr) = mpsc::channel(128);
-    let (sender, new_data) = mpsc::channel(128);
-    let (_drop_oneshot, close_oneshot) = oneshot::channel();
-    let (close_send, close_recv) = oneshot::channel();
+    let (output_data_sender, output_data_receiver) = mpsc::channel(128);
+    let (input_data_sender, input_data_receiver) = mpsc::channel(128);
     let conn_copy = conn.clone();
-
-    let fw = Arc::new(Mutex::new((None as Option<Waker>, true)));
-    let flush_wakeup = fw.clone();
-
     tokio::spawn(async move {
-        let mut close_receiver = close_oneshot.fuse();
-        let _close_sender = close_send; // exists for drop
-        let mut new_data = new_data.fuse();
-
-        let mut sender = Sender::new(conn_copy.settings.clone(), conn_copy.handshake);
-        let mut receiver = Receiver::new(conn_copy.settings, Handshake::Connector);
-
-        let mut flushed = true;
-
-        let mut serialize_buffer = Vec::new();
-        let mut packets = packets.fuse();
-
-        loop {
-            let (sender_timeout, close) = match sender.next_action(Instant::now()) {
-                SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => {
-                    (None, false)
-                }
-                SenderAlgorithmAction::WaitUntil(t) => (Some(t), false),
-                SenderAlgorithmAction::Close => {
-                    trace!("{:?} Send returned close", sender.settings().local_sockid);
-                    (None, true)
-                }
-            };
-            while let Some((packet, to)) = sender.pop_output() {
-                serialize_buffer.clear();
-                packet.serialize(&mut serialize_buffer);
-
-                if let Err(e) = sock.send_to(&serialize_buffer, to).await {
-                    error!("Error while seding packet: {:?}", e); // TODO: real error handling
-                }
-            }
-
-            if close && receiver.is_flushed() {
-                trace!(
-                    "{:?} Send returned close and receiver flushed",
-                    sender.settings().local_sockid
-                );
-                return;
-            } else if close {
-                trace!(
-                    "{:?} Sender closed, but receiver not flushed",
-                    sender.settings().local_sockid
-                );
-            }
-
-            let recvr_timeout = loop {
-                match receiver.next_algorithm_action(Instant::now()) {
-                    ReceiverAlgorithmAction::TimeBoundedReceive(t2) => {
-                        break Some(t2);
-                    }
-                    ReceiverAlgorithmAction::SendControl(cp, addr) => {
-                        serialize_buffer.clear();
-                        Packet::from(cp).serialize(&mut serialize_buffer);
-                        if let Err(e) = sock.send_to(&serialize_buffer, addr).await {
-                            error!("Error while sending packet {:?}", e);
-                        }
-                    }
-                    ReceiverAlgorithmAction::OutputData(ib) => {
-                        if let Err(e) = release.send(ib).await {
-                            error!("Error while releasing packet {:?}", e);
-                        }
-                    }
-                    ReceiverAlgorithmAction::Close => {
-                        if sender.is_flushed() {
-                            trace!("Recv returned close and sender flushed");
-                            return;
-                        } else {
-                            trace!(
-                                "{:?}: receiver closed but not closing as sender is not flushed",
-                                sender.settings().local_sockid
-                            );
-                            break None;
-                        }
-                    }
-                };
-            };
-            if sender.is_flushed() != flushed {
-                // wakeup
-                let mut l = fw.lock().unwrap();
-                flushed = sender.is_flushed();
-                l.1 = sender.is_flushed();
-                if sender.is_flushed() {
-                    if let Some(waker) = mem::replace(&mut l.0, None) {
-                        waker.wake();
-                    }
-                }
-            }
-
-            let timeout = [sender_timeout, recvr_timeout]
-                .iter()
-                .filter_map(|&x| x) // Only take Some(x) timeouts
-                .min();
-
-            let timeout_fut = async {
-                if let Some(to) = timeout {
-                    let now = Instant::now();
-                    trace!(
-                        "{:?} scheduling wakeup at {}{:?} from {}{}",
-                        sender.settings().local_sockid,
-                        if to > now { "+" } else { "-" },
-                        if to > now { to - now } else { now - to },
-                        if sender_timeout.is_some() {
-                            "sender "
-                        } else {
-                            ""
-                        },
-                        if recvr_timeout.is_some() {
-                            "receiver"
-                        } else {
-                            ""
-                        }
-                    );
-                    sleep_until(to.into()).await
-                } else {
-                    trace!(
-                        "{:?} not scheduling wakeup!!!",
-                        sender.settings().local_sockid
-                    );
-                    future::pending().await
-                }
-            };
-
-            let action = select_biased! {
-                // new packet received--do this first to not exaust the receive buffer
-                res = packets.next() =>
-                    Action::DelegatePacket(res),
-                // one of the entities requested wakeup
-                _ = timeout_fut.fuse() => Action::Nothing,
-                // new packet queued
-                res = new_data.next() => {
-                    Action::Send(res)
-                }
-                // socket closed
-                _ = close_receiver =>  {
-                    Action::CloseSender
-                }
-            };
-            match action {
-                Action::Nothing => {}
-                Action::DelegatePacket(res) => {
-                    match res {
-                        Some((pack, from)) => {
-                            match &pack {
-                                Packet::Data(_) => {
-                                    receiver.handle_packet(Instant::now(), (pack, from))
-                                }
-                                Packet::Control(cp) => match &cp.control_type {
-                                    // sender-responsble packets
-                                    Handshake(_) | Ack { .. } | Nak(_) | DropRequest { .. } => {
-                                        sender.handle_packet((pack, from), Instant::now());
-                                    }
-                                    // receiver-respnsible
-                                    Ack2(_) => receiver.handle_packet(Instant::now(), (pack, from)),
-                                    // both
-                                    Shutdown => {
-                                        sender.handle_packet((pack.clone(), from), Instant::now());
-                                        receiver.handle_packet(Instant::now(), (pack, from));
-                                    }
-                                    // neither--this exists just to keep the connection alive
-                                    KeepAlive => {}
-                                    Srt(s) => {
-                                        dbg!(s);
-                                        // unimplemented!("{:?}", s);
-                                    }
-                                },
-                            }
-                        }
-                        None => {
-                            info!(
-                                "{:?} Exiting because underlying stream ended",
-                                sender.settings().local_sockid
-                            );
-                            break;
-                        }
-                    }
-                }
-                Action::Send(res) => match res {
-                    Some(item) => {
-                        trace!("{:?} queued packet to send", sender.settings().local_sockid);
-                        sender.handle_data(item, Instant::now());
-                    }
-                    None => {
-                        debug!("Incoming data stream closed");
-                        sender.handle_close();
-                    }
-                },
-                Action::CloseSender => sender.handle_close(),
-            }
+        if Instant::now().elapsed().as_nanos() % 2 == 0 {
+            run_handler_loop(
+                socket,
+                packets,
+                output_data_sender,
+                input_data_receiver,
+                conn_copy,
+            )
+            .await;
+        } else {
+            run_input_loop(
+                socket,
+                packets,
+                output_data_sender,
+                input_data_receiver,
+                conn_copy,
+            )
+            .await;
         }
     });
 
     SrtSocket {
-        recvr,
-        sender,
-        close: close_recv,
+        output_data: output_data_receiver,
+        input_data: input_data_sender,
         settings: conn.settings,
-        flush_wakeup,
-        _drop_oneshot,
+    }
+}
+
+async fn run_handler_loop(
+    socket: Arc<UdpSocket>,
+    packets: impl Stream<Item = (Packet, SocketAddr)> + Unpin + Send + 'static,
+    output_data: Sender<(Instant, Bytes)>,
+    input_data: Receiver<(Instant, Bytes)>,
+    connection: Connection,
+) {
+    let local_sockid = connection.settings.local_sockid;
+    let mut input_data = input_data.fuse();
+    let mut output_data = output_data;
+    let mut packets = packets.fuse();
+    let mut connection = DuplexConnection::new(connection);
+    let mut serialize_buffer = Vec::new();
+    while connection.is_open() {
+        while let Some((packet, addr)) = connection.next_packet() {
+            serialize_buffer.clear();
+            packet.serialize(&mut serialize_buffer);
+            if let Err(e) = socket.send_to(&serialize_buffer, addr).await {
+                error!("Error while seding packet: {:?}", e); // TODO: real error handling
+            }
+        }
+
+        while let Some(data) = connection.next_data(Instant::now()) {
+            if let Err(e) = output_data.send(data).await {
+                error!("Error while releasing packet {:?}", e);
+            }
+        }
+
+        let timeout = connection.check_timers(Instant::now());
+        let timeout_fut = async {
+            let now = Instant::now();
+            trace!(
+                "{:?} scheduling wakeup at {}{:?}",
+                local_sockid,
+                if timeout > now { "+" } else { "-" },
+                if timeout > now {
+                    timeout - now
+                } else {
+                    now - timeout
+                },
+            );
+            sleep_until(timeout.into()).await
+        };
+
+        let action = select! {
+            // one of the entities requested wakeup
+            _ = timeout_fut.fuse() => Input::Timer,
+            // new packet received
+            packet = packets.next() =>
+                Input::Packet(packet),
+            // new packet queued
+            data = input_data.next() => {
+                Input::Data(data)
+            }
+        };
+
+        match action {
+            Input::Packet(packet) => connection.handle_packet_input(Instant::now(), packet),
+            Input::Data(data) => connection.handle_data_input(Instant::now(), data),
+            _ => {}
+        }
+    }
+    if let Err(e) = output_data.close().await {
+        error!("Error while closing data output stream {:?}", e);
+    }
+}
+
+async fn run_input_loop(
+    socket: Arc<UdpSocket>,
+    packets: impl Stream<Item = (Packet, SocketAddr)> + Unpin + Send + 'static,
+    output_data: Sender<(Instant, Bytes)>,
+    input_data: Receiver<(Instant, Bytes)>,
+    connection: Connection,
+) {
+    let mut input_data = input_data.fuse();
+    let mut output_data = output_data;
+    let mut packets = packets.fuse();
+    let mut connection = DuplexConnection::new(connection);
+    let mut input = Input::Timer;
+    let mut serialize_buffer = Vec::new();
+    loop {
+        let now = Instant::now();
+        input = match connection.handle_input(now, input) {
+            Action::Close => break,
+            Action::ReleaseData(data) => {
+                if let Err(e) = output_data.send(data).await {
+                    error!("Error while releasing data {:?}", e);
+                }
+                Input::DataReleased
+            }
+            Action::SendPacket((packet, address)) => {
+                serialize_buffer.clear();
+                packet.serialize(&mut serialize_buffer);
+                if let Err(e) = socket.send_to(&serialize_buffer, address).await {
+                    error!("Error while seding packet: {:?}", e); // TODO: real error handling
+                }
+                Input::PacketSent
+            }
+            Action::WaitForData(wait) => {
+                let timeout = now + wait;
+                select! {
+                    _ = sleep_until(timeout.into()).fuse() => Input::Timer,
+                    packet = packets.next() =>
+                        Input::Packet(packet),
+                    res = input_data.next() => {
+                        Input::Data(res)
+                    }
+                }
+            }
+        }
+    }
+    if let Err(e) = output_data.close().await {
+        error!("Error while closing data output stream {:?}", e);
     }
 }
 
@@ -292,7 +202,7 @@ impl Stream for SrtSocket {
     type Item = Result<(Instant, Bytes), io::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        Poll::Ready(ready!(Pin::new(&mut self.recvr).poll_next(cx)).map(Ok))
+        Poll::Ready(ready!(Pin::new(&mut self.output_data).poll_next(cx)).map(Ok))
     }
 }
 
@@ -300,36 +210,22 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
     type Error = io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(ready!(Pin::new(&mut self.sender).poll_ready(cx))
+        Poll::Ready(Ok(ready!(Pin::new(&mut self.input_data).poll_ready(cx))
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?))
     }
     fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Self::Error> {
-        self.sender
+        self.input_data
             .start_send(item)
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        ready!(Pin::new(&mut self.sender).poll_flush(cx))
-            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?;
-
-        let mut l = self.flush_wakeup.lock().unwrap();
-        if l.1 {
-            // already flushed
-            Poll::Ready(Ok(()))
-        } else {
-            // not flushed yet, register wakeup when flushed
-            l.0 = Some(cx.waker().clone());
-            Poll::Pending
-        }
+        Pin::new(&mut self.input_data)
+            .poll_flush(cx)
+            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
     }
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        ready!(Pin::new(&mut self.sender).poll_close(cx))
-            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?;
-        // the sender side of this oneshot is dropped when the task returns, which returns Err here. This means it is closd.
-        match Pin::new(&mut self.close).poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(_)) => Poll::Ready(Ok(())),
-            Poll::Ready(Ok(_)) => unreachable!(),
-        }
+        Pin::new(&mut self.input_data)
+            .poll_close(cx)
+            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
     }
 }

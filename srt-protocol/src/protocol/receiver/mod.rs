@@ -11,27 +11,18 @@ use log::{debug, error, info, trace, warn};
 use super::TimeSpan;
 use crate::loss_compression::compress_loss_list;
 use crate::packet::{
-    AckControlInfo, ControlPacket, ControlTypes, DataEncryption, DataPacket, HandshakeControlInfo,
-    Packet, SrtControlPacket,
+    AckControlInfo, ControlPacket, ControlTypes, DataEncryption, DataPacket, Packet,
 };
 use crate::protocol::handshake::Handshake;
-use crate::protocol::TimeBase;
+use crate::protocol::{TimeBase, TimeStamp};
 use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber};
 
 mod buffer;
 mod time;
 
+use crate::connection::ConnectionStatus;
 use buffer::RecvBuffer;
 use time::{ReceiveTimers, Rtt};
-
-#[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
-pub enum ReceiverAlgorithmAction {
-    TimeBoundedReceive(Instant),
-    SendControl(ControlPacket, SocketAddr),
-    OutputData((Instant, Bytes)),
-    Close,
-}
 
 #[derive(Debug)]
 struct LossListEntry {
@@ -117,8 +108,7 @@ pub struct Receiver {
     /// The buffer
     receive_buffer: RecvBuffer,
 
-    /// Shutdown flag. This is set so when the buffer is flushed, it returns Async::Ready(None)
-    shutdown_flag: bool,
+    status: ConnectionStatus,
 }
 
 impl Receiver {
@@ -147,67 +137,30 @@ impl Receiver {
             probe_time: None,
             lr_ack_acked: (0, init_seq_num),
             receive_buffer: RecvBuffer::with(&settings),
-            shutdown_flag: false,
+            status: ConnectionStatus::Open(settings.recv_tsbpd_latency),
         }
     }
-
-    pub fn handle_shutdown(&mut self) {
-        self.shutdown_flag = true;
+    pub fn is_open(&self) -> bool {
+        self.status.is_open()
     }
 
-    // handles an incoming a packet
-    pub fn handle_packet(&mut self, now: Instant, (packet, from): (Packet, SocketAddr)) {
-        // We don't care about packets from elsewhere
-        if from != self.settings.remote {
-            info!("Packet received from unknown address: {:?}", from);
-            return;
-        }
+    pub fn is_flushed(&self) -> bool {
+        debug!(
+            "{:?}|{:?}|recv - {:?}:{},{}",
+            TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
+            self.settings.local_sockid,
+            self.receive_buffer.next_msg_ready(),
+            self.lr_ack_acked.1,
+            self.receive_buffer.next_release()
+        );
 
-        if self.settings.local_sockid != packet.dest_sockid() {
-            // packet isn't applicable
-            info!(
-                "Packet send to socket id ({:?}) that does not match local ({:?})",
-                packet.dest_sockid(),
-                self.settings.local_sockid
-            );
-            return;
-        }
-
-        trace!("Received packet: {:?}", packet);
-
-        self.timers.reset_exp(now);
-        match packet {
-            Packet::Control(ctrl) => {
-                self.receive_buffer.synchronize_clock(now, ctrl.timestamp);
-
-                // handle the control packet
-                match ctrl.control_type {
-                    ControlTypes::Ack { .. } => warn!("Receiver received ACK packet, unusual"),
-                    ControlTypes::Ack2(seq_num) => self.handle_ack2(seq_num, now),
-                    ControlTypes::DropRequest { .. } => unimplemented!(),
-                    ControlTypes::Handshake(shake) => self.handle_handshake_packet(now, shake),
-                    ControlTypes::KeepAlive => {}
-                    ControlTypes::Nak { .. } => warn!("Receiver received NAK packet, unusual"),
-                    ControlTypes::Shutdown => {
-                        info!(
-                            "{:?}: Shutdown packet received, flushing receiver...",
-                            self.settings.local_sockid
-                        );
-                        self.shutdown_flag = true;
-                    } // end of stream
-                    ControlTypes::Srt(srt_packet) => {
-                        self.handle_srt_control_packet(srt_packet);
-                    }
-                }
-            }
-            Packet::Data(data) => self.handle_data_packet(data, now),
-        };
+        self.receive_buffer.next_msg_ready().is_none()
+            && self.lr_ack_acked.1 == self.receive_buffer.next_release() // packets have been acked and all acks have been acked (ack2)
+            && self.control_packets.is_empty()
+            && self.data_release.is_empty()
     }
 
-    /// 6.2 The Receiver's Algorithm
-    pub fn next_algorithm_action(&mut self, now: Instant) -> ReceiverAlgorithmAction {
-        use ReceiverAlgorithmAction::*;
-
+    pub fn check_timers(&mut self, now: Instant) {
         //   Data Sending Algorithm:
         //   1) Query the system time to check if ACK, NAK, or EXP timer has
         //      expired. If there is any, process the event (as described below
@@ -222,22 +175,27 @@ impl Receiver {
         if self.timers.check_peer_idle_timeout(now).is_some() {
             self.on_peer_idle_timeout(now);
         }
-
-        if let Some(data) = self.pop_data(now) {
-            OutputData(data)
-        } else if let Some(Packet::Control(packet)) = self.pop_conotrol_packet() {
-            SendControl(packet, self.settings.remote)
-        } else if self.shutdown_flag && self.is_flushed() {
-            Close
-        } else {
-            // 2) Start time bounded UDP receiving. If no packet arrives, go to 1).
-            TimeBoundedReceive(self.next_timer(now))
+        if self.status.check_close_timeout(now, self.is_flushed()) {
+            debug!("{:?} receiver close timed out", self.settings.local_sockid);
+            // receiver is closing, there is no need to track ACKs anymore
+            self.lr_ack_acked.1 = self.receive_buffer.next_release()
         }
     }
 
-    pub fn is_flushed(&self) -> bool {
-        self.receive_buffer.next_msg_ready().is_none()
-            && self.lr_ack_acked.1 == self.receive_buffer.next_release() // packets have been acked and all acks have been acked (ack2)
+    pub fn handle_shutdown_packet(&mut self, now: Instant) {
+        info!(
+            "{:?}: Shutdown packet received, flushing receiver...",
+            self.settings.local_sockid
+        );
+        self.status.drain(now);
+    }
+
+    pub fn reset_exp(&mut self, now: Instant) {
+        self.timers.reset_exp(now);
+    }
+
+    pub fn synchronize_clock(&mut self, now: Instant, ts: TimeStamp) {
+        self.receive_buffer.synchronize_clock(now, ts)
     }
 
     fn on_ack_event(&mut self, now: Instant) {
@@ -420,28 +378,10 @@ impl Receiver {
     }
 
     fn on_peer_idle_timeout(&mut self, now: Instant) {
-        self.shutdown_flag = true;
+        self.status.drain(now);
         self.send_control(now, ControlTypes::Shutdown);
     }
-
-    fn handle_handshake_packet(&mut self, now: Instant, control_info: HandshakeControlInfo) {
-        if let Some(c) = self.handshake.handle_handshake(&control_info) {
-            self.send_control(now, c)
-        }
-    }
-
-    // handles a SRT control packet
-    fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) {
-        use self::SrtControlPacket::*;
-        match pack {
-            HandshakeRequest(_) | HandshakeResponse(_) => {
-                warn!("Received handshake SRT packet, HSv5 expected");
-            }
-            _ => unimplemented!(),
-        }
-    }
-
-    fn handle_ack2(&mut self, seq_num: i32, ack2_arrival_time: Instant) {
+    pub fn handle_ack2_packet(&mut self, seq_num: i32, ack2_arrival_time: Instant) {
         // 1) Locate the related ACK in the ACK History Window according to the
         //    ACK sequence number in this ACK2.
         let id_in_wnd = match self
@@ -482,7 +422,7 @@ impl Receiver {
         }
     }
 
-    fn handle_data_packet(&mut self, mut data: DataPacket, now: Instant) {
+    pub fn handle_data_packet(&mut self, mut data: DataPacket, now: Instant) {
         // 2&3 don't apply
 
         // 4) If the sequence number of the current data packet is 16n + 1,
@@ -590,7 +530,7 @@ impl Receiver {
         );
     }
 
-    fn pop_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
+    pub fn next_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
         // try to release packets
         while let Some(d) = self.receive_buffer.next_msg_tsbpd(now) {
             self.data_release.push_back(d);
@@ -603,13 +543,15 @@ impl Receiver {
         self.data_release.pop_front()
     }
 
-    fn pop_conotrol_packet(&mut self) -> Option<Packet> {
-        self.control_packets.pop_front()
+    pub fn next_packet(&mut self) -> Option<(Packet, SocketAddr)> {
+        self.control_packets
+            .pop_front()
+            .map(|packet| (packet, self.settings.remote))
     }
 
-    fn next_timer(&self, now: Instant) -> Instant {
+    pub fn next_timer(&self, now: Instant) -> Instant {
         match self.receive_buffer.next_message_release_time() {
-            Some(next_rel_time) => min(self.timers.next_timer(now), next_rel_time),
+            Some(next_rel_time) => max(min(self.timers.next_timer(now), next_rel_time), now),
             None => self.timers.next_timer(now),
         }
     }

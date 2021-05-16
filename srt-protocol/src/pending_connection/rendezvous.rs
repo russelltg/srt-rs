@@ -228,6 +228,11 @@ impl Rendezvous {
             Ordering::Equal => return NotHandled(CookiesMatched(self.cookie)),
         };
 
+        debug!(
+            "Rendezvous socket {:?} is {:?}",
+            self.init_settings.local_sockid, role
+        );
+
         match (info.shake_type, role) {
             (ShakeType::Waveahand, Initiator) => {
                 // NOTE: streamid not supported in rendezvous
@@ -455,6 +460,7 @@ impl Rendezvous {
                     return NoAction; // TODO: this is a pretty roundabout way to do this...just waits for another tick
                 }
                 (ShakeType::Conclusion, Ok(Some(_))) => return NotHandled(ExpectedHsReq),
+                (ShakeType::Waveahand, _) => return NotHandled(AgreementExpected(info.clone())),
                 _ => {}
             }
         }

@@ -58,6 +58,7 @@ impl Connect {
             streamid,
         }
     }
+
     fn on_start(&mut self) -> ConnectionResult {
         let packet = Packet::Control(ControlPacket {
             dest_sockid: SocketId(0),
