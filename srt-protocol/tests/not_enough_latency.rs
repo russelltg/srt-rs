@@ -44,19 +44,18 @@ fn not_enough_latency() {
             r_sa,
             s_sa.ip(),
             ConnInitSettings {
-                starting_send_seqnum: seqno,
                 local_sockid: s_sid,
                 crypto: None,
                 send_latency: Duration::from_millis(2000),
                 recv_latency: Duration::from_millis(20),
             },
             None,
+            seqno,
         ),
         start,
     );
 
     let mut recv = ListRecv::List(Listen::new(ConnInitSettings {
-        starting_send_seqnum: seqno,
         local_sockid: r_sid,
         crypto: None,
         send_latency: Duration::from_millis(20),

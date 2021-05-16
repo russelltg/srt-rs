@@ -1,15 +1,28 @@
 #![recursion_limit = "256"]
-use std::io::ErrorKind;
-use std::net::{SocketAddr, SocketAddrV4};
-use std::process::Command;
-use std::time::{Duration, Instant};
+use std::{
+    ffi::{CStr, CString},
+    io::ErrorKind,
+    os::raw::{c_char, c_int},
+    thread,
+};
+use std::{
+    mem::size_of,
+    net::{SocketAddr, SocketAddrV4},
+};
+use std::{process::Command, ptr::null};
+use std::{
+    thread::sleep,
+    time::{Duration, Instant},
+};
 
 use anyhow::Error;
 use bytes::Bytes;
 use futures::{future::try_join, join, stream, SinkExt, Stream, StreamExt};
-use log::info;
+use libc::{in_addr, sockaddr, sockaddr_in, AF_INET};
+use libloading::{Library, Symbol};
+use log::{debug, info};
 
-use tokio::net::UdpSocket;
+use tokio::{net::UdpSocket, task::spawn_blocking};
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
@@ -307,4 +320,129 @@ async fn stransmit_decrypt() -> Result<(), Error> {
     child.wait().unwrap();
 
     Ok(())
+}
+
+// reported by @ian-spoonradio
+#[tokio::test]
+async fn test_c_client_interop() -> Result<(), Error> {
+    let _ = pretty_env_logger::try_init();
+
+    let srt_rs_side = async move {
+        let mut sock = SrtSocketBuilder::new_listen()
+            .local_port(2011)
+            .connect()
+            .await
+            .unwrap();
+
+        for _ in 0..100 {
+            sock.next().await.unwrap().unwrap();
+            debug!("Got packet");
+        }
+
+        debug!("Closing");
+
+        sock.close().await.unwrap();
+
+        debug!("Closed");
+
+        Ok(())
+    };
+
+    let jh = spawn_blocking(move || test_c_client(2011));
+
+    try_join(srt_rs_side, jh).await.unwrap();
+
+    Ok(())
+}
+
+type SRTSOCKET = i32;
+
+struct HaivisionSrt<'l> {
+    create_socket: Symbol<'l, unsafe extern "C" fn() -> SRTSOCKET>,
+    setsockflag: Symbol<'l, unsafe extern "C" fn(SRTSOCKET, c_int, *const (), c_int) -> c_int>,
+    connect: Symbol<'l, unsafe extern "C" fn(SRTSOCKET, *const sockaddr, c_int) -> c_int>,
+    sendmsg2: Symbol<'l, unsafe extern "C" fn(i32, *const u8, c_int, *const ()) -> c_int>,
+    close: Symbol<'l, unsafe extern "C" fn(i32) -> c_int>,
+    startup: Symbol<'l, unsafe extern "C" fn() -> c_int>,
+    cleanup: Symbol<'l, unsafe extern "C" fn() -> c_int>,
+    getlasterror_str: Symbol<'l, unsafe extern "C" fn() -> *const c_char>,
+}
+
+impl<'l> HaivisionSrt<'l> {
+    unsafe fn new(lib: &'l Library) -> HaivisionSrt<'l> {
+        HaivisionSrt {
+            create_socket: lib.get(b"srt_create_socket").unwrap(),
+            setsockflag: lib.get(b"srt_setsockflag").unwrap(),
+            connect: lib.get(b"srt_connect").unwrap(),
+            sendmsg2: lib.get(b"srt_sendmsg2").unwrap(),
+            close: lib.get(b"srt_close").unwrap(),
+            startup: lib.get(b"srt_startup").unwrap(),
+            cleanup: lib.get(b"srt_cleanup").unwrap(),
+            getlasterror_str: lib.get(b"srt_getlasterror_str").unwrap(),
+        }
+    }
+}
+
+// this mimics test_c_client from the repository
+fn test_c_client(port: u16) {
+    const SRTO_SENDER: c_int = 21;
+
+    unsafe {
+        // load symbols
+        let lib = Library::new("libsrt.so").unwrap();
+        let srt = HaivisionSrt::new(&lib);
+
+        let message = b"This message should be sent to the other side";
+        (srt.startup)();
+
+        let ss = (srt.create_socket)();
+        if ss == -1 {
+            panic!("Failed to create socket");
+        }
+
+        let sa = sockaddr_in {
+            sin_family: AF_INET as u16,
+            sin_port: port.to_be(),
+            sin_addr: in_addr {
+                s_addr: u32::from_be_bytes([127, 0, 0, 1]).to_be(),
+            },
+            sin_zero: [0; 8],
+        };
+
+        let yes: c_int = 1;
+        (srt.setsockflag)(
+            ss,
+            SRTO_SENDER,
+            &yes as *const i32 as *const (),
+            size_of::<c_int>() as c_int,
+        );
+
+        let st = (srt.connect)(
+            ss,
+            &sa as *const sockaddr_in as *const sockaddr,
+            size_of::<sockaddr_in>() as c_int,
+        );
+        if st == -1 {
+            panic!(
+                "Failed to connect {:?}",
+                CStr::from_ptr((srt.getlasterror_str)())
+            );
+        }
+
+        for _ in 0..100 {
+            let st = (srt.sendmsg2)(ss, message.as_ptr(), message.len() as c_int, null());
+            if st == -1 {
+                panic!();
+            }
+
+            sleep(Duration::from_millis(1))
+        }
+
+        let st = (srt.close)(ss);
+        if st == -1 {
+            panic!();
+        }
+
+        (srt.cleanup)();
+    }
 }

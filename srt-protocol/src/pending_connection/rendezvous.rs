@@ -8,13 +8,13 @@ use super::{
 
 use log::debug;
 
-use crate::packet::{
-    ControlTypes, HandshakeControlInfo, HandshakeVsInfo, HsV5Info, ShakeType, SrtControlPacket,
-};
-use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::{
-    accesscontrol::AllowAllStreamAcceptor, Connection, ConnectionSettings, ControlPacket, Packet,
-    SocketId,
+    accesscontrol::AllowAllStreamAcceptor,
+    packet::{
+        ControlTypes, HandshakeControlInfo, HandshakeVsInfo, HsV5Info, ShakeType, SrtControlPacket,
+    },
+    protocol::{handshake::Handshake, TimeStamp},
+    Connection, ConnectionSettings, ControlPacket, Packet, SeqNumber, SocketId,
 };
 
 use ConnectError::*;
@@ -29,6 +29,7 @@ pub struct Rendezvous {
     cookie: i32,
     last_packet: (Packet, SocketAddr),
     last_send: Option<Instant>,
+    starting_seqnum: SeqNumber,
 }
 
 // see haivision/srt/docs/handshake.md for documentation
@@ -50,6 +51,7 @@ impl Rendezvous {
         local_addr: SocketAddr,
         remote_public: SocketAddr,
         init_settings: ConnInitSettings,
+        starting_seqnum: SeqNumber,
     ) -> Self {
         let cookie = gen_cookie(&local_addr);
         let last_packet = (
@@ -57,7 +59,7 @@ impl Rendezvous {
                 dest_sockid: SocketId(0),
                 timestamp: TimeStamp::from_micros(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                    init_seq_num: init_settings.starting_send_seqnum,
+                    init_seq_num: starting_seqnum,
                     max_packet_size: 1500, // TODO: take as a parameter
                     max_flow_size: 8192,   // TODO: take as a parameter
                     socket_id: init_settings.local_sockid,
@@ -79,6 +81,7 @@ impl Rendezvous {
             local_addr,
             remote_public,
             last_send: None,
+            starting_seqnum,
         }
     }
 }
@@ -127,7 +130,7 @@ impl Rendezvous {
 
     fn gen_packet(&self, shake_type: ShakeType, info: HandshakeVsInfo) -> HandshakeControlInfo {
         HandshakeControlInfo {
-            init_seq_num: self.init_settings.starting_send_seqnum,
+            init_seq_num: self.starting_seqnum,
             max_packet_size: 1500, // TODO: take as a parameter
             max_flow_size: 8192,   // TODO: take as a parameter
             socket_id: self.init_settings.local_sockid,

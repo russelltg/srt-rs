@@ -139,13 +139,13 @@ fn precise_ts0() {
             r_sa,
             s_sa.ip(),
             ConnInitSettings {
-                starting_send_seqnum: seqno,
                 local_sockid: s_sid,
                 crypto: None,
                 send_latency: Duration::from_millis(2000),
                 recv_latency: Duration::from_millis(20),
             },
             None,
+            seqno,
         ),
         start,
     );
@@ -153,7 +153,6 @@ fn precise_ts0() {
     let recv = Conn::PendingL(
         Direction::B2A,
         Listen::new(ConnInitSettings {
-            starting_send_seqnum: seqno,
             local_sockid: r_sid,
             crypto: None,
             send_latency: Duration::from_millis(20),
@@ -205,13 +204,13 @@ fn do_lossy_connect(seed: u64) {
             l_sa,
             c_sa.ip(),
             ConnInitSettings {
-                starting_send_seqnum: start_seqno,
                 local_sockid: s_sid,
                 crypto: None,
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
             },
             None,
+            start_seqno,
         ),
         start,
     );
@@ -219,7 +218,6 @@ fn do_lossy_connect(seed: u64) {
     let l = Conn::PendingL(
         Direction::B2A,
         Listen::new(ConnInitSettings {
-            starting_send_seqnum: start_seqno,
             local_sockid: r_sid,
             crypto: None,
             send_latency: Duration::from_millis(20),
@@ -268,12 +266,12 @@ fn do_lossy_rendezvous(seed: u64) {
             a_sa,
             b_sa,
             ConnInitSettings {
-                starting_send_seqnum: start_seqno,
                 local_sockid: s_sid,
                 crypto: None,
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
             },
+            start_seqno,
         ),
         start,
     );
@@ -284,12 +282,12 @@ fn do_lossy_rendezvous(seed: u64) {
             b_sa,
             a_sa,
             ConnInitSettings {
-                starting_send_seqnum: start_seqno,
                 local_sockid: r_sid,
                 crypto: None,
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
             },
+            start_seqno,
         ),
         start,
     );

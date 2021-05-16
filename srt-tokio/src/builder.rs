@@ -220,9 +220,15 @@ impl SrtSocketBuilder {
                     error!("Mismatched address and local address ip family");
                     return Err(io::ErrorKind::InvalidInput.into());
                 }
-                let r =
-                    pending_connection::connect(&socket, addr, local_addr, self.init_settings, sid)
-                        .await;
+                let r = pending_connection::connect(
+                    &socket,
+                    addr,
+                    local_addr,
+                    self.init_settings,
+                    sid,
+                    rand::random(),
+                )
+                .await;
 
                 r?
             }
@@ -236,6 +242,7 @@ impl SrtSocketBuilder {
                     local_addr,
                     remote_public,
                     self.init_settings,
+                    rand::random(),
                 )
                 .await?
             }
