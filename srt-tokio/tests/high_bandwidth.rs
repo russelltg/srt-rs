@@ -19,7 +19,7 @@ fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
 }
 
 #[tokio::test]
-#[ignore]
+// #[ignore]
 async fn high_bandwidth() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
@@ -28,8 +28,8 @@ async fn high_bandwidth() -> Result<(), Error> {
             .connect()
             .await?;
 
-        // send 1gbps (125 MB/s)
-        let mut stream_gbps = stream_exact(Duration::from_micros(1_000_000 / 1024 / 35))
+        const RATE_MBPS: u64 = 20;
+        let mut stream_gbps = stream_exact(Duration::from_micros(1_000_000 / 1024 / RATE_MBPS))
             .map(|bytes| Ok((Instant::now(), bytes)))
             .boxed();
 
