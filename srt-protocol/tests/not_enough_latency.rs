@@ -68,7 +68,7 @@ fn do_not_enough_latency(seed: u64) {
         };
 
         let receiver_next_time = if receiver.is_open() {
-            while let Some(_) = receiver.next_data(now) {
+            while receiver.next_data(now).is_some() {
                 total_recvd += 1;
             }
 
