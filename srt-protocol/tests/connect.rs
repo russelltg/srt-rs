@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use log::debug;
 use rand::{prelude::StdRng, SeedableRng};
 
 use rand_distr::{Bernoulli, Normal};
@@ -262,18 +263,20 @@ fn do_lossy_connect(seed: u64) {
 
 #[test]
 fn lossy_rendezvous() {
+    let _ = pretty_env_logger::try_init();
+
     // run once failing seeds
     do_lossy_rendezvous(1104041222010949432);
+    do_lossy_rendezvous(16693786644192575166);
 
-    for _ in 0..100 {
+    for _ in 0..10000000 {
         let seed = rand::random();
-        println!("Rendezvous seed is {}", seed);
         do_lossy_rendezvous(seed);
     }
 }
 
 fn do_lossy_rendezvous(seed: u64) {
-    let _ = pretty_env_logger::try_init();
+    println!("Rendezvous seed is {}", seed);
 
     let a_sa: SocketAddr = ([127, 0, 0, 1], 2222).into();
     let b_sa: SocketAddr = ([127, 0, 0, 1], 2224).into();
@@ -326,8 +329,17 @@ fn do_lossy_rendezvous(seed: u64) {
     complete(Conn { a, b, conn, sim }, start);
 }
 
-fn complete(mut conn: Conn, mut current_time: Instant) -> (Connection, Connection) {
+fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {
+    const TIME_LIMIT: Duration = Duration::from_secs(10);
+
+    let mut current_time = start;
+
     loop {
+        // assert!(current_time - start < TIME_LIMIT);
+        if current_time - start > TIME_LIMIT {
+            println!("Hi")
+        }
+
         let sender_time = loop {
             match conn.conn.sender.select_next_input(
                 current_time,
@@ -336,6 +348,7 @@ fn complete(mut conn: Conn, mut current_time: Instant) -> (Connection, Connectio
                     .unwrap_or(current_time + Duration::from_secs(1)),
             ) {
                 (time, Input::Packet(Some((packet, sa)))) => {
+                    debug!("b->a {:?}", packet);
                     conn.a
                         .handle_packet(packet, time, sa, &mut conn.conn, &mut conn.sim)
                 }
@@ -351,6 +364,7 @@ fn complete(mut conn: Conn, mut current_time: Instant) -> (Connection, Connectio
                     .unwrap_or(current_time + Duration::from_secs(1)),
             ) {
                 (time, Input::Packet(Some((packet, sa)))) => {
+                    debug!("a->b {:?}", packet);
                     conn.b
                         .handle_packet(packet, time, sa, &mut conn.conn, &mut conn.sim)
                 }

@@ -19,6 +19,7 @@ pub enum ConnectError {
     HandshakeExpected(ControlTypes),
     InductionExpected(HandshakeControlInfo),
     WaveahandExpected(HandshakeControlInfo),
+    AgreementExpected(HandshakeControlInfo),
     UnexpectedHost(SocketAddr, SocketAddr),
     ConclusionExpected(HandshakeControlInfo),
     UnsupportedProtocolVersion(u32),
@@ -67,6 +68,7 @@ impl fmt::Display for ConnectError {
             HandshakeExpected(got) => write!(f, "Expected Handshake packet, found: {:?}", got),
             InductionExpected(got) => write!(f, "Expected Induction (1) packet, found: {:?}", got),
             WaveahandExpected(got) => write!(f, "Expected Waveahand (0) packet, found: {:?}", got),
+            AgreementExpected(got) => write!(f, "Expected Agreement (-2) packet, found: {:?}", got),
             UnexpectedHost(host, got) => write!(
                 f,
                 "Expected packets from different host, expected: {} found: {}",
