@@ -62,7 +62,7 @@ impl ConnectEntity {
                     ..
                 }) = &packet
                 {
-                    match c.handshake.handle_handshake(hs.clone()) {
+                    match c.handshake.handle_handshake(&hs.clone()) {
                         Some(control_type) => ConnectionResult::SendPacket((
                             Packet::Control(ControlPacket {
                                 control_type,

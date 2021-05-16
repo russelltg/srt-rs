@@ -335,7 +335,8 @@ async fn test_c_client_interop() -> Result<(), Error> {
             .unwrap();
 
         for _ in 0..100 {
-            sock.next().await.unwrap().unwrap();
+            let (_, msg) = sock.next().await.unwrap().unwrap();
+            assert_eq!(msg, TEST_C_CLIENT_MESSAGE);
             debug!("Got packet");
         }
 
@@ -351,6 +352,21 @@ async fn test_c_client_interop() -> Result<(), Error> {
     let jh = spawn_blocking(move || test_c_client(2011));
 
     try_join(srt_rs_side, jh).await.unwrap();
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn bidirectional_interop() -> Result<(), Error> {
+    let srt_rs_side = async move {
+        let mut sock = SrtSocketBuilder::new_listen()
+            .local_port(2012)
+            .connect()
+            .await
+            .unwrap();
+
+        let (s, r) = sock.split();
+    };
 
     Ok(())
 }
@@ -383,6 +399,8 @@ impl<'l> HaivisionSrt<'l> {
     }
 }
 
+const TEST_C_CLIENT_MESSAGE: &[u8] = b"This message should be sent to the other side";
+
 // this mimics test_c_client from the repository
 fn test_c_client(port: u16) {
     const SRTO_SENDER: c_int = 21;
@@ -392,7 +410,6 @@ fn test_c_client(port: u16) {
         let lib = Library::new("libsrt.so").unwrap();
         let srt = HaivisionSrt::new(&lib);
 
-        let message = b"This message should be sent to the other side";
         (srt.startup)();
 
         let ss = (srt.create_socket)();
@@ -430,7 +447,12 @@ fn test_c_client(port: u16) {
         }
 
         for _ in 0..100 {
-            let st = (srt.sendmsg2)(ss, message.as_ptr(), message.len() as c_int, null());
+            let st = (srt.sendmsg2)(
+                ss,
+                TEST_C_CLIENT_MESSAGE.as_ptr(),
+                TEST_C_CLIENT_MESSAGE.len() as c_int,
+                null(),
+            );
             if st == -1 {
                 panic!();
             }
@@ -443,6 +465,8 @@ fn test_c_client(port: u16) {
             panic!();
         }
 
-        (srt.cleanup)();
+        // (srt.cleanup)();
     }
 }
+
+fn haivision_bidirectional(port: u16) {}
