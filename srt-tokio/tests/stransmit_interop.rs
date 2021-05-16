@@ -452,7 +452,7 @@ fn make_sockaddr(port: u16) -> sockaddr {
                 s_addr: u32::from_be_bytes([127, 0, 0, 1]).to_be(),
             },
             sin_zero: [0; 8],
-            sin_len: size_of::<sockaddr_in>(),
+            sin_len: size_of::<sockaddr_in>() as u8,
         })
     }
 }
@@ -588,5 +588,5 @@ fn list_contents() {
     let mut s = String::new();
     p.stdout.unwrap().read_to_string(&mut s).unwrap();
 
-    panci!("{}", s);
+    panic!("{}", s);
 }
