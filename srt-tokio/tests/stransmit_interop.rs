@@ -1,8 +1,10 @@
 #![recursion_limit = "256"]
 use std::{
     ffi::CStr,
-    io::ErrorKind,
+    intrinsics::transmute,
+    io::{ErrorKind, Read},
     os::raw::{c_char, c_int},
+    process::Stdio,
 };
 use std::{
     mem::size_of,
@@ -17,7 +19,7 @@ use std::{
 use anyhow::Error;
 use bytes::Bytes;
 use futures::{future::try_join, join, stream, SinkExt, Stream, StreamExt};
-use libc::{in_addr, sockaddr, sockaddr_in, AF_INET};
+use libc::sockaddr;
 use libloading::{Library, Symbol};
 use log::{debug, info};
 
@@ -422,22 +424,49 @@ impl<'l> HaivisionSrt<'l> {
 
 const TEST_C_CLIENT_MESSAGE: &[u8] = b"This message should be sent to the other side";
 
-fn make_sockaddr(port: u16) -> sockaddr_in {
-    sockaddr_in {
-        sin_family: AF_INET as u16,
-        sin_port: port.to_be(),
-        sin_addr: in_addr {
-            s_addr: u32::from_be_bytes([127, 0, 0, 1]).to_be(),
-        },
-        sin_zero: [0; 8],
+#[cfg(not(target_os = "windows"))]
+fn make_sockaddr(port: u16) -> sockaddr {
+    use libc::{in_addr, sockaddr_in, AF_INET};
+    unsafe {
+        transmute(sockaddr_in {
+            sin_family: AF_INET as u16,
+            sin_port: port.to_be(),
+            sin_addr: in_addr {
+                s_addr: u32::from_be_bytes([127, 0, 0, 1]).to_be(),
+            },
+            sin_zero: [0; 8],
+        })
     }
+}
+
+#[cfg(target_os = "windows")]
+fn make_sockaddr(port: u16) -> sockaddr {
+    unimplemented!()
+}
+
+fn open_libsrt() -> Option<Library> {
+    #[cfg(target_os = "linux")]
+    let possible_names = ["libsrt.so", "libsrt.so.1"];
+
+    #[cfg(target_os = "windows")]
+    let possible_names = ["srt.dll"];
+
+    #[cfg(target_os = "macos")]
+    let possible_names = ["srt.dylib"];
+
+    for name in &possible_names {
+        if let Ok(lib) = unsafe { Library::new(*name) } {
+            return Some(lib);
+        }
+    }
+    None
 }
 
 // this mimics test_c_client from the repository
 fn test_c_client(port: u16) {
     unsafe {
         // load symbols
-        let lib = Library::new("libsrt.so.1").unwrap();
+        let lib = open_libsrt().unwrap();
         let srt = HaivisionSrt::new(&lib);
 
         (srt.startup)();
@@ -457,11 +486,7 @@ fn test_c_client(port: u16) {
             size_of::<c_int>() as c_int,
         );
 
-        let st = (srt.connect)(
-            ss,
-            &sa as *const sockaddr_in as *const sockaddr,
-            size_of::<sockaddr_in>() as c_int,
-        );
+        let st = (srt.connect)(ss, &sa, size_of::<sockaddr>() as c_int);
         if st == -1 {
             panic!(
                 "Failed to connect {:?}",
@@ -494,7 +519,7 @@ fn test_c_client(port: u16) {
 
 fn haivision_echo(port: u16) {
     unsafe {
-        let lib = Library::new("libsrt.so.1").unwrap();
+        let lib = open_libsrt().unwrap();
         let srt = HaivisionSrt::new(&lib);
 
         (srt.startup)();
@@ -506,11 +531,7 @@ fn haivision_echo(port: u16) {
 
         let sa = make_sockaddr(port);
 
-        let st = (srt.connect)(
-            ss,
-            &sa as *const sockaddr_in as *const sockaddr,
-            size_of::<sockaddr_in>() as c_int,
-        );
+        let st = (srt.connect)(ss, &sa, size_of::<sockaddr>() as c_int);
 
         if st == -1 {
             panic!(
@@ -535,4 +556,19 @@ fn haivision_echo(port: u16) {
             }
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn list_contents() {
+    let p = Command::new("brew")
+        .args(&["ls", "--verbose", "srt"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut s = String::new();
+    p.stdout.unwrap().read_to_string(&mut s).unwrap();
+
+    println!("s");
 }
