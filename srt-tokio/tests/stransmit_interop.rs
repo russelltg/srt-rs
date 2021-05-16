@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 use std::{
+    env,
     ffi::CStr,
     intrinsics::transmute,
     io::{ErrorKind, Read},
@@ -471,6 +472,14 @@ fn open_libsrt() -> Option<Library> {
 
     #[cfg(target_os = "macos")]
     let possible_names = ["libsrt.dylib"];
+
+    // first the environment variable
+    if let Ok(path) = env::var("LIBSRT_PATH") {
+        info!("LIBSRT_PATH={}, trying...", path);
+        if let Ok(lib) = unsafe { Library::new(path) } {
+            return Some(lib);
+        }
+    }
 
     for name in &possible_names {
         if let Ok(lib) = unsafe { Library::new(*name) } {

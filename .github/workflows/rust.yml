@@ -37,7 +37,9 @@ jobs:
       run: sudo apt-get install srt-tools
       if: matrix.os == 'ubuntu'
     - name: install srt (macos)
-      run: brew update && brew install srt
+      run: |
+        brew update && brew install srt
+        export LIBSRT_PATH="$(brew --prefix srt)/lib/libsrt.dylib"
       if: matrix.os == 'macos'
     - name: Build
       run: cargo build ${{ matrix.extra_flags }} --tests --examples --verbose
