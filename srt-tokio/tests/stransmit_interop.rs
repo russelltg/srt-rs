@@ -588,5 +588,5 @@ fn list_contents() {
     let mut s = String::new();
     p.stdout.unwrap().read_to_string(&mut s).unwrap();
 
-    println!("s");
+    panci!("{}", s);
 }
