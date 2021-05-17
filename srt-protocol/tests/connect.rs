@@ -197,6 +197,9 @@ fn precise_ts0() {
 
 #[test]
 fn lossy_connect() {
+    // previously failing seeds
+    do_lossy_connect(2687748015417457250);
+
     for _ in 0..100 {
         let seed = rand::random();
         println!("Connect seed is {}", seed);
@@ -332,7 +335,7 @@ fn do_lossy_rendezvous(seed: u64) {
 }
 
 fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {
-    const TIME_LIMIT: Duration = Duration::from_secs(10);
+    const TIME_LIMIT: Duration = Duration::from_secs(20);
 
     let mut current_time = start;
 
