@@ -9,7 +9,7 @@ use std::{
     os::raw::{c_char, c_int},
     process::Command,
     ptr::null,
-    thread::sleep,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -20,7 +20,7 @@ use libc::sockaddr;
 use libloading::{Library, Symbol};
 use log::{debug, info};
 
-use tokio::{net::UdpSocket, task::spawn_blocking};
+use tokio::{net::UdpSocket, task::spawn_blocking, time};
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
 use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
@@ -366,6 +366,8 @@ async fn bidirectional_interop() -> Result<(), Error> {
             .await
             .unwrap();
 
+        time::sleep(Duration::from_millis(500)).await;
+
         for _ in 0..10 {
             debug!("Sending...");
             sock.send((Instant::now(), Bytes::from_static(b"1234")))
@@ -527,7 +529,7 @@ fn test_c_client(port: u16) {
                 panic!();
             }
 
-            sleep(Duration::from_millis(1))
+            thread::sleep(Duration::from_millis(1))
         }
 
         if (srt.close)(ss) == -1 {
@@ -576,6 +578,8 @@ fn haivision_echo(port: u16) {
                 panic!()
             }
         }
+
+        thread::sleep(Duration::from_secs(2)); // make sure the receiver gets the last message before closing
 
         if (srt.close)(ss) == -1 {
             panic!();
