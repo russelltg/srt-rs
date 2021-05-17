@@ -530,8 +530,7 @@ fn test_c_client(port: u16) {
             sleep(Duration::from_millis(1))
         }
 
-        let st = (srt.close)(ss);
-        if st == -1 {
+        if (srt.close)(ss) == -1 {
             panic!();
         }
 
@@ -564,7 +563,7 @@ fn haivision_echo(port: u16) {
 
         let mut buffer = [0; 1316];
 
-        // receive 100 packets, send 100 packets
+        // receive 10 packets, send 10 packets
         for _ in 0..10 {
             let size = (srt.recvmsg2)(ss, buffer.as_mut_ptr(), buffer.len() as c_int, null());
             if size == -1 {
@@ -577,21 +576,9 @@ fn haivision_echo(port: u16) {
                 panic!()
             }
         }
+
+        if (srt.close)(ss) == -1 {
+            panic!();
+        }
     }
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-#[ignore]
-fn list_contents() {
-    let p = Command::new("brew")
-        .args(&["ls", "--verbose", "srt"])
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let mut s = String::new();
-    p.stdout.unwrap().read_to_string(&mut s).unwrap();
-
-    panic!("{}", s);
 }
