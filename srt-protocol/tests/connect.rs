@@ -324,7 +324,9 @@ fn do_lossy_rendezvous(seed: u64) {
         start,
     );
 
-    complete(Conn { a, b, conn, sim }, start);
+    let (a, b) = complete(Conn { a, b, conn, sim }, start);
+    assert_eq!(a.settings.init_recv_seq_num, b.settings.init_send_seq_num);
+    assert_eq!(a.settings.init_send_seq_num, b.settings.init_recv_seq_num);
 }
 
 fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {
@@ -333,10 +335,7 @@ fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {
     let mut current_time = start;
 
     loop {
-        // assert!(current_time - start < TIME_LIMIT);
-        if current_time - start > TIME_LIMIT {
-            println!("Hi")
-        }
+        assert!(current_time - start < TIME_LIMIT);
 
         let sender_time = loop {
             match conn.conn.sender.select_next_input(

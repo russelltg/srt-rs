@@ -3,16 +3,12 @@ use std::{
     env,
     ffi::CStr,
     intrinsics::transmute,
-    io::{ErrorKind, Read},
-    os::raw::{c_char, c_int},
-    process::Stdio,
-};
-use std::{
+    io::ErrorKind,
     mem::size_of,
     net::{SocketAddr, SocketAddrV4},
-};
-use std::{process::Command, ptr::null};
-use std::{
+    os::raw::{c_char, c_int},
+    process::Command,
+    ptr::null,
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -25,8 +21,7 @@ use libloading::{Library, Symbol};
 use log::{debug, info};
 
 use tokio::{net::UdpSocket, task::spawn_blocking};
-use tokio_util::codec::BytesCodec;
-use tokio_util::udp::UdpFramed;
+use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
 use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
 
