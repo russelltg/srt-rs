@@ -1,7 +1,9 @@
+use std::time::Instant;
+
+use bytes::Bytes;
 use srt_tokio::SrtSocketBuilder;
 
-use futures::join;
-use futures::prelude::*;
+use futures::{join, prelude::*};
 
 #[tokio::test]
 async fn rendezvous() {
@@ -17,10 +19,21 @@ async fn rendezvous() {
 
     join!(
         async move {
-            a.await.unwrap().close().await.unwrap();
+            let mut a = a.await.unwrap();
+
+            a.send((Instant::now(), Bytes::from_static(b"hi")))
+                .await
+                .unwrap();
+
+            a.close().await.unwrap();
         },
         async move {
-            b.await.unwrap().close().await.unwrap();
+            let mut b = b.await.unwrap();
+
+            assert_eq!(&*b.try_next().await.unwrap().unwrap().1, b"hi");
+            assert_eq!(b.try_next().await.unwrap(), None);
+
+            b.close().await.unwrap();
         }
     );
 }

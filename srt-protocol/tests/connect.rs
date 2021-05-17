@@ -5,7 +5,7 @@ use std::{
 };
 
 use log::debug;
-use rand::{prelude::StdRng, SeedableRng};
+use rand::{prelude::StdRng, Rng, SeedableRng};
 
 use rand_distr::{Bernoulli, Normal};
 use simulator::*;
@@ -279,7 +279,10 @@ fn do_lossy_rendezvous(seed: u64) {
     let a_sa: SocketAddr = ([127, 0, 0, 1], 2222).into();
     let b_sa: SocketAddr = ([127, 0, 0, 1], 2224).into();
 
-    let start_seqno = SeqNumber::new_truncate(0);
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    let a_start_seqno = rng.gen();
+    let b_start_seqno = rng.gen();
 
     let r_sid = SocketId(1234);
     let s_sid = SocketId(2234);
@@ -289,7 +292,7 @@ fn do_lossy_rendezvous(seed: u64) {
     let conn = NetworkSimulator::new(a_sa, b_sa);
 
     let sim = RandomLossSimulation {
-        rng: StdRng::seed_from_u64(seed),
+        rng,
         delay_dist: Normal::new(0.02, 0.02).unwrap(),
         drop_dist: Bernoulli::new(0.70).unwrap(),
     };
@@ -304,7 +307,7 @@ fn do_lossy_rendezvous(seed: u64) {
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
             },
-            start_seqno,
+            a_start_seqno,
         ),
         start,
     );
@@ -319,7 +322,7 @@ fn do_lossy_rendezvous(seed: u64) {
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
             },
-            start_seqno,
+            b_start_seqno,
         ),
         start,
     );

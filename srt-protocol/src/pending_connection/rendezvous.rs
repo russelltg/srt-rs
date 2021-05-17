@@ -247,6 +247,7 @@ impl Rendezvous {
                 self.send_conclusion(info.socket_id, hsv5)
             }
             (ShakeType::Waveahand, Responder) => {
+                self.starting_seqnum = info.init_seq_num; // responder, take initiator's seqnum
                 self.transition(AttentionResponder(now));
                 self.send_conclusion(info.socket_id, Rendezvous::empty_flags())
             }
@@ -278,6 +279,7 @@ impl Rendezvous {
                                 return self.make_rejection(info, timestamp, r)
                             }
                         };
+                        self.starting_seqnum = info.init_seq_num; // responder, take initiator's seqnum
                         self.transition(FineResponder(connection));
 
                         hsv5
@@ -361,6 +363,7 @@ impl Rendezvous {
                     GenHsv5Result::NotHandled(e) => return NotHandled(e),
                     GenHsv5Result::Reject(r) => return self.make_rejection(info, timestamp, r),
                 };
+                self.starting_seqnum = info.init_seq_num; // responder, take initiator's seqnum
                 self.transition(InitiatedResponder(connection));
 
                 self.send_conclusion(info.socket_id, hsv5)
