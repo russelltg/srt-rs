@@ -210,7 +210,7 @@ pub enum SocketType {
 /// The rendezvous HSv4 (legacy):
 /// --> WAVEAHAND (effective only if peer is also connecting)
 /// <-- CONCLUSION (empty) (consider yourself connected upon reception)
-/// --> AGREEMENT (sent as a response for conclusion, requires no response)
+/// --> AGREEMENT
 ///
 /// The rendezvous HSv5 (using SRT extensions):
 /// --> WAVEAHAND (with cookie)
@@ -571,7 +571,12 @@ impl ControlTypes {
                                             SrtControlPacket::StreamId(stream_id) => {
                                                 sid = Some(stream_id)
                                             }
-                                            _ => unimplemented!("Implement other kinds"),
+                                            _ => {
+                                                // TODO, implement more
+                                                return Err(
+                                                    PacketParseError::BadSrtExtensionMessage,
+                                                );
+                                            }
                                         }
                                     }
                                 }

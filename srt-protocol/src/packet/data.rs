@@ -25,6 +25,7 @@ use crate::{MsgNumber, SeqNumber, SocketId};
 /// ```
 /// (from <https://tools.ietf.org/html/draft-gg-udt-03>)
 #[derive(Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct DataPacket {
     /// The sequence number is packet based, so if packet n has
     /// sequence number `i`, the next would have `i + 1`

@@ -22,6 +22,9 @@ hmac = "0.11"
 sha-1 = "0.9"
 bitflags = "1"
 
+# fuzzing
+arbitrary = { version = "1", optional = true, features = ["derive"] }
+
 [dev-dependencies]
 proptest = "1.0"
 hex = "0.4"

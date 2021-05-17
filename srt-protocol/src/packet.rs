@@ -18,6 +18,7 @@ use crate::SocketId;
 
 /// Represents A UDT/SRT packet
 #[derive(Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum Packet {
     Data(DataPacket),
     Control(ControlPacket),
@@ -113,6 +114,33 @@ impl Debug for Packet {
         match self {
             Packet::Data(dp) => write!(f, "{:?}", dp),
             Packet::Control(cp) => write!(f, "{:?}", cp),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::io::Cursor;
+
+    use crate::Packet;
+
+    const FUZZ_VECTORS: &[&str] = &[
+        "ffff000535012fffff2d29ff00ffffff",
+        "8000200523ffffff00012101000000000000000500000000000000000000\
+            000000000000000000000000000000000000000000000000000000000000\
+            000000000000000000000000000000000000000000000000000000000000\
+            0000000000000000000000000000000000000000000000003100014100d9\
+            0000001a000000000001000000000035000000008000000051ffff000551\
+            5151515151515101015151ffc80127110101ffff00ff0a01000000000000\
+            00ffff",
+    ];
+
+    // tests from fuzzing
+    #[test]
+    fn fuzz() {
+        for v in FUZZ_VECTORS {
+            let data = hex::decode(v).unwrap();
+            let _ = Packet::parse(&mut Cursor::new(data), true);
         }
     }
 }

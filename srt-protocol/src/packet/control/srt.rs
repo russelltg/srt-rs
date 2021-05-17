@@ -223,7 +223,7 @@ impl SrtControlPacket {
             5 => {
                 // the stream id string is stored as 32-bit little endian words
                 // https://tools.ietf.org/html/draft-sharabayko-mops-srt-01#section-3.2.1.3
-                if buf.remaining() % 4 != 0 {
+                if buf.remaining() % 4 != 0 || buf.remaining() == 0 {
                     return Err(PacketParseError::NotEnoughData);
                 }
 
