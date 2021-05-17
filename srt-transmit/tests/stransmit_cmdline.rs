@@ -272,16 +272,16 @@ mod stransmit_rs_snd_rcv {
     #[tokio::test]
     async fn rendezvous() -> Result<(), Error> {
         test_send(
-            2010,
+            3010,
             &[
-                "udp://:2010",
-                "srt://127.0.0.1:2012?rendezvous&local_port=2011",
+                "udp://:3010",
+                "srt://127.0.0.1:3012?rendezvous&local_port=3011",
             ],
             &[
-                "srt://127.0.0.1:2011?rendezvous&local_port=2012",
-                "udp://127.0.0.1:2013",
+                "srt://127.0.0.1:3011?rendezvous&local_port=3012",
+                "udp://127.0.0.1:3013",
             ],
-            2013,
+            3013,
         )
         .await
     }
@@ -384,10 +384,10 @@ mod stransmit_rs_snd_rcv {
     #[tokio::test]
     async fn ipv6() -> Result<(), Error> {
         test_send(
-            2034,
-            &["udp://:2034", "srt://:2035?interface=::1"],
-            &["srt://[::1]:2035", "udp://localhost:2036"],
-            2036,
+            3034,
+            &["udp://:3034", "srt://:3035?interface=::1"],
+            &["srt://[::1]:3035", "udp://localhost:3036"],
+            3036,
         )
         .await
     }

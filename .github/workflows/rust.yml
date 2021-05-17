@@ -31,13 +31,15 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: install target
-      run: rustup target add i686-unknown-linux-gnu && sudo apt-get install gcc-multilib
+      run: rustup target add i686-unknown-linux-gnu && sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install gcc-multilib srt-tools:i386
       if: matrix.extra_flags != ''
     - name: install srt (linux)
       run: sudo apt-get install srt-tools
       if: matrix.os == 'ubuntu'
     - name: install srt (macos)
-      run: brew update && brew install srt
+      run: |
+        brew update && brew install srt
+        export LIBSRT_PATH="$(brew --prefix srt)/lib/libsrt.dylib"
       if: matrix.os == 'macos'
     - name: Build
       run: cargo build ${{ matrix.extra_flags }} --tests --examples --verbose

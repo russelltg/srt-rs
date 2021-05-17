@@ -14,7 +14,7 @@ use srt_protocol::{
         connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnInitSettings,
         ConnectionResult,
     },
-    Connection, Packet,
+    Connection, Packet, SeqNumber,
 };
 
 use futures::prelude::*;
@@ -26,8 +26,15 @@ pub async fn connect(
     local_addr: IpAddr,
     init_settings: ConnInitSettings,
     streamid: Option<String>,
+    starting_seqno: SeqNumber,
 ) -> Result<Connection, io::Error> {
-    let mut connect = Connect::new(remote, local_addr, init_settings, streamid.clone());
+    let mut connect = Connect::new(
+        remote,
+        local_addr,
+        init_settings,
+        streamid.clone(),
+        starting_seqno,
+    );
     let mut tick_interval = interval(Duration::from_millis(100));
 
     let mut ser_buffer = Vec::new();
@@ -115,9 +122,10 @@ pub async fn rendezvous(
     local_addr: SocketAddr,
     remote_public: SocketAddr,
     init_settings: ConnInitSettings,
+    starting_seqno: SeqNumber,
 ) -> Result<Connection, io::Error> {
     let sockid = init_settings.local_sockid;
-    let mut rendezvous = Rendezvous::new(local_addr, remote_public, init_settings);
+    let mut rendezvous = Rendezvous::new(local_addr, remote_public, init_settings, starting_seqno);
 
     let mut tick_interval = interval(Duration::from_millis(100));
     let mut ser_buffer = Vec::new();

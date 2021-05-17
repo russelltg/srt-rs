@@ -121,7 +121,7 @@ impl Sender {
             metrics: SenderMetrics::new(),
             send_buffer: SendBuffer::new(&settings),
             loss_list: LossList::new(&settings),
-            lr_acked_packet: settings.init_send_seq_num,
+            lr_acked_packet: settings.init_seq_num,
             lr_acked_ack: -1, // TODO: why magic number?
             output_buffer: VecDeque::new(),
             transmit_buffer: TransmitBuffer::new(&settings),

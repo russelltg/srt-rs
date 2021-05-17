@@ -182,8 +182,7 @@ impl RandomLossSimulation {
             remote: (sender.remote.ip(), sender.remote.port() + 1).into(),
             remote_sockid: sender.local_sockid,
             local_sockid: sender.remote_sockid,
-            init_send_seq_num: sender.init_recv_seq_num,
-            init_recv_seq_num: sender.init_send_seq_num,
+            init_seq_num: sender.init_seq_num,
             ..sender.clone()
         };
 
@@ -215,8 +214,7 @@ impl RandomLossSimulation {
             local_sockid: self.rng.gen(),
             socket_start_time: start,
             rtt: Duration::default(),
-            init_send_seq_num: self.rng.gen(),
-            init_recv_seq_num: self.rng.gen(),
+            init_seq_num: self.rng.gen(),
             max_packet_size: 1316,
             max_flow_size: 8192,
             send_tsbpd_latency: latency,

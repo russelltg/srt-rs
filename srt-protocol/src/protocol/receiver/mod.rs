@@ -113,7 +113,7 @@ pub struct Receiver {
 
 impl Receiver {
     pub fn new(settings: ConnectionSettings, handshake: Handshake) -> Self {
-        let init_seq_num = settings.init_recv_seq_num;
+        let init_seq_num = settings.init_seq_num;
 
         info!(
             "Receiving started from {:?}, with latency={:?}",

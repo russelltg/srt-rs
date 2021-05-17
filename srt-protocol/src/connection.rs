@@ -38,8 +38,7 @@ pub struct ConnectionSettings {
     pub rtt: Duration,
 
     /// The first sequence number that will be sent/received
-    pub init_send_seq_num: SeqNumber,
-    pub init_recv_seq_num: SeqNumber,
+    pub init_seq_num: SeqNumber,
 
     /// The maximum packet size
     pub max_packet_size: u32,
@@ -378,8 +377,7 @@ mod duplex_connection {
                 local_sockid: local_sockid(),
                 socket_start_time: now,
                 rtt: Duration::default(),
-                init_send_seq_num: SeqNumber::new_truncate(0),
-                init_recv_seq_num: SeqNumber::new_truncate(0),
+                init_seq_num: SeqNumber::new_truncate(0),
                 max_packet_size: 1316,
                 max_flow_size: 8192,
                 send_tsbpd_latency: TSBPD,

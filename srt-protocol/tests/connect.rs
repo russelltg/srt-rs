@@ -5,7 +5,7 @@ use std::{
 };
 
 use log::debug;
-use rand::{prelude::StdRng, SeedableRng};
+use rand::{prelude::StdRng, Rng, SeedableRng};
 
 use rand_distr::{Bernoulli, Normal};
 use simulator::*;
@@ -148,19 +148,18 @@ fn precise_ts0() {
             r_sa,
             s_sa.ip(),
             ConnInitSettings {
-                starting_send_seqnum: seqno,
                 local_sockid: s_sid,
                 crypto: None,
                 send_latency: Duration::from_millis(2000),
                 recv_latency: Duration::from_millis(20),
             },
             None,
+            seqno,
         ),
         start,
     );
 
     let recv = ConnectEntity::PendingL(Listen::new(ConnInitSettings {
-        starting_send_seqnum: seqno,
         local_sockid: r_sid,
         crypto: None,
         send_latency: Duration::from_millis(20),
@@ -198,6 +197,9 @@ fn precise_ts0() {
 
 #[test]
 fn lossy_connect() {
+    // previously failing seeds
+    do_lossy_connect(2687748015417457250);
+
     for _ in 0..100 {
         let seed = rand::random();
         println!("Connect seed is {}", seed);
@@ -231,19 +233,18 @@ fn do_lossy_connect(seed: u64) {
             l_sa,
             c_sa.ip(),
             ConnInitSettings {
-                starting_send_seqnum: start_seqno,
                 local_sockid: s_sid,
                 crypto: None,
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
             },
             None,
+            start_seqno,
         ),
         start,
     );
 
     let l = ConnectEntity::PendingL(Listen::new(ConnInitSettings {
-        starting_send_seqnum: start_seqno,
         local_sockid: r_sid,
         crypto: None,
         send_latency: Duration::from_millis(20),
@@ -281,7 +282,10 @@ fn do_lossy_rendezvous(seed: u64) {
     let a_sa: SocketAddr = ([127, 0, 0, 1], 2222).into();
     let b_sa: SocketAddr = ([127, 0, 0, 1], 2224).into();
 
-    let start_seqno = SeqNumber::new_truncate(0);
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    let a_start_seqno = rng.gen();
+    let b_start_seqno = rng.gen();
 
     let r_sid = SocketId(1234);
     let s_sid = SocketId(2234);
@@ -291,7 +295,7 @@ fn do_lossy_rendezvous(seed: u64) {
     let conn = NetworkSimulator::new(a_sa, b_sa);
 
     let sim = RandomLossSimulation {
-        rng: StdRng::seed_from_u64(seed),
+        rng,
         delay_dist: Normal::new(0.02, 0.02).unwrap(),
         drop_dist: Bernoulli::new(0.70).unwrap(),
     };
@@ -301,12 +305,12 @@ fn do_lossy_rendezvous(seed: u64) {
             a_sa,
             b_sa,
             ConnInitSettings {
-                starting_send_seqnum: start_seqno,
                 local_sockid: s_sid,
                 crypto: None,
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
             },
+            a_start_seqno,
         ),
         start,
     );
@@ -316,29 +320,27 @@ fn do_lossy_rendezvous(seed: u64) {
             b_sa,
             a_sa,
             ConnInitSettings {
-                starting_send_seqnum: start_seqno,
                 local_sockid: r_sid,
                 crypto: None,
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
             },
+            b_start_seqno,
         ),
         start,
     );
 
-    complete(Conn { a, b, conn, sim }, start);
+    let (a, b) = complete(Conn { a, b, conn, sim }, start);
+    assert_eq!(a.settings.init_seq_num, b.settings.init_seq_num);
 }
 
 fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {
-    const TIME_LIMIT: Duration = Duration::from_secs(10);
+    const TIME_LIMIT: Duration = Duration::from_secs(20);
 
     let mut current_time = start;
 
     loop {
-        // assert!(current_time - start < TIME_LIMIT);
-        if current_time - start > TIME_LIMIT {
-            println!("Hi")
-        }
+        assert!(current_time - start < TIME_LIMIT);
 
         let sender_time = loop {
             match conn.conn.sender.select_next_input(
