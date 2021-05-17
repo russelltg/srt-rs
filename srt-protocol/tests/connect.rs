@@ -328,8 +328,7 @@ fn do_lossy_rendezvous(seed: u64) {
     );
 
     let (a, b) = complete(Conn { a, b, conn, sim }, start);
-    assert_eq!(a.settings.init_recv_seq_num, b.settings.init_send_seq_num);
-    assert_eq!(a.settings.init_send_seq_num, b.settings.init_recv_seq_num);
+    assert_eq!(a.settings.init_seq_num, b.settings.init_seq_num);
 }
 
 fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {

@@ -35,7 +35,7 @@ impl TransmitBuffer {
             time_base: TimeBase::new(settings.socket_start_time),
             buffer: Default::default(),
             crypto: settings.crypto_manager.clone(),
-            next_sequence_number: settings.init_send_seq_num,
+            next_sequence_number: settings.init_seq_num,
             next_message_number: MsgNumber::new_truncate(0),
         }
     }
@@ -157,7 +157,7 @@ impl SendBuffer {
     pub fn new(settings: &ConnectionSettings) -> Self {
         Self {
             buffer: Default::default(),
-            first_seq: settings.init_send_seq_num,
+            first_seq: settings.init_seq_num,
         }
     }
 
