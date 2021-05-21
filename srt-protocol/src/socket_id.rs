@@ -5,6 +5,7 @@ use std::fmt;
 
 /// A newtype wrapper for strongly-typed SocketIDs
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct SocketId(pub u32);
 
 impl Distribution<SocketId> for Standard {

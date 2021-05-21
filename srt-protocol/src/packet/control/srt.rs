@@ -11,6 +11,7 @@ use std::fmt::Formatter;
 /// The SRT-specific control packets
 /// These are `Packet::Custom` types
 #[derive(Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum SrtControlPacket {
     /// SRT handshake reject
     /// ID = 0
@@ -66,6 +67,7 @@ pub enum SrtControlPacket {
 /// ```
 ///
 #[derive(Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct SrtKeyMessage {
     pub pt: PacketType, // TODO: i think this is always KeyingMaterial....
     pub key_flags: KeyFlags,
@@ -89,6 +91,7 @@ impl fmt::Debug for SrtKeyMessage {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum Auth {
     None = 0,
 }
@@ -121,6 +124,7 @@ impl TryFrom<u8> for StreamEncapsulation {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum PacketType {
     MediaStream = 1,
     KeyingMaterial = 2,
@@ -128,6 +132,7 @@ pub enum PacketType {
 }
 
 bitflags! {
+    #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
     pub struct KeyFlags : u8 {
         const EVEN = 0b01;
         const ODD = 0b10;
@@ -147,6 +152,7 @@ impl TryFrom<u8> for PacketType {
 
 /// from https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_msg.h#L121-L124
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum CipherType {
     None = 0,
     Ecb = 1,
@@ -156,6 +162,7 @@ pub enum CipherType {
 
 /// The SRT handshake object
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct SrtHandshake {
     /// The SRT version
     /// Serialized just as the u32 that SrtVersion serialized to
@@ -176,6 +183,7 @@ pub struct SrtHandshake {
 }
 
 bitflags! {
+    #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
     pub struct SrtShakeFlags: u32 {
         /// Timestamp-based Packet delivery real-time data sender
         const TSBPDSND = 0x1;

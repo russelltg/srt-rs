@@ -38,6 +38,7 @@ use fmt::Display;
 /// ```
 /// (from <https://tools.ietf.org/html/draft-gg-udt-03#page-5>)
 #[derive(Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ControlPacket {
     /// The timestamp, relative to the socket start time (wrapping every 2^32 microseconds)
     pub timestamp: TimeStamp,
@@ -52,6 +53,7 @@ pub struct ControlPacket {
 /// The different kind of control packets
 #[derive(Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum ControlTypes {
     /// The control packet for initiating connections, type 0x0
     /// Does not use Additional Info
@@ -107,6 +109,7 @@ bitflags! {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct HsV5Info {
     /// the crypto size in bytes, either 0 (no encryption), 16, 24, or 32 (stored /8)
     /// source: https://github.com/Haivision/srt/blob/master/docs/stransmit.md#medium-srt
@@ -125,6 +128,7 @@ pub struct HsV5Info {
 /// HS-version dependenent data
 #[derive(Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum HandshakeVsInfo {
     V4(SocketType),
     V5(HsV5Info),
@@ -163,6 +167,7 @@ pub struct HandshakeControlInfo {
 }
 
 #[derive(Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct AckControlInfo {
     /// The ack sequence number of this ack, increments for each ack sent.
     /// Stored in additional info
@@ -189,6 +194,7 @@ pub struct AckControlInfo {
 
 /// The socket type for a handshake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum SocketType {
     /// A stream socket, 1 when serialized
     Stream = 1,
@@ -219,6 +225,7 @@ pub enum SocketType {
 /// --> CONCLUSION (with response extensions, if RESPONDER)
 /// <-- AGREEMENT (sent exclusively by INITIATOR upon reception of CONCLUSIOn with response extensions)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum ShakeType {
     /// First handshake exchange in client-server connection
     Induction,
@@ -239,6 +246,7 @@ pub enum ShakeType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum CoreRejectReason {
     System = 1001,
     Peer = 1002,
@@ -260,6 +268,7 @@ pub enum CoreRejectReason {
 
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum ServerRejectReason {
     Fallback = 2000,
     KeyNotSup = 2001,
@@ -287,6 +296,7 @@ pub enum ServerRejectReason {
 /// Reject code
 /// *must* be >= 1000
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum RejectReason {
     /// Core reject codes, [1000, 2000)
     Core(CoreRejectReason),
@@ -298,6 +308,26 @@ pub enum RejectReason {
 
     /// User reject code, >3000
     User(i32),
+}
+
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for HandshakeControlInfo {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(HandshakeControlInfo {
+            init_seq_num: SeqNumber::arbitrary(u)?,
+            max_packet_size: u32::arbitrary(u)?,
+            max_flow_size: u32::arbitrary(u)?,
+            shake_type: ShakeType::arbitrary(u)?,
+            socket_id: SocketId::arbitrary(u)?,
+            syn_cookie: i32::arbitrary(u)?,
+            peer_addr: if bool::arbitrary(u)? {
+                Ipv4Addr::arbitrary(u)?.into()
+            } else {
+                Ipv6Addr::arbitrary(u)?.into()
+            },
+            info: HandshakeVsInfo::arbitrary(u)?,
+        })
+    }
 }
 
 impl HandshakeVsInfo {
