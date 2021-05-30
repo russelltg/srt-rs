@@ -232,6 +232,7 @@ mod test {
     use bytes::Bytes;
     use rand::random;
 
+    use crate::values::FullAckSeqNumber;
     use crate::{
         accesscontrol::{AcceptParameters, AllowAllStreamAcceptor},
         packet::{ControlPacket, DataPacket, HandshakeControlInfo, Packet, ShakeType},
@@ -360,7 +361,7 @@ mod test {
     fn send_ack2() {
         let (mut l, mut a) = test_listen();
 
-        let a2 = ControlTypes::Ack2(random());
+        let a2 = ControlTypes::Ack2(FullAckSeqNumber::from_u32(random()).unwrap());
         assert!(matches!(
             l.handle_packet((
                 Packet::Control(ControlPacket {

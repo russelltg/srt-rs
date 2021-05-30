@@ -15,6 +15,7 @@ use crate::packet::{
 };
 use crate::protocol::handshake::Handshake;
 use crate::protocol::{TimeBase, TimeStamp};
+use crate::values::FullAckSeqNumber;
 use crate::{seq_number::seq_num_range, ConnectionSettings, SeqNumber};
 
 mod buffer;
@@ -41,7 +42,7 @@ struct AckHistoryEntry {
     ack_number: SeqNumber,
 
     /// the ack sequence number
-    ack_seq_num: i32,
+    ack_seq_num: FullAckSeqNumber,
 
     departure_time: Instant,
 }
@@ -96,14 +97,14 @@ pub struct Receiver {
     lrsn: SeqNumber,
 
     /// The ID of the next ack packet
-    next_ack: i32,
+    next_ack: FullAckSeqNumber,
 
     /// The timestamp of the probe time
     /// Used to see duration between packets
     probe_time: Option<Instant>,
 
     /// The ACK sequence number of the largest ACK2 received, and the ack number
-    lr_ack_acked: (i32, SeqNumber),
+    lr_ack_acked: (FullAckSeqNumber, SeqNumber),
 
     /// The buffer
     receive_buffer: RecvBuffer,
@@ -133,9 +134,9 @@ impl Receiver {
             packet_history_window: Vec::new(),
             packet_pair_window: Vec::new(),
             lrsn: init_seq_num, // at start, we have received everything until the first packet, exclusive (aka nothing)
-            next_ack: 1,
+            next_ack: FullAckSeqNumber::MIN,
             probe_time: None,
-            lr_ack_acked: (0, init_seq_num),
+            lr_ack_acked: (FullAckSeqNumber::MIN, init_seq_num),
             receive_buffer: RecvBuffer::with(&settings),
             status: ConnectionStatus::Open(settings.recv_tsbpd_latency),
         }
@@ -246,8 +247,7 @@ impl Receiver {
         }
 
         // 3) Assign this ACK a unique increasing ACK sequence number.
-        let ack_seq_num = self.next_ack;
-        self.next_ack += 1;
+        let ack_seq_num = self.next_ack.increment();
 
         // 4) Calculate the packet arrival speed according to the following
         // algorithm:
@@ -318,7 +318,7 @@ impl Receiver {
         self.send_control(
             now,
             ControlTypes::Ack(AckControlInfo {
-                ack_seq_num,
+                ack_seq_num: Some(ack_seq_num),
                 ack_number,
                 rtt: Some(self.rtt.mean()),
                 rtt_variance: Some(self.rtt.variance()),
@@ -381,7 +381,7 @@ impl Receiver {
         self.status.drain(now);
         self.send_control(now, ControlTypes::Shutdown);
     }
-    pub fn handle_ack2_packet(&mut self, seq_num: i32, ack2_arrival_time: Instant) {
+    pub fn handle_ack2_packet(&mut self, seq_num: FullAckSeqNumber, ack2_arrival_time: Instant) {
         // 1) Locate the related ACK in the ACK History Window according to the
         //    ACK sequence number in this ACK2.
         let id_in_wnd = match self
@@ -416,7 +416,7 @@ impl Receiver {
             self.timers.update_rtt(&self.rtt);
         } else {
             warn!(
-                "ACK sequence number in ACK2 packet not found in ACK history: {}",
+                "ACK sequence number in ACK2 packet not found in ACK history: {:?}",
                 seq_num
             );
         }

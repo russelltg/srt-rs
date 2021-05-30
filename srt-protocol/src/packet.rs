@@ -9,8 +9,8 @@ mod control;
 mod data;
 mod error;
 
-pub use self::control::*;
-pub use self::data::*;
+pub use control::*;
+pub use data::*;
 pub use error::PacketParseError;
 
 use crate::protocol::TimeStamp;

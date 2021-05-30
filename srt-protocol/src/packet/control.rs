@@ -9,6 +9,7 @@ use bytes::{Buf, BufMut};
 use log::warn;
 
 use crate::protocol::{TimeSpan, TimeStamp};
+use crate::values::FullAckSeqNumber;
 use crate::{MsgNumber, SeqNumber, SocketId};
 
 mod srt;
@@ -74,7 +75,7 @@ pub enum ControlTypes {
 
     /// Acknowledgement of Acknowledgement (ACK2) 0x6
     /// Additional Info (the i32) is the ACK sequence number to acknowldege
-    Ack2(i32),
+    Ack2(FullAckSeqNumber),
 
     /// Drop request, type 0x7
     DropRequest {
@@ -166,7 +167,7 @@ pub struct HandshakeControlInfo {
 pub struct AckControlInfo {
     /// The ack sequence number of this ack, increments for each ack sent.
     /// Stored in additional info
-    pub ack_seq_num: i32,
+    pub ack_seq_num: Option<FullAckSeqNumber>,
 
     /// The packet sequence number that all packets have been recieved until (excluding)
     pub ack_number: SeqNumber,
@@ -365,7 +366,7 @@ impl ControlPacket {
 
         // get reserved data, which is the last two bytes of the first four bytes
         let reserved = buf.get_u16();
-        let add_info = buf.get_i32();
+        let add_info = buf.get_u32();
         let timestamp = TimeStamp::from_micros(buf.get_u32());
         let dest_sockid = buf.get_u32();
 
@@ -391,7 +392,7 @@ impl ControlPacket {
         into.put_u16(self.control_type.reserved());
 
         // the additonal info line
-        into.put_i32(self.control_type.additional_info());
+        into.put_u32(self.control_type.additional_info());
 
         // timestamp
         into.put_u32(self.timestamp.as_micros());
@@ -434,7 +435,7 @@ impl ControlTypes {
     fn deserialize<T: Buf>(
         packet_type: u16,
         reserved: u16,
-        extra_info: i32,
+        extra_info: u32,
         mut buf: T,
         is_ipv6: bool,
     ) -> Result<ControlTypes, PacketParseError> {
@@ -650,7 +651,7 @@ impl ControlTypes {
                 let est_link_cap = opt_read_next_u32(&mut buf);
 
                 Ok(ControlTypes::Ack(AckControlInfo {
-                    ack_seq_num: extra_info,
+                    ack_seq_num: FullAckSeqNumber::from_u32(extra_info),
                     ack_number,
                     rtt,
                     rtt_variance,
@@ -680,7 +681,10 @@ impl ControlTypes {
                 if buf.remaining() >= 4 {
                     buf.get_u32(); // discard "unused" packet field
                 }
-                Ok(ControlTypes::Ack2(extra_info))
+                Ok(ControlTypes::Ack2(
+                    FullAckSeqNumber::from_u32(extra_info)
+                        .ok_or(PacketParseError::BadControlType(0x6))?,
+                ))
             }
             0x7 => {
                 // Drop request
@@ -717,11 +721,14 @@ impl ControlTypes {
         }
     }
 
-    fn additional_info(&self) -> i32 {
+    fn additional_info(&self) -> u32 {
         match self {
             // These types have additional info
-            ControlTypes::DropRequest { msg_to_drop: a, .. } => a.as_raw() as i32,
-            ControlTypes::Ack2(a) | ControlTypes::Ack(AckControlInfo { ack_seq_num: a, .. }) => *a,
+            ControlTypes::DropRequest { msg_to_drop: a, .. } => a.as_raw(),
+            ControlTypes::Ack2(a) => a.as_u32(),
+            ControlTypes::Ack(AckControlInfo { ack_seq_num: a, .. }) => {
+                a.map(|n| n.as_u32()).unwrap_or(0u32)
+            }
             // These do not, just use zero
             _ => 0,
         }
@@ -828,7 +835,7 @@ impl Debug for ControlTypes {
                 packet_recv_rate,
                 est_link_cap,
             }) => {
-                write!(f, "Ack(asn={} an={}", ack_seq_num, ack_number,)?;
+                write!(f, "Ack(asn={:?} an={}", ack_seq_num, ack_number,)?;
                 if let Some(rtt) = rtt {
                     write!(f, " rtt={}", rtt.as_micros())?;
                 }
@@ -851,7 +858,7 @@ impl Debug for ControlTypes {
                 write!(f, "Nak({:?})", nak) // TODO could be better, show ranges
             }
             ControlTypes::Shutdown => write!(f, "Shutdown"),
-            ControlTypes::Ack2(ackno) => write!(f, "Ack2({})", ackno),
+            ControlTypes::Ack2(ackno) => write!(f, "Ack2({:?})", ackno),
             ControlTypes::DropRequest {
                 msg_to_drop,
                 first,
@@ -1137,13 +1144,15 @@ impl Display for ServerRejectReason {
 
 #[cfg(test)]
 mod test {
+    use std::time::Duration;
+    use std::{convert::TryInto, io::Cursor};
 
     use bytes::BytesMut;
 
-    use super::*;
+    use crate::values::FullAckSeqNumber;
     use crate::{SeqNumber, SocketId, SrtVersion};
-    use std::time::Duration;
-    use std::{convert::TryInto, io::Cursor};
+
+    use super::*;
 
     #[test]
     fn handshake_ser_des_test() {
@@ -1186,7 +1195,7 @@ mod test {
             timestamp: TimeStamp::from_micros(113_703),
             dest_sockid: SocketId(2_453_706_529),
             control_type: ControlTypes::Ack(AckControlInfo {
-                ack_seq_num: 1,
+                ack_seq_num: Some(FullAckSeqNumber::MIN),
                 ack_number: SeqNumber::new_truncate(282_049_186),
                 rtt: Some(TimeSpan::from_micros(10_002)),
                 rtt_variance: Some(TimeSpan::from_micros(1000)),
@@ -1209,7 +1218,7 @@ mod test {
         let pack = ControlPacket {
             timestamp: TimeStamp::from_micros(125_812),
             dest_sockid: SocketId(8313),
-            control_type: ControlTypes::Ack2(831),
+            control_type: ControlTypes::Ack2(FullAckSeqNumber::from_u32(831).unwrap()),
         };
         assert_eq!(pack.control_type.additional_info(), 831);
 

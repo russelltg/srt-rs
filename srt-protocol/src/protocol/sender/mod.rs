@@ -14,6 +14,7 @@ use crate::loss_compression::decompress_loss_list;
 use crate::packet::{AckControlInfo, ControlTypes, HandshakeControlInfo};
 use crate::protocol::handshake::Handshake;
 use crate::protocol::Timer;
+use crate::values::FullAckSeqNumber;
 use crate::{ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
 
 use crate::connection::ConnectionStatus;
@@ -96,7 +97,7 @@ pub struct Sender {
     lr_acked_packet: SeqNumber,
 
     /// The ack sequence number that an ack2 has been sent for
-    lr_acked_ack: i32,
+    lr_acked_ack: FullAckSeqNumber,
 
     snd_timer: Timer,
     // this isn't in the spec, but it's in the reference implementation
@@ -122,7 +123,7 @@ impl Sender {
             send_buffer: SendBuffer::new(&settings),
             loss_list: LossList::new(&settings),
             lr_acked_packet: settings.init_seq_num,
-            lr_acked_ack: -1, // TODO: why magic number?
+            lr_acked_ack: FullAckSeqNumber::MIN, // TODO: why magic number?
             output_buffer: VecDeque::new(),
             transmit_buffer: TransmitBuffer::new(&settings),
             snd_timer: Timer::new(Duration::from_millis(1), settings.socket_start_time),
@@ -284,11 +285,15 @@ impl Sender {
             return;
         }
 
-        if info.ack_seq_num <= self.lr_acked_ack {
+        if info
+            .ack_seq_num
+            .map(|n| n <= self.lr_acked_ack)
+            .unwrap_or(true)
+        {
             // warn!("Ack sequence number '{}' less than or equal to the previous one recieved: '{}'", ack_seq_num, self.lr_acked_ack);
             return;
         }
-        self.lr_acked_ack = info.ack_seq_num;
+        self.lr_acked_ack = info.ack_seq_num.unwrap();
 
         // update the packets received count
         self.metrics.recvd_packets += info.ack_number - self.lr_acked_packet;
@@ -297,7 +302,7 @@ impl Sender {
         self.lr_acked_packet = info.ack_number;
 
         // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
-        self.send_control(ControlTypes::Ack2(info.ack_seq_num), now);
+        self.send_control(ControlTypes::Ack2(info.ack_seq_num.unwrap()), now);
 
         // 3) Update RTT and RTTVar.
         self.metrics.rtt = info.rtt.unwrap_or_else(|| TimeSpan::from_micros(0));
