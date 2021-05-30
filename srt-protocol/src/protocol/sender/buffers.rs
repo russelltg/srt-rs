@@ -46,7 +46,7 @@ impl TransmitBuffer {
         let (time, mut payload) = data;
         let mut location = PacketLocation::FIRST;
         let mut packet_count = 0;
-        let message_number = self.get_new_message_number();
+        let message_number = self.next_message_number.increment();
         loop {
             if payload.len() > self.max_packet_size as usize {
                 let this_payload = payload.slice(0..self.max_packet_size as usize);
@@ -104,7 +104,7 @@ impl TransmitBuffer {
             retransmitted,
             // if this marks the beginning of the next message, get a new message number, else don't
             message_number: message_num,
-            seq_number: self.get_new_sequence_number(),
+            seq_number: self.next_sequence_number.increment(),
             timestamp: self.timestamp_from(time),
             payload,
         };
@@ -120,19 +120,6 @@ impl TransmitBuffer {
         }
 
         self.buffer.push_back(packet)
-    }
-
-    /// Gets the next available message number
-    fn get_new_message_number(&mut self) -> MsgNumber {
-        self.next_message_number += 1;
-        self.next_message_number - 1
-    }
-
-    /// Gets the next avilabe packet sequence number
-    fn get_new_sequence_number(&mut self) -> SeqNumber {
-        // this does looping for us
-        self.next_sequence_number += 1;
-        self.next_sequence_number - 1
     }
 
     pub fn next_sequence_number_to_send(&self) -> SeqNumber {
