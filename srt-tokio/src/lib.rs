@@ -50,11 +50,11 @@
 mod builder;
 mod multiplex;
 mod pending_connection;
-pub mod tokio;
+pub mod socket;
 
 pub use crate::builder::{ConnInitMethod, SrtSocketBuilder};
 pub use crate::multiplex::{multiplex, StreamerServer};
-pub use crate::tokio::SrtSocket;
+pub use crate::socket::SrtSocket;
 
 use srt_protocol::connection::{Connection, ConnectionSettings};
 use srt_protocol::crypto;

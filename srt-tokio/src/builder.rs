@@ -9,7 +9,7 @@ use tokio::net::UdpSocket;
 
 use futures::{stream::unfold, Stream, StreamExt};
 
-use crate::tokio::create_bidrectional_srt;
+use crate::socket::create_bidrectional_srt;
 use crate::{crypto::CryptoOptions, multiplex, pending_connection, SrtSocket};
 use log::error;
 use srt_protocol::{
