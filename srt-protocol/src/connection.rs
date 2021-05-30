@@ -402,7 +402,7 @@ mod duplex_connection {
         let mut now = start;
         assert_eq!(
             connection.handle_input(now, Input::Timer),
-            WaitForData(51 * MILLIS)
+            WaitForData(102 * MILLIS)
         );
         assert_eq!(
             connection.handle_input(now, Input::Data(Some((start, Bytes::new())))),
@@ -423,7 +423,7 @@ mod duplex_connection {
         ));
         assert_eq!(
             connection.handle_input(now, Input::Data(None)),
-            WaitForData(50 * MILLIS)
+            WaitForData(101 * MILLIS)
         );
 
         // closing: drain last item in send buffer
@@ -444,7 +444,7 @@ mod duplex_connection {
         ));
         assert_eq!(
             connection.handle_input(now, Input::Timer),
-            WaitForData(49 * MILLIS)
+            WaitForData(100 * MILLIS)
         );
         assert_eq!(connection.handle_input(now, Input::Timer), Close);
     }

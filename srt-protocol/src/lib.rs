@@ -8,7 +8,6 @@ pub use srt_version::SrtVersion;
 pub mod accesscontrol;
 pub mod connection;
 pub mod crypto;
-mod loss_compression;
 mod modular_num;
 mod msg_number;
 pub mod packet;
