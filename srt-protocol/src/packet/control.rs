@@ -880,11 +880,11 @@ impl CompressedLossList {
         CompressedLossList(compress_loss_list(iter).collect())
     }
 
-    pub fn iter_compressed<'a>(&'a self) -> impl Iterator<Item = u32> + 'a {
+    pub fn iter_compressed(&self) -> impl Iterator<Item = u32> + '_ {
         self.0.iter().copied()
     }
 
-    pub fn iter_decompressed<'a>(&'a self) -> impl Iterator<Item = SeqNumber> + 'a {
+    pub fn iter_decompressed(&self) -> impl Iterator<Item = SeqNumber> + '_ {
         decompress_loss_list(self.iter_compressed())
     }
 }
@@ -909,9 +909,9 @@ impl From<i32> for AckSeqNumber {
     }
 }
 
-impl Into<i32> for AckSeqNumber {
-    fn into(self) -> i32 {
-        self.0
+impl From<AckSeqNumber> for i32 {
+    fn from(u: AckSeqNumber) -> Self {
+        u.0
     }
 }
 

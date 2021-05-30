@@ -361,7 +361,7 @@ impl Receiver {
                 full: Some(FullAck {
                     ack_seq_num,
                     packet_recv_rate: rr_packets,
-                    est_link_cap: est_link_cap,
+                    est_link_cap,
                     data_recv_rate: rr_bytes,
                 }),
             }),

@@ -304,17 +304,17 @@ impl Sender {
             .remove_acknowledged_packets(info.ack_number());
 
         if let AckControlInfo::FullSmall {
-            ack_number,
+            ack_number: _,
             rtt,
             rtt_variance,
-            buffer_available,
+            buffer_available: _,
             full:
                 Some(FullAck {
                     ack_seq_num,
 
                     packet_recv_rate,
                     est_link_cap,
-                    data_recv_rate,
+                    data_recv_rate: _,
                 }),
         } = info
         {
