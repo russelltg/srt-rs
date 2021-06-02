@@ -3,6 +3,7 @@ use std::{cmp::Ordering, fmt};
 /// Serialied, it looks like:
 /// major * 0x10000 + minor * 0x100 + patch
 #[derive(PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct SrtVersion {
     pub major: u8,
     pub minor: u8,
