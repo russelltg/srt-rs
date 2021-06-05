@@ -360,7 +360,7 @@ mod test {
     fn send_ack2() {
         let (mut l, mut a) = test_listen();
 
-        let a2 = ControlTypes::Ack2(random::<i32>().into());
+        let a2 = ControlTypes::Ack2(random::<u32>().into());
         assert!(matches!(
             l.handle_packet((
                 Packet::Control(ControlPacket {

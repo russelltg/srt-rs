@@ -207,7 +207,7 @@ pub enum AckControlInfo {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Copy, Ord, PartialOrd)]
-pub struct AckSeqNumber(i32);
+pub struct AckSeqNumber(u32);
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct CompressedLossList(Vec<u32>);
@@ -390,7 +390,7 @@ impl ControlPacket {
 
         // get reserved data, which is the last two bytes of the first four bytes
         let reserved = buf.get_u16();
-        let add_info = buf.get_i32();
+        let add_info = buf.get_u32();
         let timestamp = TimeStamp::from_micros(buf.get_u32());
         let dest_sockid = buf.get_u32();
 
@@ -416,7 +416,7 @@ impl ControlPacket {
         into.put_u16(self.control_type.reserved());
 
         // the additonal info line
-        into.put_i32(self.control_type.additional_info());
+        into.put_u32(self.control_type.additional_info());
 
         // timestamp
         into.put_u32(self.timestamp.as_micros());
@@ -459,7 +459,7 @@ impl ControlTypes {
     fn deserialize<T: Buf>(
         packet_type: u16,
         reserved: u16,
-        extra_info: i32,
+        extra_info: u32,
         mut buf: T,
         is_ipv6: bool,
     ) -> Result<ControlTypes, PacketParseError> {
@@ -748,10 +748,10 @@ impl ControlTypes {
         }
     }
 
-    fn additional_info(&self) -> i32 {
+    fn additional_info(&self) -> u32 {
         match self {
             // These types have additional info
-            ControlTypes::DropRequest { msg_to_drop: a, .. } => a.as_raw() as i32,
+            ControlTypes::DropRequest { msg_to_drop: a, .. } => a.as_raw(),
             ControlTypes::Ack2(a)
             | ControlTypes::Ack(AckControlInfo::FullSmall {
                 full: Some(FullAck { ack_seq_num: a, .. }),
@@ -903,13 +903,13 @@ impl AckSeqNumber {
     }
 }
 
-impl From<i32> for AckSeqNumber {
-    fn from(u: i32) -> Self {
+impl From<u32> for AckSeqNumber {
+    fn from(u: u32) -> Self {
         AckSeqNumber(u)
     }
 }
 
-impl From<AckSeqNumber> for i32 {
+impl From<AckSeqNumber> for u32 {
     fn from(u: AckSeqNumber) -> Self {
         u.0
     }
