@@ -10,8 +10,8 @@ use log::{debug, error, info, trace, warn};
 
 use super::TimeSpan;
 use crate::packet::{
-    AckControlInfo, AckSeqNumber, CompressedLossList, ControlPacket, ControlTypes, DataEncryption,
-    DataPacket, FullAck, Packet,
+    AckControlInfo, CompressedLossList, ControlPacket, ControlTypes, DataEncryption, DataPacket,
+    FullAckSeqNumber, Packet,
 };
 use crate::protocol::handshake::Handshake;
 use crate::protocol::{TimeBase, TimeStamp};
@@ -43,7 +43,7 @@ struct AckHistoryEntry {
     ack_number: SeqNumber,
 
     /// the ack sequence number
-    ack_seq_num: Option<AckSeqNumber>,
+    ack_seq_num: Option<FullAckSeqNumber>,
 
     departure_time: Instant,
 }
@@ -105,14 +105,14 @@ pub struct Receiver {
     lrsn: SeqNumber,
 
     /// The ID of the next ack packet
-    next_ack: AckSeqNumber,
+    next_ack: FullAckSeqNumber,
 
     /// The timestamp of the probe time
     /// Used to see duration between packets
     probe_time: Option<Instant>,
 
-    /// The ACK sequence number of the largest ACK2 received, and the ack number
-    lr_ack_acked: (AckSeqNumber, SeqNumber),
+    /// The ACK number from the largest ACK2
+    lr_ack_acked: SeqNumber,
 
     /// The buffer
     receive_buffer: RecvBuffer,
@@ -142,9 +142,9 @@ impl Receiver {
             packet_history_window: Vec::new(),
             packet_pair_window: Vec::new(),
             lrsn: init_seq_num, // at start, we have received everything until the first packet, exclusive (aka nothing)
-            next_ack: AckSeqNumber::INITIAL,
+            next_ack: FullAckSeqNumber::INITIAL,
             probe_time: None,
-            lr_ack_acked: (0.into(), init_seq_num),
+            lr_ack_acked: init_seq_num,
             receive_buffer: RecvBuffer::with(&settings),
             status: ConnectionStatus::Open(settings.recv_tsbpd_latency),
         }
@@ -159,12 +159,12 @@ impl Receiver {
             TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
             self.settings.local_sockid,
             self.receive_buffer.next_msg_ready(),
-            self.lr_ack_acked.1,
+            self.lr_ack_acked,
             self.receive_buffer.next_release()
         );
 
         self.receive_buffer.next_msg_ready().is_none()
-            && self.lr_ack_acked.1 == self.receive_buffer.next_release() // packets have been acked and all acks have been acked (ack2)
+            && self.lr_ack_acked == self.receive_buffer.next_release() // packets have been acked and all acks have been acked (ack2)
             && self.control_packets.is_empty()
             && self.data_release.is_empty()
     }
@@ -187,7 +187,7 @@ impl Receiver {
         if self.status.check_close_timeout(now, self.is_flushed()) {
             debug!("{:?} receiver close timed out", self.settings.local_sockid);
             // receiver is closing, there is no need to track ACKs anymore
-            self.lr_ack_acked.1 = self.receive_buffer.next_release()
+            self.lr_ack_acked = self.receive_buffer.next_release()
         }
     }
 
@@ -277,7 +277,7 @@ impl Receiver {
     }
 
     fn full_ack_timer_active(&self) -> bool {
-        self.ack_number() != self.lr_ack_acked.1
+        self.ack_number() != self.lr_ack_acked
     }
 
     fn on_full_ack_event(&mut self, now: Instant) {
@@ -297,7 +297,7 @@ impl Receiver {
         trace!(
             "Sending ACK; ack_num={:?}, lr_ack_acked={:?}",
             ack_number,
-            self.lr_ack_acked.1
+            self.lr_ack_acked
         );
 
         if let Some(&AckHistoryEntry {
@@ -320,7 +320,7 @@ impl Receiver {
         }
 
         // 3) Assign this ACK a unique increasing ACK sequence number.
-        let ack_seq_num = self.next_ack;
+        let full_ack_seq_number = self.next_ack;
         self.next_ack.increment();
 
         // 4) Calculate the packet arrival speed according to the following
@@ -358,19 +358,17 @@ impl Receiver {
                 rtt: self.rtt.mean(),
                 rtt_variance: self.rtt.variance(),
                 buffer_available: 100, // TODO: add this
-                full: Some(FullAck {
-                    ack_seq_num,
-                    packet_recv_rate: rr_packets,
-                    est_link_cap,
-                    data_recv_rate: rr_bytes,
-                }),
+                full_ack_seq_number: Some(full_ack_seq_number),
+                packet_recv_rate: Some(rr_packets),
+                est_link_cap: Some(est_link_cap),
+                data_recv_rate: Some(rr_bytes),
             }),
         );
 
         // add it to the ack history
         self.ack_history_window.push(AckHistoryEntry {
             ack_number,
-            ack_seq_num: Some(ack_seq_num),
+            ack_seq_num: Some(full_ack_seq_number),
             departure_time: now,
         });
     }
@@ -424,7 +422,7 @@ impl Receiver {
         self.status.drain(now);
         self.send_control(now, ControlTypes::Shutdown);
     }
-    pub fn handle_ack2_packet(&mut self, seq_num: AckSeqNumber, ack2_arrival_time: Instant) {
+    pub fn handle_ack2_packet(&mut self, seq_num: FullAckSeqNumber, ack2_arrival_time: Instant) {
         // 1) Locate the related ACK in the ACK History Window according to the
         //    ACK sequence number in this ACK2.
         let id_in_wnd = match self
@@ -444,7 +442,7 @@ impl Receiver {
             } = self.ack_history_window[id];
 
             // 2) Update the largest ACK number ever been acknowledged.
-            self.lr_ack_acked = (seq_num, ack_number);
+            self.lr_ack_acked = ack_number;
 
             // 3) Calculate new rtt according to the ACK2 arrival time and the ACK
             //    , and update the RTT value as: RTT = (RTT * 7 +

@@ -1,7 +1,9 @@
 use std::{
     convert::TryFrom,
     fmt::{self, Debug, Formatter},
+    mem::size_of,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    ops::Add,
 };
 
 use bitflags::bitflags;
@@ -75,7 +77,7 @@ pub enum ControlTypes {
 
     /// Acknowledgement of Acknowledgement (ACK2) 0x6
     /// Additional Info (the i32) is the ACK sequence number to acknowldege
-    Ack2(AckSeqNumber),
+    Ack2(FullAckSeqNumber),
 
     /// Drop request, type 0x7
     DropRequest {
@@ -164,20 +166,7 @@ pub struct HandshakeControlInfo {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct FullAck {
-    /// receive rate, in packets/sec
-    pub packet_recv_rate: u32,
-
-    /// Estimated Link capacity in packets/sec
-    pub est_link_cap: u32,
-
-    /// Receive rate, in bytes/sec
-    pub data_recv_rate: u32,
-
-    /// The ack sequence number of this ack, increments for each full ack sent.
-    /// Stored in additional info
-    pub ack_seq_num: AckSeqNumber,
-}
+pub struct FullAck {}
 
 /// Data included in a ACK packet. [spec](https://datatracker.ietf.org/doc/html/draft-sharabayko-mops-srt-00#section-3.2.3)
 ///
@@ -185,6 +174,10 @@ pub struct FullAck {
 /// * Full - includes all the fields
 /// * Lite - no optional fields
 /// * Small - Includes rtt, rtt_variance, and buffer_available
+///
+/// However, these aren't necessarily clean categories--there may be some
+/// amount of overlap so full acks are allowed to have no extra info and short acks
+/// are allowed to have all the info
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum AckControlInfo {
     FullSmall {
@@ -200,14 +193,23 @@ pub enum AckControlInfo {
         /// available buffer, in packets
         buffer_available: u32,
 
+        /// receive rate, in packets/sec
+        packet_recv_rate: Option<u32>,
+
+        /// Estimated Link capacity in packets/sec
+        est_link_cap: Option<u32>,
+
+        /// Receive rate, in bytes/sec
+        data_recv_rate: Option<u32>,
+
         /// Some for full ack, none otherwise
-        full: Option<FullAck>,
+        full_ack_seq_number: Option<FullAckSeqNumber>,
     },
     Lite(SeqNumber),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Copy, Ord, PartialOrd)]
-pub struct AckSeqNumber(u32);
+pub struct FullAckSeqNumber(u32);
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct CompressedLossList(Vec<u32>);
@@ -652,42 +654,33 @@ impl ControlTypes {
 
                 // read control info
                 let ack_number = SeqNumber::new_truncate(buf.get_u32());
+                let full_ack_seq_number = FullAckSeqNumber::new(extra_info);
 
-                if extra_info == 0 {
-                    // lite/short ACK
-                    // TOOD: short
-                    Ok(ControlTypes::Ack(AckControlInfo::Lite(ack_number)))
-                } else {
-                    // Assume new enough version to have all the fields
-                    if buf.remaining() < 3 * 4 {
-                        return Err(PacketParseError::NotEnoughData);
-                    }
-
+                // short/full
+                if buf.remaining() >= 3 * size_of::<u32>() {
                     let rtt = TimeSpan::from_micros(buf.get_i32());
                     let rtt_variance = TimeSpan::from_micros(buf.get_i32());
                     let buffer_available = buf.get_u32();
 
-                    let full = if buf.remaining() < 3 * 4 {
-                        None
-                    } else {
-                        let packet_recv_rate = buf.get_u32();
-                        let est_link_cap = buf.get_u32();
-                        let data_recv_rate = buf.get_u32();
-                        Some(FullAck {
-                            ack_seq_num: extra_info.into(),
-                            packet_recv_rate,
-                            est_link_cap,
-                            data_recv_rate,
-                        })
-                    };
+                    let packet_recv_rate =
+                        (buf.remaining() >= size_of::<u32>()).then(|| buf.get_u32());
+                    let est_link_cap = (buf.remaining() >= size_of::<u32>()).then(|| buf.get_u32());
+                    let data_recv_rate =
+                        (buf.remaining() >= size_of::<u32>()).then(|| buf.get_u32());
 
                     Ok(ControlTypes::Ack(AckControlInfo::FullSmall {
                         ack_number,
                         rtt,
                         rtt_variance,
                         buffer_available,
-                        full,
+                        packet_recv_rate,
+                        est_link_cap,
+                        data_recv_rate,
+                        full_ack_seq_number,
                     }))
+                } else {
+                    // lite ack
+                    Ok(ControlTypes::Ack(AckControlInfo::Lite(ack_number)))
                 }
             }
             0x3 => {
@@ -711,7 +704,11 @@ impl ControlTypes {
                 if buf.remaining() >= 4 {
                     buf.get_u32(); // discard "unused" packet field
                 }
-                Ok(ControlTypes::Ack2(extra_info.into()))
+                if let Some(ack_seq_no) = FullAckSeqNumber::new(extra_info) {
+                    Ok(ControlTypes::Ack2(ack_seq_no))
+                } else {
+                    Err(PacketParseError::ZeroAckSequenceNumber)
+                }
             }
             0x7 => {
                 // Drop request
@@ -754,7 +751,7 @@ impl ControlTypes {
             ControlTypes::DropRequest { msg_to_drop: a, .. } => a.as_raw(),
             ControlTypes::Ack2(a)
             | ControlTypes::Ack(AckControlInfo::FullSmall {
-                full: Some(FullAck { ack_seq_num: a, .. }),
+                full_ack_seq_number: Some(a),
                 ..
             }) => (*a).into(),
             // These do not, just use zero
@@ -818,17 +815,26 @@ impl ControlTypes {
                 rtt,
                 rtt_variance,
                 buffer_available,
-                full,
+                packet_recv_rate,
+                est_link_cap,
+                data_recv_rate,
+                full_ack_seq_number: _,
             }) => {
                 into.put_u32(ack_number.as_raw());
                 into.put_i32(rtt.as_micros());
                 into.put_i32(rtt_variance.as_micros());
                 into.put_u32(*buffer_available);
 
-                if let Some(f) = full {
-                    into.put_u32(f.packet_recv_rate);
-                    into.put_u32(f.est_link_cap);
-                    into.put_u32(f.data_recv_rate);
+                // Make sure fields are always in the right order
+                // Would rather not transmit than transmit incorrectly
+                if let Some(prr) = packet_recv_rate {
+                    into.put_u32(*prr);
+                    if let Some(elc) = est_link_cap {
+                        into.put_u32(*elc);
+                        if let Some(drr) = data_recv_rate {
+                            into.put_u32(*drr);
+                        }
+                    }
                 }
             }
             ControlTypes::Ack(AckControlInfo::Lite(ack_no)) => {
@@ -889,9 +895,16 @@ impl CompressedLossList {
     }
 }
 
-impl AckSeqNumber {
-    pub const INITIAL: AckSeqNumber = AckSeqNumber(1);
-    pub const LIGHT: AckSeqNumber = AckSeqNumber(0);
+impl FullAckSeqNumber {
+    pub const INITIAL: FullAckSeqNumber = FullAckSeqNumber(1);
+
+    pub fn new(raw: u32) -> Option<FullAckSeqNumber> {
+        if raw == 0 {
+            None
+        } else {
+            Some(FullAckSeqNumber(raw))
+        }
+    }
 
     pub fn increment(&mut self) {
         // TODO: wrapping or nonwrapping???
@@ -903,15 +916,17 @@ impl AckSeqNumber {
     }
 }
 
-impl From<u32> for AckSeqNumber {
-    fn from(u: u32) -> Self {
-        AckSeqNumber(u)
+impl From<FullAckSeqNumber> for u32 {
+    fn from(u: FullAckSeqNumber) -> Self {
+        u.0
     }
 }
 
-impl From<AckSeqNumber> for u32 {
-    fn from(u: AckSeqNumber) -> Self {
-        u.0
+impl Add<u32> for FullAckSeqNumber {
+    type Output = FullAckSeqNumber;
+
+    fn add(self, rhs: u32) -> Self::Output {
+        FullAckSeqNumber(self.0 + rhs)
     }
 }
 
@@ -1243,12 +1258,10 @@ mod test {
                 rtt: TimeSpan::from_micros(10_002),
                 rtt_variance: TimeSpan::from_micros(1000),
                 buffer_available: 1314,
-                full: Some(FullAck {
-                    ack_seq_num: 1.into(),
-                    packet_recv_rate: 0,
-                    est_link_cap: 0,
-                    data_recv_rate: 0,
-                }),
+                full_ack_seq_number: FullAckSeqNumber::new(1),
+                packet_recv_rate: Some(0),
+                est_link_cap: Some(0),
+                data_recv_rate: Some(0),
             }),
         };
 
@@ -1265,7 +1278,7 @@ mod test {
         let pack = ControlPacket {
             timestamp: TimeStamp::from_micros(125_812),
             dest_sockid: SocketId(8313),
-            control_type: ControlTypes::Ack2(831.into()),
+            control_type: ControlTypes::Ack2(FullAckSeqNumber::new(831).unwrap()),
         };
         assert_eq!(pack.control_type.additional_info(), 831);
 

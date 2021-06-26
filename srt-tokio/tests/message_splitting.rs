@@ -5,6 +5,7 @@ use bytes::Bytes;
 use futures::prelude::*;
 
 use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
+use tokio::time::sleep;
 
 const PACKET_SIZE: usize = 1 << 19;
 
@@ -27,6 +28,7 @@ async fn message_splitting() -> Result<()> {
     let sender = tokio::spawn(async move {
         let mut sender = sender.await?;
         sender.send((Instant::now(), long_message)).await?;
+        sleep(Duration::from_secs(3)).await;
         sender.close().await?;
         Ok(()) as Result<_>
     });

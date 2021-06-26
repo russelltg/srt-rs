@@ -10,8 +10,8 @@ use log::debug;
 use log::trace;
 
 use super::TimeSpan;
-use crate::packet::{AckControlInfo, ControlTypes, FullAck, HandshakeControlInfo};
-use crate::packet::{AckSeqNumber, CompressedLossList};
+use crate::packet::{AckControlInfo, ControlTypes, HandshakeControlInfo};
+use crate::packet::{CompressedLossList, FullAckSeqNumber};
 use crate::protocol::handshake::Handshake;
 use crate::protocol::Timer;
 use crate::{ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
@@ -95,8 +95,8 @@ pub struct Sender {
     /// The sequence number of the largest acknowledged packet + 1
     lr_acked_packet: SeqNumber,
 
-    /// The ack sequence number that an ack2 has been sent for
-    lr_acked_ack: AckSeqNumber,
+    /// The ack sequence number that an ack2 has been sent for + 1
+    next_acked_ack: FullAckSeqNumber,
 
     snd_timer: Timer,
     // this isn't in the spec, but it's in the reference implementation
@@ -122,7 +122,7 @@ impl Sender {
             send_buffer: SendBuffer::new(&settings),
             loss_list: LossList::new(&settings),
             lr_acked_packet: settings.init_seq_num,
-            lr_acked_ack: 0.into(),
+            next_acked_ack: FullAckSeqNumber::INITIAL,
             output_buffer: VecDeque::new(),
             transmit_buffer: TransmitBuffer::new(&settings),
             snd_timer: Timer::new(Duration::from_millis(1), settings.socket_start_time),
@@ -308,22 +308,19 @@ impl Sender {
             rtt,
             rtt_variance,
             buffer_available: _,
-            full:
-                Some(FullAck {
-                    ack_seq_num,
+            full_ack_seq_number: Some(ack_seq_num),
 
-                    packet_recv_rate,
-                    est_link_cap,
-                    data_recv_rate: _,
-                }),
+            packet_recv_rate: Some(packet_recv_rate),
+            est_link_cap: Some(est_link_cap),
+            data_recv_rate: _,
         } = info
         {
-            if ack_seq_num <= self.lr_acked_ack {
+            if ack_seq_num < self.next_acked_ack {
                 // warn!("Ack sequence number '{}' less than or equal to the previous one recieved: '{}'", ack_seq_num, self.lr_acked_ack);
                 return;
             }
 
-            self.lr_acked_ack = ack_seq_num;
+            self.next_acked_ack = ack_seq_num + 1;
 
             // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
             self.send_control(ControlTypes::Ack2(ack_seq_num), now);
