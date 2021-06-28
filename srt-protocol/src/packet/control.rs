@@ -1,7 +1,9 @@
 use std::{
     convert::TryFrom,
     fmt::{self, Debug, Formatter},
+    mem::size_of,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    ops::Add,
 };
 
 use bitflags::bitflags;
@@ -11,7 +13,9 @@ use log::warn;
 use crate::protocol::{TimeSpan, TimeStamp};
 use crate::{MsgNumber, SeqNumber, SocketId};
 
+mod loss_compression;
 mod srt;
+use self::loss_compression::{compress_loss_list, decompress_loss_list};
 pub use self::srt::*;
 
 use super::PacketParseError;
@@ -66,15 +70,14 @@ pub enum ControlTypes {
 
     /// NAK packet, type 0x3
     /// Additional Info isn't used
-    /// The information is stored in the loss compression format, specified in the loss_compression module.
-    Nak(Vec<u32>),
+    Nak(CompressedLossList),
 
     /// Shutdown packet, type 0x5
     Shutdown,
 
     /// Acknowledgement of Acknowledgement (ACK2) 0x6
     /// Additional Info (the i32) is the ACK sequence number to acknowldege
-    Ack2(i32),
+    Ack2(FullAckSeqNumber),
 
     /// Drop request, type 0x7
     DropRequest {
@@ -162,30 +165,54 @@ pub struct HandshakeControlInfo {
     pub info: HandshakeVsInfo,
 }
 
-#[derive(Clone, PartialEq, Eq)]
-pub struct AckControlInfo {
-    /// The ack sequence number of this ack, increments for each ack sent.
-    /// Stored in additional info
-    pub ack_seq_num: i32,
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FullAck {}
 
-    /// The packet sequence number that all packets have been recieved until (excluding)
-    pub ack_number: SeqNumber,
+/// Data included in a ACK packet. [spec](https://datatracker.ietf.org/doc/html/draft-sharabayko-mops-srt-00#section-3.2.3)
+///
+/// There are three types of ACK packets:
+/// * Full - includes all the fields
+/// * Lite - no optional fields
+/// * Small - Includes rtt, rtt_variance, and buffer_available
+///
+/// However, these aren't necessarily clean categories--there may be some
+/// amount of overlap so full acks are allowed to have no extra info and short acks
+/// are allowed to have all the info
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum AckControlInfo {
+    FullSmall {
+        /// The packet sequence number that all packets have been recieved until (excluding)
+        ack_number: SeqNumber,
 
-    /// Round trip time
-    pub rtt: Option<TimeSpan>,
+        /// Round trip time
+        rtt: TimeSpan,
 
-    /// RTT variance
-    pub rtt_variance: Option<TimeSpan>,
+        /// RTT variance
+        rtt_variance: TimeSpan,
 
-    /// available buffer
-    pub buffer_available: Option<u32>,
+        /// available buffer, in packets
+        buffer_available: u32,
 
-    /// receive rate, in packets/sec
-    pub packet_recv_rate: Option<u32>,
+        /// receive rate, in packets/sec
+        packet_recv_rate: Option<u32>,
 
-    /// Estimated Link capacity
-    pub est_link_cap: Option<u32>,
+        /// Estimated Link capacity in packets/sec
+        est_link_cap: Option<u32>,
+
+        /// Receive rate, in bytes/sec
+        data_recv_rate: Option<u32>,
+
+        /// Some for full ack, none otherwise
+        full_ack_seq_number: Option<FullAckSeqNumber>,
+    },
+    Lite(SeqNumber),
 }
+
+#[derive(Clone, PartialEq, Eq, Debug, Copy, Ord, PartialOrd)]
+pub struct FullAckSeqNumber(u32);
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct CompressedLossList(Vec<u32>);
 
 /// The socket type for a handshake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -365,7 +392,7 @@ impl ControlPacket {
 
         // get reserved data, which is the last two bytes of the first four bytes
         let reserved = buf.get_u16();
-        let add_info = buf.get_i32();
+        let add_info = buf.get_u32();
         let timestamp = TimeStamp::from_micros(buf.get_u32());
         let dest_sockid = buf.get_u32();
 
@@ -391,7 +418,7 @@ impl ControlPacket {
         into.put_u16(self.control_type.reserved());
 
         // the additonal info line
-        into.put_i32(self.control_type.additional_info());
+        into.put_u32(self.control_type.additional_info());
 
         // timestamp
         into.put_u32(self.timestamp.as_micros());
@@ -434,7 +461,7 @@ impl ControlTypes {
     fn deserialize<T: Buf>(
         packet_type: u16,
         reserved: u16,
-        extra_info: i32,
+        extra_info: u32,
         mut buf: T,
         is_ipv6: bool,
     ) -> Result<ControlTypes, PacketParseError> {
@@ -627,37 +654,34 @@ impl ControlTypes {
 
                 // read control info
                 let ack_number = SeqNumber::new_truncate(buf.get_u32());
+                let full_ack_seq_number = FullAckSeqNumber::new(extra_info);
 
-                // if there is more data, use it. However, it's optional
-                let opt_read_next_u32 = |buf: &mut T| {
-                    if buf.remaining() >= 4 {
-                        Some(buf.get_u32())
-                    } else {
-                        None
-                    }
-                };
-                let opt_read_next_i32 = |buf: &mut T| {
-                    if buf.remaining() >= 4 {
-                        Some(buf.get_i32())
-                    } else {
-                        None
-                    }
-                };
-                let rtt = opt_read_next_i32(&mut buf).map(TimeSpan::from_micros);
-                let rtt_variance = opt_read_next_i32(&mut buf).map(TimeSpan::from_micros);
-                let buffer_available = opt_read_next_u32(&mut buf);
-                let packet_recv_rate = opt_read_next_u32(&mut buf);
-                let est_link_cap = opt_read_next_u32(&mut buf);
+                // short/full
+                if buf.remaining() >= 3 * size_of::<u32>() {
+                    let rtt = TimeSpan::from_micros(buf.get_i32());
+                    let rtt_variance = TimeSpan::from_micros(buf.get_i32());
+                    let buffer_available = buf.get_u32();
 
-                Ok(ControlTypes::Ack(AckControlInfo {
-                    ack_seq_num: extra_info,
-                    ack_number,
-                    rtt,
-                    rtt_variance,
-                    buffer_available,
-                    packet_recv_rate,
-                    est_link_cap,
-                }))
+                    let packet_recv_rate =
+                        (buf.remaining() >= size_of::<u32>()).then(|| buf.get_u32());
+                    let est_link_cap = (buf.remaining() >= size_of::<u32>()).then(|| buf.get_u32());
+                    let data_recv_rate =
+                        (buf.remaining() >= size_of::<u32>()).then(|| buf.get_u32());
+
+                    Ok(ControlTypes::Ack(AckControlInfo::FullSmall {
+                        ack_number,
+                        rtt,
+                        rtt_variance,
+                        buffer_available,
+                        packet_recv_rate,
+                        est_link_cap,
+                        data_recv_rate,
+                        full_ack_seq_number,
+                    }))
+                } else {
+                    // lite ack
+                    Ok(ControlTypes::Ack(AckControlInfo::Lite(ack_number)))
+                }
             }
             0x3 => {
                 // NAK
@@ -667,7 +691,7 @@ impl ControlTypes {
                     loss_info.push(buf.get_u32());
                 }
 
-                Ok(ControlTypes::Nak(loss_info))
+                Ok(ControlTypes::Nak(CompressedLossList(loss_info)))
             }
             0x5 => {
                 if buf.remaining() >= 4 {
@@ -680,7 +704,11 @@ impl ControlTypes {
                 if buf.remaining() >= 4 {
                     buf.get_u32(); // discard "unused" packet field
                 }
-                Ok(ControlTypes::Ack2(extra_info))
+                if let Some(ack_seq_no) = FullAckSeqNumber::new(extra_info) {
+                    Ok(ControlTypes::Ack2(ack_seq_no))
+                } else {
+                    Err(PacketParseError::ZeroAckSequenceNumber)
+                }
             }
             0x7 => {
                 // Drop request
@@ -717,11 +745,15 @@ impl ControlTypes {
         }
     }
 
-    fn additional_info(&self) -> i32 {
+    fn additional_info(&self) -> u32 {
         match self {
             // These types have additional info
-            ControlTypes::DropRequest { msg_to_drop: a, .. } => a.as_raw() as i32,
-            ControlTypes::Ack2(a) | ControlTypes::Ack(AckControlInfo { ack_seq_num: a, .. }) => *a,
+            ControlTypes::DropRequest { msg_to_drop: a, .. } => a.as_raw(),
+            ControlTypes::Ack2(a)
+            | ControlTypes::Ack(AckControlInfo::FullSmall {
+                full_ack_seq_number: Some(a),
+                ..
+            }) => (*a).into(),
             // These do not, just use zero
             _ => 0,
         }
@@ -778,24 +810,38 @@ impl ControlTypes {
                     }
                 }
             }
-            ControlTypes::Ack(AckControlInfo {
+            ControlTypes::Ack(AckControlInfo::FullSmall {
                 ack_number,
                 rtt,
                 rtt_variance,
                 buffer_available,
                 packet_recv_rate,
                 est_link_cap,
-                ..
+                data_recv_rate,
+                full_ack_seq_number: _,
             }) => {
                 into.put_u32(ack_number.as_raw());
-                into.put_i32(rtt.map(|t| t.as_micros()).unwrap_or(10_000));
-                into.put_i32(rtt_variance.map(|t| t.as_micros()).unwrap_or(50_000));
-                into.put_u32(buffer_available.unwrap_or(8175)); // TODO: better defaults
-                into.put_u32(packet_recv_rate.unwrap_or(10_000));
-                into.put_u32(est_link_cap.unwrap_or(1_000));
+                into.put_i32(rtt.as_micros());
+                into.put_i32(rtt_variance.as_micros());
+                into.put_u32(*buffer_available);
+
+                // Make sure fields are always in the right order
+                // Would rather not transmit than transmit incorrectly
+                if let Some(prr) = packet_recv_rate {
+                    into.put_u32(*prr);
+                    if let Some(elc) = est_link_cap {
+                        into.put_u32(*elc);
+                        if let Some(drr) = data_recv_rate {
+                            into.put_u32(*drr);
+                        }
+                    }
+                }
+            }
+            ControlTypes::Ack(AckControlInfo::Lite(ack_no)) => {
+                into.put_u32(ack_no.as_raw());
             }
             ControlTypes::Nak(ref n) => {
-                for &loss in n {
+                for loss in n.iter_compressed() {
                     into.put_u32(loss);
                 }
             }
@@ -819,39 +865,12 @@ impl Debug for ControlTypes {
         match self {
             ControlTypes::Handshake(hs) => write!(f, "{:?}", hs),
             ControlTypes::KeepAlive => write!(f, "KeepAlive"),
-            ControlTypes::Ack(AckControlInfo {
-                ack_seq_num,
-                ack_number,
-                rtt,
-                rtt_variance,
-                buffer_available,
-                packet_recv_rate,
-                est_link_cap,
-            }) => {
-                write!(f, "Ack(asn={} an={}", ack_seq_num, ack_number,)?;
-                if let Some(rtt) = rtt {
-                    write!(f, " rtt={}", rtt.as_micros())?;
-                }
-                if let Some(rttvar) = rtt_variance {
-                    write!(f, " rttvar={}", rttvar.as_micros())?;
-                }
-                if let Some(buf) = buffer_available {
-                    write!(f, " buf_av={}", buf)?;
-                }
-                if let Some(prr) = packet_recv_rate {
-                    write!(f, " pack_rr={}", prr)?;
-                }
-                if let Some(link_cap) = est_link_cap {
-                    write!(f, " link_cap={}", link_cap)?;
-                }
-                write!(f, ")")?;
-                Ok(())
-            }
+            ControlTypes::Ack(aci) => write!(f, "{:?}", aci),
             ControlTypes::Nak(nak) => {
                 write!(f, "Nak({:?})", nak) // TODO could be better, show ranges
             }
             ControlTypes::Shutdown => write!(f, "Shutdown"),
-            ControlTypes::Ack2(ackno) => write!(f, "Ack2({})", ackno),
+            ControlTypes::Ack2(ackno) => write!(f, "Ack2({})", ackno.0),
             ControlTypes::DropRequest {
                 msg_to_drop,
                 first,
@@ -862,32 +881,65 @@ impl Debug for ControlTypes {
     }
 }
 
-// pub init_seq_num: SeqNumber,
+impl CompressedLossList {
+    pub fn from_loss_list(iter: impl Iterator<Item = SeqNumber>) -> CompressedLossList {
+        CompressedLossList(compress_loss_list(iter).collect())
+    }
 
-// /// Max packet size, including UDP/IP headers. 1500 by default
-// pub max_packet_size: u32,
+    pub fn iter_compressed(&self) -> impl Iterator<Item = u32> + '_ {
+        self.0.iter().copied()
+    }
 
-// /// Max flow window size, by default 25600
-// pub max_flow_size: u32,
+    pub fn iter_decompressed(&self) -> impl Iterator<Item = SeqNumber> + '_ {
+        decompress_loss_list(self.iter_compressed())
+    }
+}
 
-// /// Designates where in the handshake process this packet lies
-// pub shake_type: ShakeType,
+impl FullAckSeqNumber {
+    pub const INITIAL: FullAckSeqNumber = FullAckSeqNumber(1);
 
-// /// The socket ID that this request is originating from
-// pub socket_id: SocketID,
+    pub fn new(raw: u32) -> Option<FullAckSeqNumber> {
+        if raw == 0 {
+            None
+        } else {
+            Some(FullAckSeqNumber(raw))
+        }
+    }
 
-// /// SYN cookie
-// ///
-// /// "generates a cookie value according to the client address and a
-// /// secret key and sends it back to the client. The client must then send
-// /// back the same cookie to the server."
-// pub syn_cookie: i32,
+    pub fn increment(&mut self) {
+        // TODO: wrapping or nonwrapping???
+        self.0 = self.0.wrapping_add(1);
+    }
 
-// /// The IP address of the connecting client
-// pub peer_addr: IpAddr,
+    pub fn is_full(&self) -> bool {
+        self.0 != 0
+    }
+}
 
-// /// The rest of the data, which is HS version specific
-// pub info: HandshakeVSInfo,
+impl From<FullAckSeqNumber> for u32 {
+    fn from(u: FullAckSeqNumber) -> Self {
+        u.0
+    }
+}
+
+impl Add<u32> for FullAckSeqNumber {
+    type Output = FullAckSeqNumber;
+
+    fn add(self, rhs: u32) -> Self::Output {
+        FullAckSeqNumber(self.0 + rhs)
+    }
+}
+
+impl AckControlInfo {
+    pub fn ack_number(&self) -> SeqNumber {
+        match self {
+            AckControlInfo::FullSmall { ack_number, .. } | AckControlInfo::Lite(ack_number) => {
+                *ack_number
+            }
+        }
+    }
+}
+
 impl Debug for HandshakeControlInfo {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         write!(
@@ -1146,6 +1198,22 @@ mod test {
     use std::{convert::TryInto, io::Cursor};
 
     #[test]
+    fn lite_ack_ser_des_test() {
+        let pack = ControlPacket {
+            timestamp: TimeStamp::from_micros(1234),
+            dest_sockid: SocketId(0),
+            control_type: ControlTypes::Ack(AckControlInfo::Lite(SeqNumber::new_truncate(1234))),
+        };
+
+        let mut buf = BytesMut::with_capacity(128);
+        pack.serialize(&mut buf);
+
+        let des = ControlPacket::parse(&mut buf, false).unwrap();
+        assert!(buf.is_empty());
+        assert_eq!(pack, des);
+    }
+
+    #[test]
     fn handshake_ser_des_test() {
         let pack = ControlPacket {
             timestamp: TimeStamp::from_micros(0),
@@ -1185,14 +1253,15 @@ mod test {
         let pack = ControlPacket {
             timestamp: TimeStamp::from_micros(113_703),
             dest_sockid: SocketId(2_453_706_529),
-            control_type: ControlTypes::Ack(AckControlInfo {
-                ack_seq_num: 1,
+            control_type: ControlTypes::Ack(AckControlInfo::FullSmall {
                 ack_number: SeqNumber::new_truncate(282_049_186),
-                rtt: Some(TimeSpan::from_micros(10_002)),
-                rtt_variance: Some(TimeSpan::from_micros(1000)),
-                buffer_available: Some(1314),
+                rtt: TimeSpan::from_micros(10_002),
+                rtt_variance: TimeSpan::from_micros(1000),
+                buffer_available: 1314,
+                full_ack_seq_number: FullAckSeqNumber::new(1),
                 packet_recv_rate: Some(0),
                 est_link_cap: Some(0),
+                data_recv_rate: Some(0),
             }),
         };
 
@@ -1209,7 +1278,7 @@ mod test {
         let pack = ControlPacket {
             timestamp: TimeStamp::from_micros(125_812),
             dest_sockid: SocketId(8313),
-            control_type: ControlTypes::Ack2(831),
+            control_type: ControlTypes::Ack2(FullAckSeqNumber::new(831).unwrap()),
         };
         assert_eq!(pack.control_type.additional_info(), 831);
 
@@ -1345,7 +1414,7 @@ mod test {
                                 | SrtShakeFlags::REXMITFLG
                                 | SrtShakeFlags::TLPKTDROP
                                 | SrtShakeFlags::NAKREPORT
-                                | SrtShakeFlags::FILTERCAP,
+                                | SrtShakeFlags::PACKET_FILTER,
                             send_latency: Duration::from_millis(20),
                             recv_latency: Duration::from_millis(20)
                         })),
@@ -1561,7 +1630,7 @@ mod test {
                             | SrtShakeFlags::TLPKTDROP
                             | SrtShakeFlags::NAKREPORT
                             | SrtShakeFlags::REXMITFLG
-                            | SrtShakeFlags::FILTERCAP,
+                            | SrtShakeFlags::PACKET_FILTER,
                         send_latency: Duration::from_millis(60),
                         recv_latency: Duration::from_millis(60)
                     })),

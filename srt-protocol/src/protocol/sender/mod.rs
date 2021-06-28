@@ -10,8 +10,8 @@ use log::debug;
 use log::trace;
 
 use super::TimeSpan;
-use crate::loss_compression::decompress_loss_list;
 use crate::packet::{AckControlInfo, ControlTypes, HandshakeControlInfo};
+use crate::packet::{CompressedLossList, FullAckSeqNumber};
 use crate::protocol::handshake::Handshake;
 use crate::protocol::Timer;
 use crate::{ConnectionSettings, ControlPacket, DataPacket, Packet, SeqNumber};
@@ -95,8 +95,8 @@ pub struct Sender {
     /// The sequence number of the largest acknowledged packet + 1
     lr_acked_packet: SeqNumber,
 
-    /// The ack sequence number that an ack2 has been sent for
-    lr_acked_ack: i32,
+    /// The ack sequence number that an ack2 has been sent for + 1
+    next_acked_ack: FullAckSeqNumber,
 
     snd_timer: Timer,
     // this isn't in the spec, but it's in the reference implementation
@@ -122,7 +122,7 @@ impl Sender {
             send_buffer: SendBuffer::new(&settings),
             loss_list: LossList::new(&settings),
             lr_acked_packet: settings.init_seq_num,
-            lr_acked_ack: -1, // TODO: why magic number?
+            next_acked_ack: FullAckSeqNumber::INITIAL,
             output_buffer: VecDeque::new(),
             transmit_buffer: TransmitBuffer::new(&settings),
             snd_timer: Timer::new(Duration::from_millis(1), settings.socket_start_time),
@@ -280,77 +280,89 @@ impl Sender {
         // if this ack number is less than (but NOT equal--equal could just mean lost ACK2 that needs to be retransmitted)
         // the largest received ack number, than discard it
         // this can happen thorough packet reordering OR losing an ACK2 packet
-        if info.ack_number < self.lr_acked_packet {
+        if info.ack_number() < self.lr_acked_packet {
             return;
         }
 
-        if info.ack_seq_num <= self.lr_acked_ack {
-            // warn!("Ack sequence number '{}' less than or equal to the previous one recieved: '{}'", ack_seq_num, self.lr_acked_ack);
-            return;
-        }
-        self.lr_acked_ack = info.ack_seq_num;
-
-        // update the packets received count
-        self.metrics.recvd_packets += info.ack_number - self.lr_acked_packet;
+        // This could be either a lite or full ack, we do extra stuff for a full ack
 
         // 1) Update the largest acknowledged sequence number, which is the ACK number
-        self.lr_acked_packet = info.ack_number;
+        self.lr_acked_packet = info.ack_number();
 
-        // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
-        self.send_control(ControlTypes::Ack2(info.ack_seq_num), now);
-
-        // 3) Update RTT and RTTVar.
-        self.metrics.rtt = info.rtt.unwrap_or_else(|| TimeSpan::from_micros(0));
-        self.metrics.rtt_var = info
-            .rtt_variance
-            .unwrap_or_else(|| TimeSpan::from_micros(0));
-
-        // 4) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
-        // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.
-
-        // 5) Update flow window size.
-        self.congestion_control.on_ack();
-
-        // 6) If this is a Light ACK, stop.
-        // TODO: wat
-
-        // 7) Update packet arrival rate: A = (A * 7 + a) / 8, where a is the
-        //    value carried in the ACK.
-        self.metrics.pkt_arr_rate =
-            self.metrics.pkt_arr_rate / 8 * 7 + info.packet_recv_rate.unwrap_or(0) / 8;
-
-        // 8) Update estimated link capacity: B = (B * 7 + b) / 8, where b is
-        //    the value carried in the ACK.
-        self.metrics.est_link_cap = (self
-            .metrics
-            .est_link_cap
-            .saturating_mul(7)
-            .saturating_add(info.est_link_cap.unwrap_or(0)))
-            / 8;
+        // update the packets received count
+        self.metrics.recvd_packets += info.ack_number() - self.lr_acked_packet;
 
         // 9) Update sender's buffer (by releasing the buffer that has been
         //    acknowledged).
         self.send_buffer
-            .release_acknowledged_packets(info.ack_number);
+            .release_acknowledged_packets(info.ack_number());
 
         // 10) Update sender's loss list (by removing all those that has been
         //     acknowledged).
-        self.metrics.retrans_packets += self.loss_list.remove_acknowledged_packets(info.ack_number);
+        self.metrics.retrans_packets += self
+            .loss_list
+            .remove_acknowledged_packets(info.ack_number());
+
+        if let AckControlInfo::FullSmall {
+            ack_number: _,
+            rtt,
+            rtt_variance,
+            buffer_available: _,
+            full_ack_seq_number: Some(ack_seq_num),
+
+            packet_recv_rate: Some(packet_recv_rate),
+            est_link_cap: Some(est_link_cap),
+            data_recv_rate: _,
+        } = info
+        {
+            if ack_seq_num < self.next_acked_ack {
+                // warn!("Ack sequence number '{}' less than or equal to the previous one recieved: '{}'", ack_seq_num, self.lr_acked_ack);
+                return;
+            }
+
+            self.next_acked_ack = ack_seq_num + 1;
+
+            // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
+            self.send_control(ControlTypes::Ack2(ack_seq_num), now);
+
+            // 3) Update RTT and RTTVar.
+            self.metrics.rtt = rtt;
+            self.metrics.rtt_var = rtt_variance;
+
+            // 4) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
+            // TODO: figure out why this makes sense, the sender shouldn't send ACK or NAK packets.
+
+            // 5) Update flow window size.
+            self.congestion_control.on_ack();
+
+            // 6) If this is a Light ACK, stop.
+            // TODO: wat
+
+            // 7) Update packet arrival rate: A = (A * 7 + a) / 8, where a is the
+            //    value carried in the ACK.
+            self.metrics.pkt_arr_rate = self.metrics.pkt_arr_rate / 8 * 7 + packet_recv_rate / 8;
+
+            // 8) Update estimated link capacity: B = (B * 7 + b) / 8, where b is
+            //    the value carried in the ACK.
+            self.metrics.est_link_cap = (self
+                .metrics
+                .est_link_cap
+                .saturating_mul(7)
+                .saturating_add(est_link_cap))
+                / 8;
+        }
     }
 
     pub fn handle_shutdown_packet(&mut self, now: Instant) {
         self.status.drain(now);
     }
 
-    pub fn handle_nack_packet(&mut self, nack: Vec<u32>) {
+    pub fn handle_nack_packet(&mut self, nack: CompressedLossList) {
         // 1) Add all sequence numbers carried in the NAK into the sender's loss list.
         // 2) Update the SND period by rate control (see section 3.6).
         // 3) Reset the EXP time variable.
 
-        for lost in self
-            .send_buffer
-            .get(decompress_loss_list(nack.iter().cloned()))
-        {
+        for lost in self.send_buffer.get(nack.iter_decompressed()) {
             let packet = match lost {
                 Ok(p) => p,
                 Err(n) => {

@@ -9,9 +9,9 @@ use bytes::{Bytes, BytesMut};
 use log::{debug, error, info, trace, warn};
 
 use super::TimeSpan;
-use crate::loss_compression::compress_loss_list;
 use crate::packet::{
-    AckControlInfo, ControlPacket, ControlTypes, DataEncryption, DataPacket, Packet,
+    AckControlInfo, CompressedLossList, ControlPacket, ControlTypes, DataEncryption, DataPacket,
+    FullAckSeqNumber, Packet,
 };
 use crate::protocol::handshake::Handshake;
 use crate::protocol::{TimeBase, TimeStamp};
@@ -23,6 +23,8 @@ mod time;
 use crate::connection::ConnectionStatus;
 use buffer::RecvBuffer;
 use time::{ReceiveTimers, Rtt};
+
+const LIGHT_ACK_PACKET_INTERVAL: u32 = 64;
 
 #[derive(Debug)]
 struct LossListEntry {
@@ -41,9 +43,16 @@ struct AckHistoryEntry {
     ack_number: SeqNumber,
 
     /// the ack sequence number
-    ack_seq_num: i32,
+    ack_seq_num: Option<FullAckSeqNumber>,
 
     departure_time: Instant,
+}
+
+#[derive(Debug)]
+struct PacketHistoryEntry {
+    seqno: SeqNumber,
+    time: Instant,
+    size: u64, // size of payload
 }
 
 #[derive(Debug)]
@@ -83,7 +92,7 @@ pub struct Receiver {
     /// of each data packet.
     ///
     /// First is sequence number, second is timestamp
-    packet_history_window: Vec<(SeqNumber, Instant)>,
+    packet_history_window: Vec<PacketHistoryEntry>,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Packet Pair Window: A circular array that records the time
@@ -96,14 +105,14 @@ pub struct Receiver {
     lrsn: SeqNumber,
 
     /// The ID of the next ack packet
-    next_ack: i32,
+    next_ack: FullAckSeqNumber,
 
     /// The timestamp of the probe time
     /// Used to see duration between packets
     probe_time: Option<Instant>,
 
-    /// The ACK sequence number of the largest ACK2 received, and the ack number
-    lr_ack_acked: (i32, SeqNumber),
+    /// The ACK number from the largest ACK2
+    lr_ack_acked: SeqNumber,
 
     /// The buffer
     receive_buffer: RecvBuffer,
@@ -133,9 +142,9 @@ impl Receiver {
             packet_history_window: Vec::new(),
             packet_pair_window: Vec::new(),
             lrsn: init_seq_num, // at start, we have received everything until the first packet, exclusive (aka nothing)
-            next_ack: 1,
+            next_ack: FullAckSeqNumber::INITIAL,
             probe_time: None,
-            lr_ack_acked: (0, init_seq_num),
+            lr_ack_acked: init_seq_num,
             receive_buffer: RecvBuffer::with(&settings),
             status: ConnectionStatus::Open(settings.recv_tsbpd_latency),
         }
@@ -150,12 +159,12 @@ impl Receiver {
             TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
             self.settings.local_sockid,
             self.receive_buffer.next_msg_ready(),
-            self.lr_ack_acked.1,
+            self.lr_ack_acked,
             self.receive_buffer.next_release()
         );
 
         self.receive_buffer.next_msg_ready().is_none()
-            && self.lr_ack_acked.1 == self.receive_buffer.next_release() // packets have been acked and all acks have been acked (ack2)
+            && self.lr_ack_acked == self.receive_buffer.next_release() // packets have been acked and all acks have been acked (ack2)
             && self.control_packets.is_empty()
             && self.data_release.is_empty()
     }
@@ -166,8 +175,8 @@ impl Receiver {
         //      expired. If there is any, process the event (as described below
         //      in this section) and reset the associated time variables. For
         //      ACK, also check the ACK packet interval.
-        if self.timers.check_ack(now).is_some() {
-            self.on_ack_event(now);
+        if self.timers.check_full_ack(now).is_some() {
+            self.on_full_ack_event(now);
         }
         if self.timers.check_nak(now).is_some() {
             self.on_nak_event(now);
@@ -178,7 +187,7 @@ impl Receiver {
         if self.status.check_close_timeout(now, self.is_flushed()) {
             debug!("{:?} receiver close timed out", self.settings.local_sockid);
             // receiver is closing, there is no need to track ACKs anymore
-            self.lr_ack_acked.1 = self.receive_buffer.next_release()
+            self.lr_ack_acked = self.receive_buffer.next_release()
         }
     }
 
@@ -198,32 +207,97 @@ impl Receiver {
         self.receive_buffer.synchronize_clock(now, ts)
     }
 
-    fn on_ack_event(&mut self, now: Instant) {
-        trace!("Ack event hit {:?}", self.settings.local_sockid);
-        // get largest inclusive received packet number
-        let ack_number = match self.loss_list.first() {
+    fn caclculate_receive_rates(&self) -> (u32, u32) {
+        if self.packet_history_window.len() < 16 {
+            (0, 0)
+        } else {
+            // Calculate the median value of the last 16 packet arrival
+            // intervals (AI) using the values stored in PKT History Window.
+            let mut last_16: Vec<_> = self.packet_history_window
+                [self.packet_history_window.len() - 16..]
+                .windows(2)
+                .map(|w| (TimeSpan::from_interval(w[0].time, w[1].time), w[0].size)) // delta time, size. Arbitrarily choose the first one
+                .collect();
+
+            // the median AI
+            let ai = last_16
+                .select_nth_unstable_by_key(16 / 2, |k| k.0)
+                .1 // get median
+                 .0; // get interval
+
+            // In these 16 values, remove those either greater than AI*8 or
+            // less than AI/8.
+            let filtered: Vec<_> = last_16
+                .iter()
+                .filter(|&&(interval, _)| interval / 8 < ai && interval > ai / 8)
+                .cloned()
+                .collect();
+
+            // If more than 8 values are left, calculate the
+            // average of the left values AI', and the packet arrival speed is
+            // 1/AI' (number of packets per second). Otherwise, return 0.
+            if filtered.len() > 8 {
+                let sum_us = filtered
+                    .iter()
+                    .map(|(dt, _)| i64::from(dt.as_micros()))
+                    .sum::<i64>() as u64; // all these dts are guaranteed to be positive
+
+                let sum_bytes: u64 = filtered.iter().map(|(_, size)| size).sum();
+
+                // 1e6 / (sum / len) = len * 1e6 / sum
+                let rr_packets = (1_000_000 * filtered.len()) as u64 / sum_us;
+
+                // 1e6 / (sum / bytes) = bytes * 1e6 / sum
+                let rr_bytes = sum_bytes * 1_000_000 / sum_us;
+
+                (rr_packets as u32, rr_bytes as u32)
+            } else {
+                (0, 0)
+            }
+        }
+    }
+
+    // Greatest seq number that everything before it has been received + 1
+    fn ack_number(&self) -> SeqNumber {
+        match self.loss_list.first() {
             // There is an element in the loss list
             Some(i) => i.seq_num,
             // No elements, use lrsn, as it's already exclusive
             None => self.lrsn,
-        };
+        }
+    }
 
+    // The most recent ack number, or init seq number otherwise
+    fn last_ack_number(&self) -> SeqNumber {
+        if let Some(he) = self.ack_history_window.last() {
+            he.ack_number
+        } else {
+            self.settings.init_seq_num
+        }
+    }
+
+    fn full_ack_timer_active(&self) -> bool {
+        self.ack_number() != self.lr_ack_acked
+    }
+
+    fn on_full_ack_event(&mut self, now: Instant) {
         // 2) If (a) the ACK number equals to the largest ACK number ever
         //    acknowledged by ACK2
-        if ack_number == self.lr_ack_acked.1 {
-            // stop (do not send this ACK).
+        if !self.full_ack_timer_active() {
             return;
         }
 
+        trace!("Ack event hit {:?}", self.settings.local_sockid);
+
+        let ack_number = self.ack_number();
+
         // make sure this ACK number is greater or equal to a one sent previously
-        if let Some(w) = self.ack_history_window.last() {
-            assert!(w.ack_number <= ack_number);
-        }
+        assert!(self.last_ack_number() <= ack_number);
 
         trace!(
             "Sending ACK; ack_num={:?}, lr_ack_acked={:?}",
             ack_number,
-            self.lr_ack_acked.1
+            self.lr_ack_acked
         );
 
         if let Some(&AckHistoryEntry {
@@ -246,70 +320,32 @@ impl Receiver {
         }
 
         // 3) Assign this ACK a unique increasing ACK sequence number.
-        let ack_seq_num = self.next_ack;
-        self.next_ack += 1;
+        let full_ack_seq_number = self.next_ack;
+        self.next_ack.increment();
 
         // 4) Calculate the packet arrival speed according to the following
         // algorithm:
-        let packet_recv_rate = if self.packet_history_window.len() < 16 {
-            0
-        } else {
-            // Calculate the median value of the last 16 packet arrival
-            // intervals (AI) using the values stored in PKT History Window.
-            let mut last_16: Vec<_> = self.packet_history_window
-                [self.packet_history_window.len() - 16..]
-                .windows(2)
-                .map(|w| TimeSpan::from_interval(w[0].1, w[1].1)) // delta time
-                .collect();
-            last_16.sort();
-
-            // the median AI
-            let ai = last_16[last_16.len() / 2];
-
-            // In these 16 values, remove those either greater than AI*8 or
-            // less than AI/8.
-            let filtered: Vec<TimeSpan> = last_16
-                .iter()
-                .filter(|&&n| n / 8 < ai && n > ai / 8)
-                .cloned()
-                .collect();
-
-            // If more than 8 values are left, calculate the
-            // average of the left values AI', and the packet arrival speed is
-            // 1/AI' (number of packets per second). Otherwise, return 0.
-            if filtered.len() > 8 {
-                // 1e6 / (sum / len) = len * 1e6 / sum
-                (1_000_000 * filtered.len()) as u64
-                    / filtered
-                        .iter()
-                        .map(|dt| i64::from(dt.as_micros()))
-                        .sum::<i64>() as u64 // all these dts are guaranteed to be positive
-            } else {
-                0
-            }
-        } as u32;
+        let (rr_packets, rr_bytes) = self.caclculate_receive_rates();
 
         // 5) Calculate the estimated link capacity according to the following algorithm:
-        let est_link_cap = {
-            if self.packet_pair_window.len() < 16 {
-                0
-            } else {
-                //  Calculate the median value of the last 16 packet pair
-                //  intervals (PI) using the values in Packet Pair Window, and the
-                //  link capacity is 1/PI (number of packets per second).
-                let pi = {
-                    let mut last_16: Vec<_> = self.packet_pair_window
-                        [self.packet_pair_window.len() - 16..]
-                        .iter()
-                        .map(|&(_, time)| time)
-                        .collect();
-                    last_16.sort_unstable();
+        let est_link_cap = if self.packet_pair_window.len() < 16 {
+            0
+        } else {
+            //  Calculate the median value of the last 16 packet pair
+            //  intervals (PI) using the values in Packet Pair Window, and the
+            //  link capacity is 1/PI (number of packets per second).
+            let pi = {
+                let mut last_16: Vec<_> = self.packet_pair_window
+                    [self.packet_pair_window.len() - 16..]
+                    .iter()
+                    .map(|&(_, time)| time)
+                    .collect();
+                last_16.sort_unstable();
 
-                    last_16[last_16.len() / 2]
-                };
+                last_16[last_16.len() / 2]
+            };
 
-                (1. / (pi.as_secs_f64())) as u32
-            }
+            (1. / (pi.as_secs_f64())) as u32
         };
 
         // Pack the ACK packet with RTT, RTT Variance, and flow window size (available
@@ -317,23 +353,28 @@ impl Receiver {
 
         self.send_control(
             now,
-            ControlTypes::Ack(AckControlInfo {
-                ack_seq_num,
+            ControlTypes::Ack(AckControlInfo::FullSmall {
                 ack_number,
-                rtt: Some(self.rtt.mean()),
-                rtt_variance: Some(self.rtt.variance()),
-                buffer_available: None, // TODO: add this
-                packet_recv_rate: Some(packet_recv_rate),
+                rtt: self.rtt.mean(),
+                rtt_variance: self.rtt.variance(),
+                buffer_available: 100, // TODO: add this
+                full_ack_seq_number: Some(full_ack_seq_number),
+                packet_recv_rate: Some(rr_packets),
                 est_link_cap: Some(est_link_cap),
+                data_recv_rate: Some(rr_bytes),
             }),
         );
 
         // add it to the ack history
         self.ack_history_window.push(AckHistoryEntry {
             ack_number,
-            ack_seq_num,
+            ack_seq_num: Some(full_ack_seq_number),
             departure_time: now,
         });
+    }
+
+    fn nak_timer_active(&self) -> bool {
+        true // TODO: can this be conditioned on anything?
     }
 
     fn on_nak_event(&mut self, now: Instant) {
@@ -381,13 +422,13 @@ impl Receiver {
         self.status.drain(now);
         self.send_control(now, ControlTypes::Shutdown);
     }
-    pub fn handle_ack2_packet(&mut self, seq_num: i32, ack2_arrival_time: Instant) {
+    pub fn handle_ack2_packet(&mut self, seq_num: FullAckSeqNumber, ack2_arrival_time: Instant) {
         // 1) Locate the related ACK in the ACK History Window according to the
         //    ACK sequence number in this ACK2.
         let id_in_wnd = match self
             .ack_history_window
             .as_slice()
-            .binary_search_by_key(&seq_num, |entry| entry.ack_seq_num)
+            .binary_search_by_key(&Some(seq_num), |entry| entry.ack_seq_num)
         {
             Ok(i) => Some(i),
             Err(_) => None,
@@ -401,7 +442,7 @@ impl Receiver {
             } = self.ack_history_window[id];
 
             // 2) Update the largest ACK number ever been acknowledged.
-            self.lr_ack_acked = (seq_num, ack_number);
+            self.lr_ack_acked = ack_number;
 
             // 3) Calculate new rtt according to the ACK2 arrival time and the ACK
             //    , and update the RTT value as: RTT = (RTT * 7 +
@@ -416,7 +457,7 @@ impl Receiver {
             self.timers.update_rtt(&self.rtt);
         } else {
             warn!(
-                "ACK sequence number in ACK2 packet not found in ACK history: {}",
+                "ACK sequence number in ACK2 packet not found in ACK history: {:?}",
                 seq_num
             );
         }
@@ -442,7 +483,11 @@ impl Receiver {
         }
 
         // 5) Record the packet arrival time in PKT History Window.
-        self.packet_history_window.push((data.seq_number, now));
+        self.packet_history_window.push(PacketHistoryEntry {
+            seqno: data.seq_number,
+            time: now,
+            size: data.payload.len() as u64,
+        });
 
         // 6)
         // a. If the sequence number of the current data packet is greater
@@ -500,6 +545,24 @@ impl Receiver {
         }
 
         self.receive_buffer.add(data);
+
+        // check if we need to send a light ACK
+        if self.ack_number() - self.last_ack_number() > LIGHT_ACK_PACKET_INTERVAL {
+            // send a light ack
+            self.send_light_ack(now);
+        }
+    }
+
+    fn send_light_ack(&mut self, now: Instant) {
+        self.send_control(
+            now,
+            ControlTypes::Ack(AckControlInfo::Lite(self.ack_number())),
+        );
+        self.ack_history_window.push(AckHistoryEntry {
+            ack_number: self.ack_number(),
+            ack_seq_num: None,
+            departure_time: now,
+        });
     }
 
     fn decrypt_packet(&self, data: &mut DataPacket) {
@@ -521,12 +584,9 @@ impl Receiver {
 
     // send a NAK, and return the future
     fn send_nak(&mut self, now: Instant, lost_seq_nums: impl Iterator<Item = SeqNumber>) {
-        let vec: Vec<_> = lost_seq_nums.collect();
-        debug!("Sending NAK for={:?}", vec);
-
         self.send_control(
             now,
-            ControlTypes::Nak(compress_loss_list(vec.iter().cloned()).collect()),
+            ControlTypes::Nak(CompressedLossList::from_loss_list(lost_seq_nums)),
         );
     }
 
@@ -550,9 +610,13 @@ impl Receiver {
     }
 
     pub fn next_timer(&self, now: Instant) -> Instant {
+        let next_timer =
+            self.timers
+                .next_timer(now, self.nak_timer_active(), self.full_ack_timer_active());
+
         match self.receive_buffer.next_message_release_time() {
-            Some(next_rel_time) => max(min(self.timers.next_timer(now), next_rel_time), now),
-            None => self.timers.next_timer(now),
+            Some(next_rel_time) => max(min(next_timer, next_rel_time), now),
+            None => next_timer,
         }
     }
 
