@@ -261,6 +261,7 @@ impl DuplexConnection {
             self.settings.local_sockid,
             packet
         );
+
         match packet {
             Some(packet) => self.handle_packet(now, packet),
             None => self.handle_socket_close(),

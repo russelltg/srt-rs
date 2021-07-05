@@ -37,7 +37,7 @@ struct LossListEntry {
     k: i32,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct AckHistoryEntry {
     /// the highest packet sequence number received that this ACK packet ACKs + 1
     ack_number: SeqNumber,
@@ -48,7 +48,7 @@ struct AckHistoryEntry {
     departure_time: Instant,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct PacketHistoryEntry {
     seqno: SeqNumber,
     time: Instant,
@@ -207,7 +207,7 @@ impl Receiver {
         self.receive_buffer.synchronize_clock(now, ts)
     }
 
-    fn caclculate_receive_rates(&self) -> (u32, u32) {
+    fn caclculate_receive_rates(&mut self) -> (u32, u32) {
         if self.packet_history_window.len() < 16 {
             (0, 0)
         } else {
@@ -218,6 +218,9 @@ impl Receiver {
                 .windows(2)
                 .map(|w| (TimeSpan::from_interval(w[0].time, w[1].time), w[0].size)) // delta time, size. Arbitrarily choose the first one
                 .collect();
+
+            self.packet_history_window =
+                self.packet_history_window[self.packet_history_window.len() - 16..].to_vec();
 
             // the median AI
             let ai = last_16
@@ -345,6 +348,9 @@ impl Receiver {
                 last_16[last_16.len() / 2]
             };
 
+            self.packet_pair_window =
+                self.packet_pair_window[self.packet_pair_window.len() - 16..].to_vec();
+
             (1. / (pi.as_secs_f64())) as u32
         };
 
@@ -455,6 +461,7 @@ impl Receiver {
 
             // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
             self.timers.update_rtt(&self.rtt);
+            self.ack_history_window = self.ack_history_window[id..].to_vec();
         } else {
             warn!(
                 "ACK sequence number in ACK2 packet not found in ACK history: {:?}",
