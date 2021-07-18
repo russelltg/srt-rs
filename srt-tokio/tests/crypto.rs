@@ -25,6 +25,7 @@ async fn test_crypto(size: u8) {
             .await
             .unwrap();
         info!("Sent!");
+        sleep(Duration::from_secs(1)).await;
         sender.close().await.unwrap();
         info!("Sender closed");
     });

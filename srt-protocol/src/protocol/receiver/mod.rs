@@ -1,5 +1,4 @@
-use std::cmp::max;
-use std::cmp::{min, Ordering};
+use std::cmp::{max, Ordering};
 use std::collections::VecDeque;
 use std::iter::Iterator;
 use std::net::SocketAddr;
@@ -149,8 +148,9 @@ impl Receiver {
             status: ConnectionStatus::Open(settings.recv_tsbpd_latency),
         }
     }
-    pub fn is_open(&self) -> bool {
-        self.status.is_open()
+
+    pub fn is_closed(&self) -> bool {
+        self.status.is_closed()
     }
 
     pub fn is_flushed(&self) -> bool {
@@ -276,14 +276,10 @@ impl Receiver {
         }
     }
 
-    fn full_ack_timer_active(&self) -> bool {
-        self.ack_number() != self.lr_ack_acked
-    }
-
     fn on_full_ack_event(&mut self, now: Instant) {
         // 2) If (a) the ACK number equals to the largest ACK number ever
         //    acknowledged by ACK2
-        if !self.full_ack_timer_active() {
+        if self.ack_number() == self.lr_ack_acked {
             return;
         }
 
@@ -373,10 +369,6 @@ impl Receiver {
         });
     }
 
-    fn nak_timer_active(&self) -> bool {
-        true // TODO: can this be conditioned on anything?
-    }
-
     fn on_nak_event(&mut self, now: Instant) {
         // reset NAK timer, rtt and variance are in us, so convert to ns
 
@@ -422,6 +414,7 @@ impl Receiver {
         self.status.drain(now);
         self.send_control(now, ControlTypes::Shutdown);
     }
+
     pub fn handle_ack2_packet(&mut self, seq_num: FullAckSeqNumber, ack2_arrival_time: Instant) {
         // 1) Locate the related ACK in the ACK History Window according to the
         //    ACK sequence number in this ACK2.
@@ -610,22 +603,19 @@ impl Receiver {
     }
 
     pub fn next_timer(&self, now: Instant) -> Instant {
-        let next_timer =
-            self.timers
-                .next_timer(now, self.nak_timer_active(), self.full_ack_timer_active());
-
-        match self.receive_buffer.next_message_release_time() {
-            Some(next_rel_time) => max(min(next_timer, next_rel_time), now),
-            None => next_timer,
-        }
+        let next_message = self.receive_buffer.next_message_release_time();
+        let unacked_packets = self.receive_buffer.unacked_packet_count();
+        self.timers.next_timer(now, next_message, unacked_packets)
     }
 
     fn send_control(&mut self, now: Instant, control: ControlTypes) {
-        self.control_packets
-            .push_back(Packet::Control(ControlPacket {
-                timestamp: self.time_base.timestamp_from(now),
-                dest_sockid: self.settings.remote_sockid,
-                control_type: control,
-            }));
+        if self.status.is_open() {
+            self.control_packets
+                .push_back(Packet::Control(ControlPacket {
+                    timestamp: self.time_base.timestamp_from(now),
+                    dest_sockid: self.settings.remote_sockid,
+                    control_type: control,
+                }));
+        }
     }
 }

@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use crate::protocol::stats::*;
-use crate::SeqNumber;
+//use crate::SeqNumber;
 
 #[derive(Debug)]
 struct MessageStats {
@@ -126,8 +126,8 @@ impl SenderCongestionControl {
     /// When an ACK packet is received
     pub fn on_ack(&mut self) {}
 
-    /// When a NAK packet is received
-    pub fn on_nak(&mut self, _largest_seq_in_ll: SeqNumber) {}
+    // When a NAK packet is received
+    // pub fn on_nak(&mut self, _largest_seq_in_ll: SeqNumber) {}
 
     /// On packet sent
     pub fn on_packet_sent(&mut self) {}

@@ -49,6 +49,10 @@ impl TimeSpan {
         Self(us)
     }
 
+    pub const fn from_millis(us: i32) -> Self {
+        Self(us * 1_000)
+    }
+
     pub const fn as_micros(self) -> i32 {
         self.0
     }
@@ -164,6 +168,12 @@ impl fmt::Debug for TimeSpan {
     }
 }
 
+impl From<Duration> for TimeSpan {
+    fn from(duration: Duration) -> TimeSpan {
+        TimeSpan::from_micros(duration.as_micros() as i32)
+    }
+}
+
 impl Neg for TimeSpan {
     type Output = TimeSpan;
 
@@ -180,11 +190,11 @@ impl Mul<i32> for TimeSpan {
     }
 }
 
-impl Add<TimeSpan> for TimeSpan {
+impl Mul<TimeSpan> for i32 {
     type Output = TimeSpan;
 
-    fn add(self, rhs: TimeSpan) -> Self::Output {
-        Self(self.0 + rhs.0)
+    fn mul(self, rhs: TimeSpan) -> Self::Output {
+        TimeSpan(self * rhs.0)
     }
 }
 
@@ -193,6 +203,14 @@ impl Div<i32> for TimeSpan {
 
     fn div(self, rhs: i32) -> Self::Output {
         Self(self.0 / rhs)
+    }
+}
+
+impl Add<TimeSpan> for TimeSpan {
+    type Output = TimeSpan;
+
+    fn add(self, rhs: TimeSpan) -> Self::Output {
+        Self(self.0 + rhs.0)
     }
 }
 

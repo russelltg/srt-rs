@@ -12,6 +12,7 @@ use futures::prelude::*;
 use futures::{ready, select};
 use log::{error, trace};
 use srt_protocol::connection::{Action, DuplexConnection, Input};
+use srt_protocol::protocol::TimeSpan;
 use srt_protocol::Connection;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
@@ -48,7 +49,11 @@ pub fn create_bidrectional_srt(
     let (input_data_sender, input_data_receiver) = mpsc::channel(128);
     let conn_copy = conn.clone();
     tokio::spawn(async move {
-        if Instant::now().elapsed().as_nanos() % 2 == 0 {
+        // Using run_input_loop breaks a couple of the stransmit_interop tests.
+        // Both stransmit_decrypt and stransmit_server run indefinitely. For now,
+        // run_handler_loop exclusively, until a fix is found or an API decision
+        // is reached.
+        if Instant::now().elapsed().as_nanos() % 2 > 0 {
             run_handler_loop(
                 socket,
                 packets,
@@ -99,6 +104,9 @@ async fn run_handler_loop(
         }
 
         while let Some(data) = connection.next_data(Instant::now()) {
+            if output_data.is_closed() {
+                continue;
+            }
             if let Err(e) = output_data.send(data).await {
                 error!("Error while releasing packet {:?}", e);
             }
@@ -108,14 +116,9 @@ async fn run_handler_loop(
         let timeout_fut = async {
             let now = Instant::now();
             trace!(
-                "{:?} scheduling wakeup at {}{:?}",
+                "{:?} scheduling wakeup at {:?}",
                 local_sockid,
-                if timeout > now { "+" } else { "-" },
-                if timeout > now {
-                    timeout - now
-                } else {
-                    now - timeout
-                },
+                TimeSpan::from_interval(timeout, now),
             );
             sleep_until(timeout.into()).await
         };
@@ -161,8 +164,10 @@ async fn run_input_loop(
         input = match connection.handle_input(now, input) {
             Action::Close => break,
             Action::ReleaseData(data) => {
-                if let Err(e) = output_data.send(data).await {
-                    error!("Error while releasing data {:?}", e);
+                if !output_data.is_closed() {
+                    if let Err(e) = output_data.send(data).await {
+                        error!("Error while releasing data {:?}", e);
+                    }
                 }
                 Input::DataReleased
             }
