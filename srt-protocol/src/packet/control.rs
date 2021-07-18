@@ -165,9 +165,6 @@ pub struct HandshakeControlInfo {
     pub info: HandshakeVsInfo,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct FullAck {}
-
 /// Data included in a ACK packet. [spec](https://datatracker.ietf.org/doc/html/draft-sharabayko-mops-srt-00#section-3.2.3)
 ///
 /// There are three types of ACK packets:
@@ -845,7 +842,15 @@ impl ControlTypes {
                     into.put_u32(loss);
                 }
             }
-            ControlTypes::DropRequest { .. } => unimplemented!(),
+            ControlTypes::DropRequest {
+                msg_to_drop,
+                first,
+                last,
+            } => {
+                into.put_u32(msg_to_drop.as_raw());
+                into.put_u32(first.as_raw());
+                into.put_u32(last.as_raw());
+            }
             ControlTypes::Ack2(_) | ControlTypes::Shutdown | ControlTypes::KeepAlive => {
                 // The reference implementation appends one (4 byte) word at the end of these packets, which wireshark labels as 'Unused'
                 // I have no idea why, but wireshark reports it as a "malformed packet" without it. For the record,

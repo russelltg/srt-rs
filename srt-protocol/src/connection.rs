@@ -66,7 +66,16 @@ pub enum ConnectionStatus {
 
 impl ConnectionStatus {
     pub fn is_open(&self) -> bool {
-        *self != ConnectionStatus::Closed
+        matches!(*self, ConnectionStatus::Open(_))
+    }
+
+    pub fn is_closed(&self) -> bool {
+        *self == ConnectionStatus::Closed
+    }
+
+    pub fn should_drain(&self) -> bool {
+        use ConnectionStatus::*;
+        matches!(*self, Shutdown(_) | Drain(_))
     }
 
     pub fn shutdown(&mut self, now: Instant) {
@@ -81,11 +90,6 @@ impl ConnectionStatus {
         if let Open(timeout) = *self {
             *self = Drain(now + timeout);
         }
-    }
-
-    pub(crate) fn should_drain(&self) -> bool {
-        use ConnectionStatus::*;
-        matches!(*self, Shutdown(_) | Drain(_))
     }
 
     pub fn check_shutdown<S: Fn() -> bool>(&mut self, now: Instant, is_flushed: S) -> bool {
@@ -165,19 +169,17 @@ impl DuplexConnection {
         );
 
         match input {
-            Input::Data(Some(data)) => self.sender.handle_data(data, now),
-            Input::Data(None) => self.handle_data_stream_close(now),
-            Input::Packet(Some(packet)) => self.handle_packet(now, packet),
-            Input::Packet(None) => self.handle_socket_close(),
+            Input::Data(data) => self.handle_data_input(now, data),
+            Input::Packet(packet) => self.handle_packet_input(now, packet),
             _ => {}
         };
 
         let action = if self.should_close(now) {
             Action::Close
-        } else if let Some(data) = self.next_data(now) {
-            Action::ReleaseData(data)
         } else if let Some(packet) = self.next_packet() {
             Action::SendPacket(packet)
+        } else if let Some(data) = self.next_data(now) {
+            Action::ReleaseData(data)
         } else {
             Action::WaitForData(self.next_timer(now) - now)
         };
@@ -193,19 +195,38 @@ impl DuplexConnection {
     }
 
     pub fn is_open(&self) -> bool {
-        !(self.status == ConnectionStatus::Closed
-            || (!self.sender.is_open() && self.receiver.is_flushed())
-            || (!self.receiver.is_open() && self.sender.is_flushed()))
+        !(self.status.is_closed()
+            || (self.sender.is_closed() && self.receiver.is_flushed())
+            || (self.receiver.is_closed() && self.sender.is_flushed()))
     }
 
     pub fn next_packet(&mut self) -> Option<(Packet, SocketAddr)> {
-        self.sender
+        let packet = self
+            .sender
             .next_packet()
-            .or_else(|| self.receiver.next_packet())
+            .or_else(|| self.receiver.next_packet());
+        if let Some(p) = &packet {
+            debug!(
+                "{:?}|{:?}|send - {:?}",
+                TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
+                self.settings.local_sockid,
+                p
+            );
+        }
+        packet
     }
 
     pub fn next_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
-        self.receiver.next_data(now)
+        let data = self.receiver.next_data(now);
+        if let Some(d) = &data {
+            debug!(
+                "{:?}|{:?}|output - {:?}",
+                TimeSpan::from_interval(self.settings.socket_start_time, now),
+                self.settings.local_sockid,
+                d
+            );
+        }
+        data
     }
 
     pub fn next_timer(&self, now: Instant) -> Instant {
@@ -222,24 +243,18 @@ impl DuplexConnection {
     }
 
     pub fn check_timers(&mut self, now: Instant) -> Instant {
-        let _status = &mut self.status;
         let sender = &mut self.sender;
         let receiver = &mut self.receiver;
 
         sender.check_timers(now);
         receiver.check_timers(now);
 
-        // if status.check_shutdown(now, || sender.is_flushed()) {
-        //     debug!("{:?} sending shutdown", self.settings.local_sockid);
-        //     sender.send_shutdown(now);
-        // }
-
         self.next_timer(now)
     }
 
     pub fn handle_data_input(&mut self, now: Instant, data: Option<(Instant, Bytes)>) {
         debug!(
-            "{:?}|{:?}|data - {:?}",
+            "{:?}|{:?}|input - {:?}",
             TimeSpan::from_interval(self.settings.socket_start_time, now),
             self.settings.local_sockid,
             data
@@ -256,7 +271,7 @@ impl DuplexConnection {
 
     pub fn handle_packet_input(&mut self, now: Instant, packet: Option<(Packet, SocketAddr)>) {
         debug!(
-            "{:?}|{:?}|pack - {:?}",
+            "{:?}|{:?}|receive - {:?}",
             TimeSpan::from_interval(self.settings.socket_start_time, now),
             self.settings.local_sockid,
             packet
@@ -312,9 +327,9 @@ impl DuplexConnection {
         match control.control_type {
             // sender-responsble packets
             Ack(info) => self.sender.handle_ack_packet(now, info),
-            DropRequest { .. } => unimplemented!(),
+            DropRequest { .. } => {}
             Handshake(shake) => self.sender.handle_handshake_packet(shake, now),
-            Nak(nack) => self.sender.handle_nack_packet(nack),
+            Nak(nack) => self.sender.handle_nak_packet(nack),
             // receiver-respnsible
             Ack2(seq_num) => self.receiver.handle_ack2_packet(seq_num, now),
             // both
@@ -348,14 +363,15 @@ impl DuplexConnection {
     }
 }
 
-// TODO: revisit these unit tests once the desired DuplexConnection API is stabilized
 #[cfg(test)]
 mod duplex_connection {
     use super::*;
+    use crate::protocol::TimeStamp;
+    use crate::MsgNumber;
 
     const MILLIS: Duration = Duration::from_millis(1);
     const SND: Duration = MILLIS;
-    const TSBPD: Duration = Duration::from_millis(20);
+    const TSBPD: Duration = Duration::from_secs(1);
 
     fn remote_addr() -> SocketAddr {
         ([127, 0, 0, 1], 2223).into()
@@ -447,5 +463,52 @@ mod duplex_connection {
             WaitForData(100 * MILLIS)
         );
         assert_eq!(connection.handle_input(now, Input::Timer), Close);
+    }
+
+    #[test]
+    fn too_late_packet_drop() {
+        let start = Instant::now();
+        let mut connection = DuplexConnection::new(new_connection(start));
+
+        use crate::ControlPacket;
+        use Action::*;
+        use ControlTypes::*;
+        use Packet::*;
+
+        let mut now = start;
+        assert_eq!(
+            connection.handle_input(now, Input::Timer),
+            WaitForData(102 * MILLIS)
+        );
+        assert_eq!(
+            connection.handle_input(now, Input::Data(Some((start, Bytes::new())))),
+            WaitForData(SND)
+        );
+
+        now += SND;
+        assert!(matches!(
+            connection.handle_input(now, Input::Timer),
+            SendPacket((Data(_), _))
+        ));
+
+        connection.handle_input(now + TSBPD, Input::Timer);
+
+        // timeout
+        now += TSBPD * 2 + TSBPD / 2; // (TSBPD * 2) * 1.25
+        assert_eq!(
+            connection.handle_input(now, Input::Timer),
+            SendPacket((
+                Control(ControlPacket {
+                    timestamp: TimeStamp::MIN + SND + TSBPD * 2 + TSBPD / 2,
+                    dest_sockid: remote_sockid(),
+                    control_type: DropRequest {
+                        first: SeqNumber(0),
+                        last: SeqNumber(0),
+                        msg_to_drop: MsgNumber(0),
+                    }
+                }),
+                remote_addr()
+            ))
+        );
     }
 }

@@ -28,7 +28,7 @@ async fn message_splitting() -> Result<()> {
     let sender = tokio::spawn(async move {
         let mut sender = sender.await?;
         sender.send((Instant::now(), long_message)).await?;
-        sleep(Duration::from_secs(3)).await;
+        sleep(Duration::from_secs(5)).await;
         sender.close().await?;
         Ok(()) as Result<_>
     });

@@ -21,6 +21,9 @@ async fn keepalive() {
         sleep(Duration::from_secs(10)).await;
 
         s.send((Instant::now(), b"1234"[..].into())).await.unwrap();
+
+        sleep(Duration::from_secs(1)).await;
+
         s.close().await.unwrap();
     };
     let r = async {

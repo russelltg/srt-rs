@@ -210,10 +210,10 @@ mod stransmit_rs_snd_rcv {
     #[tokio::test]
     async fn basic() -> Result<(), Error> {
         test_send(
-            2000,
-            &["udp://:2000", "srt://127.0.0.1:2001"],
-            &["srt://:2001", "udp://127.0.0.1:2002"],
-            2002,
+            2900,
+            &["udp://:2900", "srt://127.0.0.1:2901"],
+            &["srt://:2901", "udp://127.0.0.1:2902"],
+            2902,
         )
         .await
     }
