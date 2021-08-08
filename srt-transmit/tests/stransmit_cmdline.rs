@@ -416,8 +416,8 @@ mod stransmit_rs_snd_rcv {
         let failure_str = "Failed reconnect test";
 
         // it worked, restart b, send again
-        b.kill().await.expect(&failure_str);
-        b.wait().await.expect(&failure_str);
+        b.kill().await.expect(failure_str);
+        b.wait().await.expect(failure_str);
 
         let mut b = Command::new(&srs_path).args(b_args).spawn().unwrap();
 
@@ -426,11 +426,11 @@ mod stransmit_rs_snd_rcv {
 
         futures::try_join!(recvr, sender).unwrap();
 
-        a.kill().await.expect(&failure_str);
-        b.kill().await.expect(&failure_str);
+        a.kill().await.expect(failure_str);
+        b.kill().await.expect(failure_str);
 
-        a.wait().await.expect(&failure_str);
-        b.wait().await.expect(&failure_str);
+        a.wait().await.expect(failure_str);
+        b.wait().await.expect(failure_str);
 
         Ok(())
     }
