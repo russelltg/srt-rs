@@ -148,7 +148,7 @@ mod synchronized_remote_clock {
 }
 
 #[derive(Debug)]
-pub(crate) struct Rtt {
+pub struct Rtt {
     mean: TimeSpan,
     variance: TimeSpan,
 }

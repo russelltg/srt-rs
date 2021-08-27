@@ -1,7 +1,6 @@
 mod buffer;
 mod congestion_control;
 mod encapsulate;
-mod encrypt;
 mod output;
 
 use std::net::SocketAddr;
@@ -307,10 +306,6 @@ impl Sender {
 
         // 2) Update the SND period by rate control (see section 3.6).
         // NOTE: NAK does not directly influence Live congestion control
-        // update CC
-        // if let Some(last_packet) = self.loss_list.back() {
-        //     self.congestion_control.on_nak(last_packet.seq_number);
-        // }
 
         // 3) Reset the EXP time variable.
         // NOTE: EXP is reset elsewhere

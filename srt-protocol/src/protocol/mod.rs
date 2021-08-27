@@ -5,6 +5,7 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::time::{Duration, Instant};
 use std::u32;
 
+pub mod encryption;
 pub mod handshake;
 pub mod receiver;
 pub mod sender;
@@ -306,8 +307,9 @@ impl TimeBase {
 
 #[cfg(test)]
 mod timebase {
-    use super::*;
     use proptest::prelude::*;
+
+    use super::*;
 
     proptest! {
         #[test]

@@ -1,6 +1,6 @@
 use crate::packet::CompressedLossList;
+use crate::protocol::encryption::Cipher;
 use crate::protocol::sender::encapsulate::Encapsulate;
-use crate::protocol::sender::encrypt::Encrypt;
 use crate::protocol::TimeStamp;
 use crate::{ConnectionSettings, DataPacket, MsgNumber, SeqNumber};
 use bytes::Bytes;
@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug)]
 pub struct SendBuffer {
     encapsulate: Encapsulate,
-    encrypt: Encrypt,
+    encrypt: Cipher,
     latency_window: Duration,
     buffer: VecDeque<DataPacket>,
     last_sent: Option<SeqNumber>,
@@ -25,8 +25,8 @@ pub struct SendBuffer {
 impl SendBuffer {
     pub fn new(settings: &ConnectionSettings) -> Self {
         Self {
-            encapsulate: Encapsulate::new(&settings),
-            encrypt: Encrypt::new(settings.crypto_manager.clone()),
+            encapsulate: Encapsulate::new(settings),
+            encrypt: Cipher::new(settings.crypto_manager.clone()),
             buffer: VecDeque::new(),
             last_sent: None,
             lost_list: BTreeSet::new(),
@@ -55,8 +55,9 @@ impl SendBuffer {
         let next_lost = self.pop_lost_list()?;
         let front = self.front_packet()?;
         let offset = next_lost - front;
-        let packet = self.buffer.get(offset as usize)?;
-        Some(packet.clone())
+        let mut packet = self.buffer.get(offset as usize)?.clone();
+        packet.retransmitted = true;
+        Some(packet)
     }
 
     pub fn has_packets_to_send(&self) -> bool {
@@ -329,10 +330,14 @@ mod test {
         ));
 
         // the spec suggests the loss list should be ordered smallest to largest
-        let next = buffer.pop_next_lost_packet().map(|p| p.seq_number.as_raw());
-        assert_eq!(next, Some(7));
-        let next = buffer.pop_next_lost_packet().map(|p| p.seq_number.as_raw());
-        assert_eq!(next, Some(11));
+        let next = buffer
+            .pop_next_lost_packet()
+            .map(|p| (p.seq_number.as_raw(), p.retransmitted));
+        assert_eq!(next, Some((7, true)));
+        let next = buffer
+            .pop_next_lost_packet()
+            .map(|p| (p.seq_number.as_raw(), p.retransmitted));
+        assert_eq!(next, Some((11, true)));
 
         assert_eq!(buffer.pop_next_lost_packet(), None);
 
