@@ -133,14 +133,14 @@ impl Sender {
             self.on_snd_event(exp_time);
         }
 
-        self.output.check_timers(now);
-
         // don't return close until fully flushed
         let flushed = self.is_flushed();
         if self.status.check_shutdown(now, || flushed) {
             let control = ControlTypes::Shutdown;
             self.output.send_control(now, control);
         }
+
+        self.output.check_timers(now);
     }
 
     pub fn next_timer(&self, now: Instant) -> Instant {
@@ -152,6 +152,10 @@ impl Sender {
                 self.output.next_timer(now),
             )
         }
+    }
+
+    pub fn reset_keep_alive(&mut self, now: Instant) {
+        self.output.reset_keep_alive(now)
     }
 
     fn on_snd(&mut self, now: Instant) {

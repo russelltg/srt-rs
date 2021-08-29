@@ -68,7 +68,7 @@ fn do_lossy_test(seed: u64, count: usize) {
 
             assert_eq!(sender.next_data(now), None);
 
-            while let Some(packet) = sender.next_packet() {
+            while let Some(packet) = sender.next_packet(now) {
                 match simulation.next_packet_schedule(now) {
                     Some(release_at) => network.send(release_at, packet),
                     None => trace!("Dropping {:?}", packet),
@@ -102,7 +102,7 @@ fn do_lossy_test(seed: u64, count: usize) {
                 received += 1;
             }
 
-            while let Some(packet) = receiver.next_packet() {
+            while let Some(packet) = receiver.next_packet(now) {
                 match simulation.next_packet_schedule(now) {
                     Some(release_at) => network.send(release_at, packet),
                     None => trace!("Dropping {:?}", packet),

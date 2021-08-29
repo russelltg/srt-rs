@@ -29,19 +29,19 @@ pub struct Receiver {
 
     handshake: Handshake,
 
+    time_base: TimeBase,
+
     timers: ReceiveTimers,
 
-    time_base: TimeBase,
+    receive_buffer: RecvBuffer,
+
+    arq: AutomaticRepeatRequestAlgorithm,
 
     cipher: Cipher,
 
     control_packets: VecDeque<Packet>,
 
     data_release: VecDeque<(Instant, Bytes)>,
-
-    receive_buffer: RecvBuffer,
-
-    arq: AutomaticRepeatRequestAlgorithm,
 
     status: ConnectionStatus,
 }
@@ -109,14 +109,6 @@ impl Receiver {
         }
     }
 
-    pub fn handle_shutdown_packet(&mut self, now: Instant) {
-        info!(
-            "{:?}: Shutdown packet received, flushing receiver...",
-            self.settings.local_sockid
-        );
-        self.status.drain(now);
-    }
-
     pub fn reset_exp(&mut self, now: Instant) {
         self.timers.reset_exp(now);
     }
@@ -125,33 +117,28 @@ impl Receiver {
         self.receive_buffer.synchronize_clock(now, ts)
     }
 
-    fn on_full_ack_event(&mut self, now: Instant) {
-        if let Some(ack) = self.arq.on_full_ack_event(now) {
-            trace!("Ack event hit {:?}", self.settings.local_sockid);
-
-            // Pack the ACK packet with RTT, RTT Variance, and flow window size (available
-            // receiver buffer size).
-            self.send_control(now, ControlTypes::Ack(ack));
+    pub fn handle_data_packet(&mut self, now: Instant, data: DataPacket) {
+        // we've already gotten this packet, drop it
+        if self.receive_buffer.next_release() > data.seq_number {
+            debug!("Received packet {:?} twice", data.seq_number);
+            return;
         }
-    }
 
-    fn on_nak_event(&mut self, now: Instant) {
-        // reset NAK timer, rtt and variance are in us, so convert to ns
+        let (nak, ack) = self
+            .arq
+            .handle_data_packet(now, data.seq_number, data.payload.len());
 
-        // NAK is used to trigger a negative acknowledgement (NAK). Its period
-        // is dynamically updated to 4 * RTT_+ RTTVar + SYN, where RTTVar is the
-        // variance of RTT samples.
-        self.timers.update_rtt(self.arq.rtt());
-
-        if let Some(loss_list) = self.arq.on_nak_event(now) {
-            // send the nak
+        if let Some(loss_list) = nak {
             self.send_control(now, ControlTypes::Nak(loss_list));
         }
-    }
+        if let Some(light_ack) = ack {
+            self.send_control(now, ControlTypes::Ack(light_ack));
+        }
 
-    fn on_peer_idle_timeout(&mut self, now: Instant) {
-        self.status.drain(now);
-        self.send_control(now, ControlTypes::Shutdown);
+        match self.cipher.decrypt(data) {
+            Ok(data) => self.receive_buffer.add(data),
+            Err(e) => error!("{:?} {:?}", self.settings.local_sockid, e),
+        }
     }
 
     pub fn handle_ack2_packet(&mut self, seq_num: FullAckSeqNumber, ack2_arrival_time: Instant) {
@@ -161,28 +148,12 @@ impl Receiver {
         self.timers.update_rtt(self.arq.rtt());
     }
 
-    pub fn handle_data_packet(&mut self, data: DataPacket, now: Instant) {
-        // we've already gotten this packet, drop it
-        if self.receive_buffer.next_release() > data.seq_number {
-            debug!("Received packet {:?} twice", data.seq_number);
-            return;
-        }
-
-        let (nak, light_ack) =
-            self.arq
-                .handle_data_packet(now, data.seq_number, data.payload.len());
-
-        if let Some(lost) = nak {
-            self.send_control(now, ControlTypes::Nak(lost));
-        }
-        if let Some(ack) = light_ack {
-            self.send_control(now, ControlTypes::Ack(ack));
-        }
-
-        match self.cipher.decrypt(data) {
-            Ok(data) => self.receive_buffer.add(data),
-            Err(e) => error!("{:?} {:?}", self.settings.local_sockid, e),
-        }
+    pub fn handle_shutdown_packet(&mut self, now: Instant) {
+        info!(
+            "{:?}: Shutdown packet received, flushing receiver...",
+            self.settings.local_sockid
+        );
+        self.status.drain(now);
     }
 
     pub fn next_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
@@ -208,6 +179,27 @@ impl Receiver {
         let next_message = self.receive_buffer.next_message_release_time();
         let unacked_packets = self.receive_buffer.unacked_packet_count();
         self.timers.next_timer(now, next_message, unacked_packets)
+    }
+
+    fn on_full_ack_event(&mut self, now: Instant) {
+        if let Some(ack) = self.arq.on_full_ack_event(now) {
+            trace!("Ack event hit {:?}", self.settings.local_sockid);
+
+            // Pack the ACK packet with RTT, RTT Variance, and flow window size (available
+            // receiver buffer size).
+            self.send_control(now, ControlTypes::Ack(ack));
+        }
+    }
+
+    fn on_nak_event(&mut self, now: Instant) {
+        if let Some(loss_list) = self.arq.on_nak_event(now) {
+            self.send_control(now, ControlTypes::Nak(loss_list));
+        }
+    }
+
+    fn on_peer_idle_timeout(&mut self, now: Instant) {
+        self.status.drain(now);
+        self.send_control(now, ControlTypes::Shutdown);
     }
 
     fn send_control(&mut self, now: Instant, control: ControlTypes) {

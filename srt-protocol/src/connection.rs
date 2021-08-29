@@ -70,7 +70,7 @@ impl ConnectionStatus {
     }
 
     pub fn is_closed(&self) -> bool {
-        *self == ConnectionStatus::Closed
+        matches!(*self, ConnectionStatus::Closed)
     }
 
     pub fn should_drain(&self) -> bool {
@@ -176,7 +176,7 @@ impl DuplexConnection {
 
         let action = if self.should_close(now) {
             Action::Close
-        } else if let Some(packet) = self.next_packet() {
+        } else if let Some(packet) = self.next_packet(now) {
             Action::SendPacket(packet)
         } else if let Some(data) = self.next_data(now) {
             Action::ReleaseData(data)
@@ -200,15 +200,21 @@ impl DuplexConnection {
             || (self.receiver.is_closed() && self.sender.is_flushed()))
     }
 
-    pub fn next_packet(&mut self) -> Option<(Packet, SocketAddr)> {
+    pub fn next_packet(&mut self, now: Instant) -> Option<(Packet, SocketAddr)> {
         let packet = self
             .sender
             .next_packet()
-            .or_else(|| self.receiver.next_packet());
+            .or_else(||
+                self.receiver.next_packet().map(
+                    |p| {
+                        self.sender.reset_keep_alive(now);
+                        p
+                    }
+                ));
         if let Some(p) = &packet {
             debug!(
                 "{:?}|{:?}|send - {:?}",
-                TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
+                TimeSpan::from_interval(self.settings.socket_start_time, now),
                 self.settings.local_sockid,
                 p
             );
@@ -246,8 +252,8 @@ impl DuplexConnection {
         let sender = &mut self.sender;
         let receiver = &mut self.receiver;
 
-        sender.check_timers(now);
         receiver.check_timers(now);
+        sender.check_timers(now);
 
         self.next_timer(now)
     }
@@ -315,7 +321,7 @@ impl DuplexConnection {
 
         self.receiver.reset_exp(now);
         match packet {
-            Packet::Data(data) => self.receiver.handle_data_packet(data, now),
+            Packet::Data(data) => self.receiver.handle_data_packet(now, data),
             Packet::Control(control) => self.handle_control_packet(now, control),
         }
     }

@@ -57,4 +57,8 @@ impl Output {
     pub fn pop_packet(&mut self) -> Option<Packet> {
         self.packets.pop_front()
     }
+
+    pub fn reset_keep_alive(&mut self, now: Instant) {
+        self.keepalive_timer.reset(now);
+    }
 }

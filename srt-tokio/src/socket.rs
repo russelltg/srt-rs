@@ -95,7 +95,7 @@ async fn run_handler_loop(
     let mut connection = DuplexConnection::new(connection);
     let mut serialize_buffer = Vec::new();
     while connection.is_open() {
-        while let Some((packet, addr)) = connection.next_packet() {
+        while let Some((packet, addr)) = connection.next_packet(Instant::now()) {
             serialize_buffer.clear();
             packet.serialize(&mut serialize_buffer);
             if let Err(e) = socket.send_to(&serialize_buffer, addr).await {

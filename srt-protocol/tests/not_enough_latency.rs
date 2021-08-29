@@ -50,7 +50,7 @@ fn do_not_enough_latency(seed: u64) {
 
             assert_eq!(sender.next_data(now), None);
 
-            while let Some(packet) = sender.next_packet() {
+            while let Some(packet) = sender.next_packet(now) {
                 match simulation.next_packet_schedule(now) {
                     Some(release_at) => network.send(release_at, packet),
                     None => trace!("Dropping {:?}", packet),
@@ -74,7 +74,7 @@ fn do_not_enough_latency(seed: u64) {
                 total_recvd += 1;
             }
 
-            while let Some(packet) = receiver.next_packet() {
+            while let Some(packet) = receiver.next_packet(now) {
                 match simulation.next_packet_schedule(now) {
                     Some(release_at) => network.send(release_at, packet),
                     None => trace!("Dropping {:?}", packet),

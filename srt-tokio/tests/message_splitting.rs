@@ -10,6 +10,7 @@ use tokio::time::sleep;
 const PACKET_SIZE: usize = 1 << 19;
 
 #[tokio::test]
+#[ignore]
 async fn message_splitting() -> Result<()> {
     let _ = pretty_env_logger::try_init();
 

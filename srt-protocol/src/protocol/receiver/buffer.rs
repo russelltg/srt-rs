@@ -240,7 +240,6 @@ impl fmt::Debug for RecvBuffer {
 
 #[cfg(test)]
 mod test {
-
     use super::RecvBuffer;
     use crate::{
         packet::{DataEncryption, PacketLocation},

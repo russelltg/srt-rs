@@ -17,6 +17,7 @@ pub fn seq_num_range(begin: SeqNumber, past_end: SeqNumber) -> impl Iterator<Ite
 }
 
 impl SeqNumber {
+    #[must_use]
     pub fn increment(&mut self) -> Self {
         let next = *self;
         *self += 1;

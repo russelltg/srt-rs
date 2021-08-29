@@ -85,7 +85,7 @@ fn timestamp_rollover() {
 
             assert_eq!(sender.next_data(now), None);
 
-            while let Some(packet) = sender.next_packet() {
+            while let Some(packet) = sender.next_packet(now) {
                 network.send(now + latency, packet);
             }
 
@@ -109,7 +109,7 @@ fn timestamp_rollover() {
                 next_data = actual + 1;
             }
 
-            while let Some(packet) = receiver.next_packet() {
+            while let Some(packet) = receiver.next_packet(now) {
                 network.send(now + latency, packet);
             }
 

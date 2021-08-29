@@ -171,7 +171,9 @@ impl fmt::Debug for TimeSpan {
 
 impl From<Duration> for TimeSpan {
     fn from(duration: Duration) -> TimeSpan {
-        TimeSpan::from_micros(duration.as_micros() as i32)
+        let duration = duration.as_micros();
+        assert!(duration < i32::MAX as u128);
+        TimeSpan::from_micros(duration as i32)
     }
 }
 
