@@ -356,6 +356,7 @@ async fn test_c_client_interop() -> Result<(), Error> {
 
 #[tokio::test]
 #[cfg(not(target_os = "windows"))]
+#[cfg(not(target_os = "macos"))]
 async fn bidirectional_interop() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 

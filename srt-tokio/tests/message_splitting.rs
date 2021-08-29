@@ -7,10 +7,9 @@ use futures::prelude::*;
 use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
 use tokio::time::sleep;
 
-const PACKET_SIZE: usize = 1 << 19;
+const PACKET_SIZE: usize = 15 * 1500;
 
 #[tokio::test]
-#[ignore]
 async fn message_splitting() -> Result<()> {
     let _ = pretty_env_logger::try_init();
 
