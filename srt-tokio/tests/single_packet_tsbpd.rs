@@ -8,7 +8,7 @@ use tokio::time::sleep;
 use srt_protocol::protocol::TimeSpan;
 use std::time::{Duration, Instant};
 
-/// Send a single packet, with a large tsbpd, then close. Make sure it gets delviered with the delay.
+/// Send a single packet, with a large tsbpd, then close. Make sure it gets delivered with the delay.
 #[tokio::test]
 async fn single_packet_tsbpd() {
     let _ = pretty_env_logger::try_init();
