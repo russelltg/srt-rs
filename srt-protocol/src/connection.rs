@@ -201,16 +201,12 @@ impl DuplexConnection {
     }
 
     pub fn next_packet(&mut self, now: Instant) -> Option<(Packet, SocketAddr)> {
-        let packet = self
-            .sender
-            .next_packet()
-            .or_else(||
-                self.receiver.next_packet().map(
-                    |p| {
-                        self.sender.reset_keep_alive(now);
-                        p
-                    }
-                ));
+        let packet = self.sender.next_packet().or_else(|| {
+            self.receiver.next_packet().map(|p| {
+                self.sender.reset_keep_alive(now);
+                p
+            })
+        });
         if let Some(p) = &packet {
             debug!(
                 "{:?}|{:?}|send - {:?}",
