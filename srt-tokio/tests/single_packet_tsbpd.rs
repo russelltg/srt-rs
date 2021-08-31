@@ -3,10 +3,12 @@ use srt_tokio::SrtSocketBuilder;
 use bytes::Bytes;
 use futures::prelude::*;
 use log::info;
+use tokio::time::sleep;
 
+use srt_protocol::protocol::TimeSpan;
 use std::time::{Duration, Instant};
 
-/// Send a single packet, with a large tsbpd, then close. Make sure it gets delviered with the delay.
+/// Send a single packet, with a large tsbpd, then close. Make sure it gets delivered with the delay.
 #[tokio::test]
 async fn single_packet_tsbpd() {
     let _ = pretty_env_logger::try_init();
@@ -43,12 +45,8 @@ async fn single_packet_tsbpd() {
 
         assert_eq!(&packet, "Hello World!");
 
-        let expected_displacement = Duration::from_millis(5);
-        let displacement = if start > time {
-            start - time
-        } else {
-            time - start
-        };
+        let expected_displacement = TimeSpan::from_micros(5000);
+        let displacement = TimeSpan::from_interval(start, time);
         assert!(displacement < expected_displacement,
             "TsbPd time calculated for the packet should be close to `start` time\nExpected: < {:?}\nActual: {:?}\n",
             expected_displacement, displacement);
@@ -62,6 +60,7 @@ async fn single_packet_tsbpd() {
             .send((Instant::now(), Bytes::from("Hello World!")))
             .await
             .unwrap();
+        sleep(Duration::from_secs(1)).await;
         sender.close().await.unwrap();
     };
 

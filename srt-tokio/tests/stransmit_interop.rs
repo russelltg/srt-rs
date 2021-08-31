@@ -110,15 +110,15 @@ async fn stransmit_client() -> Result<(), Error> {
 
     // stranmsit process
     let mut stransmit = allow_not_found!(Command::new("srt-live-transmit")
-        .arg("udp://:2002")
-        .arg("srt://127.0.0.1:2003?latency=182")
+        .arg("udp://:2452")
+        .arg("srt://127.0.0.1:2453?latency=182")
         .arg("-a:no") // don't reconnect
         .spawn());
 
     let listener = async {
         // connect to process
         let mut conn = SrtSocketBuilder::new(ConnInitMethod::Listen)
-            .local_port(2003)
+            .local_port(2453)
             .latency(Duration::from_millis(827))
             .connect()
             .await
@@ -135,7 +135,7 @@ async fn stransmit_client() -> Result<(), Error> {
         let mut i = 0;
 
         // start the data generation process
-        join!(async { udp_sender(PACKETS, 2002).await.unwrap() }, async {
+        join!(async { udp_sender(PACKETS, 2452).await.unwrap() }, async {
             // receive
             while let Some(p) = conn.next().await {
                 let (_, b) = p.unwrap();
@@ -167,7 +167,7 @@ async fn stransmit_server() -> Result<(), Error> {
 
     // start SRT connector
     let serv = async {
-        let mut sender = SrtSocketBuilder::new_connect("127.0.0.1:2000")
+        let mut sender = SrtSocketBuilder::new_connect("127.0.0.1:2340")
             .latency(Duration::from_millis(99))
             .connect()
             .await
@@ -188,12 +188,12 @@ async fn stransmit_server() -> Result<(), Error> {
         sender.close().await.unwrap();
     };
 
-    let udp_recv = async { udp_recvr(PACKETS, 2001).await.unwrap() };
+    let udp_recv = async { udp_recvr(PACKETS, 2341).await.unwrap() };
 
     // start stransmit process
     let mut child = allow_not_found!(Command::new("srt-live-transmit")
-        .arg("srt://:2000?latency=123?blocking=true")
-        .arg("udp://127.0.0.1:2001")
+        .arg("srt://:2340?latency=123?blocking=true")
+        .arg("udp://127.0.0.1:2341")
         .arg("-a:no") // don't auto-reconnect
         .spawn());
 
@@ -212,8 +212,8 @@ async fn stransmit_rendezvous() -> Result<(), Error> {
     const PACKETS: u32 = 1_000;
 
     let sender_fut = async move {
-        let mut sender = SrtSocketBuilder::new_rendezvous("127.0.0.1:2004")
-            .local_port(2005)
+        let mut sender = SrtSocketBuilder::new_rendezvous("127.0.0.1:2544")
+            .local_port(2545)
             .connect()
             .await
             .unwrap();
@@ -229,11 +229,11 @@ async fn stransmit_rendezvous() -> Result<(), Error> {
         sender.close().await.unwrap();
     };
 
-    let udp_recvr = async { udp_recvr(PACKETS, 2006).await.unwrap() };
+    let udp_recvr = async { udp_recvr(PACKETS, 2546).await.unwrap() };
 
     let mut child = allow_not_found!(Command::new("srt-live-transmit")
-        .arg("srt://127.0.0.1:2005?adapter=127.0.0.1&port=2004&mode=rendezvous")
-        .arg("udp://127.0.0.1:2006")
+        .arg("srt://127.0.0.1:2545?adapter=127.0.0.1&port=2544&mode=rendezvous")
+        .arg("udp://127.0.0.1:2546")
         .arg("-a:no") // don't auto-reconnect
         .spawn());
 
@@ -251,14 +251,14 @@ async fn stransmit_encrypt() -> Result<(), Error> {
     const PACKETS: u32 = 1_000;
 
     let mut child = allow_not_found!(Command::new("srt-live-transmit")
-        .arg("udp://:2007")
-        .arg("srt://:2008?passphrase=password123&pbkeylen=16")
+        .arg("udp://:2677")
+        .arg("srt://:2678?passphrase=password123&pbkeylen=16")
         .arg("-a:no")
         .arg("-loglevel:debug")
         .spawn());
 
     let recvr_fut = async move {
-        let recv = SrtSocketBuilder::new_connect("127.0.0.1:2008")
+        let recv = SrtSocketBuilder::new_connect("127.0.0.1:2678")
             .crypto(16, "password123")
             .connect()
             .await
@@ -266,7 +266,7 @@ async fn stransmit_encrypt() -> Result<(), Error> {
 
         try_join(
             receiver(PACKETS, recv.map(|f| f.unwrap().1)),
-            udp_sender(PACKETS, 2007),
+            udp_sender(PACKETS, 2677),
         )
         .await
         .unwrap();
@@ -287,7 +287,7 @@ async fn stransmit_decrypt() -> Result<(), Error> {
     let sender_fut = async move {
         let mut snd = SrtSocketBuilder::new_listen()
             .crypto(16, "password123")
-            .local_port(2009)
+            .local_port(2909)
             .connect()
             .await
             .unwrap();
@@ -304,14 +304,14 @@ async fn stransmit_decrypt() -> Result<(), Error> {
     };
 
     let mut child = allow_not_found!(Command::new("srt-live-transmit")
-        .arg("srt://127.0.0.1:2009?passphrase=password123&pbkeylen=16")
-        .arg("udp://127.0.0.1:2010")
+        .arg("srt://127.0.0.1:2909?passphrase=password123&pbkeylen=16")
+        .arg("udp://127.0.0.1:2910")
         .arg("-a:no")
         .arg("-loglevel:debug")
         .spawn());
 
     join!(sender_fut, async {
-        udp_recvr(PACKETS, 2010).await.unwrap()
+        udp_recvr(PACKETS, 2910).await.unwrap()
     });
     info!("Futures finished!");
     child.wait().unwrap();
@@ -327,7 +327,7 @@ async fn test_c_client_interop() -> Result<(), Error> {
 
     let srt_rs_side = async move {
         let mut sock = SrtSocketBuilder::new_listen()
-            .local_port(2011)
+            .local_port(2811)
             .connect()
             .await
             .unwrap();
@@ -347,7 +347,7 @@ async fn test_c_client_interop() -> Result<(), Error> {
         Ok(())
     };
 
-    let jh = spawn_blocking(move || test_c_client(2011));
+    let jh = spawn_blocking(move || test_c_client(2811));
 
     try_join(srt_rs_side, jh).await.unwrap();
 
@@ -356,12 +356,13 @@ async fn test_c_client_interop() -> Result<(), Error> {
 
 #[tokio::test]
 #[cfg(not(target_os = "windows"))]
+#[cfg(not(target_os = "macos"))]
 async fn bidirectional_interop() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     let srt_rs_side = async move {
         let mut sock = SrtSocketBuilder::new_listen()
-            .local_port(2012)
+            .local_port(2812)
             .connect()
             .await
             .unwrap();
@@ -383,7 +384,7 @@ async fn bidirectional_interop() -> Result<(), Error> {
         Ok(())
     };
 
-    let jh = spawn_blocking(move || haivision_echo(2012));
+    let jh = spawn_blocking(move || haivision_echo(2812));
 
     try_join(srt_rs_side, jh).await.unwrap();
 

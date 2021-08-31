@@ -5,8 +5,8 @@ modular_num! {
 }
 
 impl MsgNumber {
-    /// Increment self and return the old value
-    pub fn increment(&mut self) -> MsgNumber {
+    #[must_use]
+    pub fn increment(&mut self) -> Self {
         let result = *self;
         *self += 1;
         result
