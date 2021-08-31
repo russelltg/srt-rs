@@ -1,4 +1,5 @@
 use std::cmp::{max, Ordering};
+use std::convert::TryInto;
 use std::fmt;
 use std::num::Wrapping;
 use std::ops::{Add, Div, Mul, Neg, Sub};
@@ -171,9 +172,7 @@ impl fmt::Debug for TimeSpan {
 
 impl From<Duration> for TimeSpan {
     fn from(duration: Duration) -> TimeSpan {
-        let duration = duration.as_micros();
-        assert!(duration < i32::MAX as u128);
-        TimeSpan::from_micros(duration as i32)
+        TimeSpan::from_micros(duration.as_micros().try_into().unwrap())
     }
 }
 

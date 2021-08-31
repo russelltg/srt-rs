@@ -273,7 +273,7 @@ impl DuplexConnection {
 
     pub fn handle_packet_input(&mut self, now: Instant, packet: Option<(Packet, SocketAddr)>) {
         debug!(
-            "{:?}|{:?}|receive - {:?}",
+            "{:?}|{:?}|packet - {:?}",
             TimeSpan::from_interval(self.settings.socket_start_time, now),
             self.settings.local_sockid,
             packet
@@ -482,6 +482,12 @@ mod duplex_connection {
             connection.handle_input(now, Input::Timer),
             WaitForData(102 * MILLIS)
         );
+        assert_eq!(
+            connection.handle_input(now, Input::Data(Some((start, Bytes::new())))),
+            WaitForData(SND)
+        );
+        // the last packet sent is kept around for retransmit on flush
+        // keeping this original behavior intact otherwise integration tests fail
         assert_eq!(
             connection.handle_input(now, Input::Data(Some((start, Bytes::new())))),
             WaitForData(SND)

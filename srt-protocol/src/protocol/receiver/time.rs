@@ -1,4 +1,5 @@
 use std::cmp::{max, min};
+use std::convert::TryInto;
 use std::time::{Duration, Instant};
 
 use stats::OnlineStats;
@@ -181,11 +182,11 @@ impl Rtt {
     }
 
     pub fn mean_as_duration(&self) -> Duration {
-        Duration::from_micros(self.mean.as_micros() as u64)
+        Duration::from_micros(self.mean.as_micros().try_into().unwrap())
     }
 
     pub fn variance_as_duration(&self) -> Duration {
-        Duration::from_micros(self.variance.as_micros() as u64)
+        Duration::from_micros(self.variance.as_micros().try_into().unwrap())
     }
 }
 
@@ -291,7 +292,7 @@ impl ReceiveTimers {
         // but 0.3s in reference implementation
         let exp_period = max(exp_count * rtt_period, exp_count * ms(300));
 
-        // full ack period is alwyas 10 ms
+        // full ack period is always 10 ms
         (Duration::from_millis(10), nak_period, exp_period)
     }
 }

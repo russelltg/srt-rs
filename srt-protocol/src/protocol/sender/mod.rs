@@ -250,8 +250,8 @@ impl Sender {
                 rtt_variance,
                 buffer_available: _,
                 full_ack_seq_number: Some(ack_seq_num),
-                packet_recv_rate: Some(packet_recv_rate),
-                est_link_cap: Some(est_link_cap),
+                packet_recv_rate,
+                est_link_cap,
                 data_recv_rate: _,
             } = info
             {
@@ -286,7 +286,7 @@ impl Sender {
                 // 7) Update packet arrival rate: A = (A * 7 + a) / 8, where a is the
                 //    value carried in the ACK.
                 self.metrics.pkt_arr_rate =
-                    self.metrics.pkt_arr_rate / 8 * 7 + packet_recv_rate / 8;
+                    self.metrics.pkt_arr_rate / 8 * 7 + packet_recv_rate.unwrap_or(0) / 8;
 
                 // 8) Update estimated link capacity: B = (B * 7 + b) / 8, where b is
                 //    the value carried in the ACK.
@@ -294,7 +294,7 @@ impl Sender {
                     .metrics
                     .est_link_cap
                     .saturating_mul(7)
-                    .saturating_add(est_link_cap))
+                    .saturating_add(est_link_cap.unwrap_or(0)))
                     / 8;
             }
         }

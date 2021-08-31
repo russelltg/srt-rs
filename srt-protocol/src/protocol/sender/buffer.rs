@@ -135,10 +135,12 @@ impl SendBuffer {
     pub fn has_packets_to_drop(&self, now: Instant) -> bool {
         let ts_now = self.timestamp_from(now);
         let latency_window = self.latency_window;
-        self.buffer
-            .front()
-            .filter(|p| p.timestamp + latency_window < ts_now)
-            .is_some()
+        self.buffer.len() > 1
+            && self
+                .buffer
+                .front()
+                .filter(|p| p.timestamp + latency_window < ts_now)
+                .is_some()
     }
 
     pub fn drop_too_late_packets(
