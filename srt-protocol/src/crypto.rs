@@ -373,14 +373,14 @@ mod test {
                 size: 16,
                 passphrase: "password123".into(),
             },
-            &b"\x00\x00\x00\x00\x00\x00\x00\x00\x85\x2c\x3c\xcd\x02\x65\x1a\x22",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00\x85\x2c\x3c\xcd\x02\x65\x1a\x22",
             None,
             Some(b"\r\xab\xc8n/2\xb4\xa7\xb9\xbb\xa2\xf31*\xe4\"".to_vec()),
         );
 
         assert_eq!(
             manager.kek,
-            &b"\xe9\xa0\xa4\x30\x2f\x59\xd0\x63\xc8\x83\x32\xbe\x35\x88\x82\x08"[..]
+            b"\xe9\xa0\xa4\x30\x2f\x59\xd0\x63\xc8\x83\x32\xbe\x35\x88\x82\x08"[..]
         );
 
         let wrapped = manager.wrap_keys();
@@ -437,7 +437,7 @@ mod test {
                 size: 16,
                 passphrase: "password123".into(),
             },
-            &b"\x00\x00\x00\x00\x00\x00\x00\x00n\xd5+\x196\nq8",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00n\xd5+\x196\nq8",
             None,
             None,
         );

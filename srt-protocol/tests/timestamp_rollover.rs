@@ -1,18 +1,13 @@
+use log::trace;
+use srt_protocol::connection::{DuplexConnection, Input};
+use srt_protocol::protocol::handshake::Handshake;
+use srt_protocol::{Connection, ConnectionSettings, SeqNumber, SocketId};
+use std::cmp::min;
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
-use log::{info, trace};
-use srt_protocol::{
-    packet::ControlTypes,
-    protocol::{
-        handshake::Handshake,
-        receiver::{Receiver, ReceiverAlgorithmAction},
-        sender::{Sender, SenderAlgorithmAction},
-    },
-    ConnectionSettings, ControlPacket, SeqNumber, SocketId,
-};
+pub mod simulator;
 
-const DATA: [u8; 1024] = [5; 1024];
+use simulator::*;
 
 #[test]
 fn timestamp_rollover() {
@@ -34,8 +29,7 @@ fn timestamp_rollover() {
         local_sockid: s1_sockid,
         socket_start_time: start,
         rtt: Duration::default(),
-        init_send_seq_num: init_seqnum,
-        init_recv_seq_num: init_seqnum,
+        init_seq_num: init_seqnum,
         max_packet_size: 1316,
         max_flow_size: 8192,
         send_tsbpd_latency: Duration::from_millis(20),
@@ -50,124 +44,98 @@ fn timestamp_rollover() {
         local_sockid: s2_sockid,
         socket_start_time: start,
         rtt: Duration::default(),
-        init_send_seq_num: init_seqnum,
-        init_recv_seq_num: init_seqnum,
+        init_seq_num: init_seqnum,
         max_packet_size: 1316,
         max_flow_size: 8192,
+
         send_tsbpd_latency: Duration::from_millis(20),
         recv_tsbpd_latency: Duration::from_millis(20),
         crypto_manager: None,
         stream_id: None,
     };
 
-    let mut sendr = Sender::new(s1, Handshake::Connector);
-    let mut recvr = Receiver::new(s2, Handshake::Connector);
+    const PACKET_RATE: u32 = 10; // 10 packet/s
+    const STREAM_DURATION: u32 = 2 * 60 * 60; // 2 hours
 
-    // send 10 packet/s for 24 hours
-    const PACKET_RATE: u32 = 10;
-    let packs_to_send = 60 * 60 * 24 * PACKET_RATE;
-    let mut send_time = (1..=packs_to_send)
-        .map(|i| (i, start + i * Duration::from_secs(1) / PACKET_RATE))
-        .peekable();
+    let packs_to_send = STREAM_DURATION * PACKET_RATE;
+    let latency = Duration::from_millis(10);
 
-    let mut current_time = start;
-    let mut recvd_packets = 0;
-    let mut last_ts = 0;
+    let mut network = NetworkSimulator::new(s1_addr, s2_addr);
+    let mut sender = DuplexConnection::new(Connection {
+        settings: s1,
+        handshake: Handshake::Connector,
+    });
+    let mut receiver = DuplexConnection::new(Connection {
+        settings: s2,
+        handshake: Handshake::Connector,
+    });
+    let mut input_data = InputDataSimulation::new(
+        start,
+        packs_to_send as usize,
+        Duration::from_secs(1) / PACKET_RATE,
+    );
 
+    let mut now = start;
+    let mut received = vec![];
+    let mut dropped = vec![];
+    let mut next_data = 1;
     loop {
-        if let Some((idx, rel_time)) = send_time.peek() {
-            if *rel_time <= current_time {
-                sendr.handle_data((current_time, Bytes::from_static(&DATA)), current_time);
+        let sender_next_time = if sender.is_open() {
+            input_data.send_data_to(now, &mut network.sender);
 
-                if idx % (60 * 20) == 0 {
-                    info!(
-                        "{}h{}m passed",
-                        idx / 60 / 60 / PACKET_RATE,
-                        (idx / 60 / PACKET_RATE) % 60
-                    );
-                }
+            assert_eq!(sender.next_data(now), None);
 
-                send_time.next();
-
-                if send_time.peek().is_none() {
-                    sendr.handle_close();
-                }
+            while let Some(packet) = sender.next_packet(now) {
+                network.send(now + latency, packet);
             }
-        }
 
-        let sender_next_time = match sendr.next_action(current_time) {
-            SenderAlgorithmAction::WaitUntilAck | SenderAlgorithmAction::WaitForData => None,
-            SenderAlgorithmAction::WaitUntil(time) => Some(time),
-            SenderAlgorithmAction::Close => None, // xxx
+            let next_timer = sender.check_timers(now);
+            let (next_time, input) = network.sender.select_next_input(now, next_timer);
+            match input {
+                Input::Data(data) => sender.handle_data_input(next_time, data),
+                Input::Packet(packet) => sender.handle_packet_input(next_time, packet),
+                _ => {}
+            };
+            Some(next_time)
+        } else {
+            None
         };
 
-        while let Some((packet, _)) = sendr.pop_output() {
-            if matches!(
-                packet.control(),
-                Some(ControlPacket {
-                    control_type: ControlTypes::Shutdown,
-                    ..
-                })
-            ) {
-                info!("shutdown");
+        let receiver_next_time = if receiver.is_open() {
+            while let Some((_, payload)) = receiver.next_data(now) {
+                let actual: i32 = std::str::from_utf8(&payload[..]).unwrap().parse().unwrap();
+                received.push(actual);
+                dropped.extend(next_data..actual);
+                next_data = actual + 1;
             }
 
-            let ts = packet.timestamp().as_micros();
-            if ts < last_ts {
-                info!("rollover packs={}", recvd_packets);
+            while let Some(packet) = receiver.next_packet(now) {
+                network.send(now + latency, packet);
             }
-            last_ts = ts;
 
-            recvr.handle_packet(current_time, (packet, s1_addr));
-        }
-
-        trace!("s={:?} r={:?}", sendr, recvr);
-
-        let receiver_next_time = loop {
-            match recvr.next_algorithm_action(current_time) {
-                ReceiverAlgorithmAction::TimeBoundedReceive(time) => break Some(time),
-                ReceiverAlgorithmAction::SendControl(cp, _) => {
-                    sendr.handle_packet((cp.into(), s2_addr), current_time);
-                }
-                ReceiverAlgorithmAction::OutputData(_) => {
-                    recvd_packets += 1;
-                } // xxx
-                ReceiverAlgorithmAction::Close => break None,
-            }
+            let next_timer = receiver.check_timers(now);
+            let (next_time, input) = network.receiver.select_next_input(now, next_timer);
+            match input {
+                Input::Data(data) => receiver.handle_data_input(now, data),
+                Input::Packet(packet) => receiver.handle_packet_input(now, packet),
+                _ => {}
+            };
+            Some(next_time)
+        } else {
+            None
         };
 
-        // determine if we are done or not
-        if recvr.is_flushed() && sendr.is_flushed() && send_time.peek().is_none() {
-            break;
-        }
+        let next_time = match (sender_next_time, receiver_next_time) {
+            (Some(s), Some(r)) => min(s, r),
+            (Some(s), None) => s,
+            (None, Some(r)) => r,
+            _ => break,
+        };
 
-        // use the next smallest one
-        let new_current = [
-            send_time.peek().map(|(_, time)| *time),
-            sender_next_time,
-            receiver_next_time,
-        ]
-        .iter()
-        .copied()
-        .flatten()
-        .min()
-        .unwrap();
-
-        if send_time.peek().map(|(_, time)| *time) == Some(new_current) {
-            trace!("Waking up to give data to sender");
-        }
-        if sender_next_time == Some(new_current) {
-            trace!("Waking up from sender")
-        }
-        if receiver_next_time == Some(new_current) {
-            trace!("Waking up from receiver")
-        }
-
-        let delta = new_current - current_time;
-        current_time = new_current;
-
+        let delta = next_time - now;
         trace!("Delta = {:?}", delta);
+        now = next_time;
     }
-
-    assert_eq!(packs_to_send, recvd_packets);
+    assert_eq!(dropped, Vec::new());
+    assert_eq!(packs_to_send as usize, received.len());
 }

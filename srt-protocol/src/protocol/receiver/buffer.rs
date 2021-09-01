@@ -29,7 +29,7 @@ pub struct RecvBuffer {
 impl RecvBuffer {
     pub fn with(settings: &ConnectionSettings) -> Self {
         Self::new(
-            settings.init_recv_seq_num,
+            settings.init_seq_num,
             settings.socket_start_time,
             settings.recv_tsbpd_latency,
         )
@@ -210,6 +210,14 @@ impl RecvBuffer {
         ))
     }
 
+    // NOTE: like with Sender, we should lift the ack/loss/drop logic to the buffer
+    //  this makes for easier testing, eventually this should return a valid answer
+    //  for now we only need the number to be zero when empty so that the ACK timer
+    //  gets excluded when calculating the next timer in the Receiver
+    pub fn unacked_packet_count(&self) -> u32 {
+        self.buffer.len() as u32
+    }
+
     fn tsbpd_instant_from(&self, timestamp: TimeStamp) -> Instant {
         self.remote_clock.instant_from(timestamp) + self.tsbpd_latency
     }
@@ -232,7 +240,6 @@ impl fmt::Debug for RecvBuffer {
 
 #[cfg(test)]
 mod test {
-
     use super::RecvBuffer;
     use crate::{
         packet::{DataEncryption, PacketLocation},

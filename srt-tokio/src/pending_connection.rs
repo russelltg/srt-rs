@@ -14,7 +14,7 @@ use srt_protocol::{
         connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnInitSettings,
         ConnectionResult,
     },
-    Connection, Packet,
+    Connection, Packet, SeqNumber,
 };
 
 use futures::prelude::*;
@@ -26,8 +26,15 @@ pub async fn connect(
     local_addr: IpAddr,
     init_settings: ConnInitSettings,
     streamid: Option<String>,
+    starting_seqno: SeqNumber,
 ) -> Result<Connection, io::Error> {
-    let mut connect = Connect::new(remote, local_addr, init_settings, streamid);
+    let mut connect = Connect::new(
+        remote,
+        local_addr,
+        init_settings,
+        streamid.clone(),
+        starting_seqno,
+    );
     let mut tick_interval = interval(Duration::from_millis(100));
 
     let mut ser_buffer = Vec::new();
@@ -37,8 +44,8 @@ pub async fn connect(
             now = tick_interval.tick().fuse() => connect.handle_tick(now.into()),
             packet = get_packet(sock).fuse() => connect.handle_packet(packet?, Instant::now()),
         };
-        debug!("sending packet");
 
+        debug!("{:?}:connect - {:?}", streamid, result);
         match result {
             ConnectionResult::SendPacket((packet, sa)) => {
                 ser_buffer.clear();
@@ -76,15 +83,18 @@ pub async fn listen(
     sock: &UdpSocket,
     init_settings: ConnInitSettings,
 ) -> Result<Connection, io::Error> {
+    let streamid = init_settings.local_sockid;
     let mut a = AllowAllStreamAcceptor::default();
     let mut listen = Listen::new(init_settings);
-
     let mut ser_buffer = Vec::new();
-
     loop {
         let packet = get_packet(sock).await?;
-        debug!("got packet {:?}", packet);
-        match listen.handle_packet(packet, Instant::now(), &mut a) {
+        debug!("{:?}:listen  - {:?}", streamid, packet);
+
+        let result = listen.handle_packet(packet, Instant::now(), &mut a);
+        debug!("{:?}:listen  - {:?}", streamid, result);
+
+        match result {
             ConnectionResult::SendPacket((packet, sa)) => {
                 ser_buffer.clear();
                 packet.serialize(&mut ser_buffer);
@@ -112,9 +122,10 @@ pub async fn rendezvous(
     local_addr: SocketAddr,
     remote_public: SocketAddr,
     init_settings: ConnInitSettings,
+    starting_seqno: SeqNumber,
 ) -> Result<Connection, io::Error> {
     let sockid = init_settings.local_sockid;
-    let mut rendezvous = Rendezvous::new(local_addr, remote_public, init_settings);
+    let mut rendezvous = Rendezvous::new(local_addr, remote_public, init_settings, starting_seqno);
 
     let mut tick_interval = interval(Duration::from_millis(100));
     let mut ser_buffer = Vec::new();
@@ -125,8 +136,7 @@ pub async fn rendezvous(
             packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?, Instant::now()),
         };
 
-        // trace!("Ticking {:?} {:?}", sockid, rendezvous);
-
+        debug!("{:?}:rendezvous - {:?}", sockid, result);
         match result {
             ConnectionResult::SendPacket((packet, sa)) => {
                 ser_buffer.clear();

@@ -8,13 +8,13 @@ use super::{
 
 use log::debug;
 
-use crate::packet::{
-    ControlTypes, HandshakeControlInfo, HandshakeVsInfo, HsV5Info, ShakeType, SrtControlPacket,
-};
-use crate::protocol::{handshake::Handshake, TimeStamp};
 use crate::{
-    accesscontrol::AllowAllStreamAcceptor, Connection, ConnectionSettings, ControlPacket, Packet,
-    SocketId,
+    accesscontrol::AllowAllStreamAcceptor,
+    packet::{
+        ControlTypes, HandshakeControlInfo, HandshakeVsInfo, HsV5Info, ShakeType, SrtControlPacket,
+    },
+    protocol::{handshake::Handshake, TimeStamp},
+    Connection, ConnectionSettings, ControlPacket, Packet, SeqNumber, SocketId,
 };
 
 use ConnectError::*;
@@ -29,6 +29,7 @@ pub struct Rendezvous {
     cookie: i32,
     last_packet: (Packet, SocketAddr),
     last_send: Option<Instant>,
+    starting_seqnum: SeqNumber,
 }
 
 // see haivision/srt/docs/handshake.md for documentation
@@ -50,6 +51,7 @@ impl Rendezvous {
         local_addr: SocketAddr,
         remote_public: SocketAddr,
         init_settings: ConnInitSettings,
+        starting_seqnum: SeqNumber,
     ) -> Self {
         let cookie = gen_cookie(&local_addr);
         let last_packet = (
@@ -57,7 +59,7 @@ impl Rendezvous {
                 dest_sockid: SocketId(0),
                 timestamp: TimeStamp::from_micros(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                    init_seq_num: init_settings.starting_send_seqnum,
+                    init_seq_num: starting_seqnum,
                     max_packet_size: 1500, // TODO: take as a parameter
                     max_flow_size: 8192,   // TODO: take as a parameter
                     socket_id: init_settings.local_sockid,
@@ -79,6 +81,7 @@ impl Rendezvous {
             local_addr,
             remote_public,
             last_send: None,
+            starting_seqnum,
         }
     }
 }
@@ -127,7 +130,7 @@ impl Rendezvous {
 
     fn gen_packet(&self, shake_type: ShakeType, info: HandshakeVsInfo) -> HandshakeControlInfo {
         HandshakeControlInfo {
-            init_seq_num: self.init_settings.starting_send_seqnum,
+            init_seq_num: self.starting_seqnum,
             max_packet_size: 1500, // TODO: take as a parameter
             max_flow_size: 8192,   // TODO: take as a parameter
             socket_id: self.init_settings.local_sockid,
@@ -228,6 +231,11 @@ impl Rendezvous {
             Ordering::Equal => return NotHandled(CookiesMatched(self.cookie)),
         };
 
+        debug!(
+            "Rendezvous socket {:?} is {:?}",
+            self.init_settings.local_sockid, role
+        );
+
         match (info.shake_type, role) {
             (ShakeType::Waveahand, Initiator) => {
                 // NOTE: streamid not supported in rendezvous
@@ -239,6 +247,7 @@ impl Rendezvous {
                 self.send_conclusion(info.socket_id, hsv5)
             }
             (ShakeType::Waveahand, Responder) => {
+                self.starting_seqnum = info.init_seq_num; // responder, take initiator's seqnum
                 self.transition(AttentionResponder(now));
                 self.send_conclusion(info.socket_id, Rendezvous::empty_flags())
             }
@@ -270,6 +279,7 @@ impl Rendezvous {
                                 return self.make_rejection(info, timestamp, r)
                             }
                         };
+                        self.starting_seqnum = info.init_seq_num; // responder, take initiator's seqnum
                         self.transition(FineResponder(connection));
 
                         hsv5
@@ -353,6 +363,7 @@ impl Rendezvous {
                     GenHsv5Result::NotHandled(e) => return NotHandled(e),
                     GenHsv5Result::Reject(r) => return self.make_rejection(info, timestamp, r),
                 };
+                self.starting_seqnum = info.init_seq_num; // responder, take initiator's seqnum
                 self.transition(InitiatedResponder(connection));
 
                 self.send_conclusion(info.socket_id, hsv5)
@@ -455,6 +466,7 @@ impl Rendezvous {
                     return NoAction; // TODO: this is a pretty roundabout way to do this...just waits for another tick
                 }
                 (ShakeType::Conclusion, Ok(Some(_))) => return NotHandled(ExpectedHsReq),
+                (ShakeType::Waveahand, _) => return NotHandled(AgreementExpected(info.clone())),
                 _ => {}
             }
         }

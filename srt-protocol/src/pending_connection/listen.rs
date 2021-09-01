@@ -67,7 +67,6 @@ impl Listen {
                         syn_cookie: cookie,
                         socket_id: self.init_settings.local_sockid,
                         info: HandshakeVsInfo::V5(HsV5Info::default()),
-                        init_seq_num: self.init_settings.starting_send_seqnum,
                         ..shake
                     }),
                 });
@@ -160,7 +159,6 @@ impl Listen {
                         syn_cookie: state.cookie,
                         socket_id: self.init_settings.local_sockid,
                         info: hsv5,
-                        init_seq_num: self.init_settings.starting_send_seqnum,
                         shake_type: ShakeType::Conclusion,
                         ..shake // TODO: this will pass peer wrong
                     }),
@@ -362,7 +360,7 @@ mod test {
     fn send_ack2() {
         let (mut l, mut a) = test_listen();
 
-        let a2 = ControlTypes::Ack2(random());
+        let a2 = ControlTypes::Ack2(FullAckSeqNumber::new(random::<u32>() + 1).unwrap());
         assert!(matches!(
             l.handle_packet((
                 Packet::Control(ControlPacket {

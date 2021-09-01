@@ -1,10 +1,12 @@
 use std::cmp::{max, Ordering};
+use std::convert::TryInto;
 use std::fmt;
 use std::num::Wrapping;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::time::{Duration, Instant};
 use std::u32;
 
+pub mod encryption;
 pub mod handshake;
 pub mod receiver;
 pub mod sender;
@@ -47,6 +49,10 @@ impl TimeSpan {
 
     pub const fn from_micros(us: i32) -> Self {
         Self(us)
+    }
+
+    pub const fn from_millis(us: i32) -> Self {
+        Self(us * 1_000)
     }
 
     pub const fn as_micros(self) -> i32 {
@@ -164,6 +170,12 @@ impl fmt::Debug for TimeSpan {
     }
 }
 
+impl From<Duration> for TimeSpan {
+    fn from(duration: Duration) -> TimeSpan {
+        TimeSpan::from_micros(duration.as_micros().try_into().unwrap())
+    }
+}
+
 impl Neg for TimeSpan {
     type Output = TimeSpan;
 
@@ -180,11 +192,11 @@ impl Mul<i32> for TimeSpan {
     }
 }
 
-impl Add<TimeSpan> for TimeSpan {
+impl Mul<TimeSpan> for i32 {
     type Output = TimeSpan;
 
-    fn add(self, rhs: TimeSpan) -> Self::Output {
-        Self(self.0 + rhs.0)
+    fn mul(self, rhs: TimeSpan) -> Self::Output {
+        TimeSpan(self * rhs.0)
     }
 }
 
@@ -193,6 +205,14 @@ impl Div<i32> for TimeSpan {
 
     fn div(self, rhs: i32) -> Self::Output {
         Self(self.0 / rhs)
+    }
+}
+
+impl Add<TimeSpan> for TimeSpan {
+    type Output = TimeSpan;
+
+    fn add(self, rhs: TimeSpan) -> Self::Output {
+        Self(self.0 + rhs.0)
     }
 }
 
@@ -288,8 +308,9 @@ impl TimeBase {
 
 #[cfg(test)]
 mod timebase {
-    use super::*;
     use proptest::prelude::*;
+
+    use super::*;
 
     proptest! {
         #[test]

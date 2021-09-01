@@ -20,7 +20,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::{tokio::create_bidrectional_srt, Packet, SocketId, SrtSocket};
+use crate::{socket::create_bidrectional_srt, Packet, SocketId, SrtSocket};
 use srt_protocol::{
     accesscontrol::StreamAcceptor,
     pending_connection::{listen::Listen, ConnInitSettings, ConnectionResult},
@@ -121,11 +121,11 @@ impl<T: StreamAcceptor> MultiplexState<T> {
         self.conns.insert(conn.settings.local_sockid, s);
 
         self.pending.remove(&from); // remove from pending connections, it's been resolved
-        return Ok(Some(create_bidrectional_srt(
+        Ok(Some(create_bidrectional_srt(
             self.sock.clone(),
             ReceiverStream::new(r),
             conn,
-        )));
+        )))
     }
 }
 

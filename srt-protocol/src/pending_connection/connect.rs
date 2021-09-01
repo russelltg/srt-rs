@@ -1,9 +1,11 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 
-use crate::protocol::{handshake::Handshake, TimeStamp};
-use crate::SocketId;
-use crate::{packet::*, Connection};
+use crate::{
+    packet::*,
+    protocol::{handshake::Handshake, TimeStamp},
+    Connection, SeqNumber, SocketId,
+};
 
 use super::{
     hsv5::{start_hsv5_initiation, StartedInitiator},
@@ -41,6 +43,7 @@ pub struct Connect {
     init_settings: ConnInitSettings,
     state: ConnectState,
     streamid: Option<String>,
+    starting_send_seqnum: SeqNumber,
 }
 
 impl Connect {
@@ -49,6 +52,7 @@ impl Connect {
         local_addr: IpAddr,
         init_settings: ConnInitSettings,
         streamid: Option<String>,
+        starting_send_seqnum: SeqNumber,
     ) -> Self {
         Connect {
             remote,
@@ -56,14 +60,16 @@ impl Connect {
             init_settings,
             state: ConnectState::new(),
             streamid,
+            starting_send_seqnum,
         }
     }
+
     fn on_start(&mut self) -> ConnectionResult {
         let packet = Packet::Control(ControlPacket {
             dest_sockid: SocketId(0),
             timestamp: TimeStamp::from_micros(0), // TODO: this is not zero in the reference implementation
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                init_seq_num: self.init_settings.starting_send_seqnum,
+                init_seq_num: self.starting_send_seqnum,
                 max_packet_size: 1500, // TODO: take as a parameter
                 max_flow_size: 8192,   // TODO: take as a parameter
                 socket_id: self.init_settings.local_sockid,
@@ -97,7 +103,7 @@ impl Connect {
                         shake_type: ShakeType::Conclusion,
                         socket_id: self.init_settings.local_sockid,
                         info: hsv5,
-                        init_seq_num: self.init_settings.starting_send_seqnum,
+                        init_seq_num: self.starting_send_seqnum,
                         ..info
                     }),
                 });
@@ -268,13 +274,13 @@ mod test {
             test_remote(),
             [127, 0, 0, 1].into(),
             ConnInitSettings {
-                starting_send_seqnum: random(),
                 local_sockid: TEST_SOCKID,
                 crypto: None,
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
             },
             sid,
+            random(),
         )
     }
 }

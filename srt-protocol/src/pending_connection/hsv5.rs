@@ -99,8 +99,7 @@ pub fn gen_hsv5_response(
             local_sockid: settings.local_sockid,
             socket_start_time: now - (now - induction_time) / 2, // initiate happened 0.5RTT ago
             rtt: now - induction_time,
-            init_send_seq_num: settings.starting_send_seqnum,
-            init_recv_seq_num: with_hsv5.init_seq_num,
+            init_seq_num: with_hsv5.init_seq_num,
             max_packet_size: 1500, // todo: parameters!
             max_flow_size: 8192,
             send_tsbpd_latency: Duration::max(settings.send_latency, hs.recv_latency),
@@ -119,6 +118,7 @@ pub struct StartedInitiator {
     initiate_time: Instant,
 }
 
+// TODO: this could check that the responder returns the same initial sequence number that we send
 pub fn start_hsv5_initiation(
     settings: ConnInitSettings,
     streamid: Option<String>,
@@ -187,8 +187,7 @@ impl StartedInitiator {
             local_sockid: self.settings.local_sockid,
             socket_start_time: self.initiate_time,
             rtt: now - self.initiate_time,
-            init_send_seq_num: self.settings.starting_send_seqnum,
-            init_recv_seq_num: response.init_seq_num,
+            init_seq_num: response.init_seq_num,
             max_packet_size: 1500, // todo: parameters!
             max_flow_size: 8192,
             send_tsbpd_latency: Duration::max(self.settings.send_latency, hs.recv_latency),

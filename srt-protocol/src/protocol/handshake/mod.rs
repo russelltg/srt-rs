@@ -9,7 +9,7 @@ pub enum Handshake {
 }
 
 impl Handshake {
-    pub fn handle_handshake(&self, handshake: &HandshakeControlInfo) -> Option<ControlTypes> {
+    pub fn handle_handshake(&self, handshake: HandshakeControlInfo) -> Option<ControlTypes> {
         match (self, handshake.shake_type) {
             (Handshake::Rendezvous(control), ShakeType::Conclusion) => control.clone(),
             (Handshake::Listener(control), _) => Some(control.clone()),

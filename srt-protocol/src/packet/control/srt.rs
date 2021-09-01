@@ -200,7 +200,7 @@ bitflags! {
         const STREAM = 0x40;
 
         /// Again not sure... TODO:
-        const FILTERCAP = 0x80;
+        const PACKET_FILTER = 0x80;
 
         // currently implemented flags
         const SUPPORTED = Self::TSBPDSND.bits | Self::TSBPDRCV.bits | Self::HAICRYPT.bits | Self::REXMITFLG.bits;

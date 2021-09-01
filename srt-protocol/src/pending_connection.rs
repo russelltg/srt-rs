@@ -7,7 +7,7 @@ pub mod rendezvous;
 use crate::{
     crypto::CryptoOptions,
     packet::{ControlTypes, HandshakeControlInfo, RejectReason},
-    Connection, DataPacket, Packet, SeqNumber, SocketId,
+    Connection, DataPacket, Packet, SocketId,
 };
 use rand::random;
 use std::{error::Error, fmt, net::SocketAddr, time::Duration};
@@ -19,6 +19,7 @@ pub enum ConnectError {
     HandshakeExpected(ControlTypes),
     InductionExpected(HandshakeControlInfo),
     WaveahandExpected(HandshakeControlInfo),
+    AgreementExpected(HandshakeControlInfo),
     UnexpectedHost(SocketAddr, SocketAddr),
     ConclusionExpected(HandshakeControlInfo),
     UnsupportedProtocolVersion(u32),
@@ -52,7 +53,6 @@ pub enum ConnectionResult {
 
 #[derive(Debug, Clone)]
 pub struct ConnInitSettings {
-    pub starting_send_seqnum: SeqNumber,
     pub local_sockid: SocketId,
     pub crypto: Option<CryptoOptions>,
     pub send_latency: Duration,
@@ -67,6 +67,7 @@ impl fmt::Display for ConnectError {
             HandshakeExpected(got) => write!(f, "Expected Handshake packet, found: {:?}", got),
             InductionExpected(got) => write!(f, "Expected Induction (1) packet, found: {:?}", got),
             WaveahandExpected(got) => write!(f, "Expected Waveahand (0) packet, found: {:?}", got),
+            AgreementExpected(got) => write!(f, "Expected Agreement (-2) packet, found: {:?}", got),
             UnexpectedHost(host, got) => write!(
                 f,
                 "Expected packets from different host, expected: {} found: {}",
@@ -135,7 +136,6 @@ impl Default for ConnInitSettings {
             crypto: None,
             send_latency: Duration::from_millis(50),
             recv_latency: Duration::from_micros(50),
-            starting_send_seqnum: random(),
             local_sockid: random(),
         }
     }
@@ -146,7 +146,6 @@ impl ConnInitSettings {
             crypto: self.crypto.clone(),
             send_latency: self.send_latency,
             recv_latency: self.recv_latency,
-            starting_send_seqnum: random(),
             local_sockid: random(),
         }
     }

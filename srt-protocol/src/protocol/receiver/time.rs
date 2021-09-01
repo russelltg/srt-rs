@@ -1,4 +1,5 @@
 use std::cmp::{max, min};
+use std::convert::TryInto;
 use std::time::{Duration, Instant};
 
 use stats::OnlineStats;
@@ -148,7 +149,7 @@ mod synchronized_remote_clock {
 }
 
 #[derive(Debug)]
-pub(crate) struct Rtt {
+pub struct Rtt {
     mean: TimeSpan,
     variance: TimeSpan,
 }
@@ -181,11 +182,11 @@ impl Rtt {
     }
 
     pub fn mean_as_duration(&self) -> Duration {
-        Duration::from_micros(self.mean.as_micros() as u64)
+        Duration::from_micros(self.mean.as_micros().try_into().unwrap())
     }
 
     pub fn variance_as_duration(&self) -> Duration {
-        Duration::from_micros(self.variance.as_micros() as u64)
+        Duration::from_micros(self.variance.as_micros().try_into().unwrap())
     }
 }
 
@@ -202,7 +203,7 @@ pub(crate) struct ReceiveTimers {
     //   does not need timer-based ACK. Here, 0.01 second is defined as the
     //   SYN time, or synchronization time, and it affects many of the other
     //   timers used in UDT.
-    ack: Timer,
+    full_ack: Timer,
 
     //   NAK is used to trigger a negative acknowledgement (NAK). Its period
     //   is dynamically updated to 4 * RTT_+ RTTVar + SYN, where RTTVar is the
@@ -214,8 +215,7 @@ pub(crate) struct ReceiveTimers {
     //   RTTVar + SYN.
     exp: Timer,
     exp_count: u32,
-    last_input: Instant,
-    peer_idle_timeout: Duration,
+    peer_idle: Timer,
 }
 
 impl ReceiveTimers {
@@ -225,27 +225,32 @@ impl ReceiveTimers {
     pub fn new(now: Instant) -> ReceiveTimers {
         let (ack, nak, exp) = Self::calculate_periods(1, &Rtt::new());
         ReceiveTimers {
-            ack: Timer::new(ack, now),
+            full_ack: Timer::new(ack, now),
             nak: Timer::new(nak, now),
             exp: Timer::new(exp, now),
             exp_count: 1,
-            last_input: now,
-            peer_idle_timeout: Duration::from_secs(5),
+            peer_idle: Timer::new(Duration::from_secs(5), now),
         }
     }
 
-    pub fn next_timer(&self, now: Instant) -> Instant {
-        max(
-            now,
-            min(
-                self.nak.next_instant(),
-                min(self.ack.next_instant(), self.exp.next_instant()),
-            ),
-        )
+    pub fn next_timer(
+        &self,
+        now: Instant,
+        next_message: Option<Instant>,
+        unacked_packets: u32,
+    ) -> Instant {
+        let timer = min(self.exp.next_instant(), self.nak.next_instant());
+        let timer = next_message.map_or(timer, |message| min(timer, message));
+        let timer = if unacked_packets > 0 {
+            min(self.full_ack.next_instant(), timer)
+        } else {
+            timer
+        };
+        max(now, timer)
     }
 
-    pub fn check_ack(&mut self, now: Instant) -> Option<Instant> {
-        self.ack.check_expired(now)
+    pub fn check_full_ack(&mut self, now: Instant) -> Option<Instant> {
+        self.full_ack.check_expired(now)
     }
 
     pub fn check_nak(&mut self, now: Instant) -> Option<Instant> {
@@ -253,25 +258,25 @@ impl ReceiveTimers {
     }
 
     pub fn check_peer_idle_timeout(&mut self, now: Instant) -> Option<Instant> {
-        self.exp.check_expired(now)?;
+        let _ = self.exp.check_expired(now)?;
 
-        let peer_idle = now - self.last_input;
-        if self.exp_count > Self::EXP_MAX && peer_idle > self.peer_idle_timeout {
-            Some(self.last_input)
-        } else {
-            self.exp_count += 1;
-            None
-        }
+        self.peer_idle
+            .check_expired(now)
+            .filter(|_| self.exp_count > Self::EXP_MAX)
+            .or_else(|| {
+                self.exp_count += 1;
+                None
+            })
     }
 
     pub fn reset_exp(&mut self, now: Instant) {
         self.exp_count = 1;
-        self.last_input = now;
+        self.peer_idle.reset(now);
     }
 
     pub fn update_rtt(&mut self, rtt: &Rtt) {
         let (ack, nak, exp) = Self::calculate_periods(self.exp_count, rtt);
-        self.ack.set_period(ack);
+        self.full_ack.set_period(ack);
         self.nak.set_period(nak);
         self.exp.set_period(exp);
     }
@@ -280,8 +285,6 @@ impl ReceiveTimers {
         let ms = Duration::from_millis;
         let rtt_period = 4 * rtt.mean_as_duration() + rtt.variance_as_duration() + Self::SYN;
 
-        let ack_period = rtt_period;
-
         let nak_report_period_accelerator: u32 = 2;
         let nak_period = nak_report_period_accelerator * rtt_period;
 
@@ -289,7 +292,8 @@ impl ReceiveTimers {
         // but 0.3s in reference implementation
         let exp_period = max(exp_count * rtt_period, exp_count * ms(300));
 
-        (ack_period, nak_period, exp_period)
+        // full ack period is always 10 ms
+        (Duration::from_millis(10), nak_period, exp_period)
     }
 }
 
@@ -298,44 +302,38 @@ mod receive_timers {
     use super::*;
     use proptest::prelude::*;
 
-    fn diff(a: Instant, b: Instant) -> Duration {
-        if a > b {
-            a - b
-        } else {
-            b - a
-        }
-    }
-
     #[test]
     fn next_timer() {
-        let ms = Duration::from_millis;
-        let rtt_mean = ms(10);
-        let rtt_variance = ms(1);
+        let ms = TimeSpan::from_millis;
+        let rtt = Rtt::new();
         let syn = ms(10);
         let start = Instant::now();
         let mut timers = ReceiveTimers::new(start);
 
-        // next timer should be ack
-        // 4 * RTT + RTTVar + SYN
-        let ack = 4 * rtt_mean + rtt_variance + syn;
+        // next timer should be ack, 10ms
         let now = start;
-        let actual_timer = timers.next_timer(now);
-        assert_eq!(diff(actual_timer, now), ack);
+        let actual_timer = timers.next_timer(now, None, 1);
+        assert_eq!(TimeSpan::from_interval(now, actual_timer), ms(10));
 
+        // ack should be disabled if there are no packets waiting acknowledgement
+        let actual_timer = timers.next_timer(now, None, 0);
+        assert_eq!(TimeSpan::from_interval(now, actual_timer), ms(102));
+
+        // fast forward the clock, at 10ms, ack will fire multiple times before any other timer
+        let now = start + ms(100);
         // only ack timer should fire
-        assert!(timers.check_ack(actual_timer).is_some());
-        assert!(timers.check_nak(actual_timer).is_none());
-        assert!(timers.check_peer_idle_timeout(actual_timer).is_none());
+        assert!(timers.check_full_ack(now).is_some());
+        assert!(timers.check_nak(now).is_none());
+        assert!(timers.check_peer_idle_timeout(now).is_none());
 
         // next timer should be nak
         // NAK accelerator * 4 * RTT + RTTVar + SYN
-        let nak = 2 * (4 * rtt_mean + rtt_variance + syn);
-        let now = actual_timer;
-        let actual_timer = timers.next_timer(now);
-        assert_eq!(diff(actual_timer, start), nak);
+        let nak = 2 * (4 * rtt.mean() + rtt.variance() + syn);
+        let actual_timer = timers.next_timer(now, Some(start + ms(10_000)), 1);
+        assert_eq!(TimeSpan::from_interval(start, actual_timer), nak);
 
-        // both ack and nak should fire because their periods overlap
-        assert!(timers.check_ack(actual_timer).is_some());
+        // only the nak timer should trigger
+        assert!(timers.check_full_ack(actual_timer).is_none());
         assert!(timers.check_nak(actual_timer).is_some());
         assert!(timers.check_peer_idle_timeout(actual_timer).is_none());
 
@@ -344,15 +342,18 @@ mod receive_timers {
         let now = start + exp_lower_bound;
 
         // push time forward for ack and nak first
-        assert!(timers.check_ack(now).is_some());
+        assert!(timers.check_full_ack(now).is_some());
         assert!(timers.check_nak(now).is_some());
 
         // next timer should be exp
-        let actual_timer = timers.next_timer(now);
-        assert_eq!(diff(actual_timer, start), exp_lower_bound);
+        let actual_timer = timers.next_timer(now, Some(start + ms(10_000)), 1);
+        assert_eq!(
+            TimeSpan::from_interval(start, actual_timer),
+            exp_lower_bound
+        );
 
-        // exp timer should fire
-        assert!(timers.check_ack(actual_timer).is_none());
+        // exp timer should trigger
+        assert!(timers.check_full_ack(actual_timer).is_none());
         assert!(timers.check_nak(actual_timer).is_none());
 
         let last_input = start;
@@ -390,7 +391,7 @@ mod receive_timers {
             timers.update_rtt(&rtt);
 
             // 4 * RTT + RTTVar + SYN
-            assert_eq!(timers.ack.next_instant() - start, 4 * rtt_mean + rtt_variance + syn);
+            assert_eq!(timers.full_ack.next_instant() - start, Duration::from_millis(10));
 
             // NAK accelerator * 4 * RTT + RTTVar + SYN
             assert_eq!(timers.nak.next_instant() - start, 2 * (4 * rtt_mean + rtt_variance + syn));
@@ -421,7 +422,7 @@ mod receive_timers {
             timers.update_rtt(&rtt);
 
             // 4 * RTT + RTTVar + SYN
-            assert_eq!(timers.ack.next_instant() - start, 4 * rtt_mean + rtt_variance + syn);
+            assert_eq!(timers.full_ack.next_instant() - start, Duration::from_millis(10));
 
             // NAK accelerator * 4 * RTT + RTTVar + SYN
             assert_eq!(timers.nak.next_instant() - start, 2 * (4 * rtt_mean + rtt_variance + syn));
