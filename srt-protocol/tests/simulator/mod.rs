@@ -61,6 +61,7 @@ impl InputDataSimulation {
     }
 
     pub fn send_data_to(&mut self, now: Instant, peer: &mut PeerSimulator) {
+        let mut delta = Duration::from_nanos(0);
         while let Some(time) = self.next_send_time {
             if time > now {
                 break;
@@ -70,11 +71,12 @@ impl InputDataSimulation {
                 self.next_send_time = Some(time + self.pace);
                 self.next_packet_id += 1;
                 let data = Bytes::from(self.next_packet_id.to_string());
-                peer.schedule_input(now, Input::Data(Some((now, data))));
+                peer.schedule_input(now + delta, Input::Data(Some((now, data))));
             } else {
                 self.next_send_time = None;
-                peer.schedule_input(now, Input::Data(None));
+                peer.schedule_input(now + delta, Input::Data(None));
             }
+            delta += Duration::from_micros(1);
         }
     }
 }

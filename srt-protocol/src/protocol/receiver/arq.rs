@@ -1,15 +1,16 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use crate::packet::{AckControlInfo, CompressedLossList, FullAckSeqNumber};
-use crate::protocol::receiver::time::Rtt;
-use crate::protocol::TimeSpan;
-use crate::seq_number::seq_num_range;
-use crate::SeqNumber;
 use array_init::from_iter;
 use arraydeque::behavior::Wrapping;
 use arraydeque::ArrayDeque;
-use log::{debug, trace, warn};
-use std::cmp::{max, Ordering};
+use bytes::Bytes;
+
+use crate::packet::{AckControlInfo, CompressedLossList, FullAckSeqNumber};
+use crate::protocol::receiver::buffer::ReceiveBuffer;
+use crate::protocol::receiver::history::AckHistoryWindow;
+use crate::protocol::receiver::time::Rtt;
+use crate::protocol::{TimeSpan, TimeStamp};
+use crate::{DataPacket, SeqNumber};
 
 #[derive(Debug)]
 pub struct ArrivalSpeed {
@@ -44,6 +45,9 @@ impl ArrivalSpeed {
     }
 
     pub fn calculate(&self) -> Option<(u32, u32)> {
+        // 4) Calculate the packet arrival speed according to the following
+        // algorithm:
+
         if !self.packet_history_window.is_full() {
             return None;
         }
@@ -112,6 +116,7 @@ impl LinkCapacityEstimate {
             return None;
         }
 
+        // 5) Calculate the estimated link capacity according to the following algorithm:
         //  Calculate the median value of the last 16 packet pair
         //  intervals (PI) using the values in Packet Pair Window, and the
         //  link capacity is 1/PI (number of packets per second).
@@ -135,17 +140,6 @@ impl LinkCapacityEstimate {
 }
 
 #[derive(Debug)]
-struct AckHistoryEntry {
-    /// the highest packet sequence number received that this ACK packet ACKs + 1
-    ack_number: SeqNumber,
-
-    /// the ack sequence number
-    ack_seq_num: Option<FullAckSeqNumber>,
-
-    departure_time: Instant,
-}
-
-#[derive(Debug)]
 struct LossListEntry {
     seq_num: SeqNumber,
 
@@ -156,23 +150,10 @@ struct LossListEntry {
     k: i32,
 }
 
-const LIGHT_ACK_PACKET_INTERVAL: u32 = 64;
-
 #[derive(Debug)]
 pub struct AutomaticRepeatRequestAlgorithm {
-    /// the round trip time
-    /// is calculated each ACK2
-    rtt: Rtt,
-
     link_capacity_estimate: LinkCapacityEstimate,
     arrival_speed: ArrivalSpeed,
-    init_seq_num: SeqNumber,
-
-    /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
-    /// ACK History Window: A circular array of each sent ACK and the time
-    /// it is sent out. The most recent value will overwrite the oldest
-    /// one if no more free space in the array.
-    ack_history_window: Vec<AckHistoryEntry>,
 
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Receiver's Loss List: It is a list of tuples whose values include:
@@ -180,96 +161,76 @@ pub struct AutomaticRepeatRequestAlgorithm {
     /// feedback time of each tuple, and a parameter k that is the number
     /// of times each one has been fed back in NAK. Values are stored in
     /// the increasing order of packet sequence numbers.
-    loss_list: Vec<LossListEntry>,
+    receive_buffer: ReceiveBuffer,
 
-    /// The ID of the next ack packet
-    next_ack: FullAckSeqNumber,
+    /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
+    /// ACK History Window: A circular array of each sent ACK and the time
+    /// it is sent out. The most recent value will overwrite the oldest
+    /// one if no more free space in the array.
+    ack_history_window: AckHistoryWindow,
 
-    /// the highest received packet sequence number + 1
-    lrsn: SeqNumber,
-
-    /// The ACK number from the largest ACK2
-    pub lr_ack_acked: SeqNumber,
+    rtt: Rtt,
 }
 
 impl AutomaticRepeatRequestAlgorithm {
-    pub fn new(init_seq_num: SeqNumber) -> Self {
+    pub fn new(
+        socket_start_time: Instant,
+        tsbpd_latency: Duration,
+        init_seq_num: SeqNumber,
+    ) -> Self {
         Self {
-            init_seq_num,
             link_capacity_estimate: LinkCapacityEstimate::new(),
             arrival_speed: ArrivalSpeed::new(),
+            receive_buffer: ReceiveBuffer::new(socket_start_time, tsbpd_latency, init_seq_num),
+            ack_history_window: AckHistoryWindow::new(tsbpd_latency, init_seq_num),
             rtt: Rtt::new(),
-            loss_list: Vec::new(),
-            ack_history_window: Vec::new(),
-            lrsn: init_seq_num, // at start, we have received everything until the first packet, exclusive (aka nothing)
-            next_ack: FullAckSeqNumber::INITIAL,
-            lr_ack_acked: init_seq_num,
         }
     }
 
+    pub fn is_flushed(&self) -> bool {
+        self.receive_buffer.is_empty()
+            && self
+                .ack_history_window
+                .is_finished(self.receive_buffer.next_ack_dsn())
+    }
+
+    pub fn unacked_packet_count(&self) -> u32 {
+        self.ack_history_window
+            .unacked_packet_count(self.receive_buffer.next_ack_dsn())
+    }
+
+    pub fn next_message_release_time(&self) -> Option<Instant> {
+        self.receive_buffer.next_message_release_time()
+    }
+
+    pub fn clear(&mut self) {
+        self.receive_buffer.clear();
+        self.ack_history_window
+            .reset(self.receive_buffer.next_ack_dsn());
+    }
+
+    pub fn synchronize_clock(&mut self, now: Instant, now_ts: TimeStamp) {
+        self.receive_buffer.synchronize_clock(now, now_ts);
+    }
+
     pub fn on_full_ack_event(&mut self, now: Instant) -> Option<AckControlInfo> {
-        let ack_number = self.ack_number();
-
-        // 2) If (a) the ACK number equals to the largest ACK number ever
-        //    acknowledged by ACK2
-        if ack_number == self.lr_ack_acked {
-            return None;
-        }
-
-        // make sure this ACK number is greater or equal to a one sent previously
-        assert!(self.last_ack_number() <= ack_number);
-
-        trace!(
-            "Sending ACK; ack_num={:?}, lr_ack_acked={:?}",
-            ack_number,
-            self.lr_ack_acked
-        );
-
-        if let Some(&AckHistoryEntry {
-            ack_number: last_ack_number,
-            departure_time: last_departure_time,
-            ..
-        }) = self.ack_history_window.first()
-        {
-            // or, (b) it is equal to the ACK number in the
-            // last ACK
-            if ack_number == last_ack_number {
-                // and the time interval between these two ACK packets is
-                // less than 2 RTTs,
-                let interval = TimeSpan::from_interval(last_departure_time, now);
-                if interval < self.rtt.mean() * 2 {
-                    // stop (do not send this ACK).
-                    return None;
-                }
-            }
-        }
-
-        // 3) Assign this ACK a unique increasing ACK sequence number.
-        let full_ack_seq_number = self.next_ack;
-        self.next_ack.increment();
-
-        // add it to the ack history
-        self.ack_history_window.push(AckHistoryEntry {
-            ack_number,
-            ack_seq_num: Some(full_ack_seq_number),
-            departure_time: now,
-        });
-
-        // 4) Calculate the packet arrival speed according to the following
-        // algorithm:
+        let (fasn, dsn) = self.ack_history_window.next_full_ack(
+            now,
+            self.rtt.mean(),
+            self.receive_buffer.next_ack_dsn(),
+        )?;
         let arrival_speed = self.arrival_speed.calculate();
+
         let packet_recv_rate = arrival_speed.map(|(packets, _)| packets);
         let data_recv_rate = arrival_speed.map(|(_, bytes)| bytes);
-
-        // 5) Calculate the estimated link capacity according to the following algorithm:
         let est_link_cap = self.link_capacity_estimate.calculate();
 
         Some(AckControlInfo::FullSmall {
-            ack_number,
+            full_ack_seq_number: Some(fasn),
+            ack_number: dsn,
             rtt: self.rtt.mean(),
             rtt_variance: self.rtt.variance(),
             buffer_available: 100, // TODO: add this
-            full_ack_seq_number: Some(full_ack_seq_number),
             packet_recv_rate,
             est_link_cap,
             data_recv_rate,
@@ -277,33 +238,18 @@ impl AutomaticRepeatRequestAlgorithm {
     }
 
     pub fn on_nak_event(&mut self, now: Instant) -> Option<CompressedLossList> {
-        // Search the receiver's loss list, find out all those sequence numbers
-        // whose last feedback time is k*RTT before, where k is initialized as 2
-        // and increased by 1 each time the number is fed back. Compress
-        // (according to section 6.4) and send these numbers back to the sender
-        // in an NAK packet.
-
-        // increment k and change feedback time, returning sequence numbers
-        let rtt = self.rtt.mean();
-        let loss_list = self
-            .loss_list
-            .iter_mut()
-            .filter(|lle| TimeSpan::from_interval(lle.feedback_time, now) > rtt * lle.k)
-            .map(|pak| {
-                pak.k += 1;
-                pak.feedback_time = now;
-
-                pak.seq_num
-            });
-        CompressedLossList::try_from(loss_list)
+        self.receive_buffer.prepare_loss_list(now, self.rtt.mean())
     }
 
     pub fn handle_data_packet(
         &mut self,
         now: Instant,
-        seq_number: SeqNumber,
-        size: usize,
-    ) -> (Option<CompressedLossList>, Option<AckControlInfo>) {
+        packet: DataPacket,
+    ) -> Result<(Option<CompressedLossList>, Option<AckControlInfo>), DataPacket> {
+        let seq_number = packet.seq_number;
+        let size = packet.payload.len();
+        let nak = self.receive_buffer.push_packet(now, packet)?;
+
         // 4) If the sequence number of the current data packet is 16n + 1,
         //     where n is an integer, record the time interval between this
         self.link_capacity_estimate
@@ -312,220 +258,285 @@ impl AutomaticRepeatRequestAlgorithm {
         // 5) Record the packet arrival time in PKT History Window.
         self.arrival_speed.record_data_packet(now, size);
 
-        // 6)
-        // a. If the sequence number of the current data packet is greater
-        //    than LRSN, put all the sequence numbers between (but
-        //    excluding) these two values into the receiver's loss list and
-        //    send them to the sender in an NAK packet.
-        let nak = match seq_number.cmp(&self.lrsn) {
-            Ordering::Greater => {
-                // lrsn is the latest packet received, so nak the one after that
-                for i in seq_num_range(self.lrsn, seq_number) {
-                    self.loss_list.push(LossListEntry {
-                        seq_num: i,
-                        feedback_time: now,
-                        // k is initialized at 2, as stated on page 12 (very end)
-                        k: 2,
-                    })
-                }
+        let light_ack = self
+            .ack_history_window
+            .next_light_ack(self.receive_buffer.next_ack_dsn())
+            // k is initialized at 2, as stated on page 12 (very end)
+            .map(AckControlInfo::Lite);
 
-                CompressedLossList::try_from(seq_num_range(self.lrsn, seq_number))
-            }
-            // b. If the sequence number is less than LRSN, remove it from the
-            //    receiver's loss list.
-            Ordering::Less => {
-                match self.loss_list[..].binary_search_by(|ll| ll.seq_num.cmp(&seq_number)) {
-                    Ok(i) => {
-                        self.loss_list.remove(i);
-                    }
-                    Err(_) => {
-                        debug!(
-                            "Packet received that's not in the loss list: {:?}, loss_list={:?}",
-                            seq_number,
-                            self.loss_list
-                                .iter()
-                                .map(|ll| ll.seq_num.as_raw())
-                                .collect::<Vec<_>>()
-                        );
-                    }
-                };
-                None
-            }
-            Ordering::Equal => None,
-        };
-
-        // record that we got this packet
-        self.lrsn = max(seq_number + 1, self.lrsn);
-
-        // check if we need to send a light ACK
-        let ack_number = self.ack_number();
-        let light_ack = if ack_number - self.last_ack_number() > LIGHT_ACK_PACKET_INTERVAL {
-            self.ack_history_window.push(AckHistoryEntry {
-                ack_number,
-                ack_seq_num: None,
-                departure_time: now,
-            });
-            Some(AckControlInfo::Lite(ack_number))
-        } else {
-            None
-        };
-
-        (nak, light_ack)
+        Ok((nak, light_ack))
     }
 
-    pub fn handle_ack2_packet(&mut self, now: Instant, ack_seq_num: FullAckSeqNumber) {
-        let ack2_arrival_time = now;
-
-        // 1) Locate the related ACK in the ACK History Window according to the
-        //    ACK sequence number in this ACK2.
-        let id_in_wnd = match self
-            .ack_history_window
-            .as_slice()
-            .binary_search_by_key(&Some(ack_seq_num), |entry| entry.ack_seq_num)
-        {
-            Ok(i) => Some(i),
-            Err(_) => None,
-        };
-
-        if let Some(id) = id_in_wnd {
-            let AckHistoryEntry {
-                ack_number,
-                departure_time: ack_departure_time,
-                ..
-            } = self.ack_history_window[id];
-
-            // 2) Update the largest ACK number ever been acknowledged.
-            self.lr_ack_acked = ack_number;
-
+    pub fn handle_ack2_packet(
+        &mut self,
+        now: Instant,
+        ack_seq_num: FullAckSeqNumber,
+    ) -> Option<&Rtt> {
+        if let Some(rtt) = self.ack_history_window.calculate_ack2_rtt(now, ack_seq_num) {
             // 3) Calculate new rtt according to the ACK2 arrival time and the ACK
             //    , and update the RTT value as: RTT = (RTT * 7 +
             //    rtt) / 8
             // 4) Update RTTVar by: RTTVar = (RTTVar * 3 + abs(RTT - rtt)) / 4.
-            self.rtt.update(TimeSpan::from_interval(
-                ack_departure_time,
-                ack2_arrival_time,
-            ));
+            self.rtt.update(rtt);
+            Some(&self.rtt)
         } else {
-            warn!(
-                "ACK sequence number in ACK2 packet not found in ACK history: {:?}",
-                ack_seq_num
-            );
+            None
         }
     }
 
-    // The most recent ack number, or init seq number otherwise
-    fn last_ack_number(&self) -> SeqNumber {
-        if let Some(he) = self.ack_history_window.last() {
-            he.ack_number
-        } else {
-            self.init_seq_num
-        }
-    }
-
-    // Greatest seq number that everything before it has been received + 1
-    fn ack_number(&self) -> SeqNumber {
-        match self.loss_list.first() {
-            // There is an element in the loss list
-            Some(i) => i.seq_num,
-            // No elements, use lrsn, as it's already exclusive
-            None => self.lrsn,
-        }
-    }
-
-    pub fn rtt(&self) -> &Rtt {
-        &self.rtt
+    pub fn pop_next_message(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
+        self.receive_buffer.pop_next_message(now)
     }
 }
 
 #[cfg(test)]
 mod automatic_repeat_request_algorithm {
     use super::*;
-    use std::time::Duration;
+    use crate::packet::{CompressedLossList, DataEncryption, PacketLocation};
+    use crate::protocol::TimeStamp;
+    use crate::seq_number::seq_num_range;
+    use crate::{MsgNumber, SocketId};
+    use bytes::Bytes;
+
+    fn basic_pack() -> DataPacket {
+        DataPacket {
+            seq_number: SeqNumber(0),
+            message_loc: PacketLocation::FIRST,
+            in_order_delivery: false,
+            encryption: DataEncryption::None,
+            retransmitted: false,
+            message_number: MsgNumber(0),
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: SocketId(4),
+            payload: Bytes::from(vec![0; 10]),
+        }
+    }
 
     #[test]
-    fn data_packet_nak() {
+    fn handle_data_packet_with_loss() {
         let start = Instant::now();
-        let data_seq_number = SeqNumber(0);
-        let mut arq = AutomaticRepeatRequestAlgorithm::new(data_seq_number);
+        let init_seq_num = SeqNumber(5);
+        let mut arq =
+            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(2), init_seq_num);
 
         assert_eq!(arq.on_full_ack_event(start), None);
         assert_eq!(arq.on_nak_event(start), None);
-        assert_eq!(
-            arq.handle_data_packet(start, data_seq_number, 0),
-            (None, None)
-        );
+        assert_eq!(arq.pop_next_message(start + Duration::from_secs(10)), None);
+        assert_eq!(arq.is_flushed(), true);
 
         assert_eq!(
-            arq.handle_data_packet(start, data_seq_number + 2, 0),
-            (
-                CompressedLossList::try_from(seq_num_range(
-                    data_seq_number + 1,
-                    data_seq_number + 2
-                )),
-                None
-            )
+            arq.handle_data_packet(
+                start,
+                DataPacket {
+                    seq_number: init_seq_num,
+                    ..basic_pack()
+                }
+            ),
+            Ok((None, None))
         );
+        assert_eq!(arq.is_flushed(), false);
+
+        assert_eq!(
+            arq.handle_data_packet(
+                start,
+                DataPacket {
+                    seq_number: init_seq_num + 3,
+                    ..basic_pack()
+                }
+            ),
+            Ok((
+                CompressedLossList::try_from(seq_num_range(init_seq_num + 1, init_seq_num + 2)),
+                None
+            ))
+        );
+        assert_eq!(arq.is_flushed(), false);
+
+        assert_eq!(arq.pop_next_message(start + Duration::from_secs(10)), None);
     }
 
     #[test]
     fn ack_event() {
         let start = Instant::now();
-        let data_seq_number = SeqNumber(0);
-        let mut arq = AutomaticRepeatRequestAlgorithm::new(data_seq_number);
+        let init_seq_num = SeqNumber(1);
+        let mut arq =
+            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(2), init_seq_num);
 
         assert_eq!(
-            arq.handle_data_packet(start, data_seq_number, 0),
-            (None, None)
+            arq.handle_data_packet(
+                start,
+                DataPacket {
+                    seq_number: init_seq_num,
+                    ..basic_pack()
+                }
+            ),
+            Ok((None, None))
         );
         assert_eq!(
-            arq.handle_data_packet(start, data_seq_number + 1, 0),
-            (None, None)
+            arq.handle_data_packet(
+                start,
+                DataPacket {
+                    seq_number: init_seq_num + 1,
+                    ..basic_pack()
+                }
+            ),
+            Ok((None, None))
         );
         assert_eq!(
             arq.on_full_ack_event(start),
             Some(AckControlInfo::FullSmall {
-                ack_number: data_seq_number + 2,
+                full_ack_seq_number: Some(FullAckSeqNumber::INITIAL),
+                ack_number: init_seq_num + 2,
                 rtt: Rtt::new().mean(),
                 rtt_variance: Rtt::new().variance(),
                 buffer_available: 100,
                 packet_recv_rate: None,
                 est_link_cap: None,
                 data_recv_rate: None,
-                full_ack_seq_number: Some(FullAckSeqNumber::INITIAL),
             })
         );
 
         assert_eq!(
-            arq.handle_data_packet(start, data_seq_number + 2, 0),
-            (None, None)
+            arq.handle_data_packet(
+                start,
+                DataPacket {
+                    seq_number: init_seq_num + 2,
+                    ..basic_pack()
+                }
+            ),
+            Ok((None, None))
         );
+        assert_eq!(arq.is_flushed(), false);
+    }
+
+    #[test]
+    fn ack2_packet() {
+        let start = Instant::now();
+        let init_seq_num = SeqNumber(1);
+        let mut arq =
+            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(2), init_seq_num);
+
+        let _ = arq.handle_data_packet(
+            start,
+            DataPacket {
+                seq_number: init_seq_num,
+                ..basic_pack()
+            },
+        );
+        let _ = arq.handle_data_packet(
+            start,
+            DataPacket {
+                seq_number: init_seq_num + 1,
+                ..basic_pack()
+            },
+        );
+        let _ = arq.on_full_ack_event(start);
+        let _ = arq.handle_data_packet(
+            start,
+            DataPacket {
+                seq_number: init_seq_num + 2,
+                ..basic_pack()
+            },
+        );
+        assert_eq!(arq.rtt.mean(), Rtt::new().mean());
+        assert_eq!(arq.is_flushed(), false);
+
+        let rtt =
+            arq.handle_ack2_packet(start + Duration::from_millis(1), FullAckSeqNumber::INITIAL);
+        assert_ne!(rtt.map(|r| r.mean()), Some(Rtt::new().mean()));
+        assert_eq!(arq.is_flushed(), false);
+    }
+
+    #[test]
+    fn is_flushed() {
+        let start = Instant::now();
+        let init_seq_num = SeqNumber(1);
+        let mut arq =
+            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(1), init_seq_num);
+
+        let _ = arq.handle_data_packet(
+            start,
+            DataPacket {
+                seq_number: init_seq_num,
+                message_loc: PacketLocation::ONLY,
+                ..basic_pack()
+            },
+        );
+
+        assert_eq!(
+            arq.on_full_ack_event(start),
+            Some(AckControlInfo::FullSmall {
+                full_ack_seq_number: Some(FullAckSeqNumber::INITIAL),
+                ack_number: init_seq_num + 1,
+                rtt: Rtt::new().mean(),
+                rtt_variance: Rtt::new().variance(),
+                buffer_available: 100,
+                packet_recv_rate: None,
+                est_link_cap: None,
+                data_recv_rate: None,
+            })
+        );
+
+        let now = start + Duration::from_millis(10);
+        assert!(matches!(
+            arq.handle_ack2_packet(now, FullAckSeqNumber::INITIAL),
+            Some(_)
+        ));
+        assert_eq!(arq.pop_next_message(now), None, "{:?}", arq);
+
+        let now = start + Duration::from_secs(10);
+        assert_eq!(
+            arq.pop_next_message(now),
+            Some((start, Bytes::from(vec![0u8; 10])))
+        );
+        assert_eq!(arq.is_flushed(), true);
     }
 
     #[test]
     fn nak_event() {
         let start = Instant::now();
-        let data_seq_number = SeqNumber(0);
-        let mut arq = AutomaticRepeatRequestAlgorithm::new(data_seq_number);
+        let tsbpd_latency = Duration::from_secs(2);
+        let init_seq_num = SeqNumber(5);
+        let mut arq = AutomaticRepeatRequestAlgorithm::new(start, tsbpd_latency, init_seq_num);
 
-        arq.handle_data_packet(start, data_seq_number + 2, 0);
+        let now = start;
+        let _ = arq.handle_data_packet(
+            now,
+            DataPacket {
+                seq_number: init_seq_num,
+                ..basic_pack()
+            },
+        );
+        let _ = arq.handle_data_packet(
+            now,
+            DataPacket {
+                seq_number: init_seq_num + 4,
+                ..basic_pack()
+            },
+        );
+        assert_eq!(arq.on_nak_event(now), None);
 
         let now = start + arq.rtt.mean();
         assert_eq!(arq.on_nak_event(now), None);
 
-        let now = now + arq.rtt.mean() * 2;
+        let now = start + arq.rtt.mean() * 2;
         assert_eq!(
             arq.on_nak_event(now),
-            CompressedLossList::try_from(seq_num_range(data_seq_number, data_seq_number + 2))
+            CompressedLossList::try_from(seq_num_range(init_seq_num + 1, init_seq_num + 3))
         );
 
-        let now = now + arq.rtt.mean();
+        let now = start + arq.rtt.mean() * 4;
         assert_eq!(arq.on_nak_event(now), None);
 
-        let now = now + arq.rtt.mean() * 4;
+        let now = start + arq.rtt.mean() * 5;
         assert_eq!(
             arq.on_nak_event(now),
-            CompressedLossList::try_from(seq_num_range(data_seq_number, data_seq_number + 2))
+            CompressedLossList::try_from(seq_num_range(init_seq_num + 1, init_seq_num + 3))
         );
+
+        let now = start + tsbpd_latency + Duration::from_millis(10);
+        // should drop late messages, not pop them
+        assert_eq!(arq.pop_next_message(now), None);
+        assert_eq!(arq.on_nak_event(now), None);
     }
 
     #[test]

@@ -245,14 +245,15 @@ impl Sender {
 
             // 6) If this is a Light ACK, stop.
             if let AckControlInfo::FullSmall {
-                ack_number: _,
+                full_ack_seq_number: Some(ack_seq_num),
                 rtt,
                 rtt_variance,
-                buffer_available: _,
-                full_ack_seq_number: Some(ack_seq_num),
                 packet_recv_rate,
                 est_link_cap,
-                data_recv_rate: _,
+                // ack_number: _,
+                // buffer_available: _,
+                // data_recv_rate: _,
+                ..
             } = info
             {
                 // 3) Update RTT and RTTVar.
@@ -297,6 +298,8 @@ impl Sender {
                     .saturating_add(est_link_cap.unwrap_or(0)))
                     / 8;
             }
+        } else {
+            debug!("Missed ACK2 {:?}", info)
         }
     }
 

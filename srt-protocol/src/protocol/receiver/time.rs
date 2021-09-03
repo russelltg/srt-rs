@@ -6,7 +6,8 @@ use stats::OnlineStats;
 
 use crate::protocol::{TimeBase, TimeSpan, TimeStamp, Timer};
 
-pub(crate) struct SynchronizedRemoteClock {
+#[derive(Debug)]
+pub struct SynchronizedRemoteClock {
     drift_deviation_tolerance: Duration,
     time_base: TimeBase,
     last_monotonic_instant: Option<Instant>,
@@ -65,10 +66,6 @@ impl SynchronizedRemoteClock {
 
     pub fn instant_from(&self, ts: TimeStamp) -> Instant {
         self.time_base.instant_from(ts)
-    }
-
-    pub fn origin_time(&self) -> Instant {
-        self.time_base.origin_time()
     }
 }
 
@@ -148,7 +145,7 @@ mod synchronized_remote_clock {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Rtt {
     mean: TimeSpan,
     variance: TimeSpan,

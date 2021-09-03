@@ -3,24 +3,20 @@ use std::net::SocketAddr;
 use std::time::Instant;
 
 use bytes::Bytes;
-use log::{debug, info, trace};
-
-use arq::AutomaticRepeatRequestAlgorithm;
-use buffer::RecvBuffer;
+use log::{debug, error, info, trace, warn};
 
 use crate::connection::ConnectionStatus;
 use crate::packet::{ControlPacket, ControlTypes, DataPacket, FullAckSeqNumber, Packet};
 use crate::protocol::encryption::Cipher;
 use crate::protocol::handshake::Handshake;
+use crate::protocol::receiver::arq::AutomaticRepeatRequestAlgorithm;
 use crate::protocol::receiver::time::ReceiveTimers;
 use crate::protocol::{TimeBase, TimeStamp};
 use crate::ConnectionSettings;
 
-use super::TimeSpan;
-use log::error;
-
 mod arq;
 mod buffer;
+mod history;
 mod time;
 
 #[derive(Debug)]
@@ -32,8 +28,6 @@ pub struct Receiver {
     time_base: TimeBase,
 
     timers: ReceiveTimers,
-
-    receive_buffer: RecvBuffer,
 
     arq: AutomaticRepeatRequestAlgorithm,
 
@@ -55,14 +49,17 @@ impl Receiver {
 
         Receiver {
             settings: settings.clone(),
-            timers: ReceiveTimers::new(settings.socket_start_time),
+            handshake,
             time_base: TimeBase::new(settings.socket_start_time),
+            cipher: Cipher::new(settings.crypto_manager),
+            arq: AutomaticRepeatRequestAlgorithm::new(
+                settings.socket_start_time,
+                settings.recv_tsbpd_latency,
+                settings.init_seq_num,
+            ),
+            timers: ReceiveTimers::new(settings.socket_start_time),
             control_packets: VecDeque::new(),
             data_release: VecDeque::new(),
-            handshake,
-            receive_buffer: RecvBuffer::with(&settings),
-            cipher: Cipher::new(settings.crypto_manager),
-            arq: AutomaticRepeatRequestAlgorithm::new(settings.init_seq_num),
             status: ConnectionStatus::Open(settings.recv_tsbpd_latency),
         }
     }
@@ -72,17 +69,7 @@ impl Receiver {
     }
 
     pub fn is_flushed(&self) -> bool {
-        debug!(
-            "{:?}|{:?}|recv - {:?}:{},{}",
-            TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
-            self.settings.local_sockid,
-            self.receive_buffer.next_msg_ready(),
-            self.arq.lr_ack_acked,
-            self.receive_buffer.next_release()
-        );
-
-        self.receive_buffer.next_msg_ready().is_none()
-            && self.arq.lr_ack_acked == self.receive_buffer.next_release() // packets have been acked and all acks have been acked (ack2)
+        self.arq.is_flushed() // packets have been acked and all acks have been acked (ack2)
             && self.control_packets.is_empty()
             && self.data_release.is_empty()
     }
@@ -105,7 +92,7 @@ impl Receiver {
         if self.status.check_close_timeout(now, self.is_flushed()) {
             debug!("{:?} receiver close timed out", self.settings.local_sockid);
             // receiver is closing, there is no need to track ACKs anymore
-            self.arq.lr_ack_acked = self.receive_buffer.next_release()
+            self.arq.clear();
         }
     }
 
@@ -114,38 +101,45 @@ impl Receiver {
     }
 
     pub fn synchronize_clock(&mut self, now: Instant, ts: TimeStamp) {
-        self.receive_buffer.synchronize_clock(now, ts)
+        self.arq.synchronize_clock(now, ts)
     }
 
     pub fn handle_data_packet(&mut self, now: Instant, data: DataPacket) {
-        // we've already gotten this packet, drop it
-        if self.receive_buffer.next_release() > data.seq_number {
-            debug!("Received packet {:?} twice", data.seq_number);
-            return;
-        }
-
-        let (nak, ack) = self
-            .arq
-            .handle_data_packet(now, data.seq_number, data.payload.len());
-
-        if let Some(loss_list) = nak {
-            self.send_control(now, ControlTypes::Nak(loss_list));
-        }
-        if let Some(light_ack) = ack {
-            self.send_control(now, ControlTypes::Ack(light_ack));
-        }
-
         match self.cipher.decrypt(data) {
-            Ok(data) => self.receive_buffer.add(data),
-            Err(e) => error!("{:?} {:?}", self.settings.local_sockid, e),
+            Ok(data) => match self.arq.handle_data_packet(now, data) {
+                Ok((nak, ack)) => {
+                    if let Some(loss_list) = nak {
+                        self.send_control(now, ControlTypes::Nak(loss_list));
+                    }
+                    if let Some(light_ack) = ack {
+                        self.send_control(now, ControlTypes::Ack(light_ack));
+                    }
+                }
+                Err(e) => error!(
+                    "invalid data packet: {:?} {:?}",
+                    self.settings.local_sockid, e
+                ),
+            },
+            Err(e) => error!(
+                "decryption failed: {:?} {:?}",
+                self.settings.local_sockid, e
+            ),
         }
     }
 
     pub fn handle_ack2_packet(&mut self, seq_num: FullAckSeqNumber, ack2_arrival_time: Instant) {
-        self.arq.handle_ack2_packet(ack2_arrival_time, seq_num);
-
-        // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
-        self.timers.update_rtt(self.arq.rtt());
+        // 1) Locate the related ACK in the ACK History Window according to the
+        //    ACK sequence number in this ACK2.
+        // 2) Update the largest ACK number ever been acknowledged.
+        if let Some(rtt) = self.arq.handle_ack2_packet(ack2_arrival_time, seq_num) {
+            // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
+            self.timers.update_rtt(rtt);
+        } else {
+            warn!(
+                "ACK sequence number in ACK2 packet not found in ACK history: {:?}",
+                seq_num
+            );
+        }
     }
 
     pub fn handle_shutdown_packet(&mut self, now: Instant) {
@@ -157,14 +151,9 @@ impl Receiver {
     }
 
     pub fn next_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
-        // try to release packets
-        while let Some(d) = self.receive_buffer.next_msg_tsbpd(now) {
+        while let Some(d) = self.arq.pop_next_message(now) {
             self.data_release.push_back(d);
         }
-
-        // drop packets
-        // TODO: do something with this
-        let _dropped = self.receive_buffer.drop_too_late_packets(now);
 
         self.data_release.pop_front()
     }
@@ -176,8 +165,8 @@ impl Receiver {
     }
 
     pub fn next_timer(&self, now: Instant) -> Instant {
-        let next_message = self.receive_buffer.next_message_release_time();
-        let unacked_packets = self.receive_buffer.unacked_packet_count();
+        let next_message = self.arq.next_message_release_time();
+        let unacked_packets = self.arq.unacked_packet_count();
         self.timers.next_timer(now, next_message, unacked_packets)
     }
 

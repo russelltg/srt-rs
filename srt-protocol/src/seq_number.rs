@@ -6,9 +6,10 @@ modular_num! {
     pub SeqNumber(u32, 31)
 }
 
-pub fn seq_num_range(begin: SeqNumber, past_end: SeqNumber) -> impl Iterator<Item = SeqNumber> {
-    successors(Some(begin), move |prev| {
-        if *prev == past_end {
+#[allow(dead_code)]
+pub fn seq_num_range(first: SeqNumber, last: SeqNumber) -> impl Iterator<Item = SeqNumber> {
+    successors(Some(first), move |prev| {
+        if *prev == last {
             None
         } else {
             Some(*prev + 1)
