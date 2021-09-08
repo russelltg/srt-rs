@@ -729,8 +729,6 @@ mod receive_buffer {
         let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num);
 
         let now = start;
-        assert_eq!(buf.drop_too_late_packets(now), None);
-
         let _ = buf.push_packet(
             now,
             DataPacket {
@@ -742,28 +740,21 @@ mod receive_buffer {
         );
         assert_eq!(buf.next_ack_dsn(), init_seq_num + 1);
         assert_eq!(buf.pop_next_message(now), None);
-        assert_eq!(buf.drop_too_late_packets(now), None);
 
         let _ = buf.push_packet(
             now,
             DataPacket {
                 seq_number: init_seq_num + 5,
-                message_loc: PacketLocation::FIRST,
+                message_loc: PacketLocation::ONLY,
                 payload: b"yas"[..].into(),
                 ..basic_pack()
             },
         );
-        assert_eq!(buf.next_ack_dsn(), init_seq_num + 1);
         assert_eq!(buf.pop_next_message(now), None);
-        assert_eq!(buf.drop_too_late_packets(now), None);
+        assert_eq!(buf.next_ack_dsn(), init_seq_num + 1);
 
         let now = now + tsbpd;
-        assert_eq!(
-            buf.drop_too_late_packets(now),
-            Some((init_seq_num, init_seq_num + 5, TimeSpan::from_micros(0)))
-        );
-        assert_eq!(buf.pop_next_message(now), None);
-
+        assert_eq!(buf.pop_next_message(now), Some((now, b"yes"[..].into())));
         assert_eq!(buf.next_ack_dsn(), init_seq_num + 5);
     }
 }
