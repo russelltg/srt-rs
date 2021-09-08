@@ -322,7 +322,7 @@ mod automatic_repeat_request_algorithm {
         assert_eq!(arq.on_full_ack_event(start), None);
         assert_eq!(arq.on_nak_event(start), None);
         assert_eq!(arq.pop_next_message(start + Duration::from_secs(10)), None);
-        assert_eq!(arq.is_flushed(), true);
+        assert!(arq.is_flushed());
 
         assert_eq!(
             arq.handle_data_packet(
@@ -334,7 +334,7 @@ mod automatic_repeat_request_algorithm {
             ),
             Ok((None, None))
         );
-        assert_eq!(arq.is_flushed(), false);
+        assert!(!arq.is_flushed());
 
         assert_eq!(
             arq.handle_data_packet(
@@ -349,7 +349,7 @@ mod automatic_repeat_request_algorithm {
                 None
             ))
         );
-        assert_eq!(arq.is_flushed(), false);
+        assert!(!arq.is_flushed());
 
         assert_eq!(arq.pop_next_message(start + Duration::from_secs(10)), None);
     }
@@ -405,7 +405,7 @@ mod automatic_repeat_request_algorithm {
             ),
             Ok((None, None))
         );
-        assert_eq!(arq.is_flushed(), false);
+        assert!(!arq.is_flushed());
     }
 
     #[test]
@@ -438,12 +438,12 @@ mod automatic_repeat_request_algorithm {
             },
         );
         assert_eq!(arq.rtt.mean(), Rtt::new().mean());
-        assert_eq!(arq.is_flushed(), false);
+        assert!(!arq.is_flushed());
 
         let rtt =
             arq.handle_ack2_packet(start + Duration::from_millis(1), FullAckSeqNumber::INITIAL);
         assert_ne!(rtt.map(|r| r.mean()), Some(Rtt::new().mean()));
-        assert_eq!(arq.is_flushed(), false);
+        assert!(!arq.is_flushed());
     }
 
     #[test]
@@ -488,7 +488,7 @@ mod automatic_repeat_request_algorithm {
             arq.pop_next_message(now),
             Some((start, Bytes::from(vec![0u8; 10])))
         );
-        assert_eq!(arq.is_flushed(), true);
+        assert!(arq.is_flushed());
     }
 
     #[test]
