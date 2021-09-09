@@ -19,9 +19,9 @@ struct AckHistoryEntry {
 #[derive(Debug)]
 pub struct AckHistoryWindow {
     tsbpd_latency: Duration,
-    initial_dsn: SeqNumber,
-    buffer: VecDeque<AckHistoryEntry>,
+    last_ack_dsn: SeqNumber,
     largest_ack2_dsn: SeqNumber,
+    buffer: VecDeque<AckHistoryEntry>,
 }
 
 impl AckHistoryWindow {
@@ -30,9 +30,9 @@ impl AckHistoryWindow {
     pub fn new(tsbpd_latency: Duration, initial_dsn: SeqNumber) -> Self {
         Self {
             tsbpd_latency,
-            initial_dsn,
-            buffer: VecDeque::with_capacity(20_000 * tsbpd_latency.as_secs_f32() as usize),
+            last_ack_dsn: initial_dsn,
             largest_ack2_dsn: initial_dsn,
+            buffer: VecDeque::with_capacity(20_000 * tsbpd_latency.as_secs_f32() as usize),
         }
     }
 
@@ -111,6 +111,7 @@ impl AckHistoryWindow {
         let next_fasn = self.next_fasn();
 
         // add it to the ack history
+        self.last_ack_dsn = next_dsn;
         self.buffer.push_back(AckHistoryEntry {
             data_seqence_numer: next_dsn,
             ack_sequence_number: next_fasn,
@@ -120,8 +121,9 @@ impl AckHistoryWindow {
         Some((next_fasn, next_dsn))
     }
 
-    pub fn next_light_ack(&self, next_dsn: SeqNumber) -> Option<SeqNumber> {
-        if next_dsn - self.last_ack_dsn() >= Self::LIGHT_ACK_PACKET_INTERVAL {
+    pub fn next_light_ack(&mut self, next_dsn: SeqNumber) -> Option<SeqNumber> {
+        if next_dsn >= self.last_ack_dsn + Self::LIGHT_ACK_PACKET_INTERVAL {
+            self.last_ack_dsn = next_dsn;
             Some(next_dsn)
         } else {
             None
@@ -133,13 +135,6 @@ impl AckHistoryWindow {
             .back()
             .map_or(FullAckSeqNumber::INITIAL, |n| n.ack_sequence_number + 1)
     }
-
-    // The most recent ack number, or init seq number otherwise
-    fn last_ack_dsn(&self) -> SeqNumber {
-        self.buffer
-            .back()
-            .map_or(self.initial_dsn, |ack| ack.data_seqence_numer)
-    }
 }
 
 #[cfg(test)]
@@ -149,17 +144,20 @@ mod ack_history_window {
     #[test]
     fn light_ack() {
         let tsbpd_latency = Duration::from_secs(1);
-        let mut next_dsn = SeqNumber(1);
+        let initial_dsn = SeqNumber(1);
 
-        let window = AckHistoryWindow::new(tsbpd_latency, next_dsn);
+        let mut window = AckHistoryWindow::new(tsbpd_latency, initial_dsn);
 
-        for _ in 0..64 {
-            assert_eq!(window.next_light_ack(next_dsn.increment()), None);
+        // absent a Full ACK, a Light ACK should be sent every 64 packets
+        for i in 0..4 {
+            for j in 0..64 {
+                let next_light_ack = initial_dsn + j + i * 64;
+                assert_eq!(window.next_light_ack(next_light_ack), None);
+            }
+
+            let next_light_ack = initial_dsn + 64 + i * 64;
+            assert_eq!(window.next_light_ack(next_light_ack), Some(next_light_ack));
         }
-        assert_eq!(
-            window.next_light_ack(next_dsn.increment()),
-            Some(SeqNumber(65))
-        );
     }
 
     #[test]
