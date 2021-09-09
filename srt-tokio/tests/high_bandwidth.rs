@@ -37,7 +37,7 @@ async fn high_bandwidth() -> Result<(), Error> {
 
         sock.send_all(&mut stream_gbps).await?;
 
-        Ok::<_, Error>(())
+        sock.close().await
     };
 
     let recv_fut = async {
