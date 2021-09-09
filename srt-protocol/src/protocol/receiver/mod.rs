@@ -35,8 +35,6 @@ pub struct Receiver {
 
     control_packets: VecDeque<Packet>,
 
-    data_release: VecDeque<(Instant, Bytes)>,
-
     status: ConnectionStatus,
 }
 
@@ -59,7 +57,6 @@ impl Receiver {
             ),
             timers: ReceiveTimers::new(settings.socket_start_time),
             control_packets: VecDeque::new(),
-            data_release: VecDeque::new(),
             status: ConnectionStatus::Open(settings.recv_tsbpd_latency),
         }
     }
@@ -71,7 +68,6 @@ impl Receiver {
     pub fn is_flushed(&self) -> bool {
         self.arq.is_flushed() // packets have been acked and all acks have been acked (ack2)
             && self.control_packets.is_empty()
-            && self.data_release.is_empty()
     }
 
     pub fn check_timers(&mut self, now: Instant) {
@@ -151,11 +147,7 @@ impl Receiver {
     }
 
     pub fn next_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
-        while let Some(d) = self.arq.pop_next_message(now) {
-            self.data_release.push_back(d);
-        }
-
-        self.data_release.pop_front()
+        self.arq.pop_next_message(now)
     }
 
     pub fn next_packet(&mut self) -> Option<(Packet, SocketAddr)> {
