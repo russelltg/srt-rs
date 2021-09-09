@@ -309,8 +309,9 @@ impl ReceiveBuffer {
         &mut self,
         now: Instant,
     ) -> Option<(SeqNumber, SeqNumber, TimeSpan)> {
+        let latency_tolerance = self.tsbpd_latency + Duration::from_millis(2);
         // Not only does it have to be non-none, it also has to be a First (don't drop half messages)
-        let (index, seq_number, t) = self
+        let (index, seq_number, timestamp) = self
             .buffer
             .iter()
             .enumerate()
@@ -318,21 +319,12 @@ impl ReceiveBuffer {
             .take_until(|(_, p)| p.is_first())
             .last()
             .and_then(|(i, p)| {
-                p.data_packet().map(|d| {
-                    (
-                        i,
-                        d.seq_number,
-                        TimeSpan::from_interval(
-                            self.remote_clock.instant_from(d.timestamp)
-                                + self.tsbpd_latency
-                                + Duration::from_millis(2),
-                            now,
-                        ),
-                    )
-                })
+                p.data_packet()
+                    .map(|d| (i, d.seq_number, self.remote_clock.instant_from(d.timestamp)))
             })
-            .filter(|(_, _, t)| *t >= TimeSpan::ZERO)?;
+            .filter(|(_, _, timestamp)| now >= *timestamp + latency_tolerance)?;
 
+        let latency = TimeSpan::from_interval(timestamp + self.tsbpd_latency, now);
         let drop_count = self.buffer.drain(0..index).count();
         self.lrsn = self.calculate_lrsn();
 
@@ -340,10 +332,10 @@ impl ReceiveBuffer {
             "Receiver dropping packets: [{},{}), {:?} too late",
             seq_number - drop_count as u32,
             seq_number,
-            t
+            latency
         );
 
-        Some((seq_number - drop_count as u32, seq_number, t))
+        Some((seq_number - drop_count as u32, seq_number, latency))
     }
 
     pub fn next_message_release_time(&self) -> Option<Instant> {
