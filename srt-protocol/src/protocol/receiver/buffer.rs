@@ -323,7 +323,7 @@ impl ReceiveBuffer {
                         i,
                         d.seq_number,
                         TimeSpan::from_interval(
-                            self.remote_clock.instant_from(d.timestamp) + self.tsbpd_latency,
+                            self.remote_clock.instant_from(d.timestamp) + self.tsbpd_latency + Duration::from_millis(2),
                             now,
                         ),
                     )
@@ -761,11 +761,17 @@ mod receive_buffer {
             },
         );
         assert_eq!(buf.pop_next_message(now), None);
+        assert_eq!(buf.next_ack_dsn(), init_seq_num);
+
+        // 2 ms buffer release tolerance, we are ok with releasing them 2ms late
+        let now = now + Duration::from_millis(2);
+        assert_eq!(buf.pop_next_message(now), None);
         // it should drop all missing packets up to the next viable message
         // and begin to ack all viable packets
         assert_eq!(buf.next_ack_dsn(), init_seq_num + 3);
 
-        let now = now + tsbpd;
+        // 2 ms buffer release tolerance, we are ok with releasing them 2ms late
+        let now = now + tsbpd + Duration::from_millis(2);
         assert_eq!(buf.pop_next_message(now), None);
         // it should drop all missing packets up to the next viable message
         // and begin to ack all viable packets
