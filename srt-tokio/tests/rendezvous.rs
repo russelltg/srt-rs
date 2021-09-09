@@ -1,9 +1,9 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use srt_tokio::SrtSocketBuilder;
-
 use futures::{join, prelude::*};
+use srt_tokio::SrtSocketBuilder;
+use tokio::time::sleep;
 
 #[tokio::test]
 async fn rendezvous() {
@@ -24,6 +24,8 @@ async fn rendezvous() {
             a.send((Instant::now(), Bytes::from_static(b"hi")))
                 .await
                 .unwrap();
+
+            sleep(Duration::from_millis(10)).await;
 
             a.close().await.unwrap();
         },

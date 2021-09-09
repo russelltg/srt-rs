@@ -53,7 +53,7 @@ pub fn create_bidrectional_srt(
         // Both stransmit_decrypt and stransmit_server run indefinitely. For now,
         // run_handler_loop exclusively, until a fix is found or an API decision
         // is reached.
-        if Instant::now().elapsed().as_nanos() % 2 > 0 {
+        if Instant::now().elapsed().as_nanos() != 0 {
             run_handler_loop(
                 socket,
                 packets,

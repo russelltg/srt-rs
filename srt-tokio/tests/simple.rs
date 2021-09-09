@@ -1,8 +1,10 @@
+use std::time::{Duration, Instant};
+
 use anyhow::Error;
 use bytes::Bytes;
 use futures::prelude::*;
 use srt_tokio::SrtSocketBuilder;
-use std::time::Instant;
+use tokio::time::sleep;
 
 #[tokio::test]
 async fn test() {
@@ -18,6 +20,9 @@ async fn test() {
 
         tx.send_all(&mut stream::iter(&iter).map(|b| Ok((Instant::now(), Bytes::from(*b)))))
             .await?;
+
+        sleep(Duration::from_millis(10)).await;
+
         tx.close().await?;
 
         Ok::<_, Error>(())

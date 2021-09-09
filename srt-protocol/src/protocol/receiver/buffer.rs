@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use bytes::{Bytes, BytesMut};
-use log::warn;
+use log::info;
 use take_until::TakeUntilExt;
 
 use crate::packet::{CompressedLossList, PacketLocation};
@@ -22,7 +22,7 @@ impl LostPacket {
         Self {
             data_sequence_number,
             feedback_time,
-            k: 1,
+            k: 2,
         }
     }
 }
@@ -323,7 +323,9 @@ impl ReceiveBuffer {
                         i,
                         d.seq_number,
                         TimeSpan::from_interval(
-                            self.remote_clock.instant_from(d.timestamp) + self.tsbpd_latency + Duration::from_millis(2),
+                            self.remote_clock.instant_from(d.timestamp)
+                                + self.tsbpd_latency
+                                + Duration::from_millis(2),
                             now,
                         ),
                     )
@@ -334,7 +336,7 @@ impl ReceiveBuffer {
         let drop_count = self.buffer.drain(0..index).count();
         self.lrsn = self.calculate_lrsn();
 
-        warn!(
+        info!(
             "Receiver dropping packets: [{},{}), {:?} too late",
             seq_number - drop_count as u32,
             seq_number,

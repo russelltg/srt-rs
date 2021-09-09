@@ -44,7 +44,7 @@ impl AckHistoryWindow {
     }
 
     pub fn is_finished(&self, lrsn: SeqNumber) -> bool {
-        lrsn >= self.largest_ack2_dsn
+        self.buffer.is_empty() || lrsn >= self.largest_ack2_dsn
     }
 
     pub fn reset(&mut self, lrsn: SeqNumber) {
@@ -101,7 +101,7 @@ impl AckHistoryWindow {
         }
 
         // drain expired entries from ACK History Window
-        let latency_tolerance = self.tsbpd_latency + Duration::from_secs(2);
+        let latency_tolerance = self.tsbpd_latency + Duration::from_millis(10);
         let has_expired = |ack: &AckHistoryEntry| now > ack.departure_time + latency_tolerance;
         while self.buffer.front().map_or(false, has_expired) {
             let _ = self.buffer.pop_front();

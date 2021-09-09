@@ -518,16 +518,16 @@ mod automatic_repeat_request_algorithm {
         let now = start + arq.rtt.mean();
         assert_eq!(arq.on_nak_event(now), None);
 
-        let now = start + arq.rtt.mean() * 2;
+        let now = start + arq.rtt.mean() * 4;
         assert_eq!(
             arq.on_nak_event(now),
             CompressedLossList::try_from(seq_num_range(init_seq_num + 1, init_seq_num + 3))
         );
 
-        let now = start + arq.rtt.mean() * 4;
+        let now = start + arq.rtt.mean() * 5;
         assert_eq!(arq.on_nak_event(now), None);
 
-        let now = start + arq.rtt.mean() * 5;
+        let now = start + arq.rtt.mean() * 8;
         assert_eq!(
             arq.on_nak_event(now),
             CompressedLossList::try_from(seq_num_range(init_seq_num + 1, init_seq_num + 3))
