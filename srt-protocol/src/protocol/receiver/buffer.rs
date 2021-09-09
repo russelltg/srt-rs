@@ -1,4 +1,3 @@
-use std::cmp::max;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -237,29 +236,28 @@ impl ReceiveBuffer {
     }
 
     pub fn pop_next_message(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
-        let message = self.pop_message(now);
-        if message.is_none() {
-            // drop packets
-            // TODO: do something with this
-            if let Some(dropped) = self.drop_too_late_packets(now) {
-                warn!("Receiver dropped packets: {:?}", dropped);
-            }
+        let timestamp = self.buffer.front()?.data_packet().map(|d| d.timestamp);
+        if timestamp.is_none() {
+            // TODO: do something with results
+            let _ = self.drop_too_late_packets(now);
+            return None;
         }
-        message
-    }
 
-    fn pop_message(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
-        let timestamp = self.buffer.front().and_then(|p| p.data_packet())?.timestamp;
-        let sent_time = self.remote_clock.instant_from(timestamp);
+        let sent_time = self.remote_clock.instant_from(timestamp?);
         if now < sent_time + self.tsbpd_latency {
             return None;
         }
 
-        let packet_count = self.next_message_packet_count()?;
-        let release_time = self.remote_clock.monotonic_instant_from(timestamp);
+        let packet_count = self.next_message_packet_count();
+        if packet_count.is_none() {
+            // TODO: do something with results
+            let _ = self.drop_too_late_packets(now);
+            return None;
+        }
 
+        let release_time = self.remote_clock.monotonic_instant_from(timestamp?);
         // optimize for single packet messages
-        if packet_count == 1 {
+        if packet_count? == 1 {
             return Some((
                 release_time,
                 self.buffer.pop_front()?.data_packet()?.payload.clone(),
@@ -270,7 +268,7 @@ impl ReceiveBuffer {
         Some((
             release_time,
             self.buffer
-                .drain(0..packet_count)
+                .drain(0..packet_count?)
                 .fold(BytesMut::new(), |mut bytes, pack| {
                     bytes.extend(pack.data_packet().unwrap().payload.clone());
                     bytes
@@ -334,14 +332,14 @@ impl ReceiveBuffer {
             .filter(|(_, _, t)| *t >= TimeSpan::ZERO)?;
 
         let drop_count = self.buffer.drain(0..index).count();
-        self.lrsn = max(self.lrsn, seq_number);
+        self.lrsn = self.calculate_lrsn();
 
-        // info!(
-        //     "Dropping packets [{},{}), {:?} too late",
-        //     self.next_release_dsn,
-        //     next_release_dsn,
-        //     now_ts - next_release_ts + latency_tolerance
-        // );
+        warn!(
+            "Receiver dropping packets: [{},{}), {:?} too late",
+            seq_number - drop_count as u32,
+            seq_number,
+            t
+        );
 
         Some((seq_number - drop_count as u32, seq_number, t))
     }
@@ -732,18 +730,30 @@ mod receive_buffer {
         let _ = buf.push_packet(
             now,
             DataPacket {
-                seq_number: init_seq_num,
+                seq_number: init_seq_num + 1,
                 message_loc: PacketLocation::FIRST,
                 payload: b"hello"[..].into(),
                 ..basic_pack()
             },
         );
-        assert_eq!(buf.next_ack_dsn(), init_seq_num + 1);
-        assert_eq!(buf.pop_next_message(now), None);
-
         let _ = buf.push_packet(
             now,
             DataPacket {
+                seq_number: init_seq_num + 2,
+                message_loc: PacketLocation::MIDDLE,
+                payload: b"hello"[..].into(),
+                ..basic_pack()
+            },
+        );
+        assert_eq!(buf.pop_next_message(now), None);
+        assert_eq!(buf.next_ack_dsn(), init_seq_num);
+
+        let now = now + tsbpd;
+        let expected_release_time = now;
+        let _ = buf.push_packet(
+            now,
+            DataPacket {
+                timestamp: TimeStamp::MIN + tsbpd,
                 seq_number: init_seq_num + 5,
                 message_loc: PacketLocation::ONLY,
                 payload: b"yas"[..].into(),
@@ -751,10 +761,20 @@ mod receive_buffer {
             },
         );
         assert_eq!(buf.pop_next_message(now), None);
-        assert_eq!(buf.next_ack_dsn(), init_seq_num + 1);
+        // it should drop all missing packets up to the next viable message
+        // and begin to ack all viable packets
+        assert_eq!(buf.next_ack_dsn(), init_seq_num + 3);
 
         let now = now + tsbpd;
-        assert_eq!(buf.pop_next_message(now), Some((now, b"yes"[..].into())));
-        assert_eq!(buf.next_ack_dsn(), init_seq_num + 5);
+        assert_eq!(buf.pop_next_message(now), None);
+        // it should drop all missing packets up to the next viable message
+        // and begin to ack all viable packets
+        assert_eq!(buf.next_ack_dsn(), init_seq_num + 6);
+
+        assert_eq!(
+            buf.pop_next_message(now),
+            Some((expected_release_time, b"yas"[..].into()))
+        );
+        assert_eq!(buf.next_ack_dsn(), init_seq_num + 6);
     }
 }
