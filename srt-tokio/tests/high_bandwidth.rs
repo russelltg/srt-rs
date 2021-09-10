@@ -25,6 +25,7 @@ async fn high_bandwidth() -> Result<(), Error> {
 
     let sender_fut = async {
         let mut sock = SrtSocketBuilder::new_connect("127.0.0.1:6654")
+            .latency(Duration::from_millis(150))
             .connect()
             .await?;
 
@@ -43,6 +44,7 @@ async fn high_bandwidth() -> Result<(), Error> {
     let recv_fut = async {
         let mut sock = SrtSocketBuilder::new_listen()
             .local_port(6654)
+            .latency(Duration::from_millis(150))
             .connect()
             .await?;
 

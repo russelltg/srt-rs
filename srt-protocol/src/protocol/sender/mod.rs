@@ -231,6 +231,12 @@ impl Sender {
         // well to ensure congestion control is respected.
 
         let period = self.congestion_control.snd_period();
+
+        // TODO: halving the send period helps make the high_bandwidth more stable
+        //  this could lead to undesired pathological network saturation during periods
+        //  of high packet loss, revisit this
+        let period = period / 2;
+
         self.snd_timer.set_period(period);
     }
 

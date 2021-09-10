@@ -309,7 +309,7 @@ impl ReceiveBuffer {
         &mut self,
         now: Instant,
     ) -> Option<(SeqNumber, SeqNumber, TimeSpan)> {
-        let latency_tolerance = self.tsbpd_latency + Duration::from_millis(2);
+        let latency_tolerance = self.tsbpd_latency + Duration::from_millis(5);
         // Not only does it have to be non-none, it also has to be a First (don't drop half messages)
         let (index, seq_number, timestamp) = self
             .buffer
@@ -758,14 +758,14 @@ mod receive_buffer {
         assert_eq!(buf.next_ack_dsn(), init_seq_num);
 
         // 2 ms buffer release tolerance, we are ok with releasing them 2ms late
-        let now = now + Duration::from_millis(2);
+        let now = now + Duration::from_millis(5);
         assert_eq!(buf.pop_next_message(now), None);
         // it should drop all missing packets up to the next viable message
         // and begin to ack all viable packets
         assert_eq!(buf.next_ack_dsn(), init_seq_num + 3);
 
         // 2 ms buffer release tolerance, we are ok with releasing them 2ms late
-        let now = now + tsbpd + Duration::from_millis(2);
+        let now = now + tsbpd + Duration::from_millis(5);
         assert_eq!(buf.pop_next_message(now), None);
         // it should drop all missing packets up to the next viable message
         // and begin to ack all viable packets
