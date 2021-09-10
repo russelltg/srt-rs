@@ -329,7 +329,13 @@ impl DuplexConnection {
         match control.control_type {
             // sender-responsble packets
             Ack(info) => self.sender.handle_ack_packet(now, info),
-            DropRequest { .. } => {}
+            DropRequest {
+                msg_to_drop,
+                first,
+                last,
+            } => self
+                .receiver
+                .handle_drop_request(now, msg_to_drop, first, last),
             Handshake(shake) => self.sender.handle_handshake_packet(shake, now),
             Nak(nack) => self.sender.handle_nak_packet(nack),
             // receiver-respnsible

@@ -10,7 +10,7 @@ use crate::protocol::receiver::buffer::ReceiveBuffer;
 use crate::protocol::receiver::history::AckHistoryWindow;
 use crate::protocol::receiver::time::Rtt;
 use crate::protocol::{TimeSpan, TimeStamp};
-use crate::{DataPacket, SeqNumber};
+use crate::{DataPacket, MsgNumber, SeqNumber};
 
 #[derive(Debug)]
 pub struct ArrivalSpeed {
@@ -282,6 +282,16 @@ impl AutomaticRepeatRequestAlgorithm {
         } else {
             None
         }
+    }
+
+    pub fn handle_drop_request(
+        &mut self,
+        _now: Instant,
+        msg: MsgNumber,
+        first: SeqNumber,
+        last: SeqNumber,
+    ) -> Option<(SeqNumber, SeqNumber, usize)> {
+        self.receive_buffer.drop_message(msg, first, last)
     }
 
     pub fn pop_next_message(&mut self, now: Instant) -> Option<(Instant, Bytes)> {

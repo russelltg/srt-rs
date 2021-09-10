@@ -19,7 +19,6 @@ fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
 }
 
 #[tokio::test]
-#[ignore]
 async fn high_bandwidth() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 

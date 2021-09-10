@@ -12,7 +12,7 @@ use crate::protocol::handshake::Handshake;
 use crate::protocol::receiver::arq::AutomaticRepeatRequestAlgorithm;
 use crate::protocol::receiver::time::ReceiveTimers;
 use crate::protocol::{TimeBase, TimeStamp};
-use crate::ConnectionSettings;
+use crate::{ConnectionSettings, MsgNumber, SeqNumber};
 
 mod arq;
 mod buffer;
@@ -134,6 +134,21 @@ impl Receiver {
             warn!(
                 "ACK sequence number in ACK2 packet not found in ACK history: {:?}",
                 seq_num
+            );
+        }
+    }
+
+    pub fn handle_drop_request(
+        &mut self,
+        now: Instant,
+        msg: MsgNumber,
+        first: SeqNumber,
+        last: SeqNumber,
+    ) {
+        if let Some((begin, end, count)) = self.arq.handle_drop_request(now, msg, first, last) {
+            info!(
+                "Dropped {} packets in the range of [{:?}, {:?})",
+                count, begin, end
             );
         }
     }

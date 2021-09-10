@@ -6,6 +6,7 @@ use log::info;
 use take_until::TakeUntilExt;
 
 use crate::packet::{CompressedLossList, PacketLocation};
+use crate::protocol::receiver::buffer::BufferPacket::Dropped;
 use crate::protocol::receiver::time::SynchronizedRemoteClock;
 use crate::protocol::{TimeSpan, TimeStamp};
 use crate::{DataPacket, MsgNumber, SeqNumber};
@@ -31,16 +32,18 @@ impl LostPacket {
 pub enum BufferPacket {
     Lost(LostPacket),
     Received(DataPacket),
+    Dropped(SeqNumber),
 }
 
 impl BufferPacket {
     pub fn data_sequence_number(&self) -> SeqNumber {
         match self {
             BufferPacket::Lost(LostPacket {
-                data_sequence_number,
+                data_sequence_number: seq_number,
                 ..
-            }) => *data_sequence_number,
-            BufferPacket::Received(DataPacket { seq_number, .. }) => *seq_number,
+            })
+            | BufferPacket::Dropped(seq_number)
+            | BufferPacket::Received(DataPacket { seq_number, .. }) => *seq_number,
         }
     }
 
@@ -92,9 +95,18 @@ impl BufferPacket {
         use BufferPacket::*;
         if matches!(self, Lost(_)) {
             *self = Received(data);
-            Ok(None)
+        }
+        Ok(None)
+    }
+
+    pub fn drop_unreceived(&mut self) -> Option<SeqNumber> {
+        use BufferPacket::*;
+        let dsn = self.data_sequence_number();
+        if matches!(self, Lost(_)) {
+            *self = Dropped(dsn);
+            Some(dsn)
         } else {
-            Ok(None)
+            None
         }
     }
 }
@@ -195,46 +207,6 @@ impl ReceiveBuffer {
         }
     }
 
-    fn recover_data(&mut self, data: DataPacket) -> Result<Option<CompressedLossList>, DataPacket> {
-        let d = &data;
-        let front = self.buffer.front();
-
-        if front.is_none() {
-            return Ok(None);
-        }
-
-        let front = front
-            .map(|p| p.data_sequence_number())
-            .filter(|front| *front < d.seq_number);
-
-        if front.is_none() {
-            return Ok(None);
-        }
-
-        let index = data.seq_number - front.unwrap();
-        self.buffer
-            .get_mut(index as usize)
-            .expect("invalid index")
-            .update_data(data)
-    }
-
-    fn calculate_loss_list(&mut self, now: Instant, end: SeqNumber) -> Option<CompressedLossList> {
-        let begin = self.next_packet_dsn;
-        if end <= begin {
-            return None;
-        }
-
-        let count = end - begin;
-        let lost = (0..count).map(|n| {
-            let seq_num = begin + n;
-            self.buffer
-                .push_back(BufferPacket::Lost(LostPacket::new(seq_num, now)));
-            seq_num
-        });
-
-        CompressedLossList::try_from(lost)
-    }
-
     pub fn pop_next_message(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
         let timestamp = self.buffer.front()?.data_packet().map(|d| d.timestamp);
         if timestamp.is_none() {
@@ -301,41 +273,29 @@ impl ReceiveBuffer {
         CompressedLossList::try_from(loss_list)
     }
 
-    /// Drops the packets that are deemed to be too late
-    /// IE: there is a packet after it that is ready to be released
-    ///
-    /// Returns the number of packets dropped
-    pub fn drop_too_late_packets(
+    pub fn drop_message(
         &mut self,
-        now: Instant,
-    ) -> Option<(SeqNumber, SeqNumber, TimeSpan)> {
-        let latency_tolerance = self.tsbpd_latency + Duration::from_millis(5);
-        // Not only does it have to be non-none, it also has to be a First (don't drop half messages)
-        let (index, seq_number, timestamp) = self
+        _: MsgNumber,
+        first: SeqNumber,
+        last: SeqNumber,
+    ) -> Option<(SeqNumber, SeqNumber, usize)> {
+        use std::cmp::{max, min};
+        let front = self.buffer.front()?.data_sequence_number();
+        let back = self.buffer.back()?.data_sequence_number();
+        let begin = max(first, front);
+        let end = min(last, back) + 1;
+        let begin_index = begin - front;
+        let end_index = end - front;
+        let dropped_count = self
             .buffer
-            .iter()
-            .enumerate()
-            .skip(1)
-            .take_until(|(_, p)| p.is_first())
-            .last()
-            .and_then(|(i, p)| {
-                p.data_packet()
-                    .map(|d| (i, d.seq_number, self.remote_clock.instant_from(d.timestamp)))
-            })
-            .filter(|(_, _, timestamp)| now >= *timestamp + latency_tolerance)?;
-
-        let latency = TimeSpan::from_interval(timestamp + self.tsbpd_latency, now);
-        let drop_count = self.buffer.drain(0..index).count();
-        self.lrsn = self.calculate_lrsn();
-
-        info!(
-            "Receiver dropping packets: [{},{}), {:?} too late",
-            seq_number - drop_count as u32,
-            seq_number,
-            latency
-        );
-
-        Some((seq_number - drop_count as u32, seq_number, latency))
+            .range_mut(begin_index..end_index)
+            .filter_map(|p| p.drop_unreceived())
+            .count();
+        if dropped_count > 0 {
+            Some((begin, end, dropped_count))
+        } else {
+            None
+        }
     }
 
     pub fn next_message_release_time(&self) -> Option<Instant> {
@@ -381,6 +341,78 @@ impl ReceiveBuffer {
             .take_while(|p| p.in_message(first.message_number))
             .try_fold(MessagePacketCount::new(), |a, p| a.accumulate(p))?
             .calculate()
+    }
+
+    fn recover_data(&mut self, data: DataPacket) -> Result<Option<CompressedLossList>, DataPacket> {
+        let d = &data;
+        let front = self.buffer.front();
+
+        if front.is_none() {
+            return Ok(None);
+        }
+
+        let front = front
+            .map(|p| p.data_sequence_number())
+            .filter(|front| *front < d.seq_number);
+
+        if front.is_none() {
+            return Ok(None);
+        }
+
+        let index = data.seq_number - front.unwrap();
+        self.buffer
+            .get_mut(index as usize)
+            .expect("invalid receive buffer index")
+            .update_data(data)
+    }
+
+    fn calculate_loss_list(&mut self, now: Instant, end: SeqNumber) -> Option<CompressedLossList> {
+        let begin = self.next_packet_dsn;
+        if end <= begin {
+            return None;
+        }
+
+        let count = end - begin;
+        let lost = (0..count).map(|n| {
+            let seq_num = begin + n;
+            self.buffer
+                .push_back(BufferPacket::Lost(LostPacket::new(seq_num, now)));
+            seq_num
+        });
+
+        CompressedLossList::try_from(lost)
+    }
+
+    /// Drops the packets that are deemed to be too late
+    /// i.e.: there is a packet after it that is ready to be released
+    fn drop_too_late_packets(&mut self, now: Instant) -> Option<(SeqNumber, SeqNumber, TimeSpan)> {
+        let latency_tolerance = self.tsbpd_latency + Duration::from_millis(5);
+        // Not only does it have to be non-none, it also has to be a First (don't drop half messages)
+        let (index, seq_number, timestamp) = self
+            .buffer
+            .iter()
+            .enumerate()
+            .skip(1)
+            .take_until(|(_, p)| p.is_first())
+            .last()
+            .and_then(|(i, p)| {
+                p.data_packet()
+                    .map(|d| (i, d.seq_number, self.remote_clock.instant_from(d.timestamp)))
+            })
+            .filter(|(_, _, timestamp)| now >= *timestamp + latency_tolerance)?;
+
+        let latency = TimeSpan::from_interval(timestamp + self.tsbpd_latency, now);
+        let drop_count = self.buffer.drain(0..index).count();
+        self.lrsn = self.calculate_lrsn();
+
+        info!(
+            "Receiver dropping packets: [{},{}), {:?} too late",
+            seq_number - drop_count as u32,
+            seq_number,
+            latency
+        );
+
+        Some((seq_number - drop_count as u32, seq_number - 1, latency))
     }
 }
 
