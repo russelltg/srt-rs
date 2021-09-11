@@ -10,16 +10,15 @@ use bytes::Bytes;
 use log::debug;
 
 use super::TimeSpan;
-use crate::packet::{AckControlInfo, ControlTypes, HandshakeControlInfo};
-use crate::packet::{CompressedLossList, FullAckSeqNumber};
+use crate::packet::ControlTypes::{Ack2, DropRequest, Shutdown};
+use crate::packet::{AckControlInfo, CompressedLossList, FullAckSeqNumber, HandshakeControlInfo};
 use crate::protocol::handshake::Handshake;
 use crate::protocol::Timer;
-use crate::{ConnectionSettings, DataPacket, Packet};
+use crate::{ConnectionSettings, DataPacket, MsgNumber, Packet};
 
 use crate::connection::ConnectionStatus;
-use crate::packet::ControlTypes::DropRequest;
 use crate::protocol::sender::output::Output;
-use buffer::SendBuffer;
+use buffer::{Loss, SendBuffer};
 use congestion_control::{LiveDataRate, SenderCongestionControl};
 use std::cmp::{max, min};
 
@@ -136,8 +135,7 @@ impl Sender {
         // don't return close until fully flushed
         let flushed = self.is_flushed();
         if self.status.check_shutdown(now, || flushed) {
-            let control = ControlTypes::Shutdown;
-            self.output.send_control(now, control);
+            self.output.send_control(now, Shutdown);
         }
 
         self.output.check_timers(now);
@@ -176,18 +174,8 @@ impl Sender {
         //      time more than the application specified TTL, send a message drop
         //      request and remove all related packets from the loss list. Go to
         //      1).
-        else if self.send_buffer.has_packets_to_drop(now) {
-            for dropped in self.send_buffer.drop_too_late_packets(now) {
-                self.metrics.lost_packets += dropped.last - dropped.first;
-                self.output.send_control(
-                    now,
-                    DropRequest {
-                        msg_to_drop: dropped.msg,
-                        first: dropped.first,
-                        last: dropped.last,
-                    },
-                );
-            }
+        else if let Some((first, last)) = self.send_buffer.drop_too_late_packets(now) {
+            self.metrics.lost_packets += last - first + 1;
         }
         //   3) Wait until there is application data to be sent.
         else if !self.send_buffer.has_packets_to_send() && !self.status.should_drain() {
@@ -281,7 +269,7 @@ impl Sender {
                 self.next_acked_ack = ack_seq_num + 1;
 
                 // 2) Send back an ACK2 with the same ACK sequence number in this ACK.
-                let control = ControlTypes::Ack2(ack_seq_num);
+                let control = Ack2(ack_seq_num);
                 self.output.send_control(now, control);
 
                 // 4) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
@@ -313,9 +301,42 @@ impl Sender {
         self.status.drain(now);
     }
 
-    pub fn handle_nak_packet(&mut self, nak: CompressedLossList) {
+    pub fn handle_nak_packet(&mut self, now: Instant, nak: CompressedLossList) {
+        use Loss::*;
         // 1) Add all sequence numbers carried in the NAK into the sender's loss list.
-        self.send_buffer.add_to_loss_list(nak);
+        for (loss, first, last) in self.send_buffer.add_to_loss_list(nak) {
+            match loss {
+                Ignored => {
+                    debug!("NAK: ignoring packets [{:?}, {:?}]", first, last);
+                }
+                Added => {
+                    debug!("NAK: added packets [{:?}, {:?}]", first, last);
+                }
+                Dropped => {
+                    debug!("NAK: dropped packets [{:?}, {:?}]", first, last);
+                    self.output.send_control(
+                        now,
+                        DropRequest {
+                            // On a Live stream, where each packet is a message, just one NAK with
+                            // with a compressed packet loss interval of significant size (e.g.
+                            // [1, 100_000] will result in a deluge of message drop request packet
+                            // transmissions from the sender, resembling a DoS attack on the receiver.
+                            // Even more pathological, this is most likely to happen when we absolutely
+                            // do not want it to happen, such as during periods of decreased network
+                            // throughput.
+                            //
+                            // For this reason, this implementation is explicitly inconsistent with the
+                            // reference implementation, which only sends a single message per message
+                            // drop request, if the message is still in the send buffer. We always send
+                            // the same message number.
+                            msg_to_drop: MsgNumber::new_truncate(0),
+                            first,
+                            last,
+                        },
+                    )
+                }
+            }
+        }
 
         // 2) Update the SND period by rate control (see section 3.6).
         // NOTE: NAK does not directly influence Live congestion control

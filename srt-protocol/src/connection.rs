@@ -329,15 +329,9 @@ impl DuplexConnection {
         match control.control_type {
             // sender-responsble packets
             Ack(info) => self.sender.handle_ack_packet(now, info),
-            DropRequest {
-                msg_to_drop,
-                first,
-                last,
-            } => self
-                .receiver
-                .handle_drop_request(now, msg_to_drop, first, last),
+            DropRequest { first, last, .. } => self.receiver.handle_drop_request(now, first, last),
             Handshake(shake) => self.sender.handle_handshake_packet(shake, now),
-            Nak(nack) => self.sender.handle_nak_packet(nack),
+            Nak(nack) => self.sender.handle_nak_packet(now, nack),
             // receiver-respnsible
             Ack2(seq_num) => self.receiver.handle_ack2_packet(seq_num, now),
             // both
@@ -351,9 +345,6 @@ impl DuplexConnection {
             // TODO: case UMSG_CGWARNING: // 100 - Delay Warning
             //            // One way packet delay is increasing, so decrease the sending rate
             //            ControlTypes::DelayWarning?
-
-            // TODO: case UMSG_LOSSREPORT: // 011 - Loss Report is this Nak?
-            // TODO: case UMSG_DROPREQ: // 111 - Msg drop request
             // TODO: case UMSG_PEERERROR: // 1000 - An error has happened to the peer side
             // TODO: case UMSG_EXT: // 0x7FFF - reserved and user defined messages
         }
@@ -374,7 +365,9 @@ impl DuplexConnection {
 #[cfg(test)]
 mod duplex_connection {
     use super::*;
+    use crate::packet::CompressedLossList;
     use crate::protocol::TimeStamp;
+    use crate::seq_number::seq_num_range;
     use crate::MsgNumber;
 
     const MILLIS: Duration = Duration::from_millis(1);
@@ -505,20 +498,58 @@ mod duplex_connection {
             SendPacket((Data(_), _))
         ));
 
-        connection.handle_input(now + TSBPD, Input::Timer);
+        assert!(matches!(
+            connection.handle_input(now + TSBPD, Input::Timer),
+            SendPacket((Data(_), _))
+        ));
 
         // timeout
-        now += TSBPD * 2 + TSBPD / 2; // (TSBPD * 2) * 1.25
-        assert_eq!(
+        now += TSBPD + TSBPD / 4; // TSBPD * 1.25
+        assert!(matches!(
             connection.handle_input(now, Input::Timer),
+            WaitForData(_)
+        ));
+
+        // https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-3.2.9
+        //
+        // 3.2.9.  Message Drop Request
+        //
+        //    A Message Drop Request control packet is sent by the sender to the
+        //    receiver when it requests the retransmission of an unacknowledged
+        //    packet (all or part of a message) which is not present in the
+        //    sender's buffer.  This may happen, for example, when a TTL parameter
+        //    (passed in the sending function) triggers a timeout for
+        //    retransmitting lost packets which constitute parts of a message,
+        //    causing these packets to be removed from the sender's buffer.
+        //
+        //    The sender notifies the receiver that it must not wait for
+        //    retransmission of this message.  Note that a Message Drop Request
+        //    control packet is not sent if the Too Late Packet Drop mechanism
+        //    (Section 4.6) causes the sender to drop a message, as in this case
+        //    the receiver is expected to drop it anyway.
+        assert_eq!(
+            connection.handle_input(
+                now,
+                Input::Packet(Some((
+                    Control(ControlPacket {
+                        timestamp: TimeStamp::MIN + SND + TSBPD + TSBPD / 4,
+                        dest_sockid: remote_sockid(),
+                        control_type: Nak(CompressedLossList::from_loss_list(seq_num_range(
+                            SeqNumber(0),
+                            SeqNumber(1),
+                        ))),
+                    }),
+                    remote_addr()
+                )))
+            ),
             SendPacket((
                 Control(ControlPacket {
-                    timestamp: TimeStamp::MIN + SND + TSBPD * 2 + TSBPD / 2,
+                    timestamp: TimeStamp::MIN + SND + TSBPD + TSBPD / 4,
                     dest_sockid: remote_sockid(),
                     control_type: DropRequest {
-                        first: SeqNumber(0),
-                        last: SeqNumber(0),
                         msg_to_drop: MsgNumber(0),
+                        first: SeqNumber(0),
+                        last: SeqNumber(1),
                     }
                 }),
                 remote_addr()

@@ -909,6 +909,10 @@ impl CompressedLossList {
     pub fn iter_decompressed(&self) -> impl Iterator<Item = SeqNumber> + '_ {
         decompress_loss_list(self.iter_compressed())
     }
+
+    pub fn into_iter_decompressed(self) -> impl Iterator<Item = SeqNumber> {
+        decompress_loss_list(self.0.into_iter())
+    }
 }
 
 impl FullAckSeqNumber {

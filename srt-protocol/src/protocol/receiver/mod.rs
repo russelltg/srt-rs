@@ -12,7 +12,7 @@ use crate::protocol::handshake::Handshake;
 use crate::protocol::receiver::arq::AutomaticRepeatRequestAlgorithm;
 use crate::protocol::receiver::time::ReceiveTimers;
 use crate::protocol::{TimeBase, TimeStamp};
-use crate::{ConnectionSettings, MsgNumber, SeqNumber};
+use crate::{ConnectionSettings, SeqNumber};
 
 mod arq;
 mod buffer;
@@ -138,14 +138,8 @@ impl Receiver {
         }
     }
 
-    pub fn handle_drop_request(
-        &mut self,
-        now: Instant,
-        msg: MsgNumber,
-        first: SeqNumber,
-        last: SeqNumber,
-    ) {
-        if let Some((begin, end, count)) = self.arq.handle_drop_request(now, msg, first, last) {
+    pub fn handle_drop_request(&mut self, now: Instant, first: SeqNumber, last: SeqNumber) {
+        if let Some((begin, end, count)) = self.arq.handle_drop_request(now, first, last) {
             info!(
                 "Dropped {} packets in the range of [{:?}, {:?})",
                 count, begin, end
