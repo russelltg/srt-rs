@@ -38,7 +38,33 @@ pub enum SrtControlPacket {
 
     /// Smoother? // TODO: research
     /// ID = 6
-    Smoother,
+    Congestion,
+
+    /// ID = 7
+    Filter,
+
+    // ID = 8
+    Group {
+        ty: GroupType,
+        flags: GroupFlags,
+        weight: u16,
+    },
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum GroupType {
+    Undefined,
+    Broadcast,
+    MainBackup,
+    Balancing,
+    Multicast,
+    Unrecognized(u8),
+}
+
+bitflags! {
+    pub struct GroupFlags: u8 {
+        const MSG_SYNC = 1 << 6;
+    }
 }
 
 /// from https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_msg.h#L76-L96
@@ -74,6 +100,32 @@ pub struct SrtKeyMessage {
     pub auth: Auth,
     pub salt: Vec<u8>,
     pub wrapped_keys: Vec<u8>,
+}
+
+impl From<GroupType> for u8 {
+    fn from(from: GroupType) -> u8 {
+        match from {
+            GroupType::Undefined => 0,
+            GroupType::Broadcast => 1,
+            GroupType::MainBackup => 2,
+            GroupType::Balancing => 3,
+            GroupType::Multicast => 4,
+            GroupType::Unrecognized(u) => u,
+        }
+    }
+}
+
+impl From<u8> for GroupType {
+    fn from(from: u8) -> GroupType {
+        match from {
+            0 => GroupType::Undefined,
+            1 => GroupType::Broadcast,
+            2 => GroupType::MainBackup,
+            3 => GroupType::Balancing,
+            4 => GroupType::Multicast,
+            u => GroupType::Unrecognized(u),
+        }
+    }
 }
 
 impl fmt::Debug for SrtKeyMessage {
@@ -246,6 +298,12 @@ impl SrtControlPacket {
                     Err(e) => Err(PacketParseError::StreamTypeNotUtf8(e.utf8_error())),
                 }
             }
+            8 => {
+                let ty = buf.get_u8().into();
+                let flags = GroupFlags::from_bits_truncate(buf.get_u8());
+                let weight = buf.get_u16_le();
+                Ok(Group { ty, flags, weight })
+            }
             _ => Err(PacketParseError::UnsupportedSrtExtensionType(packet_type)),
         }
     }
@@ -261,7 +319,9 @@ impl SrtControlPacket {
             KeyManagerRequest(_) => 3,
             KeyManagerResponse(_) => 4,
             StreamId(_) => 5,
-            Smoother => 6,
+            Congestion => 6,
+            Filter => 7,
+            Group { .. } => 8,
         }
     }
     pub fn serialize<T: BufMut>(&self, into: &mut T) {
@@ -290,6 +350,11 @@ impl SrtControlPacket {
                     [a] => into.put(&[0, 0, 0, a][..]),
                     _ => {}
                 }
+            }
+            Group { ty, flags, weight } => {
+                into.put_u8((*ty).into());
+                into.put_u8(flags.bits());
+                into.put_u16_le(*weight);
             }
             _ => unimplemented!(),
         }
@@ -528,7 +593,11 @@ impl fmt::Debug for SrtControlPacket {
             SrtControlPacket::KeyManagerRequest(req) => write!(f, "kmreq={:?}", req),
             SrtControlPacket::KeyManagerResponse(resp) => write!(f, "kmresp={:?}", resp),
             SrtControlPacket::StreamId(sid) => write!(f, "streamid={}", sid),
-            SrtControlPacket::Smoother => write!(f, "smoother"),
+            SrtControlPacket::Congestion => write!(f, "congestionwarn"),
+            SrtControlPacket::Filter => write!(f, "filter"),
+            SrtControlPacket::Group { ty, flags, weight } => {
+                write!(f, "group=({:?}, {:?}, {:?})", ty, flags, weight)
+            }
         }
     }
 }

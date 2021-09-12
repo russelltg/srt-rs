@@ -74,6 +74,9 @@ pub enum ControlTypes {
     /// Additional Info isn't used
     Nak(CompressedLossList),
 
+    // Congestion warning packet, type 0x4
+    CongestionWarning,
+
     /// Shutdown packet, type 0x5
     Shutdown,
 
@@ -93,6 +96,9 @@ pub enum ControlTypes {
         /// The last sequence number in the message to drop
         last: SeqNumber,
     },
+
+    // Peer error, type 0x8
+    PeerError(u32),
 
     /// Srt control packets
     /// These use the UDT extension type 0xFF
@@ -122,6 +128,8 @@ pub struct HsV5Info {
 
     /// The extension KMREQ/KMRESP
     pub ext_km: Option<SrtControlPacket>,
+
+    pub ext_group: Option<SrtControlPacket>,
 
     /// The SID
     pub sid: Option<String>,
@@ -618,6 +626,7 @@ impl ControlTypes {
                                 crypto_size,
                                 ext_hs,
                                 ext_km,
+                                ext_group: None,
                                 sid,
                             })
                         }
@@ -692,6 +701,10 @@ impl ControlTypes {
 
                 Ok(ControlTypes::Nak(CompressedLossList(loss_info)))
             }
+            0x4 => {
+                // Congestion
+                Ok(ControlTypes::CongestionWarning)
+            }
             0x5 => {
                 if buf.remaining() >= 4 {
                     buf.get_u32(); // discard "unused" packet field
@@ -721,6 +734,10 @@ impl ControlTypes {
                     last: SeqNumber::new_truncate(buf.get_u32()),
                 })
             }
+            0x8 => {
+                // Peer error
+                Ok(ControlTypes::PeerError(extra_info))
+            }
             0x7FFF => {
                 // Srt
                 Ok(ControlTypes::Srt(SrtControlPacket::parse(
@@ -737,9 +754,11 @@ impl ControlTypes {
             ControlTypes::KeepAlive => 0x1,
             ControlTypes::Ack { .. } => 0x2,
             ControlTypes::Nak(_) => 0x3,
+            ControlTypes::CongestionWarning => 0x4,
             ControlTypes::Shutdown => 0x5,
             ControlTypes::Ack2(_) => 0x6,
             ControlTypes::DropRequest { .. } => 0x7,
+            ControlTypes::PeerError(_) => 0x8,
             ControlTypes::Srt(_) => 0x7FFF,
         }
     }
@@ -753,8 +772,15 @@ impl ControlTypes {
                 full_ack_seq_number: Some(a),
                 ..
             }) => (*a).into(),
+            ControlTypes::PeerError(err) => *err,
             // These do not, just use zero
-            _ => 0,
+            ControlTypes::Ack(_)
+            | ControlTypes::Handshake(_)
+            | ControlTypes::KeepAlive
+            | ControlTypes::Nak(_)
+            | ControlTypes::CongestionWarning
+            | ControlTypes::Shutdown
+            | ControlTypes::Srt(_) => 0,
         }
     }
 
@@ -853,7 +879,11 @@ impl ControlTypes {
                 into.put_u32(first.as_raw());
                 into.put_u32(last.as_raw());
             }
-            ControlTypes::Ack2(_) | ControlTypes::Shutdown | ControlTypes::KeepAlive => {
+            ControlTypes::CongestionWarning
+            | ControlTypes::Ack2(_)
+            | ControlTypes::Shutdown
+            | ControlTypes::KeepAlive
+            | ControlTypes::PeerError(_) => {
                 // The reference implementation appends one (4 byte) word at the end of these packets, which wireshark labels as 'Unused'
                 // I have no idea why, but wireshark reports it as a "malformed packet" without it. For the record,
                 // this is NOT in the UDT specification. I wonder if this was carried over from the original UDT implementation.
@@ -876,6 +906,7 @@ impl Debug for ControlTypes {
             ControlTypes::Nak(nak) => {
                 write!(f, "Nak({:?})", nak) // TODO could be better, show ranges
             }
+            ControlTypes::CongestionWarning => write!(f, "CongestionWarning"),
             ControlTypes::Shutdown => write!(f, "Shutdown"),
             ControlTypes::Ack2(ackno) => write!(f, "Ack2({})", ackno.0),
             ControlTypes::DropRequest {
@@ -883,6 +914,7 @@ impl Debug for ControlTypes {
                 first,
                 last,
             } => write!(f, "DropReq(msg={} {}-{})", msg_to_drop, first, last),
+            ControlTypes::PeerError(e) => write!(f, "PeerError({})", e),
             ControlTypes::Srt(srt) => write!(f, "{:?}", srt),
         }
     }
@@ -1247,6 +1279,7 @@ mod test {
                         recv_latency: Duration::from_millis(12345),
                     })),
                     ext_km: None,
+                    ext_group: None,
                     sid: None,
                 }),
             }),
@@ -1384,6 +1417,7 @@ mod test {
                             recv_latency: Duration::new(0, 0)
                         })),
                         ext_km: None,
+                        ext_group: None,
                         sid: None,
                     })
                 })
@@ -1431,6 +1465,7 @@ mod test {
                             recv_latency: Duration::from_millis(20)
                         })),
                         ext_km: None,
+                        ext_group: None,
                         sid: Some(String::from("abcdefghij")),
                     })
                 })
@@ -1487,6 +1522,7 @@ mod test {
                             )
                             .unwrap()
                         })),
+                        ext_group: None,
                         sid: None,
                     })
                 })
@@ -1533,6 +1569,7 @@ mod test {
                     crypto_size: 16,
                     ext_km: None,
                     ext_hs: None,
+                    ext_group: None,
                     sid: None,
                 }),
             }),
@@ -1563,6 +1600,7 @@ mod test {
                     crypto_size: 0,
                     ext_km: None,
                     ext_hs: None,
+                    ext_group: None,
                     sid: Some("Hello hello".into()),
                 }),
             }),
@@ -1658,6 +1696,7 @@ mod test {
                         )
                         .unwrap()
                     })),
+                    ext_group: None,
                     sid: Some("#!::u=hex".into()),
                 }),
             }),

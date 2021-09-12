@@ -341,12 +341,14 @@ impl DuplexConnection {
             }
             // neither--this exists just to keep the connection alive
             KeepAlive => {}
-            Srt(s) => self.handle_srt_control_packet(s),
             // TODO: case UMSG_CGWARNING: // 100 - Delay Warning
             //            // One way packet delay is increasing, so decrease the sending rate
             //            ControlTypes::DelayWarning?
+            CongestionWarning => todo!(),
             // TODO: case UMSG_PEERERROR: // 1000 - An error has happened to the peer side
+            PeerError(_) => todo!(),
             // TODO: case UMSG_EXT: // 0x7FFF - reserved and user defined messages
+            Srt(s) => self.handle_srt_control_packet(s),
         }
     }
 

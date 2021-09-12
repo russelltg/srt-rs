@@ -28,7 +28,7 @@ async fn high_bandwidth() -> Result<(), Error> {
             .connect()
             .await?;
 
-        const RATE_MBPS: u64 = 20;
+        const RATE_MBPS: u64 = 50;
         let mut stream_gbps = stream_exact(Duration::from_micros(1_000_000 / 1024 / RATE_MBPS))
             .map(|bytes| Ok((Instant::now(), bytes)))
             .boxed();

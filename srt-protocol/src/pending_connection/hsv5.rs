@@ -91,6 +91,7 @@ pub fn gen_hsv5_response(
                 recv_latency: settings.recv_latency,
             })),
             ext_km: outgoing_ext_km.map(SrtControlPacket::KeyManagerResponse),
+            ext_group: None,
             sid,
         }),
         ConnectionSettings {
@@ -148,6 +149,7 @@ pub fn start_hsv5_initiation(
                 recv_latency: settings.recv_latency,
             })),
             ext_km,
+            ext_group: None,
             sid: streamid.clone(),
         }),
         StartedInitiator {
