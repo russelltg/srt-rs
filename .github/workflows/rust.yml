@@ -75,6 +75,8 @@ jobs:
       with:
         profile: minimal
         toolchain: nightly
+    - name: Set nightly to defualt
+      run: rustup default nightly
     - name: Install llvm-tools-preview
       run: rustup component add --toolchain nightly llvm-tools-preview
     - name: install srt
