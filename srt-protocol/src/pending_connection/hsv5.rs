@@ -8,7 +8,7 @@ use crate::{
         HandshakeControlInfo, HandshakeVsInfo, HsV5Info, ServerRejectReason, SrtControlPacket,
         SrtHandshake, SrtShakeFlags,
     },
-    ConnectionSettings, SrtVersion,
+    ConnectionSettings, LiveBandwidthMode, SrtVersion,
 };
 use std::{
     net::SocketAddr,
@@ -105,6 +105,7 @@ pub fn gen_hsv5_response(
             send_tsbpd_latency: Duration::max(settings.send_latency, hs.recv_latency),
             recv_tsbpd_latency: Duration::max(settings.recv_latency, hs.send_latency),
             crypto_manager: cm,
+            bandwidth: settings.bandwidth.clone(),
             stream_id: incoming.sid.clone(),
         },
     )
@@ -194,6 +195,7 @@ impl StartedInitiator {
             recv_tsbpd_latency: Duration::max(self.settings.recv_latency, hs.send_latency),
             crypto_manager: self.cm,
             stream_id: self.streamid,
+            bandwidth: LiveBandwidthMode::default(),
         })
     }
 }

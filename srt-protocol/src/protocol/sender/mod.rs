@@ -1,5 +1,5 @@
 mod buffer;
-mod congestion_control;
+pub mod congestion_control;
 mod encapsulate;
 mod output;
 
@@ -19,7 +19,7 @@ use crate::{ConnectionSettings, DataPacket, MsgNumber, Packet};
 use crate::connection::ConnectionStatus;
 use crate::protocol::sender::output::Output;
 use buffer::{Loss, SendBuffer};
-use congestion_control::{LiveDataRate, SenderCongestionControl};
+use congestion_control::SenderCongestionControl;
 use std::cmp::{max, min};
 
 #[derive(Debug)]
@@ -93,7 +93,7 @@ impl Sender {
             handshake,
             send_buffer: SendBuffer::new(&settings),
             snd_timer: Timer::new(Duration::from_millis(1), settings.socket_start_time),
-            congestion_control: SenderCongestionControl::new(LiveDataRate::Unlimited, None),
+            congestion_control: SenderCongestionControl::new(settings.bandwidth.clone(), None),
             next_acked_ack: FullAckSeqNumber::INITIAL,
             output: Output::new(&settings),
             metrics: SenderMetrics::new(),

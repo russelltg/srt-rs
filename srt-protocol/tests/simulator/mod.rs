@@ -5,7 +5,7 @@ use rand::prelude::*;
 use rand_distr::Normal;
 use srt_protocol::connection::{DuplexConnection, Input};
 use srt_protocol::protocol::handshake::Handshake;
-use srt_protocol::{Connection, ConnectionSettings, Packet};
+use srt_protocol::{Connection, ConnectionSettings, LiveBandwidthMode, Packet};
 use std::{
     cmp::max,
     collections::BinaryHeap,
@@ -223,6 +223,7 @@ impl RandomLossSimulation {
             recv_tsbpd_latency: latency,
             crypto_manager: None,
             stream_id: None,
+            bandwidth: LiveBandwidthMode::default(),
         }
     }
 }
