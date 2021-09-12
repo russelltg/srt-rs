@@ -68,8 +68,12 @@ jobs:
        fetch-depth: "0"
     - name: Install rust nightly
       run: rustup install nightly
+    - name: Make nightly defualt, uninstall stable
+      run: 
+        - rustup uninstall stable
+        - rustup default nightly
     - name: Install llvm-tools-preview
-      run: rustup component add llvm-tools-preview
+      run: rustup component add --toolchain nightly llvm-tools-preview
     - name: install srt
       run: sudo apt-get install srt-tools
     - name: Download grcov

@@ -111,7 +111,7 @@ bitflags! {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct HsV5Info {
     /// the crypto size in bytes, either 0 (no encryption), 16, 24, or 32 (stored /8)
     /// source: https://github.com/Haivision/srt/blob/master/docs/stransmit.md#medium-srt
@@ -970,17 +970,6 @@ impl Debug for HandshakeControlInfo {
             "HS {:?} from={:?} {:?}",
             self.shake_type, self.socket_id, self.info
         )
-    }
-}
-
-impl Default for HsV5Info {
-    fn default() -> Self {
-        HsV5Info {
-            crypto_size: 0,
-            ext_hs: None,
-            ext_km: None,
-            sid: None,
-        }
     }
 }
 

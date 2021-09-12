@@ -2,21 +2,11 @@ use std::time::{Duration, Instant};
 
 use crate::protocol::stats::*;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct MessageStats {
     pub message_count: u64,
     pub packet_count: u64,
     pub bytes_total: u64,
-}
-
-impl Default for MessageStats {
-    fn default() -> Self {
-        Self {
-            message_count: 0,
-            packet_count: 0,
-            bytes_total: 0,
-        }
-    }
 }
 
 impl Stats for MessageStats {
