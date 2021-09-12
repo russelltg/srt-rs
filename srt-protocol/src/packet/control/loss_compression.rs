@@ -23,10 +23,7 @@ where
     fn next(&mut self) -> Option<u32> {
         // if we're at the start, assign a next
         if self.next.is_none() {
-            self.next = match self.iterator.next() {
-                None => return None,
-                a => a,
-            }
+            self.next = Some(self.iterator.next()?)
         }
 
         loop {
@@ -37,9 +34,9 @@ where
             // c) not in a loop and need to start one
             // d) not in a loop and doesn't need to start one
 
-            let this = self.next.unwrap();
-            self.next = match self.iterator.next() {
-                Some(i) => Some(i),
+            let this = self.next?;
+            match self.iterator.next() {
+                Some(i) => self.next = Some(i),
                 None => {
                     // invalidate next, so it None will be returned next time
                     self.next = None;
@@ -50,15 +47,10 @@ where
             };
 
             // the list must be sorted
-            assert!(
-                this < self.next.unwrap(),
-                "error: {}!<{}",
-                this.0,
-                self.next.unwrap().0
-            );
+            assert!(this < self.next?, "error: {}!<{}", this.0, self.next?.0);
 
             if let Some(last_in_loop) = self.last_in_loop {
-                if last_in_loop + 2 == self.next.unwrap() {
+                if last_in_loop + 2 == self.next? {
                     // continue with the loop
                     self.last_in_loop = Some(last_in_loop + 1);
 
@@ -69,7 +61,7 @@ where
 
                     return Some(this.as_raw());
                 }
-            } else if this + 1 == self.next.unwrap() {
+            } else if this + 1 == self.next? {
                 // create a loop
                 self.last_in_loop = Some(this);
 

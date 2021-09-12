@@ -1,8 +1,7 @@
 use crate::packet::CompressedLossList;
 use crate::protocol::encryption::Cipher;
 use crate::protocol::sender::encapsulate::Encapsulate;
-use crate::protocol::TimeStamp;
-use crate::{ConnectionSettings, DataPacket, MsgNumber, SeqNumber};
+use crate::{ConnectionSettings, DataPacket, SeqNumber};
 use bytes::Bytes;
 use std::cmp::max;
 use std::collections::{BTreeSet, VecDeque};
@@ -14,7 +13,7 @@ pub struct SendBuffer {
     encrypt: Cipher,
     latency_window: Duration,
     buffer: VecDeque<DataPacket>,
-    last_sent: Option<SeqNumber>,
+    next_send: Option<SeqNumber>,
     // 1) Sender's Loss List: The sender's loss list is used to store the
     //    sequence numbers of the lost packets fed back by the receiver
     //    through NAK packets or inserted in a timeout event. The numbers
@@ -28,10 +27,10 @@ impl SendBuffer {
             encapsulate: Encapsulate::new(settings),
             encrypt: Cipher::new(settings.crypto_manager.clone()),
             buffer: VecDeque::new(),
-            last_sent: None,
+            next_send: None,
             lost_list: BTreeSet::new(),
             latency_window: max(
-                settings.send_tsbpd_latency * 2 + settings.send_tsbpd_latency / 2,
+                settings.send_tsbpd_latency + settings.send_tsbpd_latency / 4, // 125% of TSBPD
                 Duration::from_secs(1),
             ),
         }
@@ -63,9 +62,6 @@ impl SendBuffer {
     pub fn has_packets_to_send(&self) -> bool {
         self.peek_next_packet().is_some() || !self.lost_list.is_empty()
     }
-    pub fn timestamp_from(&self, at: Instant) -> TimeStamp {
-        self.encapsulate.timestamp_from(at)
-    }
 
     pub fn number_of_unacked_packets(&mut self) -> u32 {
         self.buffer.len() as u32
@@ -73,7 +69,7 @@ impl SendBuffer {
 
     pub fn pop_next_packet(&mut self) -> Option<DataPacket> {
         let packet = self.peek_next_packet()?.clone();
-        self.last_sent = Some(packet.seq_number);
+        self.next_send = Some(packet.seq_number + 1);
         Some(packet)
     }
 
@@ -86,7 +82,7 @@ impl SendBuffer {
 
     pub fn flush_on_close(&mut self, should_drain: bool) -> Option<DataPacket> {
         if should_drain && self.buffer.len() == 1 {
-            self.last_sent = None;
+            self.next_send = None;
             self.buffer.pop_front()
         } else {
             None
@@ -95,8 +91,8 @@ impl SendBuffer {
 
     pub fn update_largest_acked_seq_number(&mut self, ack_number: SeqNumber) -> Option<(u32, u32)> {
         let first = self.front_packet()?;
-        let last = self.last_sent?;
-        if ack_number < first || ack_number > last + 1 {
+        let next = self.next_send?;
+        if ack_number < first || ack_number > next {
             return None;
         }
 
@@ -118,39 +114,48 @@ impl SendBuffer {
         Some((received_count, recovered_count))
     }
 
-    pub fn add_to_loss_list(&mut self, nak: CompressedLossList) {
-        if let Some(first) = self.front_packet() {
-            if let Some(last) = self.last_sent {
-                for seq in nak.iter_decompressed() {
-                    if seq >= first && seq <= last {
-                        self.lost_list.insert(seq);
-                    } else {
-                        //debug!("NAK received for packet {} that's not in the buffer, maybe it's already been ACKed", seq);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn has_packets_to_drop(&self, now: Instant) -> bool {
-        let ts_now = self.timestamp_from(now);
-        let latency_window = self.latency_window;
-        self.buffer.len() > 1
-            && self
-                .buffer
-                .front()
-                .filter(|p| p.timestamp + latency_window < ts_now)
-                .is_some()
-    }
-
-    pub fn drop_too_late_packets(
+    pub fn add_to_loss_list(
         &mut self,
-        now: Instant,
-    ) -> impl Iterator<Item = DroppedPackets> + '_ {
-        DroppedPacketsIterator {
-            ts_now: self.encapsulate.timestamp_from(now),
+        nak: CompressedLossList,
+    ) -> impl Iterator<Item = (Loss, SeqNumber, SeqNumber)> + '_ {
+        LossIterator {
+            loss_list: nak.into_iter_decompressed(),
+            first: None,
             buffer: self,
         }
+    }
+
+    pub fn drop_too_late_packets(&mut self, now: Instant) -> Option<(SeqNumber, SeqNumber)> {
+        let latency_window = self.latency_window;
+        let ts_now = self.encapsulate.timestamp_from(now);
+
+        let front = self
+            .buffer
+            .front()
+            .filter(|p| ts_now > p.timestamp + latency_window)?;
+        let first = front.seq_number;
+        let mut last = first;
+        let mut message = front.message_number;
+        for next in self.buffer.iter().skip(1) {
+            if ts_now > next.timestamp + latency_window {
+                message = next.message_number;
+                last = next.seq_number;
+            } else if next.message_number == message {
+                last = next.seq_number;
+            } else {
+                break;
+            }
+        }
+
+        let count = last - first + 1;
+        let _ = self.buffer.drain(0..count as usize).count();
+
+        self.next_send = self
+            .next_send
+            .filter(|next| *next > last)
+            .or(Some(last + 1));
+
+        Some((first, last))
     }
 
     fn front_packet(&self) -> Option<SeqNumber> {
@@ -159,8 +164,9 @@ impl SendBuffer {
 
     fn peek_next_packet(&self) -> Option<&DataPacket> {
         let first = self.front_packet()?;
-        let index = self.last_sent.map(|last| last - first + 1).unwrap_or(0) as usize;
-        self.buffer.get(index)
+        let next_send = self.next_send.unwrap_or(first);
+        let index = next_send - first;
+        self.buffer.get(index as usize)
     }
 
     fn pop_lost_list(&mut self) -> Option<SeqNumber> {
@@ -178,47 +184,65 @@ impl SendBuffer {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub struct DroppedPackets {
-    pub msg: MsgNumber,
-    pub first: SeqNumber,
-    pub last: SeqNumber,
+#[derive(Clone, Debug, PartialEq)]
+pub enum Loss {
+    Added,
+    Dropped,
+    Ignored,
 }
 
-pub struct DroppedPacketsIterator<'a> {
-    ts_now: TimeStamp,
+pub struct LossIterator<'a, I: Iterator<Item = SeqNumber>> {
     buffer: &'a mut SendBuffer,
+    loss_list: I,
+    first: Option<(Loss, SeqNumber)>,
 }
 
-impl Iterator for DroppedPacketsIterator<'_> {
-    type Item = DroppedPackets;
+impl<'a, I> LossIterator<'a, I>
+where
+    I: Iterator<Item = SeqNumber>,
+{
+    fn next_loss(&mut self) -> Option<(Loss, SeqNumber)> {
+        use Loss::*;
+        let front = self.buffer.front_packet();
+        let next_send = self.buffer.next_send;
+        self.loss_list.next().map(|next| match (front, next_send) {
+            (_, Some(next_send)) if next >= next_send => (Ignored, next),
+            (_, None) => (Dropped, next),
+            (Some(front), _) if next < front => (Dropped, next),
+            (None, _) => (Dropped, next),
+            (Some(_), Some(_)) => {
+                self.buffer.lost_list.insert(next);
+                (Added, next)
+            }
+        })
+    }
+}
+
+impl<'a, I> Iterator for LossIterator<'a, I>
+where
+    I: Iterator<Item = SeqNumber>,
+{
+    type Item = (Loss, SeqNumber, SeqNumber);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let latency_window = self.buffer.latency_window;
-        let ts_now = self.ts_now;
-        let sent = &mut self.buffer.buffer;
-        let front = sent
-            .front()
-            .filter(|p| p.timestamp + latency_window < ts_now)?;
-
-        let msg = front.message_number;
-        let first = front.seq_number;
+        let (first_type, first) = self.first.clone().or_else(|| self.next_loss())?;
         let mut last = first;
-        while let Some(next) = sent
-            .front()
-            .filter(|p| p.message_number == msg)
-            .map(|p| p.seq_number)
-        {
-            last = next;
-            let _ = sent.pop_front();
+        loop {
+            match self.next_loss() {
+                Some((next_type, next)) if next_type == first_type && next == last + 1 => {
+                    last = next;
+                    continue;
+                }
+                Some((next_type, next)) => {
+                    self.first = Some((next_type, next));
+                    return Some((first_type, first, last));
+                }
+                None => {
+                    self.first = None;
+                    return Some((first_type, first, last));
+                }
+            }
         }
-
-        self.buffer.last_sent = match (self.buffer.front_packet(), self.buffer.last_sent) {
-            (Some(front), Some(back)) if back >= front => Some(back),
-            _ => None,
-        };
-
-        Some(DroppedPackets { msg, first, last })
     }
 }
 
@@ -226,6 +250,7 @@ impl Iterator for DroppedPacketsIterator<'_> {
 mod test {
     use super::*;
     use crate::packet::{DataEncryption, PacketLocation};
+    use crate::protocol::TimeStamp;
     use crate::*;
     use bytes::Bytes;
     use std::iter::FromIterator;
@@ -324,12 +349,22 @@ mod test {
 
         assert_eq!(buffer.pop_next_lost_packet(), None);
 
-        buffer.add_to_loss_list(CompressedLossList::from_loss_list(
-            vec![SeqNumber(11), SeqNumber(13)].into_iter(),
-        ));
-        buffer.add_to_loss_list(CompressedLossList::from_loss_list(
-            vec![SeqNumber(7), SeqNumber(12)].into_iter(),
-        ));
+        assert!(
+            buffer
+                .add_to_loss_list(CompressedLossList::from_loss_list(
+                    vec![SeqNumber(11), SeqNumber(13)].into_iter(),
+                ))
+                .count()
+                > 0
+        );
+        assert!(
+            buffer
+                .add_to_loss_list(CompressedLossList::from_loss_list(
+                    vec![SeqNumber(7), SeqNumber(12)].into_iter(),
+                ))
+                .count()
+                > 0
+        );
 
         // the spec suggests the loss list should be ordered smallest to largest
         let next = buffer
@@ -375,9 +410,14 @@ mod test {
         assert!(buffer.has_packets_to_send());
 
         // NAK for packets from the past should be ignored
-        buffer.add_to_loss_list(CompressedLossList::from_loss_list(
-            vec![SeqNumber(1)].into_iter(),
-        ));
+        assert!(
+            buffer
+                .add_to_loss_list(CompressedLossList::from_loss_list(
+                    vec![SeqNumber(1)].into_iter(),
+                ))
+                .count()
+                > 0
+        );
         assert_eq!(buffer.pop_next_lost_packet(), None);
         assert_eq!(buffer.number_of_unacked_packets(), 2);
         assert!(!buffer.is_flushed());
@@ -415,9 +455,14 @@ mod test {
             assert_ne!(buffer.pop_next_packet(), None);
         }
 
-        buffer.add_to_loss_list(CompressedLossList::from_loss_list(
-            vec![SeqNumber(1)].into_iter(),
-        ));
+        assert!(
+            buffer
+                .add_to_loss_list(CompressedLossList::from_loss_list(
+                    vec![SeqNumber(1)].into_iter(),
+                ))
+                .count()
+                > 0
+        );
         // two packets received, one recovered
         assert_eq!(
             buffer.update_largest_acked_seq_number(SeqNumber(3)),
@@ -439,27 +484,14 @@ mod test {
             buffer.push_data((now, Bytes::from_iter([0u8; 2048])));
         }
 
-        let now = start + TSBPD * 2 + TSBPD / 2 + 2 * MILLIS;
-        assert!(buffer.has_packets_to_drop(now));
-        let dropped = buffer.drop_too_late_packets(now).collect::<Vec<_>>();
-
         // only drop the too late packets, leave the rest queued
+        let now = start + TSBPD + TSBPD / 4 + 2 * MILLIS;
         assert_eq!(
-            dropped,
-            vec![
-                DroppedPackets {
-                    msg: MsgNumber(0),
-                    first: SeqNumber(0),
-                    last: SeqNumber(1)
-                },
-                DroppedPackets {
-                    msg: MsgNumber(1),
-                    first: SeqNumber(2),
-                    last: SeqNumber(3)
-                },
-            ]
+            buffer.drop_too_late_packets(now),
+            Some((SeqNumber(0), SeqNumber(3)))
         );
-        assert!(!buffer.has_packets_to_drop(now));
+
+        assert_eq!(buffer.drop_too_late_packets(now), None);
         assert!(!buffer.is_flushed())
     }
 
@@ -477,27 +509,14 @@ mod test {
         assert_ne!(buffer.pop_next_packet(), None);
         assert_ne!(buffer.pop_next_packet(), None);
 
-        let now = start + TSBPD * 2 + TSBPD / 2 + 2 * MILLIS;
-        assert!(buffer.has_packets_to_drop(now));
-        let dropped = buffer.drop_too_late_packets(now).collect::<Vec<_>>();
-
         // only drop the too late packets, leave the rest queued
+        let now = start + TSBPD + TSBPD / 4 + 2 * MILLIS;
         assert_eq!(
-            dropped,
-            vec![
-                DroppedPackets {
-                    msg: MsgNumber(0),
-                    first: SeqNumber(0),
-                    last: SeqNumber(1)
-                },
-                DroppedPackets {
-                    msg: MsgNumber(1),
-                    first: SeqNumber(2),
-                    last: SeqNumber(3)
-                },
-            ]
+            buffer.drop_too_late_packets(now),
+            Some((SeqNumber(0), SeqNumber(3)))
         );
-        assert!(!buffer.has_packets_to_drop(now));
+
+        assert_eq!(buffer.drop_too_late_packets(now), None);
         assert!(!buffer.is_flushed())
     }
 
@@ -515,29 +534,40 @@ mod test {
         assert_ne!(buffer.pop_next_packet(), None);
         assert_ne!(buffer.pop_next_packet(), None);
 
-        let _ = buffer.add_to_loss_list(CompressedLossList::from_loss_list(
-            vec![SeqNumber(1), SeqNumber(2)].into_iter(),
-        ));
-
-        let now = start + TSBPD * 2 + TSBPD / 2 + 2 * MILLIS;
-        assert!(buffer.has_packets_to_drop(now));
-        // only drop the too late packets, leave the rest queued
+        use Loss::*;
         assert_eq!(
-            buffer.drop_too_late_packets(now).collect::<Vec<_>>(),
+            buffer
+                .add_to_loss_list(CompressedLossList::from_loss_list(
+                    vec![SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)].into_iter(),
+                ))
+                .collect::<Vec<_>>(),
             vec![
-                DroppedPackets {
-                    msg: MsgNumber(0),
-                    first: SeqNumber(0),
-                    last: SeqNumber(1)
-                },
-                DroppedPackets {
-                    msg: MsgNumber(1),
-                    first: SeqNumber(2),
-                    last: SeqNumber(3)
-                },
+                (Added, SeqNumber(1), SeqNumber(2)),
+                (Ignored, SeqNumber(3), SeqNumber(3)),
+                (Ignored, SeqNumber(5), SeqNumber(5)),
             ]
         );
-        assert!(!buffer.has_packets_to_drop(now));
-        assert!(!buffer.is_flushed())
+
+        // only drop the too late packets, leave the rest queued
+        let now = start + TSBPD + TSBPD / 4 + 2 * MILLIS;
+        assert_eq!(
+            buffer.drop_too_late_packets(now),
+            Some((SeqNumber(0), SeqNumber(3)))
+        );
+
+        assert_eq!(buffer.drop_too_late_packets(now), None);
+        assert!(!buffer.is_flushed());
+
+        assert_eq!(
+            buffer
+                .add_to_loss_list(CompressedLossList::from_loss_list(
+                    vec![SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)].into_iter(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (Dropped, SeqNumber(1), SeqNumber(3)),
+                (Ignored, SeqNumber(5), SeqNumber(5)),
+            ]
+        );
     }
 }

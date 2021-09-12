@@ -19,12 +19,12 @@ fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
 }
 
 #[tokio::test]
-#[ignore]
 async fn high_bandwidth() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     let sender_fut = async {
         let mut sock = SrtSocketBuilder::new_connect("127.0.0.1:6654")
+            .latency(Duration::from_millis(150))
             .connect()
             .await?;
 
@@ -37,12 +37,13 @@ async fn high_bandwidth() -> Result<(), Error> {
 
         sock.send_all(&mut stream_gbps).await?;
 
-        Ok::<_, Error>(())
+        sock.close().await
     };
 
     let recv_fut = async {
         let mut sock = SrtSocketBuilder::new_listen()
             .local_port(6654)
+            .latency(Duration::from_millis(150))
             .connect()
             .await?;
 

@@ -1,7 +1,6 @@
 use std::time::{Duration, Instant};
 
 use crate::protocol::stats::*;
-//use crate::SeqNumber;
 
 #[derive(Debug)]
 struct MessageStats {
@@ -120,7 +119,7 @@ impl SenderCongestionControl {
     pub fn window_size(&self) -> u32 {
         // Up to SRT 1.0.6, this value was set at 1000 pkts, which may be insufficient
         // for satellite links with ~1000 msec RTT and high bit rate.
-        self.window_size.unwrap_or(1000) as u32
+        self.window_size.unwrap_or(10_000) as u32
     }
 
     /// When an ACK packet is received

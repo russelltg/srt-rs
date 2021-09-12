@@ -1,5 +1,6 @@
 use std::{
     convert::TryFrom,
+    convert::TryInto,
     fmt::{self, Debug, Formatter},
     mem::size_of,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -20,6 +21,7 @@ pub use self::srt::*;
 
 use super::PacketParseError;
 use fmt::Display;
+use std::ops::Sub;
 
 /// A UDP packet carrying control information
 ///
@@ -907,6 +909,10 @@ impl CompressedLossList {
     pub fn iter_decompressed(&self) -> impl Iterator<Item = SeqNumber> + '_ {
         decompress_loss_list(self.iter_compressed())
     }
+
+    pub fn into_iter_decompressed(self) -> impl Iterator<Item = SeqNumber> {
+        decompress_loss_list(self.0.into_iter())
+    }
 }
 
 impl FullAckSeqNumber {
@@ -918,11 +924,6 @@ impl FullAckSeqNumber {
         } else {
             Some(FullAckSeqNumber(raw))
         }
-    }
-
-    pub fn increment(&mut self) {
-        // TODO: wrapping or nonwrapping???
-        self.0 = self.0.wrapping_add(1);
     }
 
     pub fn is_full(&self) -> bool {
@@ -941,6 +942,14 @@ impl Add<u32> for FullAckSeqNumber {
 
     fn add(self, rhs: u32) -> Self::Output {
         FullAckSeqNumber(self.0 + rhs)
+    }
+}
+
+impl Sub<FullAckSeqNumber> for FullAckSeqNumber {
+    type Output = usize;
+
+    fn sub(self, rhs: FullAckSeqNumber) -> Self::Output {
+        (self.0 - rhs.0).try_into().unwrap()
     }
 }
 
