@@ -45,6 +45,10 @@ jobs:
       run: cargo build ${{ matrix.extra_flags }} --tests --examples --verbose
     - name: Run tests
       run: cargo test ${{ matrix.extra_flags }} --verbose
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
       
   clippy:
     runs-on: ubuntu-latest
@@ -86,3 +90,7 @@ jobs:
       run: ./grcov . --llvm --binary-path ./target/debug/ -t lcov -s . --ignore '*/tests/*' -o lcov.info
     - name: Upload results
       run: bash <(curl -s https://codecov.io/bash) -f lcov.info
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: nightly
