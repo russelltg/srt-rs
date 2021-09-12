@@ -155,7 +155,7 @@ impl DuplexConnection {
         DuplexConnection {
             status: ConnectionStatus::Open(settings.send_tsbpd_latency),
             settings: settings.clone(),
-            receiver: Receiver::new(settings.clone(), connection.handshake.clone()),
+            receiver: Receiver::new(settings.clone()),
             sender: Sender::new(settings, connection.handshake),
         }
     }

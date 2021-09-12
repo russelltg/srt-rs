@@ -140,17 +140,6 @@ impl LinkCapacityEstimate {
 }
 
 #[derive(Debug)]
-struct LossListEntry {
-    seq_num: SeqNumber,
-
-    // last time it was feed into NAK
-    feedback_time: Instant,
-
-    // the number of times this entry has been fed back into NAK
-    k: i32,
-}
-
-#[derive(Debug)]
 pub struct AutomaticRepeatRequestAlgorithm {
     link_capacity_estimate: LinkCapacityEstimate,
     arrival_speed: ArrivalSpeed,

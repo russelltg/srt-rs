@@ -1,8 +1,11 @@
 use std::{net::SocketAddr, time::Instant};
 
-use crate::protocol::TimeStamp;
-use crate::{accesscontrol::StreamAcceptor, SocketId};
-use crate::{packet::*, protocol::handshake::Handshake, Connection};
+use crate::{
+    accesscontrol::StreamAcceptor,
+    packet::*,
+    protocol::{handshake::Handshake, TimeStamp},
+    Connection,
+};
 
 use super::{
     cookie::gen_cookie,
@@ -19,8 +22,6 @@ pub struct Listen {
 
 #[derive(Clone)]
 pub struct ConclusionWaitState {
-    timestamp: TimeStamp,
-    from: (SocketAddr, SocketId),
     cookie: i32,
     induction_response: Packet,
     induction_time: Instant,
@@ -74,8 +75,6 @@ impl Listen {
                 // save induction message for potential later retransmit
                 let save_induction_response = induction_response.clone();
                 self.state = ConclusionWait(ConclusionWaitState {
-                    timestamp,
-                    from: (from, shake.socket_id),
                     cookie,
                     induction_response: save_induction_response,
                     induction_time: now,

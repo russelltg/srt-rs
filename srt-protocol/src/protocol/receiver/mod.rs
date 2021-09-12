@@ -1,18 +1,18 @@
-use std::collections::VecDeque;
-use std::net::SocketAddr;
-use std::time::Instant;
+use std::{collections::VecDeque, net::SocketAddr, time::Instant};
 
 use bytes::Bytes;
 use log::{debug, error, info, trace, warn};
 
-use crate::connection::ConnectionStatus;
-use crate::packet::{ControlPacket, ControlTypes, DataPacket, FullAckSeqNumber, Packet};
-use crate::protocol::encryption::Cipher;
-use crate::protocol::handshake::Handshake;
-use crate::protocol::receiver::arq::AutomaticRepeatRequestAlgorithm;
-use crate::protocol::receiver::time::ReceiveTimers;
-use crate::protocol::{TimeBase, TimeStamp};
-use crate::{ConnectionSettings, SeqNumber};
+use crate::{
+    connection::ConnectionStatus,
+    packet::{ControlPacket, ControlTypes, DataPacket, FullAckSeqNumber, Packet},
+    protocol::{
+        encryption::Cipher,
+        receiver::{arq::AutomaticRepeatRequestAlgorithm, time::ReceiveTimers},
+        TimeBase, TimeStamp,
+    },
+    ConnectionSettings, SeqNumber,
+};
 
 mod arq;
 mod buffer;
@@ -22,8 +22,6 @@ mod time;
 #[derive(Debug)]
 pub struct Receiver {
     settings: ConnectionSettings,
-
-    handshake: Handshake,
 
     time_base: TimeBase,
 
@@ -39,7 +37,7 @@ pub struct Receiver {
 }
 
 impl Receiver {
-    pub fn new(settings: ConnectionSettings, handshake: Handshake) -> Self {
+    pub fn new(settings: ConnectionSettings) -> Self {
         info!(
             "Receiving started from {:?}, with latency={:?}",
             settings.remote, settings.recv_tsbpd_latency
@@ -47,7 +45,6 @@ impl Receiver {
 
         Receiver {
             settings: settings.clone(),
-            handshake,
             time_base: TimeBase::new(settings.socket_start_time),
             cipher: Cipher::new(settings.crypto_manager),
             arq: AutomaticRepeatRequestAlgorithm::new(
