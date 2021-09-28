@@ -63,7 +63,7 @@ pub enum LiveBandwidthMode {
     /// Note that Input mode reduces to the Set mode and the same restrictions apply.
     Input {
         // m_llInputBW != 0
-        rate: DataRate,     // m_llInputBW
+        rate: DataRate,    // m_llInputBW
         overhead: Percent, // m_iOverheadBW
     },
 
