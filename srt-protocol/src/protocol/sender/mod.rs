@@ -318,8 +318,8 @@ impl Sender {
                         now,
                         DropRequest {
                             // On a Live stream, where each packet is a message, just one NAK with
-                            // with a compressed packet loss interval of significant size (e.g.
-                            // [1, 100_000] will result in a deluge of message drop request packet
+                            // a compressed packet loss interval of significant size (e.g. [1,
+                            // 100_000] will result in a deluge of message drop request packet
                             // transmissions from the sender, resembling a DoS attack on the receiver.
                             // Even more pathological, this is most likely to happen when we absolutely
                             // do not want it to happen, such as during periods of decreased network
@@ -353,7 +353,6 @@ impl Sender {
     }
 
     fn on_snd_event(&mut self, now: Instant) {
-        self.snd_timer.reset(now);
         self.on_snd(now);
     }
 

@@ -39,6 +39,7 @@ impl StatsWindow<MessageStats> {
 
 // rate in bytes per second
 type DataRate = u64;
+type Percent = u64;
 
 // https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-5.1.1
 //
@@ -63,7 +64,7 @@ pub enum LiveBandwidthMode {
     Input {
         // m_llInputBW != 0
         rate: DataRate,     // m_llInputBW
-        overhead: DataRate, // m_iOverheadBW
+        overhead: Percent, // m_iOverheadBW
     },
 
     /// Measure the SRT send input rate internally and set the Overhead.
@@ -97,7 +98,7 @@ pub enum LiveBandwidthMode {
     Estimated {
         // expected: DataRate,     // m_llInputBW
         // m_llMaxBW == 0 && m_llInputBW == 0
-        overhead: DataRate, // m_iOverheadBW
+        overhead: Percent, // m_iOverheadBW
     },
     Unlimited,
 }
