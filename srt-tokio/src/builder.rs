@@ -15,6 +15,7 @@ use log::error;
 use srt_protocol::{
     accesscontrol::{AllowAllStreamAcceptor, StreamAcceptor},
     pending_connection::ConnInitSettings,
+    LiveBandwidthMode,
 };
 
 /// Struct to build sockets.
@@ -184,6 +185,11 @@ impl SrtSocketBuilder {
     // the minimum latency to send at
     pub fn send_latency(mut self, latency: Duration) -> Self {
         self.init_settings.send_latency = latency;
+        self
+    }
+
+    pub fn bandwidth(mut self, bandwidth: LiveBandwidthMode) -> Self {
+        self.init_settings.bandwidth = bandwidth;
         self
     }
 

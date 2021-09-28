@@ -1,7 +1,7 @@
 use log::trace;
 use srt_protocol::connection::{DuplexConnection, Input};
 use srt_protocol::protocol::handshake::Handshake;
-use srt_protocol::{Connection, ConnectionSettings, SeqNumber, SocketId};
+use srt_protocol::{Connection, ConnectionSettings, LiveBandwidthMode, SeqNumber, SocketId};
 use std::cmp::min;
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,7 @@ fn timestamp_rollover() {
         recv_tsbpd_latency: Duration::from_millis(20),
         crypto_manager: None,
         stream_id: None,
+        bandwidth: LiveBandwidthMode::default(),
     };
 
     let s2 = ConnectionSettings {
@@ -52,6 +53,7 @@ fn timestamp_rollover() {
         recv_tsbpd_latency: Duration::from_millis(20),
         crypto_manager: None,
         stream_id: None,
+        bandwidth: LiveBandwidthMode::default(),
     };
 
     const PACKET_RATE: u32 = 10; // 10 packet/s

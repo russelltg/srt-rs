@@ -7,6 +7,7 @@ use anyhow::Error;
 use bytes::Bytes;
 use futures::{stream, SinkExt, Stream, StreamExt, TryStreamExt};
 use log::info;
+use srt_protocol::LiveBandwidthMode::*;
 use srt_tokio::SrtSocketBuilder;
 
 fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
@@ -25,6 +26,7 @@ async fn high_bandwidth() -> Result<(), Error> {
     let sender_fut = async {
         let mut sock = SrtSocketBuilder::new_connect("127.0.0.1:6654")
             .latency(Duration::from_millis(150))
+            .bandwidth(Estimated { overhead: 20 })
             .connect()
             .await?;
 
