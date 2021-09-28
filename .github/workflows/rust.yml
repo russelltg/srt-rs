@@ -34,6 +34,7 @@ jobs:
       with:
         profile: minimal
         toolchain: stable
+    - uses: Swatinem/rust-cache@v1
     - name: install target
       run: rustup target add i686-unknown-linux-gnu && sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install gcc-multilib srt-tools:i386
       if: matrix.extra_flags != ''
@@ -49,7 +50,6 @@ jobs:
       run: cargo build ${{ matrix.extra_flags }} --tests --examples --verbose
     - name: Run tests
       run: cargo test ${{ matrix.extra_flags }} --verbose
-    - uses: Swatinem/rust-cache@v1
       
   clippy:
     runs-on: ubuntu-latest
@@ -74,21 +74,21 @@ jobs:
     - uses: actions-rs/toolchain@v1
       with:
         profile: minimal
-        toolchain: nightly
+        toolchain: nightly-2021-08-07
+    - uses: Swatinem/rust-cache@v1
     - name: Set nightly to defualt
-      run: rustup default nightly
+      run: rustup default nightly-2021-08-07
     - name: Install llvm-tools-preview
-      run: rustup component add --toolchain nightly llvm-tools-preview
+      run: rustup component add --toolchain nightly-2021-08-07 llvm-tools-preview
     - name: install srt
       run: sudo apt-get install srt-tools
     - name: Download grcov
-      run: wget https://github.com/mozilla/grcov/releases/download/v0.7.1/grcov-linux-x86_64.tar.bz2 -O grcov.tar.bz2 && tar -xf grcov.tar.bz2
+      run: wget https://github.com/mozilla/grcov/releases/download/v0.8.2/grcov-linux-x86_64.tar.bz2 -O grcov.tar.bz2 && tar -xf grcov.tar.bz2
     - name: Build with profdata
-      run: RUSTFLAGS="-Zinstrument-coverage" cargo +nightly build --tests
+      run: RUSTFLAGS="-Zinstrument-coverage" cargo +nightly-2021-08-07 build --tests
     - name: Generate reports
-      run: RUSTFLAGS="-Zinstrument-coverage" LLVM_PROFILE_FILE="srt.%p.profraw" cargo +nightly test
+      run: RUSTFLAGS="-Zinstrument-coverage" LLVM_PROFILE_FILE="srt.%p.profraw" cargo +nightly-2021-08-07 test
     - name: Run grcov
-      run: ./grcov . --llvm --binary-path ./target/debug/ -t lcov -s . --ignore '*/tests/*' -o lcov.info
+      run: RUSTUP_TOOLCHAIN=nightly-2021-08-07 ./grcov . --llvm --binary-path ./target/debug/ -t lcov -s . --ignore '*/tests/*' -o lcov.info
     - name: Upload results
       run: bash <(curl -s https://codecov.io/bash) -f lcov.info
-    - uses: Swatinem/rust-cache@v1
