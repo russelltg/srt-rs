@@ -17,7 +17,7 @@ use srt_protocol::{
         connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnInitSettings,
         ConnectionResult,
     },
-    Connection, ControlPacket, Packet, SeqNumber, SocketId,
+    Connection, ControlPacket, LiveBandwidthMode, Packet, SeqNumber, SocketId,
 };
 
 pub mod simulator;
@@ -152,6 +152,7 @@ fn precise_ts0() {
                 crypto: None,
                 send_latency: Duration::from_millis(2000),
                 recv_latency: Duration::from_millis(20),
+                bandwidth: LiveBandwidthMode::default(),
             },
             None,
             seqno,
@@ -164,6 +165,7 @@ fn precise_ts0() {
         crypto: None,
         send_latency: Duration::from_millis(20),
         recv_latency: Duration::from_millis(20),
+        bandwidth: LiveBandwidthMode::default(),
     }));
 
     let conn = NetworkSimulator::new(s_sa, r_sa);
@@ -237,6 +239,7 @@ fn do_lossy_connect(seed: u64) {
                 crypto: None,
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
+                bandwidth: LiveBandwidthMode::default(),
             },
             None,
             start_seqno,
@@ -249,6 +252,7 @@ fn do_lossy_connect(seed: u64) {
         crypto: None,
         send_latency: Duration::from_millis(20),
         recv_latency: Duration::from_millis(20),
+        bandwidth: LiveBandwidthMode::default(),
     }));
 
     complete(
@@ -309,6 +313,7 @@ fn do_lossy_rendezvous(seed: u64) {
                 crypto: None,
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
+                bandwidth: LiveBandwidthMode::default(),
             },
             a_start_seqno,
         ),
@@ -324,6 +329,7 @@ fn do_lossy_rendezvous(seed: u64) {
                 crypto: None,
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
+                bandwidth: LiveBandwidthMode::default(),
             },
             b_start_seqno,
         ),

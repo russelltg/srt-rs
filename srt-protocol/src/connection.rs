@@ -8,7 +8,7 @@ use crate::protocol::handshake::Handshake;
 use crate::protocol::receiver::Receiver;
 use crate::protocol::sender::Sender;
 use crate::protocol::TimeSpan;
-use crate::{crypto::CryptoManager, ControlPacket, Packet, SeqNumber, SocketId};
+use crate::{crypto::CryptoManager, ControlPacket, LiveBandwidthMode, Packet, SeqNumber, SocketId};
 use bytes::Bytes;
 use log::{debug, info, warn};
 use std::cmp::min;
@@ -54,6 +54,7 @@ pub struct ConnectionSettings {
     pub crypto_manager: Option<CryptoManager>,
 
     pub stream_id: Option<String>,
+    pub bandwidth: LiveBandwidthMode,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -370,7 +371,7 @@ mod duplex_connection {
     use crate::packet::CompressedLossList;
     use crate::protocol::TimeStamp;
     use crate::seq_number::seq_num_range;
-    use crate::MsgNumber;
+    use crate::{LiveBandwidthMode, MsgNumber};
 
     const MILLIS: Duration = Duration::from_millis(1);
     const SND: Duration = MILLIS;
@@ -403,6 +404,7 @@ mod duplex_connection {
                 recv_tsbpd_latency: TSBPD,
                 crypto_manager: None,
                 stream_id: None,
+                bandwidth: LiveBandwidthMode::default(),
             },
             handshake: Handshake::Connector,
         }

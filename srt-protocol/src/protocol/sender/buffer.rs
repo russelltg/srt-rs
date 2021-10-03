@@ -273,6 +273,7 @@ mod test {
             recv_tsbpd_latency: TSBPD,
             crypto_manager: None,
             stream_id: None,
+            bandwidth: LiveBandwidthMode::default(),
         }
     }
 
