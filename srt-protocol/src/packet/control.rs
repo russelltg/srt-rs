@@ -702,7 +702,9 @@ impl ControlTypes {
                 Ok(ControlTypes::Nak(CompressedLossList(loss_info)))
             }
             0x4 => {
-                // Congestion
+                if buf.remaining() >= 4 {
+                    buf.get_u32(); // discard "unused" packet field
+                }
                 Ok(ControlTypes::CongestionWarning)
             }
             0x5 => {
@@ -736,6 +738,9 @@ impl ControlTypes {
             }
             0x8 => {
                 // Peer error
+                if buf.remaining() >= 4 {
+                    buf.get_u32(); // discard "unused" packet field
+                }
                 Ok(ControlTypes::PeerError(extra_info))
             }
             0x7FFF => {

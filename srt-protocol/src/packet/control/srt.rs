@@ -278,7 +278,7 @@ fn le_bytes_to_string(le_bytes: &mut impl Buf) -> Result<String, PacketParseErro
         [a, 0, 0, 0] => str_bytes.push(a),
         [a, b, 0, 0] => str_bytes.extend(&[a, b]),
         [a, b, c, 0] => str_bytes.extend(&[a, b, c]),
-        _ => {}
+        [a, b, c, d] => str_bytes.extend(&[a, b, c, d]),
     }
 
     String::from_utf8(str_bytes).map_err(|e| PacketParseError::StreamTypeNotUtf8(e.utf8_error()))
@@ -296,7 +296,8 @@ fn string_to_le_bytes(str: &str, into: &mut impl BufMut) {
         [a, b, c] => into.put(&[0, c, b, a][..]),
         [a, b] => into.put(&[0, 0, b, a][..]),
         [a] => into.put(&[0, 0, 0, a][..]),
-        _ => {}
+        [] =>  {} // exact multiple of 4
+        _ => unreachable!(),
     }
 }
 
@@ -396,7 +397,10 @@ impl SrtControlPacket {
                 into.put_u8(flags.bits());
                 into.put_u16_le(*weight);
             }
-            _ => unimplemented!(),
+            Reject => {}
+            Congestion(c) => {
+                string_to_le_bytes(&c, into);
+            }
         }
     }
     // size in 32-bit words
