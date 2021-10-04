@@ -15,6 +15,7 @@ use std::{error::Error, fmt, net::SocketAddr, time::Duration};
 
 #[non_exhaustive]
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum ConnectError {
     ControlExpected(DataPacket),
     HandshakeExpected(ControlTypes),

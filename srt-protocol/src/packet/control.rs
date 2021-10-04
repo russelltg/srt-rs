@@ -74,6 +74,9 @@ pub enum ControlTypes {
     /// Additional Info isn't used
     Nak(CompressedLossList),
 
+    // Congestion warning packet, type 0x4
+    CongestionWarning,
+
     /// Shutdown packet, type 0x5
     Shutdown,
 
@@ -93,6 +96,9 @@ pub enum ControlTypes {
         /// The last sequence number in the message to drop
         last: SeqNumber,
     },
+
+    // Peer error, type 0x8
+    PeerError(u32),
 
     /// Srt control packets
     /// These use the UDT extension type 0xFF
@@ -122,6 +128,8 @@ pub struct HsV5Info {
 
     /// The extension KMREQ/KMRESP
     pub ext_km: Option<SrtControlPacket>,
+
+    pub ext_group: Option<SrtControlPacket>,
 
     /// The SID
     pub sid: Option<String>,
@@ -618,6 +626,7 @@ impl ControlTypes {
                                 crypto_size,
                                 ext_hs,
                                 ext_km,
+                                ext_group: None,
                                 sid,
                             })
                         }
@@ -692,6 +701,12 @@ impl ControlTypes {
 
                 Ok(ControlTypes::Nak(CompressedLossList(loss_info)))
             }
+            0x4 => {
+                if buf.remaining() >= 4 {
+                    buf.get_u32(); // discard "unused" packet field
+                }
+                Ok(ControlTypes::CongestionWarning)
+            }
             0x5 => {
                 if buf.remaining() >= 4 {
                     buf.get_u32(); // discard "unused" packet field
@@ -721,6 +736,13 @@ impl ControlTypes {
                     last: SeqNumber::new_truncate(buf.get_u32()),
                 })
             }
+            0x8 => {
+                // Peer error
+                if buf.remaining() >= 4 {
+                    buf.get_u32(); // discard "unused" packet field
+                }
+                Ok(ControlTypes::PeerError(extra_info))
+            }
             0x7FFF => {
                 // Srt
                 Ok(ControlTypes::Srt(SrtControlPacket::parse(
@@ -737,9 +759,11 @@ impl ControlTypes {
             ControlTypes::KeepAlive => 0x1,
             ControlTypes::Ack { .. } => 0x2,
             ControlTypes::Nak(_) => 0x3,
+            ControlTypes::CongestionWarning => 0x4,
             ControlTypes::Shutdown => 0x5,
             ControlTypes::Ack2(_) => 0x6,
             ControlTypes::DropRequest { .. } => 0x7,
+            ControlTypes::PeerError(_) => 0x8,
             ControlTypes::Srt(_) => 0x7FFF,
         }
     }
@@ -753,8 +777,15 @@ impl ControlTypes {
                 full_ack_seq_number: Some(a),
                 ..
             }) => (*a).into(),
+            ControlTypes::PeerError(err) => *err,
             // These do not, just use zero
-            _ => 0,
+            ControlTypes::Ack(_)
+            | ControlTypes::Handshake(_)
+            | ControlTypes::KeepAlive
+            | ControlTypes::Nak(_)
+            | ControlTypes::CongestionWarning
+            | ControlTypes::Shutdown
+            | ControlTypes::Srt(_) => 0,
         }
     }
 
@@ -853,7 +884,11 @@ impl ControlTypes {
                 into.put_u32(first.as_raw());
                 into.put_u32(last.as_raw());
             }
-            ControlTypes::Ack2(_) | ControlTypes::Shutdown | ControlTypes::KeepAlive => {
+            ControlTypes::CongestionWarning
+            | ControlTypes::Ack2(_)
+            | ControlTypes::Shutdown
+            | ControlTypes::KeepAlive
+            | ControlTypes::PeerError(_) => {
                 // The reference implementation appends one (4 byte) word at the end of these packets, which wireshark labels as 'Unused'
                 // I have no idea why, but wireshark reports it as a "malformed packet" without it. For the record,
                 // this is NOT in the UDT specification. I wonder if this was carried over from the original UDT implementation.
@@ -876,6 +911,7 @@ impl Debug for ControlTypes {
             ControlTypes::Nak(nak) => {
                 write!(f, "Nak({:?})", nak) // TODO could be better, show ranges
             }
+            ControlTypes::CongestionWarning => write!(f, "CongestionWarning"),
             ControlTypes::Shutdown => write!(f, "Shutdown"),
             ControlTypes::Ack2(ackno) => write!(f, "Ack2({})", ackno.0),
             ControlTypes::DropRequest {
@@ -883,6 +919,7 @@ impl Debug for ControlTypes {
                 first,
                 last,
             } => write!(f, "DropReq(msg={} {}-{})", msg_to_drop, first, last),
+            ControlTypes::PeerError(e) => write!(f, "PeerError({})", e),
             ControlTypes::Srt(srt) => write!(f, "{:?}", srt),
         }
     }
@@ -1201,33 +1238,35 @@ impl Display for ServerRejectReason {
 
 #[cfg(test)]
 mod test {
-
-    use bytes::BytesMut;
-
     use super::*;
     use crate::{SeqNumber, SocketId, SrtVersion};
-    use std::time::Duration;
+    use std::{array::IntoIter, time::Duration};
     use std::{convert::TryInto, io::Cursor};
+
+    fn ser_des_test(pack: ControlPacket) -> Vec<u8> {
+        let mut buf = vec![];
+        pack.serialize(&mut buf);
+
+        let mut cursor = Cursor::new(&buf);
+        let des = ControlPacket::parse(&mut cursor, false).unwrap();
+        assert_eq!(cursor.remaining(), 0);
+        assert_eq!(pack, des);
+
+        buf
+    }
 
     #[test]
     fn lite_ack_ser_des_test() {
-        let pack = ControlPacket {
+        ser_des_test(ControlPacket {
             timestamp: TimeStamp::from_micros(1234),
             dest_sockid: SocketId(0),
             control_type: ControlTypes::Ack(AckControlInfo::Lite(SeqNumber::new_truncate(1234))),
-        };
-
-        let mut buf = BytesMut::with_capacity(128);
-        pack.serialize(&mut buf);
-
-        let des = ControlPacket::parse(&mut buf, false).unwrap();
-        assert!(buf.is_empty());
-        assert_eq!(pack, des);
+        });
     }
 
     #[test]
     fn handshake_ser_des_test() {
-        let pack = ControlPacket {
+        ser_des_test(ControlPacket {
             timestamp: TimeStamp::from_micros(0),
             dest_sockid: SocketId(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
@@ -1247,22 +1286,16 @@ mod test {
                         recv_latency: Duration::from_millis(12345),
                     })),
                     ext_km: None,
+                    ext_group: None,
                     sid: None,
                 }),
             }),
-        };
-
-        let mut buf = BytesMut::with_capacity(128);
-        pack.serialize(&mut buf);
-
-        let des = ControlPacket::parse(&mut buf, false).unwrap();
-        assert!(buf.is_empty());
-        assert_eq!(pack, des);
+        });
     }
 
     #[test]
     fn ack_ser_des_test() {
-        let pack = ControlPacket {
+        ser_des_test(ControlPacket {
             timestamp: TimeStamp::from_micros(113_703),
             dest_sockid: SocketId(2_453_706_529),
             control_type: ControlTypes::Ack(AckControlInfo::FullSmall {
@@ -1275,34 +1308,127 @@ mod test {
                 est_link_cap: Some(0),
                 data_recv_rate: Some(0),
             }),
-        };
-
-        let mut buf = BytesMut::with_capacity(128);
-        pack.serialize(&mut buf);
-
-        let des = ControlPacket::parse(&mut buf, false).unwrap();
-        assert!(buf.is_empty());
-        assert_eq!(pack, des);
+        });
     }
 
     #[test]
     fn ack2_ser_des_test() {
-        let pack = ControlPacket {
+        let buf = ser_des_test(ControlPacket {
             timestamp: TimeStamp::from_micros(125_812),
             dest_sockid: SocketId(8313),
             control_type: ControlTypes::Ack2(FullAckSeqNumber::new(831).unwrap()),
-        };
-        assert_eq!(pack.control_type.additional_info(), 831);
-
-        let mut buf = BytesMut::with_capacity(128);
-        pack.serialize(&mut buf);
+        });
 
         // dword 2 should have 831 in big endian, so the last two bits of the second dword
         assert_eq!((u32::from(buf[6]) << 8) + u32::from(buf[7]), 831);
+    }
 
-        let des = ControlPacket::parse(&mut buf, false).unwrap();
-        assert!(buf.is_empty());
-        assert_eq!(pack, des);
+    #[test]
+    fn enc_size_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: SocketId(0),
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                init_seq_num: SeqNumber(0),
+                max_packet_size: 1816,
+                max_flow_size: 0,
+                shake_type: ShakeType::Conclusion,
+                socket_id: SocketId(0),
+                syn_cookie: 0,
+                peer_addr: [127, 0, 0, 1].into(),
+                info: HandshakeVsInfo::V5(HsV5Info {
+                    crypto_size: 16,
+                    ext_km: None,
+                    ext_hs: None,
+                    ext_group: None,
+                    sid: None,
+                }),
+            }),
+        });
+    }
+
+    #[test]
+    fn sid_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: SocketId(0),
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                init_seq_num: SeqNumber(0),
+                max_packet_size: 1816,
+                max_flow_size: 0,
+                shake_type: ShakeType::Conclusion,
+                socket_id: SocketId(0),
+                syn_cookie: 0,
+                peer_addr: [127, 0, 0, 1].into(),
+                info: HandshakeVsInfo::V5(HsV5Info {
+                    crypto_size: 0,
+                    ext_km: None,
+                    ext_hs: None,
+                    ext_group: None,
+                    sid: Some("Hello hello".into()),
+                }),
+            }),
+        });
+    }
+
+    #[test]
+    fn keepalive_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: SocketId(0),
+            control_type: ControlTypes::KeepAlive,
+        });
+    }
+
+    #[test]
+    fn congestion_warning_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(100),
+            dest_sockid: rand::random(),
+            control_type: ControlTypes::CongestionWarning,
+        });
+    }
+
+    #[test]
+    fn peer_error_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(100),
+            dest_sockid: rand::random(),
+            control_type: ControlTypes::PeerError(1234),
+        });
+    }
+
+    #[test]
+    fn congestion_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(100),
+            dest_sockid: rand::random(),
+            control_type: ControlTypes::Srt(SrtControlPacket::Congestion("live".to_string())),
+        });
+    }
+
+    #[test]
+    fn group_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(100),
+            dest_sockid: rand::random(),
+            control_type: ControlTypes::Srt(SrtControlPacket::Group {
+                ty: GroupType::MainBackup,
+                flags: GroupFlags::MSG_SYNC,
+                weight: 123,
+            }),
+        });
+    }
+
+    #[test]
+    fn filter_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(100),
+            dest_sockid: rand::random(),
+            control_type: ControlTypes::Srt(SrtControlPacket::Filter(
+                IntoIter::new([("hi".to_string(), "bye".to_string())]).collect(),
+            )),
+        });
     }
 
     #[test]
@@ -1384,6 +1510,7 @@ mod test {
                             recv_latency: Duration::new(0, 0)
                         })),
                         ext_km: None,
+                        ext_group: None,
                         sid: None,
                     })
                 })
@@ -1431,6 +1558,7 @@ mod test {
                             recv_latency: Duration::from_millis(20)
                         })),
                         ext_km: None,
+                        ext_group: None,
                         sid: Some(String::from("abcdefghij")),
                     })
                 })
@@ -1487,6 +1615,7 @@ mod test {
                             )
                             .unwrap()
                         })),
+                        ext_group: None,
                         sid: None,
                     })
                 })
@@ -1514,82 +1643,6 @@ mod test {
                 .unwrap();
 
         let _cp = ControlPacket::parse(&mut Cursor::new(packet_data), false).unwrap();
-    }
-
-    #[test]
-    fn test_enc_size() {
-        let pack = ControlPacket {
-            timestamp: TimeStamp::from_micros(0),
-            dest_sockid: SocketId(0),
-            control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                init_seq_num: SeqNumber(0),
-                max_packet_size: 1816,
-                max_flow_size: 0,
-                shake_type: ShakeType::Conclusion,
-                socket_id: SocketId(0),
-                syn_cookie: 0,
-                peer_addr: [127, 0, 0, 1].into(),
-                info: HandshakeVsInfo::V5(HsV5Info {
-                    crypto_size: 16,
-                    ext_km: None,
-                    ext_hs: None,
-                    sid: None,
-                }),
-            }),
-        };
-
-        let mut ser = BytesMut::with_capacity(128);
-        pack.serialize(&mut ser);
-
-        let pack_deser = ControlPacket::parse(&mut ser, false).unwrap();
-        assert!(ser.is_empty());
-        assert_eq!(pack, pack_deser);
-    }
-
-    #[test]
-    fn test_sid() {
-        let pack = ControlPacket {
-            timestamp: TimeStamp::from_micros(0),
-            dest_sockid: SocketId(0),
-            control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                init_seq_num: SeqNumber(0),
-                max_packet_size: 1816,
-                max_flow_size: 0,
-                shake_type: ShakeType::Conclusion,
-                socket_id: SocketId(0),
-                syn_cookie: 0,
-                peer_addr: [127, 0, 0, 1].into(),
-                info: HandshakeVsInfo::V5(HsV5Info {
-                    crypto_size: 0,
-                    ext_km: None,
-                    ext_hs: None,
-                    sid: Some("Hello hello".into()),
-                }),
-            }),
-        };
-
-        let mut ser = BytesMut::with_capacity(128);
-        pack.serialize(&mut ser);
-
-        let pack_deser = ControlPacket::parse(&mut ser, false).unwrap();
-        assert_eq!(pack, pack_deser);
-        assert!(ser.is_empty());
-    }
-
-    #[test]
-    fn test_keepalive() {
-        let pack = ControlPacket {
-            timestamp: TimeStamp::from_micros(0),
-            dest_sockid: SocketId(0),
-            control_type: ControlTypes::KeepAlive,
-        };
-
-        let mut ser = BytesMut::with_capacity(128);
-        pack.serialize(&mut ser);
-
-        let pack_deser = ControlPacket::parse(&mut ser, false).unwrap();
-        assert_eq!(pack, pack_deser);
-        assert!(ser.is_empty());
     }
 
     #[test]
@@ -1658,6 +1711,7 @@ mod test {
                         )
                         .unwrap()
                     })),
+                    ext_group: None,
                     sid: Some("#!::u=hex".into()),
                 }),
             }),

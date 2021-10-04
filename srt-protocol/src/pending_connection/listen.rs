@@ -280,6 +280,7 @@ mod test {
                     recv_latency: Duration::from_secs(2),
                 })),
                 ext_km: None,
+                ext_group: None,
                 sid: None,
             }),
         }
