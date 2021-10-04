@@ -399,7 +399,7 @@ impl SrtControlPacket {
             }
             Reject => {}
             Congestion(c) => {
-                string_to_le_bytes(&c, into);
+                string_to_le_bytes(c, into);
             }
         }
     }
