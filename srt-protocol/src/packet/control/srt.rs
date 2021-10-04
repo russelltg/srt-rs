@@ -296,7 +296,7 @@ fn string_to_le_bytes(str: &str, into: &mut impl BufMut) {
         [a, b, c] => into.put(&[0, c, b, a][..]),
         [a, b] => into.put(&[0, 0, b, a][..]),
         [a] => into.put(&[0, 0, 0, a][..]),
-        [] =>  {} // exact multiple of 4
+        [] => {} // exact multiple of 4
         _ => unreachable!(),
     }
 }
