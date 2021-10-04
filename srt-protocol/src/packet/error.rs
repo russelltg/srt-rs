@@ -20,6 +20,7 @@ pub enum PacketParseError {
     BadDataEncryption(u8),
     StreamTypeNotUtf8(Utf8Error),
     ZeroAckSequenceNumber,
+    BadFilter(String),
     Io(io::Error),
 }
 

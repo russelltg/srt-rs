@@ -1233,33 +1233,35 @@ impl Display for ServerRejectReason {
 
 #[cfg(test)]
 mod test {
-
-    use bytes::BytesMut;
-
     use super::*;
     use crate::{SeqNumber, SocketId, SrtVersion};
-    use std::time::Duration;
+    use std::{array::IntoIter, time::Duration};
     use std::{convert::TryInto, io::Cursor};
+
+    fn ser_des_test(pack: ControlPacket) -> Vec<u8> {
+        let mut buf = vec![];
+        pack.serialize(&mut buf);
+
+        let mut cursor = Cursor::new(&buf);
+        let des = ControlPacket::parse(&mut cursor, false).unwrap();
+        assert_eq!(cursor.remaining(), 0);
+        assert_eq!(pack, des);
+
+        buf
+    }
 
     #[test]
     fn lite_ack_ser_des_test() {
-        let pack = ControlPacket {
+        ser_des_test(ControlPacket {
             timestamp: TimeStamp::from_micros(1234),
             dest_sockid: SocketId(0),
             control_type: ControlTypes::Ack(AckControlInfo::Lite(SeqNumber::new_truncate(1234))),
-        };
-
-        let mut buf = BytesMut::with_capacity(128);
-        pack.serialize(&mut buf);
-
-        let des = ControlPacket::parse(&mut buf, false).unwrap();
-        assert!(buf.is_empty());
-        assert_eq!(pack, des);
+        });
     }
 
     #[test]
     fn handshake_ser_des_test() {
-        let pack = ControlPacket {
+        ser_des_test(ControlPacket {
             timestamp: TimeStamp::from_micros(0),
             dest_sockid: SocketId(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
@@ -1283,19 +1285,12 @@ mod test {
                     sid: None,
                 }),
             }),
-        };
-
-        let mut buf = BytesMut::with_capacity(128);
-        pack.serialize(&mut buf);
-
-        let des = ControlPacket::parse(&mut buf, false).unwrap();
-        assert!(buf.is_empty());
-        assert_eq!(pack, des);
+        });
     }
 
     #[test]
     fn ack_ser_des_test() {
-        let pack = ControlPacket {
+        ser_des_test(ControlPacket {
             timestamp: TimeStamp::from_micros(113_703),
             dest_sockid: SocketId(2_453_706_529),
             control_type: ControlTypes::Ack(AckControlInfo::FullSmall {
@@ -1308,34 +1303,127 @@ mod test {
                 est_link_cap: Some(0),
                 data_recv_rate: Some(0),
             }),
-        };
-
-        let mut buf = BytesMut::with_capacity(128);
-        pack.serialize(&mut buf);
-
-        let des = ControlPacket::parse(&mut buf, false).unwrap();
-        assert!(buf.is_empty());
-        assert_eq!(pack, des);
+        });
     }
 
     #[test]
     fn ack2_ser_des_test() {
-        let pack = ControlPacket {
+        let buf = ser_des_test(ControlPacket {
             timestamp: TimeStamp::from_micros(125_812),
             dest_sockid: SocketId(8313),
             control_type: ControlTypes::Ack2(FullAckSeqNumber::new(831).unwrap()),
-        };
-        assert_eq!(pack.control_type.additional_info(), 831);
-
-        let mut buf = BytesMut::with_capacity(128);
-        pack.serialize(&mut buf);
+        });
 
         // dword 2 should have 831 in big endian, so the last two bits of the second dword
         assert_eq!((u32::from(buf[6]) << 8) + u32::from(buf[7]), 831);
+    }
 
-        let des = ControlPacket::parse(&mut buf, false).unwrap();
-        assert!(buf.is_empty());
-        assert_eq!(pack, des);
+    #[test]
+    fn enc_size_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: SocketId(0),
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                init_seq_num: SeqNumber(0),
+                max_packet_size: 1816,
+                max_flow_size: 0,
+                shake_type: ShakeType::Conclusion,
+                socket_id: SocketId(0),
+                syn_cookie: 0,
+                peer_addr: [127, 0, 0, 1].into(),
+                info: HandshakeVsInfo::V5(HsV5Info {
+                    crypto_size: 16,
+                    ext_km: None,
+                    ext_hs: None,
+                    ext_group: None,
+                    sid: None,
+                }),
+            }),
+        });
+    }
+
+    #[test]
+    fn sid_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: SocketId(0),
+            control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                init_seq_num: SeqNumber(0),
+                max_packet_size: 1816,
+                max_flow_size: 0,
+                shake_type: ShakeType::Conclusion,
+                socket_id: SocketId(0),
+                syn_cookie: 0,
+                peer_addr: [127, 0, 0, 1].into(),
+                info: HandshakeVsInfo::V5(HsV5Info {
+                    crypto_size: 0,
+                    ext_km: None,
+                    ext_hs: None,
+                    ext_group: None,
+                    sid: Some("Hello hello".into()),
+                }),
+            }),
+        });
+    }
+
+    #[test]
+    fn keepalive_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: SocketId(0),
+            control_type: ControlTypes::KeepAlive,
+        });
+    }
+
+    #[test]
+    fn congestion_warning_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(100),
+            dest_sockid: rand::random(),
+            control_type: ControlTypes::CongestionWarning,
+        });
+    }
+
+    #[test]
+    fn peer_error_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(100),
+            dest_sockid: rand::random(),
+            control_type: ControlTypes::PeerError(1234),
+        });
+    }
+
+    #[test]
+    fn congestion_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(100),
+            dest_sockid: rand::random(),
+            control_type: ControlTypes::Srt(SrtControlPacket::Congestion("live".to_string())),
+        });
+    }
+
+    #[test]
+    fn group_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(100),
+            dest_sockid: rand::random(),
+            control_type: ControlTypes::Srt(SrtControlPacket::Group {
+                ty: GroupType::MainBackup,
+                flags: GroupFlags::MSG_SYNC,
+                weight: 123,
+            }),
+        });
+    }
+
+    #[test]
+    fn filter_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(100),
+            dest_sockid: rand::random(),
+            control_type: ControlTypes::Srt(SrtControlPacket::Filter(
+                IntoIter::new([("hi".to_string(), "bye".to_string())]).collect(),
+            )),
+        });
     }
 
     #[test]
@@ -1550,84 +1638,6 @@ mod test {
                 .unwrap();
 
         let _cp = ControlPacket::parse(&mut Cursor::new(packet_data), false).unwrap();
-    }
-
-    #[test]
-    fn test_enc_size() {
-        let pack = ControlPacket {
-            timestamp: TimeStamp::from_micros(0),
-            dest_sockid: SocketId(0),
-            control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                init_seq_num: SeqNumber(0),
-                max_packet_size: 1816,
-                max_flow_size: 0,
-                shake_type: ShakeType::Conclusion,
-                socket_id: SocketId(0),
-                syn_cookie: 0,
-                peer_addr: [127, 0, 0, 1].into(),
-                info: HandshakeVsInfo::V5(HsV5Info {
-                    crypto_size: 16,
-                    ext_km: None,
-                    ext_hs: None,
-                    ext_group: None,
-                    sid: None,
-                }),
-            }),
-        };
-
-        let mut ser = BytesMut::with_capacity(128);
-        pack.serialize(&mut ser);
-
-        let pack_deser = ControlPacket::parse(&mut ser, false).unwrap();
-        assert!(ser.is_empty());
-        assert_eq!(pack, pack_deser);
-    }
-
-    #[test]
-    fn test_sid() {
-        let pack = ControlPacket {
-            timestamp: TimeStamp::from_micros(0),
-            dest_sockid: SocketId(0),
-            control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                init_seq_num: SeqNumber(0),
-                max_packet_size: 1816,
-                max_flow_size: 0,
-                shake_type: ShakeType::Conclusion,
-                socket_id: SocketId(0),
-                syn_cookie: 0,
-                peer_addr: [127, 0, 0, 1].into(),
-                info: HandshakeVsInfo::V5(HsV5Info {
-                    crypto_size: 0,
-                    ext_km: None,
-                    ext_hs: None,
-                    ext_group: None,
-                    sid: Some("Hello hello".into()),
-                }),
-            }),
-        };
-
-        let mut ser = BytesMut::with_capacity(128);
-        pack.serialize(&mut ser);
-
-        let pack_deser = ControlPacket::parse(&mut ser, false).unwrap();
-        assert_eq!(pack, pack_deser);
-        assert!(ser.is_empty());
-    }
-
-    #[test]
-    fn test_keepalive() {
-        let pack = ControlPacket {
-            timestamp: TimeStamp::from_micros(0),
-            dest_sockid: SocketId(0),
-            control_type: ControlTypes::KeepAlive,
-        };
-
-        let mut ser = BytesMut::with_capacity(128);
-        pack.serialize(&mut ser);
-
-        let pack_deser = ControlPacket::parse(&mut ser, false).unwrap();
-        assert_eq!(pack, pack_deser);
-        assert!(ser.is_empty());
     }
 
     #[test]
