@@ -106,12 +106,6 @@ async fn sender_timeout() {
         }
 
         a.kill().await.unwrap();
-        // let mut b = b.await.unwrap();
-        // assert_eq!(
-        //     b.try_next().await.unwrap().as_ref().map(|t| &*t.1),
-        //     Some(&b"asdf"[..])
-        // );
-        // assert_eq!(b.try_next().await.unwrap(), None);
     };
     futures::join!(sender, recvr);
 }
