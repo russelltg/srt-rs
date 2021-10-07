@@ -185,8 +185,8 @@ impl Receiver {
     }
 
     fn on_peer_idle_timeout(&mut self, now: Instant) {
-        self.status.drain(now);
         self.send_control(now, ControlTypes::Shutdown);
+        self.status.drain(now);
     }
 
     fn send_control(&mut self, now: Instant, control: ControlTypes) {

@@ -198,7 +198,7 @@ impl DuplexConnection {
     pub fn is_open(&self) -> bool {
         !(self.status.is_closed()
             || (self.sender.is_closed() && self.receiver.is_flushed())
-            || (self.receiver.is_closed() && self.sender.is_flushed()))
+            || self.receiver.is_closed())
     }
 
     pub fn next_packet(&mut self, now: Instant) -> Option<(Packet, SocketAddr)> {
