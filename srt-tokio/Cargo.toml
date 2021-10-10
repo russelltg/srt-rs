@@ -30,8 +30,11 @@ rand_distr = "0.4"
 tokio-util = { version = "0.6", features = ["net", "codec"] }
 libloading = "0.7"
 libc = "0.2"
+ac-ffmpeg = "0.17"
 
 [dev-dependencies.tokio]
 version = "1"
 features = ["rt-multi-thread"]
+
+
 
