@@ -17,6 +17,7 @@ futures = { version = "0.3", default-features = false, features = ["std", "async
 bytes = "1"
 rand = "0.8"
 tokio-stream = "0.1"
+ac-ffmpeg = { version = "0.17", optional = true }
 
 [dependencies.tokio]
 version = "1"
@@ -30,11 +31,11 @@ rand_distr = "0.4"
 tokio-util = { version = "0.6", features = ["net", "codec"] }
 libloading = "0.7"
 libc = "0.2"
-ac-ffmpeg = "0.17"
 
 [dev-dependencies.tokio]
 version = "1"
 features = ["rt-multi-thread"]
 
 
-
+[features]
+default = []
