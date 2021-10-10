@@ -82,7 +82,7 @@ jobs:
       run: rustup default nightly-2021-08-07
     - name: Install llvm-tools-preview
       run: rustup component add --toolchain nightly-2021-08-07 llvm-tools-preview
-    - name: install srt+ffmpeg
+    - name: install srt
       run: sudo apt-get install srt-tools
     - name: Download grcov
       run: wget https://github.com/mozilla/grcov/releases/download/v0.8.2/grcov-linux-x86_64.tar.bz2 -O grcov.tar.bz2 && tar -xf grcov.tar.bz2
