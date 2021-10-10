@@ -39,7 +39,7 @@ jobs:
       run: rustup target add i686-unknown-linux-gnu && sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install gcc-multilib srt-tools:i386
       if: matrix.extra_flags != ''
     - name: install srt+ffmpeg (linux)
-      run: sudo apt-get install srt-tools libavformat-dev
+      run: sudo apt-get install srt-tools libavformat-dev libswscale-dev
       if: matrix.os == 'ubuntu'
     - name: install srt+ffmpeg (macos)
       run: |
@@ -81,7 +81,7 @@ jobs:
     - name: Install llvm-tools-preview
       run: rustup component add --toolchain nightly-2021-08-07 llvm-tools-preview
     - name: install srt+ffmpeg
-      run: sudo apt-get install srt-tools libavformat-dev
+      run: sudo apt-get install srt-tools libavformat-dev libswscale-dev
     - name: Download grcov
       run: wget https://github.com/mozilla/grcov/releases/download/v0.8.2/grcov-linux-x86_64.tar.bz2 -O grcov.tar.bz2 && tar -xf grcov.tar.bz2
     - name: Build with profdata
