@@ -140,7 +140,7 @@ pub async fn multiplex(
             pending: HashMap::new(),
             acceptor,
             conns: HashMap::new(),
-            recv_buffer: BytesMut::with_capacity(1024),
+            recv_buffer: BytesMut::with_capacity(1024 * 1024),
             init_settings,
         },
         |mut state| async move {
