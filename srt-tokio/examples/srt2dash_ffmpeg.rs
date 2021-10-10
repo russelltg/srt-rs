@@ -1,6 +1,6 @@
 // Run with
 // ffmpeg -re -stream_loop -1 -i ~/Videos/test.ts -c:v copy -c:a copy -f mpegts 'srt://127.0.0.1:1234'
-// cargo run --example=ffmpeg_ac
+// cargo run --example=srt2dash_ffmpeg --features ac-ffmpeg
 // python3 -m http.server
 // ffplay http://localhost:8000/segments/dash.mpd
 
