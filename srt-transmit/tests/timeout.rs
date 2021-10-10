@@ -67,7 +67,6 @@ async fn receiver_timeout() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn sender_timeout() {
     let _ = pretty_env_logger::try_init();
 
