@@ -56,7 +56,6 @@ jobs:
     steps:
     - name: install ffmpeg
       run: sudo apt-get install libavformat-dev libswscale-dev
-      if: matrix.os == 'ubuntu'
     - uses: actions/checkout@v2
     - name: Cargo clippy
       run: cargo clippy --tests --examples -- -D clippy::all
