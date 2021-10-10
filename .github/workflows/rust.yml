@@ -46,6 +46,9 @@ jobs:
         brew update && brew install srt ffmpeg
         export LIBSRT_PATH="$(brew --prefix srt)/lib/libsrt.dylib"
       if: matrix.os == 'macos'
+    - name: install ffmpeg (windows)
+      run: choco install ffmpeg
+      if: matrix.os == 'windows'
     - name: Build
       run: cargo build ${{ matrix.extra_flags }} --tests --examples --verbose
     - name: Run tests
