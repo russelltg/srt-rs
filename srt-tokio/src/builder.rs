@@ -193,6 +193,12 @@ impl SrtSocketBuilder {
         self
     }
 
+    /// Set the receicve maximum buffer size, in packets
+    pub fn recv_buffer_size(mut self, buffer_size: usize) -> Self {
+        self.init_settings.recv_buffer_size = buffer_size;
+        self
+    }
+
     /// Se the crypto paramters. However, this is currently unimplemented.
     ///
     /// # Panics:
