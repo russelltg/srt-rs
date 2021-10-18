@@ -314,6 +314,17 @@ impl Sender {
                 }
                 Dropped => {
                     debug!("NAK: dropped packets {:?}", range);
+                    // On a Live stream, where each packet is a message, just one NAK with
+                    // a compressed packet loss interval of significant size (e.g. [1,
+                    // 100_000] will result in a deluge of message drop request packet
+                    // transmissions from the sender, resembling a DoS attack on the receiver.
+                    // Even more pathological, this is most likely to happen when we absolutely
+                    // do not want it to happen, such as during periods of decreased network
+                    // throughput.
+                    //
+                    // For this reason, this implementation is explicitly inconsistent with the
+                    // reference implementation, which only sends a single message per message
+                    // drop request, if the message is still in the send buffer. We always send
                     self.output.send_control(
                         now,
                         ControlTypes::new_drop_request(MsgNumber::new_truncate(0), range),
