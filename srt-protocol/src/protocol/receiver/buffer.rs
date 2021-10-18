@@ -1,4 +1,5 @@
 use std::{
+    cmp::min,
     collections::VecDeque,
     convert::TryFrom,
     ops::Range,
@@ -341,9 +342,11 @@ impl ReceiveBuffer {
 
     /// Returns how many packets were actually dropped
     pub fn drop_message(&mut self, range: Range<SeqNumber>) -> usize {
-        use std::cmp::min;
-
-        let first_idx = self.index_for_seqno(range.start).unwrap_or(0); // if start of the range has been dropped already, just drop everything after
+        // if start of the range has been dropped already, just drop everything after
+        let first_idx = min(
+            self.buffer.len(),
+            self.index_for_seqno(range.start).unwrap_or(0),
+        );
 
         // clamp to end
         let last_idx = min(
@@ -862,6 +865,15 @@ mod receive_buffer {
                 payload: b"yas"[..].into(),
                 ..basic_pack()
             },
+        );
+
+        // fully out of bounds
+        assert_eq!(
+            buf.drop_message(Range {
+                start: init_seq_num + 9,
+                end: init_seq_num + 12
+            }),
+            0
         );
 
         // only drop packets that are marked Lost, i.e. pending NAK
