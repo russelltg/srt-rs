@@ -105,6 +105,7 @@ pub fn gen_hsv5_response(
             max_flow_size: 8192,
             send_tsbpd_latency: Duration::max(settings.send_latency, hs.recv_latency),
             recv_tsbpd_latency: Duration::max(settings.recv_latency, hs.send_latency),
+            recv_buffer_size: settings.recv_buffer_size,
             crypto_manager: cm,
             bandwidth: settings.bandwidth.clone(),
             stream_id: incoming.sid.clone(),
@@ -198,6 +199,7 @@ impl StartedInitiator {
             crypto_manager: self.cm,
             stream_id: self.streamid,
             bandwidth: LiveBandwidthMode::default(),
+            recv_buffer_size: self.settings.recv_buffer_size,
         })
     }
 }

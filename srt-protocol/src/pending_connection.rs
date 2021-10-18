@@ -60,6 +60,9 @@ pub struct ConnInitSettings {
     pub send_latency: Duration,
     pub recv_latency: Duration,
     pub bandwidth: LiveBandwidthMode,
+
+    /// Receive buffer size in packets
+    pub recv_buffer_size: usize,
 }
 
 impl fmt::Display for ConnectError {
@@ -141,6 +144,7 @@ impl Default for ConnInitSettings {
             recv_latency: Duration::from_micros(50),
             local_sockid: random(),
             bandwidth: LiveBandwidthMode::default(),
+            recv_buffer_size: 8192,
         }
     }
 }
@@ -152,6 +156,7 @@ impl ConnInitSettings {
             recv_latency: self.recv_latency,
             local_sockid: random(),
             bandwidth: LiveBandwidthMode::default(),
+            recv_buffer_size: 8192,
         }
     }
 }

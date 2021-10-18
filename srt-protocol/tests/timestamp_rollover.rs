@@ -37,6 +37,7 @@ fn timestamp_rollover() {
         crypto_manager: None,
         stream_id: None,
         bandwidth: LiveBandwidthMode::default(),
+        recv_buffer_size: 8192,
     };
 
     let s2 = ConnectionSettings {
@@ -54,6 +55,7 @@ fn timestamp_rollover() {
         crypto_manager: None,
         stream_id: None,
         bandwidth: LiveBandwidthMode::default(),
+        recv_buffer_size: 8192,
     };
 
     const PACKET_RATE: u32 = 10; // 10 packet/s

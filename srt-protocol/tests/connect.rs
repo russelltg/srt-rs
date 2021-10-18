@@ -17,7 +17,7 @@ use srt_protocol::{
         connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnInitSettings,
         ConnectionResult,
     },
-    Connection, ControlPacket, LiveBandwidthMode, Packet, SeqNumber, SocketId,
+    Connection, ControlPacket, Packet, SeqNumber, SocketId,
 };
 
 pub mod simulator;
@@ -149,10 +149,8 @@ fn precise_ts0() {
             s_sa.ip(),
             ConnInitSettings {
                 local_sockid: s_sid,
-                crypto: None,
                 send_latency: Duration::from_millis(2000),
-                recv_latency: Duration::from_millis(20),
-                bandwidth: LiveBandwidthMode::default(),
+                ..ConnInitSettings::default()
             },
             None,
             seqno,
@@ -162,10 +160,7 @@ fn precise_ts0() {
 
     let recv = ConnectEntity::PendingL(Listen::new(ConnInitSettings {
         local_sockid: r_sid,
-        crypto: None,
-        send_latency: Duration::from_millis(20),
-        recv_latency: Duration::from_millis(20),
-        bandwidth: LiveBandwidthMode::default(),
+        ..ConnInitSettings::default()
     }));
 
     let conn = NetworkSimulator::new(s_sa, r_sa);
@@ -236,10 +231,7 @@ fn do_lossy_connect(seed: u64) {
             c_sa.ip(),
             ConnInitSettings {
                 local_sockid: s_sid,
-                crypto: None,
-                send_latency: Duration::from_millis(20),
-                recv_latency: Duration::from_millis(20),
-                bandwidth: LiveBandwidthMode::default(),
+                ..ConnInitSettings::default()
             },
             None,
             start_seqno,
@@ -249,10 +241,7 @@ fn do_lossy_connect(seed: u64) {
 
     let l = ConnectEntity::PendingL(Listen::new(ConnInitSettings {
         local_sockid: r_sid,
-        crypto: None,
-        send_latency: Duration::from_millis(20),
-        recv_latency: Duration::from_millis(20),
-        bandwidth: LiveBandwidthMode::default(),
+        ..ConnInitSettings::default()
     }));
 
     complete(
@@ -310,10 +299,7 @@ fn do_lossy_rendezvous(seed: u64) {
             b_sa,
             ConnInitSettings {
                 local_sockid: s_sid,
-                crypto: None,
-                send_latency: Duration::from_millis(20),
-                recv_latency: Duration::from_millis(20),
-                bandwidth: LiveBandwidthMode::default(),
+                ..ConnInitSettings::default()
             },
             a_start_seqno,
         ),
@@ -326,10 +312,7 @@ fn do_lossy_rendezvous(seed: u64) {
             a_sa,
             ConnInitSettings {
                 local_sockid: r_sid,
-                crypto: None,
-                send_latency: Duration::from_millis(20),
-                recv_latency: Duration::from_millis(20),
-                bandwidth: LiveBandwidthMode::default(),
+                ..ConnInitSettings::default()
             },
             b_start_seqno,
         ),

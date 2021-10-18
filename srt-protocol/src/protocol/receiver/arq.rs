@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    ops::Range,
+    time::{Duration, Instant},
+};
 
 use array_init::from_iter;
 use arraydeque::behavior::Wrapping;
@@ -166,11 +169,17 @@ impl AutomaticRepeatRequestAlgorithm {
         socket_start_time: Instant,
         tsbpd_latency: Duration,
         init_seq_num: SeqNumber,
+        buffer_size_packets: usize,
     ) -> Self {
         Self {
             link_capacity_estimate: LinkCapacityEstimate::new(),
             arrival_speed: ArrivalSpeed::new(),
-            receive_buffer: ReceiveBuffer::new(socket_start_time, tsbpd_latency, init_seq_num),
+            receive_buffer: ReceiveBuffer::new(
+                socket_start_time,
+                tsbpd_latency,
+                init_seq_num,
+                buffer_size_packets,
+            ),
             ack_history_window: AckHistoryWindow::new(tsbpd_latency, init_seq_num),
             rtt: Rtt::new(),
         }
@@ -219,7 +228,7 @@ impl AutomaticRepeatRequestAlgorithm {
             ack_number: dsn,
             rtt: self.rtt.mean(),
             rtt_variance: self.rtt.variance(),
-            buffer_available: 100, // TODO: add this
+            buffer_available: self.receive_buffer.buffer_available() as u32,
             packet_recv_rate,
             est_link_cap,
             data_recv_rate,
@@ -273,13 +282,8 @@ impl AutomaticRepeatRequestAlgorithm {
         }
     }
 
-    pub fn handle_drop_request(
-        &mut self,
-        _now: Instant,
-        first: SeqNumber,
-        last: SeqNumber,
-    ) -> Option<(SeqNumber, SeqNumber, usize)> {
-        self.receive_buffer.drop_message(first, last)
+    pub fn handle_drop_request(&mut self, _now: Instant, range: Range<SeqNumber>) -> usize {
+        self.receive_buffer.drop_message(range)
     }
 
     pub fn pop_next_message(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
@@ -315,7 +319,7 @@ mod automatic_repeat_request_algorithm {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
         let mut arq =
-            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(2), init_seq_num);
+            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(2), init_seq_num, 8192);
 
         assert_eq!(arq.on_full_ack_event(start), None);
         assert_eq!(arq.on_nak_event(start), None);
@@ -333,7 +337,6 @@ mod automatic_repeat_request_algorithm {
             Ok((None, None))
         );
         assert!(!arq.is_flushed());
-
         assert_eq!(
             arq.handle_data_packet(
                 start,
@@ -343,7 +346,7 @@ mod automatic_repeat_request_algorithm {
                 }
             ),
             Ok((
-                CompressedLossList::try_from(seq_num_range(init_seq_num + 1, init_seq_num + 2)),
+                CompressedLossList::try_from(seq_num_range(init_seq_num + 1, init_seq_num + 3)),
                 None
             ))
         );
@@ -357,7 +360,7 @@ mod automatic_repeat_request_algorithm {
         let start = Instant::now();
         let init_seq_num = SeqNumber(1);
         let mut arq =
-            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(2), init_seq_num);
+            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(2), init_seq_num, 8192);
 
         assert_eq!(
             arq.handle_data_packet(
@@ -386,7 +389,7 @@ mod automatic_repeat_request_algorithm {
                 ack_number: init_seq_num + 2,
                 rtt: Rtt::new().mean(),
                 rtt_variance: Rtt::new().variance(),
-                buffer_available: 100,
+                buffer_available: 8190,
                 packet_recv_rate: None,
                 est_link_cap: None,
                 data_recv_rate: None,
@@ -411,7 +414,7 @@ mod automatic_repeat_request_algorithm {
         let start = Instant::now();
         let init_seq_num = SeqNumber(1);
         let mut arq =
-            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(2), init_seq_num);
+            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(2), init_seq_num, 8192);
 
         let _ = arq.handle_data_packet(
             start,
@@ -449,7 +452,7 @@ mod automatic_repeat_request_algorithm {
         let start = Instant::now();
         let init_seq_num = SeqNumber(1);
         let mut arq =
-            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(1), init_seq_num);
+            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(1), init_seq_num, 8192);
 
         let _ = arq.handle_data_packet(
             start,
@@ -467,7 +470,7 @@ mod automatic_repeat_request_algorithm {
                 ack_number: init_seq_num + 1,
                 rtt: Rtt::new().mean(),
                 rtt_variance: Rtt::new().variance(),
-                buffer_available: 100,
+                buffer_available: 8191,
                 packet_recv_rate: None,
                 est_link_cap: None,
                 data_recv_rate: None,
@@ -494,7 +497,8 @@ mod automatic_repeat_request_algorithm {
         let start = Instant::now();
         let tsbpd_latency = Duration::from_secs(2);
         let init_seq_num = SeqNumber(5);
-        let mut arq = AutomaticRepeatRequestAlgorithm::new(start, tsbpd_latency, init_seq_num);
+        let mut arq =
+            AutomaticRepeatRequestAlgorithm::new(start, tsbpd_latency, init_seq_num, 8192);
 
         let now = start;
         let _ = arq.handle_data_packet(
@@ -519,7 +523,7 @@ mod automatic_repeat_request_algorithm {
         let now = start + arq.rtt.mean() * 4;
         assert_eq!(
             arq.on_nak_event(now),
-            CompressedLossList::try_from(seq_num_range(init_seq_num + 1, init_seq_num + 3))
+            CompressedLossList::try_from(seq_num_range(init_seq_num + 1, init_seq_num + 4))
         );
 
         let now = start + arq.rtt.mean() * 5;
@@ -528,7 +532,7 @@ mod automatic_repeat_request_algorithm {
         let now = start + arq.rtt.mean() * 8;
         assert_eq!(
             arq.on_nak_event(now),
-            CompressedLossList::try_from(seq_num_range(init_seq_num + 1, init_seq_num + 3))
+            CompressedLossList::try_from(seq_num_range(init_seq_num + 1, init_seq_num + 4))
         );
 
         let now = start + tsbpd_latency + Duration::from_millis(10);

@@ -224,6 +224,7 @@ impl RandomLossSimulation {
             crypto_manager: None,
             stream_id: None,
             bandwidth: LiveBandwidthMode::default(),
+            recv_buffer_size: 8192,
         }
     }
 }

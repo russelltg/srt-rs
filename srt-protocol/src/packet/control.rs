@@ -4,7 +4,7 @@ use std::{
     fmt::{self, Debug, Formatter},
     mem::size_of,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    ops::Add,
+    ops::{Add, Range},
 };
 
 use bitflags::bitflags;
@@ -91,10 +91,11 @@ pub enum ControlTypes {
         msg_to_drop: MsgNumber,
 
         /// The first sequence number in the message to drop
-        first: SeqNumber,
+        start: SeqNumber,
 
         /// The last sequence number in the message to drop
-        last: SeqNumber,
+        /// This is inclusive
+        end_inclusive: SeqNumber,
     },
 
     // Peer error, type 0x8
@@ -462,6 +463,15 @@ impl Debug for ControlPacket {
 const SRT_MAGIC_CODE: u16 = 0x4A17;
 
 impl ControlTypes {
+    pub fn new_drop_request(msg_to_drop: MsgNumber, drop_range: Range<SeqNumber>) -> Self {
+        assert!(!drop_range.is_empty());
+        Self::DropRequest {
+            msg_to_drop,
+            start: drop_range.start,
+            end_inclusive: drop_range.end - 1,
+        }
+    }
+
     /// Deserialize a control info
     /// * `packet_type` - The packet ID byte, the second byte in the first row
     /// * `reserved` - the second 16 bytes of the first row, reserved for custom packets
@@ -732,8 +742,8 @@ impl ControlTypes {
 
                 Ok(ControlTypes::DropRequest {
                     msg_to_drop: MsgNumber::new_truncate(extra_info as u32), // cast is safe, just reinterpret
-                    first: SeqNumber::new_truncate(buf.get_u32()),
-                    last: SeqNumber::new_truncate(buf.get_u32()),
+                    start: SeqNumber::new_truncate(buf.get_u32()),
+                    end_inclusive: SeqNumber::new_truncate(buf.get_u32()),
                 })
             }
             0x8 => {
@@ -877,8 +887,8 @@ impl ControlTypes {
             }
             ControlTypes::DropRequest {
                 msg_to_drop,
-                first,
-                last,
+                start: first,
+                end_inclusive: last,
             } => {
                 into.put_u32(msg_to_drop.as_raw());
                 into.put_u32(first.as_raw());
@@ -916,8 +926,8 @@ impl Debug for ControlTypes {
             ControlTypes::Ack2(ackno) => write!(f, "Ack2({})", ackno.0),
             ControlTypes::DropRequest {
                 msg_to_drop,
-                first,
-                last,
+                start: first,
+                end_inclusive: last,
             } => write!(f, "DropReq(msg={} {}-{})", msg_to_drop, first, last),
             ControlTypes::PeerError(e) => write!(f, "PeerError({})", e),
             ControlTypes::Srt(srt) => write!(f, "{:?}", srt),
