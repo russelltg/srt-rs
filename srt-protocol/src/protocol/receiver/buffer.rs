@@ -388,7 +388,7 @@ impl ReceiveBuffer {
             .range(self.lost_list_index()..)
             .filter_map(|p| p.lost_list())
             .next()
-            .unwrap_or(self.next_packet_dsn())
+            .unwrap_or_else(|| self.next_packet_dsn())
     }
 
     fn lost_list_index(&self) -> usize {
