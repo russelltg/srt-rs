@@ -1,9 +1,10 @@
-use log::trace;
+use log::{info, trace};
 use rand::{prelude::StdRng, SeedableRng};
 use rand_distr::{Bernoulli, Normal};
 use srt_protocol::connection::Input;
 use std::{
     cmp::min,
+    str,
     time::{Duration, Instant},
 };
 
@@ -13,6 +14,9 @@ use simulator::*;
 
 #[test]
 fn not_enough_latency() {
+    // once failing seeds
+    do_not_enough_latency(6785379667375872404);
+
     for _ in 0..100 {
         do_not_enough_latency(rand::random());
     }
@@ -43,6 +47,8 @@ fn do_not_enough_latency(seed: u64) {
 
     let mut now = start;
     let mut total_recvd = 0;
+    let mut total_dropped = 0;
+    let mut last_data = 0;
 
     loop {
         let sender_next_time = if sender.is_open() {
@@ -70,8 +76,18 @@ fn do_not_enough_latency(seed: u64) {
         };
 
         let receiver_next_time = if receiver.is_open() {
-            while receiver.next_data(now).is_some() {
+            while let Some((_, by)) = receiver.next_data(now) {
                 total_recvd += 1;
+
+                let id = str::from_utf8(&by).unwrap().parse().unwrap();
+
+                assert!(id > last_data, "Received {} after {}", id, last_data);
+
+                if last_data + 1 != id {
+                    info!("Packets [{}, {}) dropped", last_data + 1, id);
+                    total_dropped += id - (last_data + 1);
+                }
+                last_data = id;
             }
 
             while let Some(packet) = receiver.next_packet(now) {
@@ -105,11 +121,17 @@ fn do_not_enough_latency(seed: u64) {
         now = next_time;
     }
 
+    assert_eq!(total_dropped + total_recvd + (1000 - last_data), 1000);
     assert!(
         total_recvd > PACKETS * 2 / 3,
         "received {} packtes, expected {}",
         total_recvd,
         PACKETS * 2 / 3
     );
-    assert!(total_recvd < PACKETS);
+    assert!(
+        total_recvd < PACKETS,
+        "received all ({}) packets, expected < {}",
+        total_recvd,
+        PACKETS
+    );
 }
