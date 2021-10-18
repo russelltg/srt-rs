@@ -4,7 +4,7 @@ use std::{
     fmt::{self, Debug, Formatter},
     mem::size_of,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    ops::{Add, Range},
+    ops::{Add, Range, RangeInclusive},
 };
 
 use bitflags::bitflags;
@@ -90,12 +90,8 @@ pub enum ControlTypes {
         /// Stored in the "addditional info" field of the packet.
         msg_to_drop: MsgNumber,
 
-        /// The first sequence number in the message to drop
-        start: SeqNumber,
-
-        /// The last sequence number in the message to drop
-        /// This is inclusive
-        end_inclusive: SeqNumber,
+        /// The range of sequence numbers in the message to drop
+        range: RangeInclusive<SeqNumber>,
     },
 
     // Peer error, type 0x8
@@ -467,8 +463,7 @@ impl ControlTypes {
         assert!(!drop_range.is_empty());
         Self::DropRequest {
             msg_to_drop,
-            start: drop_range.start,
-            end_inclusive: drop_range.end - 1,
+            range: RangeInclusive::new(drop_range.start, drop_range.end - 1),
         }
     }
 
@@ -740,10 +735,12 @@ impl ControlTypes {
                     return Err(PacketParseError::NotEnoughData);
                 }
 
+                let start = SeqNumber::new_truncate(buf.get_u32());
+                let end = SeqNumber::new_truncate(buf.get_u32());
+
                 Ok(ControlTypes::DropRequest {
                     msg_to_drop: MsgNumber::new_truncate(extra_info as u32), // cast is safe, just reinterpret
-                    start: SeqNumber::new_truncate(buf.get_u32()),
-                    end_inclusive: SeqNumber::new_truncate(buf.get_u32()),
+                    range: RangeInclusive::new(start, end),
                 })
             }
             0x8 => {
@@ -885,14 +882,10 @@ impl ControlTypes {
                     into.put_u32(loss);
                 }
             }
-            ControlTypes::DropRequest {
-                msg_to_drop,
-                start: first,
-                end_inclusive: last,
-            } => {
+            ControlTypes::DropRequest { msg_to_drop, range } => {
                 into.put_u32(msg_to_drop.as_raw());
-                into.put_u32(first.as_raw());
-                into.put_u32(last.as_raw());
+                into.put_u32(range.start().as_raw());
+                into.put_u32(range.end().as_raw());
             }
             ControlTypes::CongestionWarning
             | ControlTypes::Ack2(_)
@@ -924,11 +917,9 @@ impl Debug for ControlTypes {
             ControlTypes::CongestionWarning => write!(f, "CongestionWarning"),
             ControlTypes::Shutdown => write!(f, "Shutdown"),
             ControlTypes::Ack2(ackno) => write!(f, "Ack2({})", ackno.0),
-            ControlTypes::DropRequest {
-                msg_to_drop,
-                start: first,
-                end_inclusive: last,
-            } => write!(f, "DropReq(msg={} {}-{})", msg_to_drop, first, last),
+            ControlTypes::DropRequest { msg_to_drop, range } => {
+                write!(f, "DropReq(msg={} {:?})", msg_to_drop, range)
+            }
             ControlTypes::PeerError(e) => write!(f, "PeerError({})", e),
             ControlTypes::Srt(srt) => write!(f, "{:?}", srt),
         }

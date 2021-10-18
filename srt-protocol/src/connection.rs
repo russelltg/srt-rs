@@ -334,15 +334,11 @@ impl DuplexConnection {
         match control.control_type {
             // sender-responsble packets
             Ack(info) => self.sender.handle_ack_packet(now, info),
-            DropRequest {
-                start,
-                end_inclusive,
-                ..
-            } => self.receiver.handle_drop_request(
+            DropRequest { range, .. } => self.receiver.handle_drop_request(
                 now,
                 Range {
-                    start,
-                    end: end_inclusive + 1,
+                    start: *range.start(),
+                    end: *range.end() + 1, // inclusive to exclusive
                 },
             ),
             Handshake(shake) => self.sender.handle_handshake_packet(shake, now),
@@ -381,10 +377,11 @@ impl DuplexConnection {
 
 #[cfg(test)]
 mod duplex_connection {
+    use std::ops::RangeInclusive;
+
     use super::*;
-    use crate::packet::CompressedLossList;
     use crate::protocol::TimeStamp;
-    use crate::seq_number::seq_num_range;
+    use crate::{packet::CompressedLossList, seq_number::seq_num_range};
     use crate::{LiveBandwidthMode, MsgNumber};
 
     const MILLIS: Duration = Duration::from_millis(1);
@@ -555,7 +552,7 @@ mod duplex_connection {
                         dest_sockid: remote_sockid(),
                         control_type: Nak(CompressedLossList::from_loss_list(seq_num_range(
                             SeqNumber(0),
-                            SeqNumber(1),
+                            SeqNumber(2),
                         ))),
                     }),
                     remote_addr()
@@ -567,8 +564,7 @@ mod duplex_connection {
                     dest_sockid: remote_sockid(),
                     control_type: DropRequest {
                         msg_to_drop: MsgNumber(0),
-                        start: SeqNumber(0),
-                        end_inclusive: SeqNumber(0), // DropRequest has an inclusive range
+                        range: RangeInclusive::new(SeqNumber(0), SeqNumber(1))
                     }
                 }),
                 remote_addr()
