@@ -30,3 +30,7 @@ proptest = "1.0"
 hex = "0.4"
 rand_distr = "0.4"
 pretty_env_logger = { version = "0.4", default-features = false }
+
+[features]
+default = []
+log_disable = ["log/max_level_off"]
