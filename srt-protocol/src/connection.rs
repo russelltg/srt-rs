@@ -380,8 +380,8 @@ mod duplex_connection {
     use std::ops::RangeInclusive;
 
     use super::*;
+    use crate::packet::CompressedLossList;
     use crate::protocol::TimeStamp;
-    use crate::{packet::CompressedLossList, seq_number::seq_num_range};
     use crate::{LiveBandwidthMode, MsgNumber};
 
     const MILLIS: Duration = Duration::from_millis(1);
@@ -550,10 +550,10 @@ mod duplex_connection {
                     Control(ControlPacket {
                         timestamp: TimeStamp::MIN + SND + TSBPD + TSBPD / 4,
                         dest_sockid: remote_sockid(),
-                        control_type: Nak(CompressedLossList::from_loss_list(seq_num_range(
-                            SeqNumber(0),
-                            SeqNumber(2),
-                        ))),
+                        control_type: Nak(CompressedLossList::from(Range {
+                            start: SeqNumber(0),
+                            end: SeqNumber(2),
+                        })),
                     }),
                     remote_addr()
                 )))

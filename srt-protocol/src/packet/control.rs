@@ -953,6 +953,18 @@ impl CompressedLossList {
     }
 }
 
+impl From<Range<SeqNumber>> for CompressedLossList {
+    fn from(r: Range<SeqNumber>) -> Self {
+        assert!(!r.is_empty());
+
+        if r.start + 1 == r.end {
+            CompressedLossList(vec![r.start.as_raw()])
+        } else {
+            CompressedLossList(vec![(1 << 31) | r.start.as_raw(), (r.end - 1).as_raw()])
+        }
+    }
+}
+
 impl Debug for CompressedLossList {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut iter = self.0.iter();

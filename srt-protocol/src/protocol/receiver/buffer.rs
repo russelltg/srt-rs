@@ -10,12 +10,9 @@ use bytes::{Bytes, BytesMut};
 use log::{debug, info, warn};
 use take_until::TakeUntilExt;
 
+use crate::packet::{CompressedLossList, PacketLocation};
 use crate::protocol::receiver::time::SynchronizedRemoteClock;
 use crate::protocol::{TimeSpan, TimeStamp};
-use crate::{
-    packet::{CompressedLossList, PacketLocation},
-    seq_number::seq_num_range,
-};
 use crate::{DataPacket, MsgNumber, SeqNumber};
 
 #[derive(Debug)]
@@ -230,11 +227,14 @@ impl ReceiveBuffer {
                 Ok(None)
             }
             Greater => {
-                let begin_lost = self.next_packet_dsn();
-                let end_lost = data.seq_number;
+                let lost = Range {
+                    start: self.next_packet_dsn(),
+                    end: data.seq_number,
+                };
+                let lost_ct = lost.end - lost.start;
 
                 // avoid buffer overrun
-                let buffer_required = usize::try_from(end_lost - begin_lost).unwrap() + 1; // +1 to store the packet itsself
+                let buffer_required = usize::try_from(lost_ct).unwrap() + 1; // +1 to store the packet itsself
                 if self.buffer_available() < buffer_required {
                     warn!(
                         "Packet received too far in the future for configured receive buffer size. Discarding packet (buffer would need to be {} packets larger)", 
@@ -244,16 +244,14 @@ impl ReceiveBuffer {
                 }
 
                 // append lost packets to end
-                self.buffer.extend(
-                    seq_num_range(begin_lost, end_lost)
-                        .map(|s| BufferPacket::Lost(LostPacket::new(s, now))),
-                );
+                for i in 0..lost_ct {
+                    self.buffer
+                        .push_back(BufferPacket::Lost(LostPacket::new(lost.start + i, now)));
+                }
 
                 self.append_data(data);
 
-                Ok(CompressedLossList::try_from(seq_num_range(
-                    begin_lost, end_lost,
-                )))
+                Ok(Some(CompressedLossList::from(lost)))
             }
             Less => {
                 self.recover_data(data);
@@ -458,7 +456,6 @@ impl ReceiveBuffer {
 mod receive_buffer {
     use super::*;
     use crate::packet::{CompressedLossList, DataEncryption};
-    use crate::seq_number::seq_num_range;
     use crate::{MsgNumber, SocketId};
 
     fn basic_pack() -> DataPacket {
@@ -648,10 +645,10 @@ mod receive_buffer {
                     ..basic_pack()
                 }
             ),
-            Ok(CompressedLossList::try_from(seq_num_range(
-                init_seq_num,
-                init_seq_num + 2
-            )))
+            Ok(Some(CompressedLossList::from(Range {
+                start: init_seq_num,
+                end: init_seq_num + 2
+            })))
         );
         assert_eq!(buf.next_ack_dsn(), init_seq_num);
         assert_eq!(buf.next_message_release_time(), None);
@@ -746,10 +743,10 @@ mod receive_buffer {
                     ..basic_pack()
                 },
             ),
-            Ok(CompressedLossList::try_from(seq_num_range(
-                init_seq_num + 1,
-                init_seq_num + 5
-            )))
+            Ok(Some(CompressedLossList::from(Range {
+                start: init_seq_num + 1,
+                end: init_seq_num + 5
+            })))
         );
         assert_eq!(buf.prepare_loss_list(now, mean_rtt), None);
 
@@ -764,10 +761,10 @@ mod receive_buffer {
                     ..basic_pack()
                 }
             ),
-            Ok(CompressedLossList::try_from(seq_num_range(
-                init_seq_num + 6,
-                init_seq_num + 15
-            )))
+            Ok(Some(CompressedLossList::from(Range {
+                start: init_seq_num + 6,
+                end: init_seq_num + 15
+            })))
         );
         assert_eq!(buf.prepare_loss_list(now, mean_rtt), None);
 
@@ -775,8 +772,9 @@ mod receive_buffer {
         assert_eq!(
             buf.prepare_loss_list(now, mean_rtt),
             CompressedLossList::try_from(
-                seq_num_range(init_seq_num + 1, init_seq_num + 5)
-                    .chain(seq_num_range(init_seq_num + 6, init_seq_num + 15))
+                (1..5)
+                    .map(|a| init_seq_num + a)
+                    .chain((6..15).map(|a| init_seq_num + a))
             )
         );
         assert_eq!(buf.prepare_loss_list(now, mean_rtt), None);
@@ -926,10 +924,10 @@ mod receive_buffer {
                     ..basic_pack()
                 },
             ),
-            Ok(Some(CompressedLossList::from_loss_list(seq_num_range(
-                init_seq_num + 1,
-                init_seq_num + 8
-            ))))
+            Ok(Some(CompressedLossList::from(Range {
+                start: init_seq_num + 1,
+                end: init_seq_num + 8
+            })))
         );
 
         assert_eq!(buf.buffer_available(), 1);
@@ -962,10 +960,10 @@ mod receive_buffer {
                     ..basic_pack()
                 },
             ),
-            Ok(Some(CompressedLossList::from_loss_list(seq_num_range(
-                init_seq_num + 9,
-                init_seq_num + 10
-            ))))
+            Ok(Some(CompressedLossList::from(Range {
+                start: init_seq_num + 9,
+                end: init_seq_num + 10
+            })))
         );
 
         assert_eq!(buf.buffer_available(), 0);
