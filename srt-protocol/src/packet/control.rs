@@ -215,7 +215,7 @@ pub enum AckControlInfo {
 #[derive(Clone, PartialEq, Eq, Debug, Copy, Ord, PartialOrd)]
 pub struct FullAckSeqNumber(u32);
 
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct CompressedLossList(Vec<u32>);
 
 /// The socket type for a handshake.
@@ -950,6 +950,21 @@ impl CompressedLossList {
 
     pub fn into_iter_decompressed(self) -> impl Iterator<Item = SeqNumber> {
         decompress_loss_list(self.0.into_iter())
+    }
+}
+
+impl Debug for CompressedLossList {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut iter = self.0.iter();
+        while let Some(a) = iter.next() {
+            if a & 0x80000000 != 0 {
+                let b = iter.next().expect("Unterminated list");
+                write!(f, "{}..={},", a & 0x7fffffff, b)?;
+            } else {
+                write!(f, "{},", a)?;
+            }
+        }
+        Ok(())
     }
 }
 

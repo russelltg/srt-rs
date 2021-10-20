@@ -121,7 +121,7 @@ fn do_not_enough_latency(seed: u64) {
         now = next_time;
     }
 
-    assert_eq!(total_dropped + total_recvd + (1000 - last_data), 1000);
+    assert_eq!(total_dropped + total_recvd + (PACKETS - last_data), PACKETS);
     assert!(
         total_recvd > PACKETS * 2 / 3,
         "received {} packtes, expected {}",

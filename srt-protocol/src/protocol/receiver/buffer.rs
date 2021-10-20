@@ -7,7 +7,7 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use log::{info, warn};
+use log::{debug, info, warn};
 use take_until::TakeUntilExt;
 
 use crate::protocol::receiver::time::SynchronizedRemoteClock;
@@ -79,13 +79,6 @@ impl BufferPacket {
                 true
             }
             _ => false,
-        }
-    }
-
-    pub fn lost_list(&self) -> Option<SeqNumber> {
-        match self {
-            BufferPacket::Lost(lost) => Some(lost.data_sequence_number),
-            _ => None,
         }
     }
 
@@ -164,6 +157,9 @@ pub struct ReceiveBuffer {
     // Sequence number that all packets up to have been received + 1
     lrsn: SeqNumber,
 
+    // first sequence number in the list
+    seqno0: SeqNumber,
+
     remote_clock: SynchronizedRemoteClock,
     buffer: VecDeque<BufferPacket>,
     max_buffer_size: usize,
@@ -179,6 +175,7 @@ impl ReceiveBuffer {
         Self {
             tsbpd_latency,
             lrsn: init_seq_num,
+            seqno0: init_seq_num,
             remote_clock: SynchronizedRemoteClock::new(socket_start_time),
             buffer: VecDeque::with_capacity(max_buffer_size),
             max_buffer_size,
@@ -208,25 +205,16 @@ impl ReceiveBuffer {
 
     // next expected packet (1 + last received packet)
     fn next_packet_dsn(&self) -> SeqNumber {
-        self.seqno0() + u32::try_from(self.buffer.len()).unwrap()
-    }
-
-    // sequence number of the first packet in the buffer
-    fn seqno0(&self) -> SeqNumber {
-        match self.buffer.front() {
-            Some(bp) => bp.data_sequence_number(),
-            None => self.lrsn,
-        }
+        self.seqno0 + u32::try_from(self.buffer.len()).unwrap()
     }
 
     // index in buffer for a given sequence number
     // returns None if before the start of the buffer. Might return a index out of bounds
     fn index_for_seqno(&self, s: SeqNumber) -> Option<usize> {
-        let seqno0 = self.seqno0();
-        if s < seqno0 {
+        if s < self.seqno0 {
             None
         } else {
-            Some(usize::try_from(s - seqno0).unwrap())
+            Some(usize::try_from(s - self.seqno0).unwrap())
         }
     }
 
@@ -293,6 +281,8 @@ impl ReceiveBuffer {
             let _ = self.drop_too_late_packets(now);
             return None;
         }
+
+        self.seqno0 += u32::try_from(packet_count?).unwrap();
 
         let release_time = self.remote_clock.monotonic_instant_from(timestamp?);
         // optimize for single packet messages
@@ -381,24 +371,14 @@ impl ReceiveBuffer {
 
         if self.lrsn == seq_number {
             self.lrsn = seq_number + 1;
-        } else {
-            self.lrsn = self.calculate_lrsn();
         }
     }
 
-    fn calculate_lrsn(&self) -> SeqNumber {
-        self.buffer
-            .range(self.lost_list_index()..)
-            .filter_map(|p| p.lost_list())
-            .next()
-            .unwrap_or_else(|| self.next_packet_dsn())
-    }
-
     fn lost_list_index(&self) -> usize {
-        self.buffer.front().map_or(0, |p| {
-            let front = p.data_sequence_number();
-            (std::cmp::max(front, self.lrsn) - front) as usize
-        })
+        self.buffer
+            .iter()
+            .take_while(|b| b.data_packet().is_some())
+            .count()
     }
 
     fn next_message_packet_count(&self) -> Option<usize> {
@@ -412,11 +392,21 @@ impl ReceiveBuffer {
     }
 
     fn recover_data(&mut self, data: DataPacket) {
-        match self.index_for_seqno(data.seq_number) {
-            Some(idx) if idx < self.buffer.len() => {
+        let seq_number = data.seq_number;
+        match self.index_for_seqno(seq_number) {
+            Some(idx) => {
+                assert!(idx < self.buffer.len());
                 self.buffer.get_mut(idx).unwrap().update_data(data);
+
+                // first lost packet was recovered, update LRSN
+                if self.lrsn == seq_number {
+                    self.lrsn = self.recalculate_lrsn(idx);
+                }
             }
-            _ => {}
+            None => debug!(
+                "Too-late packet {} was received, discarding",
+                data.seq_number
+            ),
         }
     }
 
@@ -440,7 +430,9 @@ impl ReceiveBuffer {
 
         let delay = TimeSpan::from_interval(timestamp + self.tsbpd_latency, now);
         let drop_count = self.buffer.drain(0..index).count();
-        self.lrsn = self.calculate_lrsn();
+
+        self.seqno0 = seq_number;
+        self.lrsn = self.recalculate_lrsn(0);
 
         info!(
             "Receiver dropping packets: [{},{}), {:?} too late",
@@ -450,6 +442,15 @@ impl ReceiveBuffer {
         );
 
         Some((seq_number - drop_count as u32, seq_number - 1, delay))
+    }
+
+    fn recalculate_lrsn(&self, start_idx: usize) -> SeqNumber {
+        self.buffer
+            .range(start_idx..)
+            .filter(|p| p.data_packet().is_none()) // skip lost and dropped
+            .map(|p| p.data_sequence_number())
+            .next()
+            .unwrap_or_else(|| self.next_packet_dsn())
     }
 }
 
@@ -783,6 +784,8 @@ mod receive_buffer {
 
     #[test]
     fn drop_too_late_packets() {
+        let _ = pretty_env_logger::try_init();
+
         let tsbpd = Duration::from_secs(2);
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
@@ -831,7 +834,7 @@ mod receive_buffer {
         assert_eq!(buf.pop_next_message(now), None);
         // it should drop all missing packets up to the next viable message
         // and begin to ack all viable packets
-        assert_eq!(buf.next_ack_dsn(), init_seq_num + 3);
+        assert_eq!(buf.next_ack_dsn(), init_seq_num + 3, "{:?}", buf);
 
         // 2 ms buffer release tolerance, we are ok with releasing them 2ms late
         let now = now + tsbpd + Duration::from_millis(5);
