@@ -15,6 +15,7 @@ use simulator::*;
 #[test]
 fn not_enough_latency() {
     // once failing seeds
+    do_not_enough_latency(7252484344775749023);
     do_not_enough_latency(6785379667375872404);
 
     for _ in 0..100 {
