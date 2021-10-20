@@ -79,6 +79,17 @@ impl BufferPacket {
         }
     }
 
+    fn lost_or_dropped(&self) -> Option<SeqNumber> {
+        match self {
+            BufferPacket::Lost(LostPacket {
+                data_sequence_number: sn,
+                ..
+            })
+            | BufferPacket::Dropped(sn) => Some(*sn),
+            _ => None,
+        }
+    }
+
     pub fn lost_ready_for_feeback_mut(
         &mut self,
         now: Instant,
@@ -445,8 +456,7 @@ impl ReceiveBuffer {
     fn recalculate_lrsn(&self, start_idx: usize) -> SeqNumber {
         self.buffer
             .range(start_idx..)
-            .filter(|p| p.data_packet().is_none()) // skip lost and dropped
-            .map(|p| p.data_sequence_number())
+            .filter_map(|p| p.lost_or_dropped())
             .next()
             .unwrap_or_else(|| self.next_packet_dsn())
     }
