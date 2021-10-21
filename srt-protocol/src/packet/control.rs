@@ -927,7 +927,7 @@ impl Debug for ControlTypes {
 }
 
 impl CompressedLossList {
-    pub fn try_from(iter: impl Iterator<Item = SeqNumber>) -> Option<CompressedLossList> {
+    pub fn try_from_iter(iter: impl Iterator<Item = SeqNumber>) -> Option<CompressedLossList> {
         let loss_list = compress_loss_list(iter).collect::<Vec<_>>();
         if loss_list.is_empty() {
             None
@@ -937,7 +937,7 @@ impl CompressedLossList {
     }
 
     pub fn from_loss_list(iter: impl Iterator<Item = SeqNumber>) -> CompressedLossList {
-        Self::try_from(iter).unwrap()
+        Self::try_from_iter(iter).unwrap()
     }
 
     pub fn iter_compressed(&self) -> impl Iterator<Item = u32> + '_ {

@@ -90,7 +90,7 @@ impl BufferPacket {
         }
     }
 
-    pub fn lost_ready_for_feeback_mut(
+    pub fn lost_ready_for_feedback_mut(
         &mut self,
         now: Instant,
         rtt_mean: TimeSpan,
@@ -238,14 +238,11 @@ impl ReceiveBuffer {
                 Ok(None)
             }
             Greater => {
-                let lost = Range {
-                    start: self.next_packet_dsn(),
-                    end: data.seq_number,
-                };
-                let lost_ct = lost.end - lost.start;
+                let lost = self.next_packet_dsn()..data.seq_number;
+                let lost_count = lost.end - lost.start;
 
                 // avoid buffer overrun
-                let buffer_required = usize::try_from(lost_ct).unwrap() + 1; // +1 to store the packet itsself
+                let buffer_required = usize::try_from(lost_count).unwrap() + 1; // +1 to store the packet itsself
                 if self.buffer_available() < buffer_required {
                     warn!(
                         "Packet received too far in the future for configured receive buffer size. Discarding packet (buffer would need to be {} packets larger)", 
@@ -255,7 +252,7 @@ impl ReceiveBuffer {
                 }
 
                 // append lost packets to end
-                for i in 0..lost_ct {
+                for i in 0..lost_count {
                     self.buffer
                         .push_back(BufferPacket::Lost(LostPacket::new(lost.start + i, now)));
                 }
@@ -328,7 +325,7 @@ impl ReceiveBuffer {
         let loss_list = self
             .buffer
             .range_mut(self.lost_list_index()..)
-            .filter_map(|p| p.lost_ready_for_feeback_mut(now, rtt_mean))
+            .filter_map(|p| p.lost_ready_for_feedback_mut(now, rtt_mean))
             .map(|lost| {
                 // increment k and change feedback time, returning sequence numbers
                 lost.k += 1;
@@ -336,7 +333,7 @@ impl ReceiveBuffer {
                 lost.data_sequence_number
             });
 
-        CompressedLossList::try_from(loss_list)
+        CompressedLossList::try_from_iter(loss_list)
     }
 
     /// Returns how many packets were actually dropped
@@ -552,7 +549,9 @@ mod receive_buffer {
                     ..basic_pack()
                 }
             ),
-            Ok(CompressedLossList::try_from(vec![SeqNumber(6)].into_iter()))
+            Ok(CompressedLossList::try_from_iter(
+                vec![SeqNumber(6)].into_iter()
+            ))
         );
         assert_eq!(buf.next_ack_dsn(), init_seq_num + 1);
         assert_eq!(buf.next_message_release_time(), Some(start + tsbpd));
@@ -655,10 +654,7 @@ mod receive_buffer {
                     ..basic_pack()
                 }
             ),
-            Ok(Some(CompressedLossList::from(Range {
-                start: init_seq_num,
-                end: init_seq_num + 2
-            })))
+            Ok(Some((init_seq_num..init_seq_num + 2).into()))
         );
         assert_eq!(buf.next_ack_dsn(), init_seq_num);
         assert_eq!(buf.next_message_release_time(), None);
@@ -753,10 +749,7 @@ mod receive_buffer {
                     ..basic_pack()
                 },
             ),
-            Ok(Some(CompressedLossList::from(Range {
-                start: init_seq_num + 1,
-                end: init_seq_num + 5
-            })))
+            Ok(Some((init_seq_num + 1..init_seq_num + 5).into()))
         );
         assert_eq!(buf.prepare_loss_list(now, mean_rtt), None);
 
@@ -771,21 +764,14 @@ mod receive_buffer {
                     ..basic_pack()
                 }
             ),
-            Ok(Some(CompressedLossList::from(Range {
-                start: init_seq_num + 6,
-                end: init_seq_num + 15
-            })))
+            Ok(Some((init_seq_num + 6..init_seq_num + 15).into()))
         );
         assert_eq!(buf.prepare_loss_list(now, mean_rtt), None);
 
         let now = now + mean_rtt * 3;
         assert_eq!(
             buf.prepare_loss_list(now, mean_rtt),
-            CompressedLossList::try_from(
-                (1..5)
-                    .map(|a| init_seq_num + a)
-                    .chain((6..15).map(|a| init_seq_num + a))
-            )
+            CompressedLossList::try_from_iter((1..5).chain(6..15).map(|a| init_seq_num + a))
         );
         assert_eq!(buf.prepare_loss_list(now, mean_rtt), None);
     }
@@ -879,22 +865,10 @@ mod receive_buffer {
         );
 
         // fully out of bounds
-        assert_eq!(
-            buf.drop_message(Range {
-                start: init_seq_num + 9,
-                end: init_seq_num + 12
-            }),
-            0
-        );
+        assert_eq!(buf.drop_message(init_seq_num + 9..init_seq_num + 12), 0);
 
         // only drop packets that are marked Lost, i.e. pending NAK
-        assert_eq!(
-            buf.drop_message(Range {
-                start: init_seq_num - 1,
-                end: init_seq_num + 5
-            }),
-            3
-        );
+        assert_eq!(buf.drop_message(init_seq_num - 1..init_seq_num + 5), 3);
 
         // no longer schedule the dropped packets for NAK
         let now = now + mean_rtt * 3;
@@ -934,10 +908,7 @@ mod receive_buffer {
                     ..basic_pack()
                 },
             ),
-            Ok(Some(CompressedLossList::from(Range {
-                start: init_seq_num + 1,
-                end: init_seq_num + 8
-            })))
+            Ok(Some((init_seq_num + 1..init_seq_num + 8).into()))
         );
 
         assert_eq!(buf.buffer_available(), 1);
@@ -970,10 +941,7 @@ mod receive_buffer {
                     ..basic_pack()
                 },
             ),
-            Ok(Some(CompressedLossList::from(Range {
-                start: init_seq_num + 9,
-                end: init_seq_num + 10
-            })))
+            Ok(Some((init_seq_num + 9..init_seq_num + 10).into()))
         );
 
         assert_eq!(buf.buffer_available(), 0);
