@@ -73,10 +73,11 @@ fn timestamp_rollover() {
         settings: s2,
         handshake: Handshake::Connector,
     });
-    let mut input_data = InputDataSimulation::new(
+    input_data_simulation(
         start,
         packs_to_send as usize,
         Duration::from_secs(1) / PACKET_RATE,
+        &mut network.sender,
     );
 
     let mut now = start;
@@ -85,8 +86,6 @@ fn timestamp_rollover() {
     let mut next_data = 1;
     loop {
         let sender_next_time = if sender.is_open() {
-            input_data.send_data_to(now, &mut network.sender);
-
             assert_eq!(sender.next_data(now), None);
 
             while let Some(packet) = sender.next_packet(now) {

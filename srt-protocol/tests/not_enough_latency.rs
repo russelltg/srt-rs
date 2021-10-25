@@ -15,20 +15,20 @@ use simulator::*;
 #[test]
 fn not_enough_latency() {
     // once failing seeds
-    do_not_enough_latency(7252484344775749023);
-    do_not_enough_latency(6785379667375872404);
+    do_not_enough_latency(14133229019647651772, 200);
+    do_not_enough_latency(7252484344775749023, 1000);
+    do_not_enough_latency(6785379667375872404, 1000);
 
     for _ in 0..100 {
-        do_not_enough_latency(rand::random());
+        do_not_enough_latency(rand::random(), 1000);
     }
 }
 
-fn do_not_enough_latency(seed: u64) {
+fn do_not_enough_latency(seed: u64, packets: usize) {
     println!("not_enough_latency seed is {}", seed);
 
     let _ = pretty_env_logger::try_init();
 
-    const PACKETS: usize = 1_000;
     const PACKET_SPACING: Duration = Duration::from_millis(10);
 
     let start = Instant::now();
@@ -44,7 +44,7 @@ fn do_not_enough_latency(seed: u64) {
 
     let (mut network, mut sender, mut receiver) = simulation.build(start, Duration::from_secs(2));
 
-    let mut input_data = InputDataSimulation::new(start, PACKETS, PACKET_SPACING);
+    input_data_simulation(start, packets, PACKET_SPACING, &mut network.sender);
 
     let mut now = start;
     let mut total_recvd = 0;
@@ -53,8 +53,6 @@ fn do_not_enough_latency(seed: u64) {
 
     loop {
         let sender_next_time = if sender.is_open() {
-            input_data.send_data_to(now, &mut network.sender);
-
             assert_eq!(sender.next_data(now), None);
 
             while let Some(packet) = sender.next_packet(now) {
@@ -122,17 +120,17 @@ fn do_not_enough_latency(seed: u64) {
         now = next_time;
     }
 
-    assert_eq!(total_dropped + total_recvd + (PACKETS - last_data), PACKETS);
+    assert_eq!(total_dropped + total_recvd + (packets - last_data), packets);
     assert!(
-        total_recvd > PACKETS * 2 / 3,
+        total_recvd > packets * 2 / 3,
         "received {} packtes, expected {}",
         total_recvd,
-        PACKETS * 2 / 3
+        packets * 2 / 3
     );
     assert!(
-        total_recvd < PACKETS,
+        total_recvd < packets,
         "received all ({}) packets, expected < {}",
         total_recvd,
-        PACKETS
+        packets
     );
 }
