@@ -2,6 +2,7 @@ use std::{
     convert::TryFrom,
     convert::TryInto,
     fmt::{self, Debug, Formatter},
+    iter::FromIterator,
     mem::size_of,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     ops::{Add, Range, RangeInclusive},
@@ -936,10 +937,6 @@ impl CompressedLossList {
         }
     }
 
-    pub fn from_loss_list(iter: impl Iterator<Item = SeqNumber>) -> CompressedLossList {
-        Self::try_from_iter(iter).unwrap()
-    }
-
     pub fn iter_compressed(&self) -> impl Iterator<Item = u32> + '_ {
         self.0.iter().copied()
     }
@@ -950,6 +947,12 @@ impl CompressedLossList {
 
     pub fn into_iter_decompressed(self) -> impl Iterator<Item = SeqNumber> {
         decompress_loss_list(self.0.into_iter())
+    }
+}
+
+impl FromIterator<SeqNumber> for CompressedLossList {
+    fn from_iter<T: IntoIterator<Item = SeqNumber>>(iter: T) -> Self {
+        CompressedLossList::try_from_iter(iter.into_iter()).unwrap()
     }
 }
 

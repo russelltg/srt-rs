@@ -1,7 +1,6 @@
 use std::cmp::min;
 use std::{
     net::SocketAddr,
-    ops::Range,
     time::{Duration, Instant},
 };
 
@@ -336,10 +335,7 @@ impl DuplexConnection {
             Ack(info) => self.sender.handle_ack_packet(now, info),
             DropRequest { range, .. } => self.receiver.handle_drop_request(
                 now,
-                Range {
-                    start: *range.start(),
-                    end: *range.end() + 1, // inclusive to exclusive
-                },
+                *range.start()..*range.end() + 1, // inclusive to exclusive
             ),
             Handshake(shake) => self.sender.handle_handshake_packet(shake, now),
             Nak(nack) => self.sender.handle_nak_packet(now, nack),
@@ -550,10 +546,7 @@ mod duplex_connection {
                     Control(ControlPacket {
                         timestamp: TimeStamp::MIN + SND + TSBPD + TSBPD / 4,
                         dest_sockid: remote_sockid(),
-                        control_type: Nak(CompressedLossList::from(Range {
-                            start: SeqNumber(0),
-                            end: SeqNumber(2),
-                        })),
+                        control_type: Nak(CompressedLossList::from(SeqNumber(0)..SeqNumber(2))),
                     }),
                     remote_addr()
                 )))

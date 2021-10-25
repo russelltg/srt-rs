@@ -254,8 +254,8 @@ mod test {
     use crate::protocol::TimeStamp;
     use crate::*;
     use bytes::Bytes;
-    use std::iter::FromIterator;
     use std::time::{Duration, Instant};
+    use std::{array::IntoIter, iter::FromIterator};
 
     const MILLIS: Duration = Duration::from_millis(1);
     const TSBPD: Duration = Duration::from_secs(2);
@@ -354,17 +354,13 @@ mod test {
 
         assert!(
             buffer
-                .add_to_loss_list(CompressedLossList::from_loss_list(
-                    vec![SeqNumber(11), SeqNumber(13)].into_iter(),
-                ))
+                .add_to_loss_list(IntoIter::new([SeqNumber(11), SeqNumber(13)]).collect())
                 .count()
                 > 0
         );
         assert!(
             buffer
-                .add_to_loss_list(CompressedLossList::from_loss_list(
-                    vec![SeqNumber(7), SeqNumber(12)].into_iter(),
-                ))
+                .add_to_loss_list(IntoIter::new([SeqNumber(7), SeqNumber(12)]).collect())
                 .count()
                 > 0
         );
@@ -415,9 +411,7 @@ mod test {
         // NAK for packets from the past should be ignored
         assert!(
             buffer
-                .add_to_loss_list(CompressedLossList::from_loss_list(
-                    vec![SeqNumber(1)].into_iter(),
-                ))
+                .add_to_loss_list(IntoIter::new([SeqNumber(1)]).collect())
                 .count()
                 > 0
         );
@@ -460,9 +454,7 @@ mod test {
 
         assert!(
             buffer
-                .add_to_loss_list(CompressedLossList::from_loss_list(
-                    vec![SeqNumber(1)].into_iter(),
-                ))
+                .add_to_loss_list(IntoIter::new([SeqNumber(1)]).collect())
                 .count()
                 > 0
         );
@@ -540,32 +532,15 @@ mod test {
         use Loss::*;
         assert_eq!(
             buffer
-                .add_to_loss_list(CompressedLossList::from_loss_list(
-                    vec![SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)].into_iter(),
-                ))
+                .add_to_loss_list(
+                    IntoIter::new([SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)])
+                        .collect()
+                )
                 .collect::<Vec<_>>(),
             vec![
-                (
-                    Added,
-                    Range {
-                        start: SeqNumber(1),
-                        end: SeqNumber(3)
-                    }
-                ),
-                (
-                    Ignored,
-                    Range {
-                        start: SeqNumber(3),
-                        end: SeqNumber(4)
-                    }
-                ),
-                (
-                    Ignored,
-                    Range {
-                        start: SeqNumber(5),
-                        end: SeqNumber(6)
-                    }
-                ),
+                (Added, SeqNumber(1)..SeqNumber(3)),
+                (Ignored, SeqNumber(3)..SeqNumber(4)),
+                (Ignored, SeqNumber(5)..SeqNumber(6)),
             ]
         );
 
@@ -581,25 +556,14 @@ mod test {
 
         assert_eq!(
             buffer
-                .add_to_loss_list(CompressedLossList::from_loss_list(
-                    vec![SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)].into_iter(),
-                ))
+                .add_to_loss_list(
+                    IntoIter::new([SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)])
+                        .collect()
+                )
                 .collect::<Vec<_>>(),
             vec![
-                (
-                    Dropped,
-                    Range {
-                        start: SeqNumber(1),
-                        end: SeqNumber(4)
-                    }
-                ),
-                (
-                    Ignored,
-                    Range {
-                        start: SeqNumber(5),
-                        end: SeqNumber(6)
-                    }
-                ),
+                (Dropped, SeqNumber(1)..SeqNumber(4)),
+                (Ignored, SeqNumber(5)..SeqNumber(6)),
             ]
         );
     }

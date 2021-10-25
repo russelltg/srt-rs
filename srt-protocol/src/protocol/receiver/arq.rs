@@ -345,10 +345,7 @@ mod automatic_repeat_request_algorithm {
                 }
             ),
             Ok((
-                Some(CompressedLossList::from(Range {
-                    start: init_seq_num + 1,
-                    end: init_seq_num + 3
-                })),
+                Some(CompressedLossList::from(init_seq_num + 1..init_seq_num + 3)),
                 None
             ))
         );
@@ -525,10 +522,7 @@ mod automatic_repeat_request_algorithm {
         let now = start + arq.rtt.mean() * 4;
         assert_eq!(
             arq.on_nak_event(now),
-            Some(CompressedLossList::from(Range {
-                start: init_seq_num + 1,
-                end: init_seq_num + 4
-            }))
+            Some(CompressedLossList::from(init_seq_num + 1..init_seq_num + 4))
         );
 
         let now = start + arq.rtt.mean() * 5;
@@ -537,10 +531,7 @@ mod automatic_repeat_request_algorithm {
         let now = start + arq.rtt.mean() * 8;
         assert_eq!(
             arq.on_nak_event(now),
-            Some(CompressedLossList::from(Range {
-                start: init_seq_num + 1,
-                end: init_seq_num + 4
-            }))
+            Some(CompressedLossList::from(init_seq_num + 1..init_seq_num + 4))
         );
 
         let now = start + tsbpd_latency + Duration::from_millis(10);
