@@ -254,8 +254,8 @@ mod test {
     use crate::protocol::TimeStamp;
     use crate::*;
     use bytes::Bytes;
-    use std::time::{Duration, Instant};
     use std::iter::FromIterator;
+    use std::time::{Duration, Instant};
 
     const MILLIS: Duration = Duration::from_millis(1);
     const TSBPD: Duration = Duration::from_secs(2);
@@ -532,7 +532,9 @@ mod test {
         use Loss::*;
         assert_eq!(
             buffer
-                .add_to_loss_list([SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)].iter()
+                .add_to_loss_list(
+                    [SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)]
+                        .iter()
                         .collect()
                 )
                 .collect::<Vec<_>>(),
@@ -555,7 +557,9 @@ mod test {
 
         assert_eq!(
             buffer
-                .add_to_loss_list([SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)].iter()
+                .add_to_loss_list(
+                    [SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)]
+                        .iter()
                         .collect()
                 )
                 .collect::<Vec<_>>(),
