@@ -91,7 +91,7 @@ jobs:
     - name: Generate reports
       run: RUSTFLAGS="-Zinstrument-coverage" LLVM_PROFILE_FILE="srt.%p.profraw%c" cargo +nightly-2021-10-25 test --features=log_disable
     - name: Delete invalid profdata files
-      run: set -x; for p in find . -name "*.profraw"; do $(find $(rustc --print sysroot) -name llvm-profdata) show $p > /dev/null || rm $p; done
+      run: set -x; for p in $(find . -name "*.profraw"); do $(find $(rustc --print sysroot) -name llvm-profdata) show $p > /dev/null || rm $p; done
     - name: Run grcov
       run: RUSTUP_TOOLCHAIN=nightly-2021-10-25 ./grcov . --llvm --binary-path ./target/debug/ -t lcov -s . --ignore '*/examples/*' --ignore '*/tests/*' -o lcov.info
     - name: Upload results
