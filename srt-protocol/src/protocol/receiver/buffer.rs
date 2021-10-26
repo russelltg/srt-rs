@@ -947,4 +947,37 @@ mod receive_buffer {
 
         assert_eq!(buf.buffer_available(), 0);
     }
+
+    #[test]
+    fn wrong_lrsn_after_drop_all() {
+        let tsbpd = Duration::from_secs(2);
+        let start = Instant::now();
+        let init_seq_num = SeqNumber(5);
+
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+
+        let now = start;
+        let _ = buf.push_packet(
+            now,
+            DataPacket {
+                seq_number: init_seq_num + 3,
+                payload: b"yas"[..].into(),
+                ..basic_pack()
+            },
+        );
+
+        assert_eq!(buf.next_ack_dsn(), init_seq_num);
+
+        // pop_next_message is strange, may want some cleanup
+        assert_eq!(
+            buf.pop_next_message(now + tsbpd + Duration::from_millis(10)),
+            None
+        );
+        assert_eq!(
+            buf.pop_next_message(now + tsbpd + Duration::from_millis(10)),
+            Some((now, b"yas"[..].into()))
+        );
+
+        assert_eq!(buf.next_ack_dsn(), init_seq_num + 4);
+    }
 }
