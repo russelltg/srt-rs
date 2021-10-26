@@ -280,6 +280,7 @@ mod test {
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
                 bandwidth: LiveBandwidthMode::default(),
+                recv_buffer_size: 8192,
             },
             sid,
             random(),

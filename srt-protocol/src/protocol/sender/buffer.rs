@@ -3,9 +3,9 @@ use crate::protocol::encryption::Cipher;
 use crate::protocol::sender::encapsulate::Encapsulate;
 use crate::{ConnectionSettings, DataPacket, SeqNumber};
 use bytes::Bytes;
-use std::cmp::max;
 use std::collections::{BTreeSet, VecDeque};
 use std::time::{Duration, Instant};
+use std::{cmp::max, ops::Range};
 
 #[derive(Debug)]
 pub struct SendBuffer {
@@ -117,7 +117,7 @@ impl SendBuffer {
     pub fn add_to_loss_list(
         &mut self,
         nak: CompressedLossList,
-    ) -> impl Iterator<Item = (Loss, SeqNumber, SeqNumber)> + '_ {
+    ) -> impl Iterator<Item = (Loss, Range<SeqNumber>)> + '_ {
         LossIterator {
             loss_list: nak.into_iter_decompressed(),
             first: None,
@@ -222,24 +222,25 @@ impl<'a, I> Iterator for LossIterator<'a, I>
 where
     I: Iterator<Item = SeqNumber>,
 {
-    type Item = (Loss, SeqNumber, SeqNumber);
+    type Item = (Loss, Range<SeqNumber>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (first_type, first) = self.first.clone().or_else(|| self.next_loss())?;
-        let mut last = first;
+        let (first_type, start) = self.first.clone().or_else(|| self.next_loss())?;
+        // exclusive end
+        let mut end = start + 1;
         loop {
             match self.next_loss() {
-                Some((next_type, next)) if next_type == first_type && next == last + 1 => {
-                    last = next;
+                Some((next_type, next)) if next_type == first_type && next == end => {
+                    end = next + 1;
                     continue;
                 }
                 Some((next_type, next)) => {
                     self.first = Some((next_type, next));
-                    return Some((first_type, first, last));
+                    return Some((first_type, start..end));
                 }
                 None => {
                     self.first = None;
-                    return Some((first_type, first, last));
+                    return Some((first_type, start..end));
                 }
             }
         }
@@ -274,6 +275,7 @@ mod test {
             crypto_manager: None,
             stream_id: None,
             bandwidth: LiveBandwidthMode::default(),
+            recv_buffer_size: 8196,
         }
     }
 
@@ -352,17 +354,13 @@ mod test {
 
         assert!(
             buffer
-                .add_to_loss_list(CompressedLossList::from_loss_list(
-                    vec![SeqNumber(11), SeqNumber(13)].into_iter(),
-                ))
+                .add_to_loss_list([SeqNumber(11), SeqNumber(13)].iter().collect())
                 .count()
                 > 0
         );
         assert!(
             buffer
-                .add_to_loss_list(CompressedLossList::from_loss_list(
-                    vec![SeqNumber(7), SeqNumber(12)].into_iter(),
-                ))
+                .add_to_loss_list([SeqNumber(7), SeqNumber(12)].iter().collect())
                 .count()
                 > 0
         );
@@ -413,9 +411,7 @@ mod test {
         // NAK for packets from the past should be ignored
         assert!(
             buffer
-                .add_to_loss_list(CompressedLossList::from_loss_list(
-                    vec![SeqNumber(1)].into_iter(),
-                ))
+                .add_to_loss_list([SeqNumber(1)].iter().collect())
                 .count()
                 > 0
         );
@@ -458,9 +454,7 @@ mod test {
 
         assert!(
             buffer
-                .add_to_loss_list(CompressedLossList::from_loss_list(
-                    vec![SeqNumber(1)].into_iter(),
-                ))
+                .add_to_loss_list([SeqNumber(1)].iter().collect())
                 .count()
                 > 0
         );
@@ -538,14 +532,16 @@ mod test {
         use Loss::*;
         assert_eq!(
             buffer
-                .add_to_loss_list(CompressedLossList::from_loss_list(
-                    vec![SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)].into_iter(),
-                ))
+                .add_to_loss_list(
+                    [SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)]
+                        .iter()
+                        .collect()
+                )
                 .collect::<Vec<_>>(),
             vec![
-                (Added, SeqNumber(1), SeqNumber(2)),
-                (Ignored, SeqNumber(3), SeqNumber(3)),
-                (Ignored, SeqNumber(5), SeqNumber(5)),
+                (Added, SeqNumber(1)..SeqNumber(3)),
+                (Ignored, SeqNumber(3)..SeqNumber(4)),
+                (Ignored, SeqNumber(5)..SeqNumber(6)),
             ]
         );
 
@@ -561,13 +557,15 @@ mod test {
 
         assert_eq!(
             buffer
-                .add_to_loss_list(CompressedLossList::from_loss_list(
-                    vec![SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)].into_iter(),
-                ))
+                .add_to_loss_list(
+                    [SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)]
+                        .iter()
+                        .collect()
+                )
                 .collect::<Vec<_>>(),
             vec![
-                (Dropped, SeqNumber(1), SeqNumber(3)),
-                (Ignored, SeqNumber(5), SeqNumber(5)),
+                (Dropped, SeqNumber(1)..SeqNumber(4)),
+                (Ignored, SeqNumber(5)..SeqNumber(6)),
             ]
         );
     }

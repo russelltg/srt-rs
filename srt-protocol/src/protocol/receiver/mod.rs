@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, net::SocketAddr, time::Instant};
+use std::{collections::VecDeque, net::SocketAddr, ops::Range, time::Instant};
 
 use bytes::Bytes;
 use log::{debug, error, info, trace, warn};
@@ -51,6 +51,7 @@ impl Receiver {
                 settings.socket_start_time,
                 settings.recv_tsbpd_latency,
                 settings.init_seq_num,
+                settings.recv_buffer_size,
             ),
             timers: ReceiveTimers::new(settings.socket_start_time),
             control_packets: VecDeque::new(),
@@ -135,12 +136,10 @@ impl Receiver {
         }
     }
 
-    pub fn handle_drop_request(&mut self, now: Instant, first: SeqNumber, last: SeqNumber) {
-        if let Some((begin, end, count)) = self.arq.handle_drop_request(now, first, last) {
-            info!(
-                "Dropped {} packets in the range of [{:?}, {:?})",
-                count, begin, end
-            );
+    pub fn handle_drop_request(&mut self, now: Instant, range: Range<SeqNumber>) {
+        let dropped_ct = self.arq.handle_drop_request(now, range.clone());
+        if dropped_ct > 0 {
+            info!("Dropped {} packets in the range of {:?}", dropped_ct, range);
         }
     }
 

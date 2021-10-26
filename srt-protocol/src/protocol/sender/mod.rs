@@ -10,7 +10,7 @@ use bytes::Bytes;
 use log::debug;
 
 use super::TimeSpan;
-use crate::packet::ControlTypes::{Ack2, DropRequest, Shutdown};
+use crate::packet::ControlTypes::{self, Ack2, Shutdown};
 use crate::packet::{AckControlInfo, CompressedLossList, FullAckSeqNumber, HandshakeControlInfo};
 use crate::protocol::handshake::Handshake;
 use crate::protocol::Timer;
@@ -304,35 +304,30 @@ impl Sender {
     pub fn handle_nak_packet(&mut self, now: Instant, nak: CompressedLossList) {
         use Loss::*;
         // 1) Add all sequence numbers carried in the NAK into the sender's loss list.
-        for (loss, first, last) in self.send_buffer.add_to_loss_list(nak) {
+        for (loss, range) in self.send_buffer.add_to_loss_list(nak) {
             match loss {
                 Ignored => {
-                    debug!("NAK: ignoring packets [{:?}, {:?}]", first, last);
+                    debug!("NAK: ignoring packets {:?}", range);
                 }
                 Added => {
-                    debug!("NAK: added packets [{:?}, {:?}]", first, last);
+                    debug!("NAK: added packets {:?}", range);
                 }
                 Dropped => {
-                    debug!("NAK: dropped packets [{:?}, {:?}]", first, last);
+                    debug!("NAK: dropped packets {:?}", range);
+                    // On a Live stream, where each packet is a message, just one NAK with
+                    // a compressed packet loss interval of significant size (e.g. [1,
+                    // 100_000] will result in a deluge of message drop request packet
+                    // transmissions from the sender, resembling a DoS attack on the receiver.
+                    // Even more pathological, this is most likely to happen when we absolutely
+                    // do not want it to happen, such as during periods of decreased network
+                    // throughput.
+                    //
+                    // For this reason, this implementation is explicitly inconsistent with the
+                    // reference implementation, which only sends a single message per message
+                    // drop request, if the message is still in the send buffer. We always send
                     self.output.send_control(
                         now,
-                        DropRequest {
-                            // On a Live stream, where each packet is a message, just one NAK with
-                            // a compressed packet loss interval of significant size (e.g. [1,
-                            // 100_000] will result in a deluge of message drop request packet
-                            // transmissions from the sender, resembling a DoS attack on the receiver.
-                            // Even more pathological, this is most likely to happen when we absolutely
-                            // do not want it to happen, such as during periods of decreased network
-                            // throughput.
-                            //
-                            // For this reason, this implementation is explicitly inconsistent with the
-                            // reference implementation, which only sends a single message per message
-                            // drop request, if the message is still in the send buffer. We always send
-                            // the same message number.
-                            msg_to_drop: MsgNumber::new_truncate(0),
-                            first,
-                            last,
-                        },
+                        ControlTypes::new_drop_request(MsgNumber::new_truncate(0), range),
                     )
                 }
             }

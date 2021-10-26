@@ -1,17 +1,17 @@
+use std::cmp::min;
 use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
 
-use crate::packet::{ControlTypes, SrtControlPacket};
-use crate::protocol::handshake::Handshake;
-use crate::protocol::receiver::Receiver;
-use crate::protocol::sender::Sender;
-use crate::protocol::TimeSpan;
-use crate::{crypto::CryptoManager, ControlPacket, LiveBandwidthMode, Packet, SeqNumber, SocketId};
+use crate::{
+    crypto::CryptoManager,
+    packet::{ControlTypes, SrtControlPacket},
+    protocol::{handshake::Handshake, receiver::Receiver, sender::Sender, TimeSpan},
+    ControlPacket, LiveBandwidthMode, Packet, SeqNumber, SocketId,
+};
 use bytes::Bytes;
 use log::{debug, info, warn};
-use std::cmp::min;
 
 #[derive(Clone, Debug)]
 pub struct Connection {
@@ -41,7 +41,7 @@ pub struct ConnectionSettings {
     pub init_seq_num: SeqNumber,
 
     /// The maximum packet size
-    pub max_packet_size: u32,
+    pub max_packet_size: usize,
 
     /// The maxiumum flow size
     pub max_flow_size: u32,
@@ -49,6 +49,9 @@ pub struct ConnectionSettings {
     /// The TSBPD of the connection--the max of each side's repspective latencies
     pub send_tsbpd_latency: Duration,
     pub recv_tsbpd_latency: Duration,
+
+    /// Size of the receive buffer, in packets
+    pub recv_buffer_size: usize,
 
     // if this stream is encrypted, it needs a crypto manager
     pub crypto_manager: Option<CryptoManager>,
@@ -330,7 +333,10 @@ impl DuplexConnection {
         match control.control_type {
             // sender-responsble packets
             Ack(info) => self.sender.handle_ack_packet(now, info),
-            DropRequest { first, last, .. } => self.receiver.handle_drop_request(now, first, last),
+            DropRequest { range, .. } => self.receiver.handle_drop_request(
+                now,
+                *range.start()..*range.end() + 1, // inclusive to exclusive
+            ),
             Handshake(shake) => self.sender.handle_handshake_packet(shake, now),
             Nak(nack) => self.sender.handle_nak_packet(now, nack),
             // receiver-respnsible
@@ -368,9 +374,7 @@ impl DuplexConnection {
 #[cfg(test)]
 mod duplex_connection {
     use super::*;
-    use crate::packet::CompressedLossList;
     use crate::protocol::TimeStamp;
-    use crate::seq_number::seq_num_range;
     use crate::{LiveBandwidthMode, MsgNumber};
 
     const MILLIS: Duration = Duration::from_millis(1);
@@ -402,6 +406,7 @@ mod duplex_connection {
                 max_flow_size: 8192,
                 send_tsbpd_latency: TSBPD,
                 recv_tsbpd_latency: TSBPD,
+                recv_buffer_size: 1024 * 1316,
                 crypto_manager: None,
                 stream_id: None,
                 bandwidth: LiveBandwidthMode::default(),
@@ -538,10 +543,7 @@ mod duplex_connection {
                     Control(ControlPacket {
                         timestamp: TimeStamp::MIN + SND + TSBPD + TSBPD / 4,
                         dest_sockid: remote_sockid(),
-                        control_type: Nak(CompressedLossList::from_loss_list(seq_num_range(
-                            SeqNumber(0),
-                            SeqNumber(1),
-                        ))),
+                        control_type: Nak((SeqNumber(0)..SeqNumber(2)).into()),
                     }),
                     remote_addr()
                 )))
@@ -552,8 +554,7 @@ mod duplex_connection {
                     dest_sockid: remote_sockid(),
                     control_type: DropRequest {
                         msg_to_drop: MsgNumber(0),
-                        first: SeqNumber(0),
-                        last: SeqNumber(1),
+                        range: SeqNumber(0)..=SeqNumber(1)
                     }
                 }),
                 remote_addr()

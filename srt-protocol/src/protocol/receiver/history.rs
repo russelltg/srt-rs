@@ -121,6 +121,7 @@ impl AckHistoryWindow {
         Some((next_fasn, next_dsn))
     }
 
+    #[must_use]
     pub fn next_light_ack(&mut self, next_dsn: SeqNumber) -> Option<SeqNumber> {
         if next_dsn >= self.last_ack_dsn + Self::LIGHT_ACK_PACKET_INTERVAL {
             self.last_ack_dsn = next_dsn;
