@@ -937,6 +937,16 @@ impl CompressedLossList {
         }
     }
 
+    pub fn try_from_range(r: Range<SeqNumber>) -> Option<CompressedLossList> {
+        if r.is_empty() {
+            None
+        } else if r.start + 1 == r.end {
+            Some(CompressedLossList(vec![r.start.as_raw()]))
+        } else {
+            Some(CompressedLossList(vec![(1 << 31) | r.start.as_raw(), (r.end - 1).as_raw()]))
+        }
+    }
+
     pub fn iter_compressed(&self) -> impl Iterator<Item = u32> + '_ {
         self.0.iter().copied()
     }
@@ -950,21 +960,21 @@ impl CompressedLossList {
     }
 }
 
+impl FromIterator<SeqNumber> for CompressedLossList {
+    fn from_iter<T: IntoIterator<Item = SeqNumber>>(iter: T) -> Self {
+        Self::try_from_iter(iter.into_iter()).unwrap()
+    }
+}
+
 impl<'a> FromIterator<&'a SeqNumber> for CompressedLossList {
     fn from_iter<T: IntoIterator<Item = &'a SeqNumber>>(iter: T) -> Self {
-        CompressedLossList::try_from_iter(iter.into_iter().copied()).unwrap()
+        Self::try_from_iter(iter.into_iter().copied()).unwrap()
     }
 }
 
 impl From<Range<SeqNumber>> for CompressedLossList {
-    fn from(r: Range<SeqNumber>) -> Self {
-        assert!(!r.is_empty());
-
-        if r.start + 1 == r.end {
-            CompressedLossList(vec![r.start.as_raw()])
-        } else {
-            CompressedLossList(vec![(1 << 31) | r.start.as_raw(), (r.end - 1).as_raw()])
-        }
+    fn from(range: Range<SeqNumber>) -> Self {
+        Self::try_from_range(range).unwrap()
     }
 }
 

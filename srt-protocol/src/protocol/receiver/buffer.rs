@@ -248,7 +248,7 @@ impl ReceiveBuffer {
                         "Packet received too far in the future for configured receive buffer size. Discarding packet (buffer would need to be {} packets larger)", 
                         buffer_required - self.buffer_available()
                     );
-                    return Ok(None);
+                    return Err(data);
                 }
 
                 // append lost packets to end
@@ -259,7 +259,7 @@ impl ReceiveBuffer {
 
                 self.append_data(data);
 
-                Ok(Some(lost.into()))
+                Ok(CompressedLossList::try_from_range(lost))
             }
             Less => {
                 self.recover_data(data);
@@ -462,7 +462,7 @@ impl ReceiveBuffer {
 #[cfg(test)]
 mod receive_buffer {
     use super::*;
-    use crate::packet::{CompressedLossList, DataEncryption};
+    use crate::packet::DataEncryption;
     use crate::{MsgNumber, SocketId};
 
     fn basic_pack() -> DataPacket {
@@ -549,9 +549,7 @@ mod receive_buffer {
                     ..basic_pack()
                 }
             ),
-            Ok(CompressedLossList::try_from_iter(
-                vec![SeqNumber(6)].into_iter()
-            ))
+            Ok(Some([SeqNumber(6)].iter().collect()))
         );
         assert_eq!(buf.next_ack_dsn(), init_seq_num + 1);
         assert_eq!(buf.next_message_release_time(), Some(start + tsbpd));
@@ -771,7 +769,7 @@ mod receive_buffer {
         let now = now + mean_rtt * 3;
         assert_eq!(
             buf.prepare_loss_list(now, mean_rtt),
-            CompressedLossList::try_from_iter((1..5).chain(6..15).map(|a| init_seq_num + a))
+            Some((1..5).chain(6..15).map(|a| init_seq_num + a).collect())
         );
         assert_eq!(buf.prepare_loss_list(now, mean_rtt), None);
     }
@@ -922,7 +920,10 @@ mod receive_buffer {
                     ..basic_pack()
                 },
             ),
-            Ok(None)
+            Err(DataPacket {
+                seq_number: init_seq_num + 10,
+                ..basic_pack()
+            })
         );
 
         assert_eq!(buf.buffer_available(), 1);
