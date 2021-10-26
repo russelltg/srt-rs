@@ -294,7 +294,7 @@ impl AutomaticRepeatRequestAlgorithm {
 #[cfg(test)]
 mod automatic_repeat_request_algorithm {
     use super::*;
-    use crate::packet::{CompressedLossList, DataEncryption, PacketLocation};
+    use crate::packet::{DataEncryption, PacketLocation};
     use crate::protocol::TimeStamp;
     use crate::{MsgNumber, SocketId};
     use bytes::Bytes;
@@ -344,10 +344,7 @@ mod automatic_repeat_request_algorithm {
                     ..basic_pack()
                 }
             ),
-            Ok((
-                Some(CompressedLossList::from(init_seq_num + 1..init_seq_num + 3)),
-                None
-            ))
+            Ok((Some((init_seq_num + 1..init_seq_num + 3).into()), None))
         );
         assert!(!arq.is_flushed());
 
@@ -522,7 +519,7 @@ mod automatic_repeat_request_algorithm {
         let now = start + arq.rtt.mean() * 4;
         assert_eq!(
             arq.on_nak_event(now),
-            Some(CompressedLossList::from(init_seq_num + 1..init_seq_num + 4))
+            Some((init_seq_num + 1..init_seq_num + 4).into())
         );
 
         let now = start + arq.rtt.mean() * 5;
@@ -531,7 +528,7 @@ mod automatic_repeat_request_algorithm {
         let now = start + arq.rtt.mean() * 8;
         assert_eq!(
             arq.on_nak_event(now),
-            Some(CompressedLossList::from(init_seq_num + 1..init_seq_num + 4))
+            Some((init_seq_num + 1..init_seq_num + 4).into())
         );
 
         let now = start + tsbpd_latency + Duration::from_millis(10);

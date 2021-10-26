@@ -259,7 +259,7 @@ impl ReceiveBuffer {
 
                 self.append_data(data);
 
-                Ok(Some(CompressedLossList::from(lost)))
+                Ok(Some(lost.into()))
             }
             Less => {
                 self.recover_data(data);

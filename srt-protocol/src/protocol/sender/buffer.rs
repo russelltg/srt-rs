@@ -236,11 +236,11 @@ where
                 }
                 Some((next_type, next)) => {
                     self.first = Some((next_type, next));
-                    return Some((first_type, Range { start, end }));
+                    return Some((first_type, start..end));
                 }
                 None => {
                     self.first = None;
-                    return Some((first_type, Range { start, end }));
+                    return Some((first_type, start..end));
                 }
             }
         }

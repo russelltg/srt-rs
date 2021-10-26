@@ -373,10 +373,7 @@ impl DuplexConnection {
 
 #[cfg(test)]
 mod duplex_connection {
-    use std::ops::RangeInclusive;
-
     use super::*;
-    use crate::packet::CompressedLossList;
     use crate::protocol::TimeStamp;
     use crate::{LiveBandwidthMode, MsgNumber};
 
@@ -546,7 +543,7 @@ mod duplex_connection {
                     Control(ControlPacket {
                         timestamp: TimeStamp::MIN + SND + TSBPD + TSBPD / 4,
                         dest_sockid: remote_sockid(),
-                        control_type: Nak(CompressedLossList::from(SeqNumber(0)..SeqNumber(2))),
+                        control_type: Nak((SeqNumber(0)..SeqNumber(2)).into()),
                     }),
                     remote_addr()
                 )))
@@ -557,7 +554,7 @@ mod duplex_connection {
                     dest_sockid: remote_sockid(),
                     control_type: DropRequest {
                         msg_to_drop: MsgNumber(0),
-                        range: RangeInclusive::new(SeqNumber(0), SeqNumber(1))
+                        range: SeqNumber(0)..=SeqNumber(1)
                     }
                 }),
                 remote_addr()
