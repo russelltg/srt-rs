@@ -173,6 +173,15 @@ fn ui_test(flags: &[&str], stderr: &str) {
             let mut string = String::new();
             child.stderr.unwrap().read_to_string(&mut string).unwrap();
 
+            // windows puts stranmsit-rs.exe instead of stranmsit-rs, this isn't a real failure so just remove all .exe
+            let string = string.replace(".exe", "");
+
+            // on some versions of rustc while compiling with -Zinstrument-coverage, it inserts this. Remove it.
+            let string = string.replace(
+                "LLVM Profile Error: __llvm_profile_counter_bias is undefined\n",
+                "",
+            );
+
             assert_eq!(
                 stderr.lines().count(),
                 string.lines().count(),
@@ -180,9 +189,6 @@ fn ui_test(flags: &[&str], stderr: &str) {
                 stderr,
                 string
             );
-
-            // windows puts stranmsit-rs.exe instead of stranmsit-rs, this isn't a real failure so just remove all .exe
-            let string = string.replace(".exe", "");
 
             for (i, (a, b)) in string.lines().zip(stderr.lines()).enumerate() {
                 let (a, b) = (a.trim(), b.trim());
