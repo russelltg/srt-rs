@@ -7,6 +7,7 @@ use anyhow::Error;
 use bytes::Bytes;
 use futures::{stream, SinkExt, Stream, StreamExt, TryStreamExt};
 use log::info;
+use srt_protocol::LiveBandwidthMode::*;
 use srt_tokio::SrtSocketBuilder;
 
 fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
@@ -19,16 +20,17 @@ fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
 }
 
 #[tokio::test]
-#[ignore]
 async fn high_bandwidth() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     let sender_fut = async {
         let mut sock = SrtSocketBuilder::new_connect("127.0.0.1:6654")
+            .latency(Duration::from_millis(150))
+            .bandwidth(Estimated { overhead: 20 })
             .connect()
             .await?;
 
-        const RATE_MBPS: u64 = 20;
+        const RATE_MBPS: u64 = 50;
         let mut stream_gbps = stream_exact(Duration::from_micros(1_000_000 / 1024 / RATE_MBPS))
             .map(|bytes| Ok((Instant::now(), bytes)))
             .boxed();
@@ -37,12 +39,13 @@ async fn high_bandwidth() -> Result<(), Error> {
 
         sock.send_all(&mut stream_gbps).await?;
 
-        Ok::<_, Error>(())
+        sock.close().await
     };
 
     let recv_fut = async {
         let mut sock = SrtSocketBuilder::new_listen()
             .local_port(6654)
+            .latency(Duration::from_millis(150))
             .connect()
             .await?;
 

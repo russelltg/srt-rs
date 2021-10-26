@@ -1,17 +1,18 @@
+use std::cmp::min;
 use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
 
-use crate::packet::{ControlTypes, PacketType, SrtControlPacket};
-use crate::protocol::handshake::Handshake;
-use crate::protocol::receiver::Receiver;
-use crate::protocol::sender::Sender;
-use crate::protocol::TimeSpan;
-use crate::{crypto::CryptoManager, ControlPacket, Packet, SeqNumber, SocketId};
+use crate::{
+    crypto::CryptoManager,
+    packet::{ControlTypes, PacketType, SrtControlPacket},
+    protocol::{handshake::Handshake, receiver::Receiver, sender::Sender, TimeSpan},
+    ControlPacket, LiveBandwidthMode, Packet, SeqNumber, SocketId,
+};
+
 use bytes::Bytes;
 use log::{debug, info, warn};
-use std::cmp::min;
 
 #[derive(Clone, Debug)]
 pub struct Connection {
@@ -41,7 +42,7 @@ pub struct ConnectionSettings {
     pub init_seq_num: SeqNumber,
 
     /// The maximum packet size
-    pub max_packet_size: u32,
+    pub max_packet_size: usize,
 
     /// The maxiumum flow size
     pub max_flow_size: u32,
@@ -50,10 +51,14 @@ pub struct ConnectionSettings {
     pub send_tsbpd_latency: Duration,
     pub recv_tsbpd_latency: Duration,
 
+    /// Size of the receive buffer, in packets
+    pub recv_buffer_size: usize,
+
     // if this stream is encrypted, it needs a crypto manager
     pub crypto_manager: Option<CryptoManager>,
 
     pub stream_id: Option<String>,
+    pub bandwidth: LiveBandwidthMode,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -155,7 +160,7 @@ impl DuplexConnection {
         DuplexConnection {
             status: ConnectionStatus::Open(settings.send_tsbpd_latency),
             settings: settings.clone(),
-            receiver: Receiver::new(settings.clone(), connection.handshake.clone()),
+            receiver: Receiver::new(settings.clone()),
             sender: Sender::new(settings, connection.handshake),
         }
     }
@@ -197,7 +202,7 @@ impl DuplexConnection {
     pub fn is_open(&self) -> bool {
         !(self.status.is_closed()
             || (self.sender.is_closed() && self.receiver.is_flushed())
-            || (self.receiver.is_closed() && self.sender.is_flushed()))
+            || self.receiver.is_closed())
     }
 
     pub fn next_packet(&mut self, now: Instant) -> Option<(Packet, SocketAddr)> {
@@ -329,9 +334,12 @@ impl DuplexConnection {
         match control.control_type {
             // sender-responsble packets
             Ack(info) => self.sender.handle_ack_packet(now, info),
-            DropRequest { .. } => {}
+            DropRequest { range, .. } => self.receiver.handle_drop_request(
+                now,
+                *range.start()..*range.end() + 1, // inclusive to exclusive
+            ),
             Handshake(shake) => self.sender.handle_handshake_packet(shake, now),
-            Nak(nack) => self.sender.handle_nak_packet(nack),
+            Nak(nack) => self.sender.handle_nak_packet(now, nack),
             // receiver-respnsible
             Ack2(seq_num) => self.receiver.handle_ack2_packet(seq_num, now),
             // both
@@ -341,15 +349,14 @@ impl DuplexConnection {
             }
             // neither--this exists just to keep the connection alive
             KeepAlive => {}
-            Srt(s) => self.handle_srt_control_packet(s),
             // TODO: case UMSG_CGWARNING: // 100 - Delay Warning
             //            // One way packet delay is increasing, so decrease the sending rate
             //            ControlTypes::DelayWarning?
-
-            // TODO: case UMSG_LOSSREPORT: // 011 - Loss Report is this Nak?
-            // TODO: case UMSG_DROPREQ: // 111 - Msg drop request
+            CongestionWarning => todo!(),
             // TODO: case UMSG_PEERERROR: // 1000 - An error has happened to the peer side
+            PeerError(_) => todo!(),
             // TODO: case UMSG_EXT: // 0x7FFF - reserved and user defined messages
+            Srt(s) => self.handle_srt_control_packet(s),
         }
     }
 
@@ -374,7 +381,7 @@ impl DuplexConnection {
 mod duplex_connection {
     use super::*;
     use crate::protocol::TimeStamp;
-    use crate::MsgNumber;
+    use crate::{LiveBandwidthMode, MsgNumber};
 
     const MILLIS: Duration = Duration::from_millis(1);
     const SND: Duration = MILLIS;
@@ -405,8 +412,10 @@ mod duplex_connection {
                 max_flow_size: 8192,
                 send_tsbpd_latency: TSBPD,
                 recv_tsbpd_latency: TSBPD,
+                recv_buffer_size: 1024 * 1316,
                 crypto_manager: None,
                 stream_id: None,
+                bandwidth: LiveBandwidthMode::default(),
             },
             handshake: Handshake::Connector,
         }
@@ -504,20 +513,54 @@ mod duplex_connection {
             SendPacket((Data(_), _))
         ));
 
-        connection.handle_input(now + TSBPD, Input::Timer);
+        assert!(matches!(
+            connection.handle_input(now + TSBPD, Input::Timer),
+            SendPacket((Data(_), _))
+        ));
 
         // timeout
-        now += TSBPD * 2 + TSBPD / 2; // (TSBPD * 2) * 1.25
-        assert_eq!(
+        now += TSBPD + TSBPD / 4; // TSBPD * 1.25
+        assert!(matches!(
             connection.handle_input(now, Input::Timer),
+            WaitForData(_)
+        ));
+
+        // https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-3.2.9
+        //
+        // 3.2.9.  Message Drop Request
+        //
+        //    A Message Drop Request control packet is sent by the sender to the
+        //    receiver when it requests the retransmission of an unacknowledged
+        //    packet (all or part of a message) which is not present in the
+        //    sender's buffer.  This may happen, for example, when a TTL parameter
+        //    (passed in the sending function) triggers a timeout for
+        //    retransmitting lost packets which constitute parts of a message,
+        //    causing these packets to be removed from the sender's buffer.
+        //
+        //    The sender notifies the receiver that it must not wait for
+        //    retransmission of this message.  Note that a Message Drop Request
+        //    control packet is not sent if the Too Late Packet Drop mechanism
+        //    (Section 4.6) causes the sender to drop a message, as in this case
+        //    the receiver is expected to drop it anyway.
+        assert_eq!(
+            connection.handle_input(
+                now,
+                Input::Packet(Some((
+                    Control(ControlPacket {
+                        timestamp: TimeStamp::MIN + SND + TSBPD + TSBPD / 4,
+                        dest_sockid: remote_sockid(),
+                        control_type: Nak((SeqNumber(0)..SeqNumber(2)).into()),
+                    }),
+                    remote_addr()
+                )))
+            ),
             SendPacket((
                 Control(ControlPacket {
-                    timestamp: TimeStamp::MIN + SND + TSBPD * 2 + TSBPD / 2,
+                    timestamp: TimeStamp::MIN + SND + TSBPD + TSBPD / 4,
                     dest_sockid: remote_sockid(),
                     control_type: DropRequest {
-                        first: SeqNumber(0),
-                        last: SeqNumber(0),
                         msg_to_drop: MsgNumber(0),
+                        range: SeqNumber(0)..=SeqNumber(1)
                     }
                 }),
                 remote_addr()

@@ -1,13 +1,13 @@
+use bytes::Bytes;
 use srt_tokio::SrtSocketBuilder;
-use std::{
-    env,
-    io::Write,
-    path::PathBuf,
-    process::{Command, Stdio},
-};
+use std::{env, path::PathBuf, process::Stdio, time::Instant};
 
 use futures::prelude::*;
-use tokio::time::{sleep, Duration};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    process::Command,
+    time::{sleep, Duration},
+};
 
 #[cfg(target_os = "windows")]
 const STRANSMIT_NAME: &str = "srt-transmit.exe";
@@ -49,10 +49,10 @@ async fn receiver_timeout() {
         .unwrap();
 
     let sender = async move {
-        a.stdin.as_mut().unwrap().write_all(b"asdf").unwrap();
+        a.stdin.as_mut().unwrap().write_all(b"asdf").await.unwrap();
         sleep(Duration::from_millis(2000)).await;
 
-        a.kill().unwrap();
+        a.kill().await.unwrap();
     };
 
     let recvr = async move {
@@ -62,6 +62,49 @@ async fn receiver_timeout() {
             Some(&b"asdf"[..])
         );
         assert_eq!(b.try_next().await.unwrap(), None);
+    };
+    futures::join!(sender, recvr);
+}
+
+#[tokio::test]
+async fn sender_timeout() {
+    let _ = pretty_env_logger::try_init();
+
+    let b = SrtSocketBuilder::new_listen().local_port(1879).connect();
+
+    let stranmsit_rs = find_stransmit_rs();
+    let mut a = Command::new(&stranmsit_rs)
+        .args(&["srt://localhost:1879", "-"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let sender = async move {
+        let mut b = b.await.unwrap();
+
+        let mut got_done = false;
+        for _ in 0..200 {
+            if b.send((Instant::now(), Bytes::from_static(b"asdf\n")))
+                .await
+                .is_err()
+            {
+                got_done = true;
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        assert!(got_done);
+    };
+
+    let recvr = async move {
+        let mut out = BufReader::new(a.stdout.as_mut().unwrap());
+
+        let mut line = String::new();
+        for _ in 0..10 {
+            out.read_line(&mut line).await.unwrap();
+        }
+
+        a.kill().await.unwrap();
     };
     futures::join!(sender, recvr);
 }

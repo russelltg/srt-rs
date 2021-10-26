@@ -21,6 +21,7 @@ fn lossy_deterministic() {
     let _ = pretty_env_logger::try_init();
 
     let once_failing_seeds = [
+        (13858442656353620955, 10_000),
         (3330590297113083014, 10_000),
         (11174431011217123256, 10_000),
         (7843866891970470107, 10_000),
@@ -56,7 +57,7 @@ fn do_lossy_test(seed: u64, count: usize) {
         drop_dist: Bernoulli::new(DROP_RATE).unwrap(),
     };
     let (mut network, mut sender, mut receiver) = simulation.build(start, Duration::from_secs(1));
-    let mut input_data = InputDataSimulation::new(start, count, PACKET_SPACING);
+    input_data_simulation(start, count, PACKET_SPACING, &mut network.sender);
 
     let mut now = start;
     let mut next_data = 0i32;
@@ -64,8 +65,6 @@ fn do_lossy_test(seed: u64, count: usize) {
     let mut received = 0i32;
     loop {
         let sender_next_time = if sender.is_open() {
-            input_data.send_data_to(now, &mut network.sender);
-
             assert_eq!(sender.next_data(now), None);
 
             while let Some(packet) = sender.next_packet(now) {

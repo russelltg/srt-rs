@@ -38,8 +38,7 @@ impl Encapsulate {
         loop {
             if payload.len() > self.max_packet_size as usize {
                 let this_payload = payload.slice(0..self.max_packet_size as usize);
-                let packet =
-                    self.new_data_packet(time, message_number, this_payload, location, false);
+                let packet = self.new_data_packet(time, message_number, this_payload, location);
                 handle_packet(packet);
                 payload = payload.slice(self.max_packet_size as usize..payload.len());
                 location = PacketLocation::empty();
@@ -50,7 +49,6 @@ impl Encapsulate {
                     message_number,
                     payload,
                     location | PacketLocation::LAST,
-                    false,
                 );
                 handle_packet(packet);
                 return packet_count + 1;
@@ -64,14 +62,13 @@ impl Encapsulate {
         message_num: MsgNumber,
         payload: Bytes,
         location: PacketLocation,
-        retransmitted: bool,
     ) -> DataPacket {
         DataPacket {
             dest_sockid: self.remote_socket_id,
             in_order_delivery: false, // TODO: research this
             message_loc: location,
             encryption: DataEncryption::None,
-            retransmitted,
+            retransmitted: false,
             // if this marks the beginning of the next message, get a new message number, else don't
             message_number: message_num,
             seq_number: self.next_sequence_number.increment(),

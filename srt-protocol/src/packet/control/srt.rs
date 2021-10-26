@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, time::Duration};
+use std::{collections::BTreeMap, convert::TryFrom, time::Duration};
 
 use bitflags::bitflags;
 use bytes::{Buf, BufMut};
@@ -36,9 +36,38 @@ pub enum SrtControlPacket {
     /// ID = 5
     StreamId(String),
 
-    /// Smoother? // TODO: research
+    /// Congestion control type. Often "live" or "file"
     /// ID = 6
-    Smoother,
+    Congestion(String),
+
+    /// ID = 7
+    /// Filter seems to be a string of
+    /// comma-separted key-value pairs like:
+    /// a:b,c:d
+    Filter(BTreeMap<String, String>),
+
+    // ID = 8
+    Group {
+        ty: GroupType,
+        flags: GroupFlags,
+        weight: u16,
+    },
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum GroupType {
+    Undefined,
+    Broadcast,
+    MainBackup,
+    Balancing,
+    Multicast,
+    Unrecognized(u8),
+}
+
+bitflags! {
+    pub struct GroupFlags: u8 {
+        const MSG_SYNC = 1 << 6;
+    }
 }
 
 /// from https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_msg.h#L76-L96
@@ -74,6 +103,32 @@ pub struct SrtKeyMessage {
     pub auth: Auth,
     pub salt: Vec<u8>,
     pub wrapped_keys: Vec<u8>,
+}
+
+impl From<GroupType> for u8 {
+    fn from(from: GroupType) -> u8 {
+        match from {
+            GroupType::Undefined => 0,
+            GroupType::Broadcast => 1,
+            GroupType::MainBackup => 2,
+            GroupType::Balancing => 3,
+            GroupType::Multicast => 4,
+            GroupType::Unrecognized(u) => u,
+        }
+    }
+}
+
+impl From<u8> for GroupType {
+    fn from(from: u8) -> GroupType {
+        match from {
+            0 => GroupType::Undefined,
+            1 => GroupType::Broadcast,
+            2 => GroupType::MainBackup,
+            3 => GroupType::Balancing,
+            4 => GroupType::Multicast,
+            u => GroupType::Unrecognized(u),
+        }
+    }
 }
 
 impl fmt::Debug for SrtKeyMessage {
@@ -207,6 +262,45 @@ bitflags! {
     }
 }
 
+fn le_bytes_to_string(le_bytes: &mut impl Buf) -> Result<String, PacketParseError> {
+    if le_bytes.remaining() % 4 != 0 {
+        return Err(PacketParseError::NotEnoughData);
+    }
+
+    let mut str_bytes = Vec::with_capacity(le_bytes.remaining());
+
+    while le_bytes.remaining() > 4 {
+        str_bytes.extend(&le_bytes.get_u32_le().to_be_bytes());
+    }
+
+    // make sure to skip padding bytes if any for the last word
+    match le_bytes.get_u32_le().to_be_bytes() {
+        [a, 0, 0, 0] => str_bytes.push(a),
+        [a, b, 0, 0] => str_bytes.extend(&[a, b]),
+        [a, b, c, 0] => str_bytes.extend(&[a, b, c]),
+        [a, b, c, d] => str_bytes.extend(&[a, b, c, d]),
+    }
+
+    String::from_utf8(str_bytes).map_err(|e| PacketParseError::StreamTypeNotUtf8(e.utf8_error()))
+}
+
+fn string_to_le_bytes(str: &str, into: &mut impl BufMut) {
+    let mut chunks = str.as_bytes().chunks_exact(4);
+
+    while let Some(&[a, b, c, d]) = chunks.next() {
+        into.put(&[d, c, b, a][..]);
+    }
+
+    // add padding bytes for the final word if needed
+    match *chunks.remainder() {
+        [a, b, c] => into.put(&[0, c, b, a][..]),
+        [a, b] => into.put(&[0, 0, b, a][..]),
+        [a] => into.put(&[0, 0, 0, a][..]),
+        [] => {} // exact multiple of 4
+        _ => unreachable!(),
+    }
+}
+
 impl SrtControlPacket {
     pub fn parse<T: Buf>(
         packet_type: u16,
@@ -223,28 +317,37 @@ impl SrtControlPacket {
             5 => {
                 // the stream id string is stored as 32-bit little endian words
                 // https://tools.ietf.org/html/draft-sharabayko-mops-srt-01#section-3.2.1.3
-                if buf.remaining() % 4 != 0 {
-                    return Err(PacketParseError::NotEnoughData);
-                }
-
-                let mut bytes = Vec::with_capacity(buf.remaining());
-
-                while buf.remaining() > 4 {
-                    bytes.extend(&buf.get_u32_le().to_be_bytes());
-                }
-
-                // make sure to skip padding bytes if any for the last word
-                match buf.get_u32_le().to_be_bytes() {
-                    [a, 0, 0, 0] => bytes.push(a),
-                    [a, b, 0, 0] => bytes.extend(&[a, b]),
-                    [a, b, c, 0] => bytes.extend(&[a, b, c]),
-                    _ => {}
-                }
-
-                match String::from_utf8(bytes) {
-                    Ok(s) => Ok(StreamId(s)),
-                    Err(e) => Err(PacketParseError::StreamTypeNotUtf8(e.utf8_error())),
-                }
+                le_bytes_to_string(buf).map(StreamId)
+            }
+            6 => le_bytes_to_string(buf).map(Congestion),
+            // Filter
+            7 => {
+                let filter_str = le_bytes_to_string(buf)?;
+                Ok(Filter(
+                    filter_str
+                        .split(',')
+                        .map(|kv| {
+                            let mut colon_split_iter = kv.split(':');
+                            let k = colon_split_iter
+                                .next()
+                                .ok_or_else(|| PacketParseError::BadFilter(filter_str.clone()))?;
+                            let v = colon_split_iter
+                                .next()
+                                .ok_or_else(|| PacketParseError::BadFilter(filter_str.clone()))?;
+                            // only one colon
+                            if colon_split_iter.next().is_some() {
+                                return Err(PacketParseError::BadFilter(filter_str.clone()));
+                            }
+                            Ok((k.to_string(), v.to_string()))
+                        })
+                        .collect::<Result<_, _>>()?,
+                ))
+            }
+            8 => {
+                let ty = buf.get_u8().into();
+                let flags = GroupFlags::from_bits_truncate(buf.get_u8());
+                let weight = buf.get_u16_le();
+                Ok(Group { ty, flags, weight })
             }
             _ => Err(PacketParseError::UnsupportedSrtExtensionType(packet_type)),
         }
@@ -261,7 +364,9 @@ impl SrtControlPacket {
             KeyManagerRequest(_) => 3,
             KeyManagerResponse(_) => 4,
             StreamId(_) => 5,
-            Smoother => 6,
+            Congestion(_) => 6,
+            Filter(_) => 7,
+            Group { .. } => 8,
         }
     }
     pub fn serialize<T: BufMut>(&self, into: &mut T) {
@@ -277,21 +382,25 @@ impl SrtControlPacket {
             StreamId(sid) => {
                 // the stream id string is stored as 32-bit little endian words
                 // https://tools.ietf.org/html/draft-sharabayko-mops-srt-01#section-3.2.1.3
-                let mut chunks = sid.as_bytes().chunks_exact(4);
-
-                while let Some(&[a, b, c, d]) = chunks.next() {
-                    into.put(&[d, c, b, a][..]);
-                }
-
-                // add padding bytes for the final word if needed
-                match *chunks.remainder() {
-                    [a, b, c] => into.put(&[0, c, b, a][..]),
-                    [a, b] => into.put(&[0, 0, b, a][..]),
-                    [a] => into.put(&[0, 0, 0, a][..]),
-                    _ => {}
-                }
+                string_to_le_bytes(&*sid, into);
             }
-            _ => unimplemented!(),
+            Filter(filter) => {
+                let filter_str = filter
+                    .iter()
+                    .map(|(a, b)| format!("{}:{}", a, b))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                string_to_le_bytes(&filter_str, into);
+            }
+            Group { ty, flags, weight } => {
+                into.put_u8((*ty).into());
+                into.put_u8(flags.bits());
+                into.put_u16_le(*weight);
+            }
+            Reject => {}
+            Congestion(c) => {
+                string_to_le_bytes(c, into);
+            }
         }
     }
     // size in 32-bit words
@@ -528,7 +637,11 @@ impl fmt::Debug for SrtControlPacket {
             SrtControlPacket::KeyManagerRequest(req) => write!(f, "kmreq={:?}", req),
             SrtControlPacket::KeyManagerResponse(resp) => write!(f, "kmresp={:?}", resp),
             SrtControlPacket::StreamId(sid) => write!(f, "streamid={}", sid),
-            SrtControlPacket::Smoother => write!(f, "smoother"),
+            SrtControlPacket::Congestion(ctype) => write!(f, "congestion={}", ctype),
+            SrtControlPacket::Filter(filter) => write!(f, "filter={:?}", filter),
+            SrtControlPacket::Group { ty, flags, weight } => {
+                write!(f, "group=({:?}, {:?}, {:?})", ty, flags, weight)
+            }
         }
     }
 }

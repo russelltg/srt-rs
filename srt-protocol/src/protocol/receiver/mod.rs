@@ -1,39 +1,31 @@
-use std::collections::VecDeque;
-use std::net::SocketAddr;
-use std::time::Instant;
+use std::{collections::VecDeque, net::SocketAddr, ops::Range, time::Instant};
 
 use bytes::Bytes;
-use log::{debug, info, trace};
+use log::{debug, error, info, trace, warn};
 
-use arq::AutomaticRepeatRequestAlgorithm;
-use buffer::RecvBuffer;
-
-use crate::connection::ConnectionStatus;
-use crate::packet::{ControlPacket, ControlTypes, DataPacket, FullAckSeqNumber, Packet};
-use crate::protocol::encryption::Cipher;
-use crate::protocol::handshake::Handshake;
-use crate::protocol::receiver::time::ReceiveTimers;
-use crate::protocol::{TimeBase, TimeStamp};
-use crate::ConnectionSettings;
-
-use super::TimeSpan;
-use log::error;
+use crate::{
+    connection::ConnectionStatus,
+    packet::{ControlPacket, ControlTypes, DataPacket, FullAckSeqNumber, Packet},
+    protocol::{
+        encryption::Cipher,
+        receiver::{arq::AutomaticRepeatRequestAlgorithm, time::ReceiveTimers},
+        TimeBase, TimeStamp,
+    },
+    ConnectionSettings, SeqNumber,
+};
 
 mod arq;
 mod buffer;
+mod history;
 mod time;
 
 #[derive(Debug)]
 pub struct Receiver {
     settings: ConnectionSettings,
 
-    handshake: Handshake,
-
     time_base: TimeBase,
 
     timers: ReceiveTimers,
-
-    receive_buffer: RecvBuffer,
 
     arq: AutomaticRepeatRequestAlgorithm,
 
@@ -41,13 +33,11 @@ pub struct Receiver {
 
     control_packets: VecDeque<Packet>,
 
-    data_release: VecDeque<(Instant, Bytes)>,
-
     status: ConnectionStatus,
 }
 
 impl Receiver {
-    pub fn new(settings: ConnectionSettings, handshake: Handshake) -> Self {
+    pub fn new(settings: ConnectionSettings) -> Self {
         info!(
             "Receiving started from {:?}, with latency={:?}",
             settings.remote, settings.recv_tsbpd_latency
@@ -55,14 +45,16 @@ impl Receiver {
 
         Receiver {
             settings: settings.clone(),
-            timers: ReceiveTimers::new(settings.socket_start_time),
             time_base: TimeBase::new(settings.socket_start_time),
-            control_packets: VecDeque::new(),
-            data_release: VecDeque::new(),
-            handshake,
-            receive_buffer: RecvBuffer::with(&settings),
             cipher: Cipher::new(settings.crypto_manager),
-            arq: AutomaticRepeatRequestAlgorithm::new(settings.init_seq_num),
+            arq: AutomaticRepeatRequestAlgorithm::new(
+                settings.socket_start_time,
+                settings.recv_tsbpd_latency,
+                settings.init_seq_num,
+                settings.recv_buffer_size,
+            ),
+            timers: ReceiveTimers::new(settings.socket_start_time),
+            control_packets: VecDeque::new(),
             status: ConnectionStatus::Open(settings.recv_tsbpd_latency),
         }
     }
@@ -72,19 +64,8 @@ impl Receiver {
     }
 
     pub fn is_flushed(&self) -> bool {
-        debug!(
-            "{:?}|{:?}|recv - {:?}:{},{}",
-            TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
-            self.settings.local_sockid,
-            self.receive_buffer.next_msg_ready(),
-            self.arq.lr_ack_acked,
-            self.receive_buffer.next_release()
-        );
-
-        self.receive_buffer.next_msg_ready().is_none()
-            && self.arq.lr_ack_acked == self.receive_buffer.next_release() // packets have been acked and all acks have been acked (ack2)
+        self.arq.is_flushed() // packets have been acked and all acks have been acked (ack2)
             && self.control_packets.is_empty()
-            && self.data_release.is_empty()
     }
 
     pub fn check_timers(&mut self, now: Instant) {
@@ -105,7 +86,7 @@ impl Receiver {
         if self.status.check_close_timeout(now, self.is_flushed()) {
             debug!("{:?} receiver close timed out", self.settings.local_sockid);
             // receiver is closing, there is no need to track ACKs anymore
-            self.arq.lr_ack_acked = self.receive_buffer.next_release()
+            self.arq.clear();
         }
     }
 
@@ -114,38 +95,52 @@ impl Receiver {
     }
 
     pub fn synchronize_clock(&mut self, now: Instant, ts: TimeStamp) {
-        self.receive_buffer.synchronize_clock(now, ts)
+        self.arq.synchronize_clock(now, ts)
     }
 
     pub fn handle_data_packet(&mut self, now: Instant, data: DataPacket) {
-        // we've already gotten this packet, drop it
-        if self.receive_buffer.next_release() > data.seq_number {
-            debug!("Received packet {:?} twice", data.seq_number);
-            return;
-        }
-
-        let (nak, ack) = self
-            .arq
-            .handle_data_packet(now, data.seq_number, data.payload.len());
-
-        if let Some(loss_list) = nak {
-            self.send_control(now, ControlTypes::Nak(loss_list));
-        }
-        if let Some(light_ack) = ack {
-            self.send_control(now, ControlTypes::Ack(light_ack));
-        }
-
         match self.cipher.decrypt(data) {
-            Ok(data) => self.receive_buffer.add(data),
-            Err(e) => error!("{:?} {:?}", self.settings.local_sockid, e),
+            Ok(data) => match self.arq.handle_data_packet(now, data) {
+                Ok((nak, ack)) => {
+                    if let Some(loss_list) = nak {
+                        self.send_control(now, ControlTypes::Nak(loss_list));
+                    }
+                    if let Some(light_ack) = ack {
+                        self.send_control(now, ControlTypes::Ack(light_ack));
+                    }
+                }
+                Err(e) => error!(
+                    "invalid data packet: {:?} {:?}",
+                    self.settings.local_sockid, e
+                ),
+            },
+            Err(e) => error!(
+                "decryption failed: {:?} {:?}",
+                self.settings.local_sockid, e
+            ),
         }
     }
 
     pub fn handle_ack2_packet(&mut self, seq_num: FullAckSeqNumber, ack2_arrival_time: Instant) {
-        self.arq.handle_ack2_packet(ack2_arrival_time, seq_num);
+        // 1) Locate the related ACK in the ACK History Window according to the
+        //    ACK sequence number in this ACK2.
+        // 2) Update the largest ACK number ever been acknowledged.
+        if let Some(rtt) = self.arq.handle_ack2_packet(ack2_arrival_time, seq_num) {
+            // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
+            self.timers.update_rtt(rtt);
+        } else {
+            warn!(
+                "ACK sequence number in ACK2 packet not found in ACK history: {:?}",
+                seq_num
+            );
+        }
+    }
 
-        // 5) Update both ACK and NAK period to 4 * RTT + RTTVar + SYN.
-        self.timers.update_rtt(self.arq.rtt());
+    pub fn handle_drop_request(&mut self, now: Instant, range: Range<SeqNumber>) {
+        let dropped_ct = self.arq.handle_drop_request(now, range.clone());
+        if dropped_ct > 0 {
+            info!("Dropped {} packets in the range of {:?}", dropped_ct, range);
+        }
     }
 
     pub fn rekey(
@@ -173,16 +168,7 @@ impl Receiver {
     }
 
     pub fn next_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
-        // try to release packets
-        while let Some(d) = self.receive_buffer.next_msg_tsbpd(now) {
-            self.data_release.push_back(d);
-        }
-
-        // drop packets
-        // TODO: do something with this
-        let _dropped = self.receive_buffer.drop_too_late_packets(now);
-
-        self.data_release.pop_front()
+        self.arq.pop_next_message(now)
     }
 
     pub fn next_packet(&mut self) -> Option<(Packet, SocketAddr)> {
@@ -192,8 +178,8 @@ impl Receiver {
     }
 
     pub fn next_timer(&self, now: Instant) -> Instant {
-        let next_message = self.receive_buffer.next_message_release_time();
-        let unacked_packets = self.receive_buffer.unacked_packet_count();
+        let next_message = self.arq.next_message_release_time();
+        let unacked_packets = self.arq.unacked_packet_count();
         self.timers.next_timer(now, next_message, unacked_packets)
     }
 
@@ -214,8 +200,8 @@ impl Receiver {
     }
 
     fn on_peer_idle_timeout(&mut self, now: Instant) {
-        self.status.drain(now);
         self.send_control(now, ControlTypes::Shutdown);
+        self.status.drain(now);
     }
 
     fn send_control(&mut self, now: Instant, control: ControlTypes) {

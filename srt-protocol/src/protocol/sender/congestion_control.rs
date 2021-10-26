@@ -1,23 +1,12 @@
 use std::time::{Duration, Instant};
 
 use crate::protocol::stats::*;
-//use crate::SeqNumber;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct MessageStats {
     pub message_count: u64,
     pub packet_count: u64,
     pub bytes_total: u64,
-}
-
-impl Default for MessageStats {
-    fn default() -> Self {
-        Self {
-            message_count: 0,
-            packet_count: 0,
-            bytes_total: 0,
-        }
-    }
 }
 
 impl Stats for MessageStats {
@@ -50,41 +39,94 @@ impl StatsWindow<MessageStats> {
 
 // rate in bytes per second
 type DataRate = u64;
+type Percent = u64;
 
-// TODO: move data rate algorithm configuration to a public protocol configuration module
-//       for now, just ignore that it's never used
-#[allow(dead_code)]
-#[derive(Debug)]
-pub(crate) enum LiveDataRate {
-    Fixed {
+// https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-5.1.1
+//
+/// Note that Maximum Bandwidth, Input Rate, and Input Rate Estimate are bytes per second
+/// and Overhead is a percentage.
+#[derive(Debug, Clone)]
+pub enum LiveBandwidthMode {
+    /// Set the maximum bandwidth explicitly.
+    ///
+    /// The recommended default value is 1 Gbps. The default value is set only for live streaming.
+    ///
+    /// Note that this static setting is not well-suited to a variable input, like when you change the bitrate on an encoder.
+    /// Each time the input bitrate is configured on the encoder, this value should also be reconfigured.
+    Set(DataRate), // m_llMaxBW != 0
+
+    /// Set the SRT send input rate and overhead.
+    /// In this mode, SRT calculates the maximum bandwidth as follows:
+    ///
+    ///   Maximum Bandwidth = Input Rate * (1 + Overhead / 100)
+    ///
+    /// Note that Input mode reduces to the Set mode and the same restrictions apply.
+    Input {
         // m_llInputBW != 0
-        rate: DataRate,     // m_llInputBW
-        overhead: DataRate, // m_iOverheadBW
+        rate: DataRate,    // m_llInputBW
+        overhead: Percent, // m_iOverheadBW
     },
-    Max(DataRate), // m_llMaxBW != 0
-    Auto {
+
+    /// Measure the SRT send input rate internally and set the Overhead.
+    ///
+    /// In this mode, SRT adjusts the value of maximum bandwidth each time it gets the updated
+    /// Input Rate Estimate of the Input Rate:
+    ///
+    ///   Maximum Bandwidth = Input Rate Estimate * (1 + Overhead / 100)
+    ///
+    /// Estimated mode is recommended for setting the Maximum Bandwidth as it follows the
+    /// fluctuations in SRT send Input Rate. However, there are certain considerations that
+    /// should be taken into account.
+    ///
+    ///
+    /// In Estimated mode, SRT takes as an initial Expected Input Rate. This should match the
+    /// configured output bitrate rate of an encoder (in terms of bitrate for the packets including
+    /// audio and overhead). But it is normal for an encoder to occasionally overshoot. At a low
+    /// bitrate, sometimes an encoder can be too optimistic and will output more bits than expected.
+    /// Under these conditions, SRT packets would not go out fast enough because the configured
+    /// bandwidth limitation would be too low. This is mitigated by calculating the bitrate
+    /// internally.
+    ///
+    /// SRT examines the packets being submitted and calculates an Input Rate Estimate as a moving
+    /// average. However, this introduces a bit of a delay based on the content. It also means that
+    /// if an encoder encounters black screens or still frames, this would dramatically lower the
+    /// bitrate being measured, which would in turn reduce the SRT output rate. And then, when the
+    /// video picks up again, the input rate rises sharply. SRT would not start up again fast
+    /// enough on output because of the time it takes to measure the speed. Packets might be
+    /// accumulated in the SRT send buffer, and delayed as a result, causing them to arrive too late
+    /// at the decoder, and possible drops by the receiver.
+    Estimated {
+        // expected: DataRate,     // m_llInputBW
         // m_llMaxBW == 0 && m_llInputBW == 0
-        overhead: DataRate, // m_iOverheadBW
+        overhead: Percent, // m_iOverheadBW
     },
     Unlimited,
 }
 
+impl Default for LiveBandwidthMode {
+    fn default() -> Self {
+        LiveBandwidthMode::Unlimited
+    }
+}
+
 #[derive(Debug)]
-pub(crate) struct SenderCongestionControl {
+pub struct SenderCongestionControl {
     message_stats_window: OnlineWindowedStats<MessageStats>,
     message_stats: StatsWindow<MessageStats>,
-    live_data_rate: LiveDataRate,
+    bandwidth_mode: LiveBandwidthMode,
     window_size: Option<usize>,
     current_data_rate: DataRate,
 }
 
+///
+/// https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-5.1.2
 impl SenderCongestionControl {
     const GIGABIT: DataRate = 1_000_000_000 / 8;
-    pub fn new(live_data_rate: LiveDataRate, window_size: Option<usize>) -> Self {
+    pub fn new(bandwidth_mode: LiveBandwidthMode, window_size: Option<usize>) -> Self {
         Self {
             message_stats_window: OnlineWindowedStats::new(Duration::from_secs(1)),
             message_stats: Default::default(),
-            live_data_rate,
+            bandwidth_mode,
             window_size,
             current_data_rate: Self::GIGABIT,
         }
@@ -120,7 +162,7 @@ impl SenderCongestionControl {
     pub fn window_size(&self) -> u32 {
         // Up to SRT 1.0.6, this value was set at 1000 pkts, which may be insufficient
         // for satellite links with ~1000 msec RTT and high bit rate.
-        self.window_size.unwrap_or(1000) as u32
+        self.window_size.unwrap_or(10_000) as u32
     }
 
     /// When an ACK packet is received
@@ -133,12 +175,12 @@ impl SenderCongestionControl {
     pub fn on_packet_sent(&mut self) {}
 
     fn updated_data_rate(&mut self, actual_data_rate: DataRate) -> DataRate {
-        use LiveDataRate::*;
-        match self.live_data_rate {
-            Fixed { rate, overhead } => rate * (100 + overhead) / 100,
-            Max(max) => max,
+        use LiveBandwidthMode::*;
+        match self.bandwidth_mode {
+            Input { rate, overhead } => rate * (100 + overhead) / 100,
+            Set(max) => max,
             Unlimited => Self::GIGABIT,
-            Auto { overhead } => actual_data_rate * (100 + overhead) / 100,
+            Estimated { overhead, .. } => actual_data_rate * (100 + overhead) / 100,
         }
     }
 }
@@ -149,7 +191,7 @@ mod sender_congestion_control {
 
     #[test]
     fn data_rate_unlimited() {
-        let data_rate = LiveDataRate::Unlimited;
+        let data_rate = LiveBandwidthMode::Unlimited;
 
         let ms = Duration::from_millis;
         let start = Instant::now();
@@ -169,7 +211,7 @@ mod sender_congestion_control {
     fn data_rate_fixed() {
         let fixed_rate = 1_000_000;
         let fixed_overhead = 100;
-        let data_rate = LiveDataRate::Fixed {
+        let data_rate = LiveBandwidthMode::Input {
             rate: fixed_rate,
             overhead: fixed_overhead,
         };
@@ -197,7 +239,7 @@ mod sender_congestion_control {
     #[test]
     fn data_rate_max() {
         let max_data_rate = 10_000_000;
-        let data_rate = LiveDataRate::Max(max_data_rate);
+        let data_rate = LiveBandwidthMode::Set(max_data_rate);
         let expected_data_rate = max_data_rate;
 
         let mean_payload_size = 1_000_000;
@@ -222,7 +264,7 @@ mod sender_congestion_control {
     #[test]
     fn data_rate_auto() {
         let auto_overhead = 5;
-        let data_rate = LiveDataRate::Auto {
+        let data_rate = LiveBandwidthMode::Estimated {
             overhead: auto_overhead,
         };
         let expected_data_rate = ((100 + auto_overhead) * 1_000_000) / 100;

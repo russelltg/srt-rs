@@ -195,6 +195,7 @@ mod test {
     use crate::pending_connection::ConnectionReject;
 
     use super::*;
+    use crate::LiveBandwidthMode;
 
     const TEST_SOCKID: SocketId = SocketId(7655);
 
@@ -278,6 +279,8 @@ mod test {
                 crypto: None,
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
+                bandwidth: LiveBandwidthMode::default(),
+                recv_buffer_size: 8192,
             },
             sid,
             random(),

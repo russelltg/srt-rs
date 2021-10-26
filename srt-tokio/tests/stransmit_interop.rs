@@ -567,6 +567,8 @@ fn test_c_client(port: u16) {
             thread::sleep(Duration::from_millis(1))
         }
 
+        thread::sleep(Duration::from_millis(100));
+
         if (srt.close)(ss) == -1 {
             panic!();
         }
