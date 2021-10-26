@@ -950,9 +950,9 @@ impl CompressedLossList {
     }
 }
 
-impl FromIterator<SeqNumber> for CompressedLossList {
-    fn from_iter<T: IntoIterator<Item = SeqNumber>>(iter: T) -> Self {
-        CompressedLossList::try_from_iter(iter.into_iter()).unwrap()
+impl<'a> FromIterator<&'a SeqNumber> for CompressedLossList {
+    fn from_iter<T: IntoIterator<Item = &'a SeqNumber>>(iter: T) -> Self {
+        CompressedLossList::try_from_iter(iter.into_iter().copied()).unwrap()
     }
 }
 

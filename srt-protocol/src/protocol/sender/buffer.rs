@@ -255,7 +255,7 @@ mod test {
     use crate::*;
     use bytes::Bytes;
     use std::time::{Duration, Instant};
-    use std::{array::IntoIter, iter::FromIterator};
+    use std::iter::FromIterator;
 
     const MILLIS: Duration = Duration::from_millis(1);
     const TSBPD: Duration = Duration::from_secs(2);
@@ -354,13 +354,13 @@ mod test {
 
         assert!(
             buffer
-                .add_to_loss_list(IntoIter::new([SeqNumber(11), SeqNumber(13)]).collect())
+                .add_to_loss_list([SeqNumber(11), SeqNumber(13)].iter().collect())
                 .count()
                 > 0
         );
         assert!(
             buffer
-                .add_to_loss_list(IntoIter::new([SeqNumber(7), SeqNumber(12)]).collect())
+                .add_to_loss_list([SeqNumber(7), SeqNumber(12)].iter().collect())
                 .count()
                 > 0
         );
@@ -411,7 +411,7 @@ mod test {
         // NAK for packets from the past should be ignored
         assert!(
             buffer
-                .add_to_loss_list(IntoIter::new([SeqNumber(1)]).collect())
+                .add_to_loss_list([SeqNumber(1)].iter().collect())
                 .count()
                 > 0
         );
@@ -454,7 +454,7 @@ mod test {
 
         assert!(
             buffer
-                .add_to_loss_list(IntoIter::new([SeqNumber(1)]).collect())
+                .add_to_loss_list([SeqNumber(1)].iter().collect())
                 .count()
                 > 0
         );
@@ -532,8 +532,7 @@ mod test {
         use Loss::*;
         assert_eq!(
             buffer
-                .add_to_loss_list(
-                    IntoIter::new([SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)])
+                .add_to_loss_list([SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)].iter()
                         .collect()
                 )
                 .collect::<Vec<_>>(),
@@ -556,8 +555,7 @@ mod test {
 
         assert_eq!(
             buffer
-                .add_to_loss_list(
-                    IntoIter::new([SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)])
+                .add_to_loss_list([SeqNumber(1), SeqNumber(2), SeqNumber(3), SeqNumber(5)].iter()
                         .collect()
                 )
                 .collect::<Vec<_>>(),
