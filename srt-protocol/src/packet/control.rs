@@ -943,7 +943,10 @@ impl CompressedLossList {
         } else if r.start + 1 == r.end {
             Some(CompressedLossList(vec![r.start.as_raw()]))
         } else {
-            Some(CompressedLossList(vec![(1 << 31) | r.start.as_raw(), (r.end - 1).as_raw()]))
+            Some(CompressedLossList(vec![
+                (1 << 31) | r.start.as_raw(),
+                (r.end - 1).as_raw(),
+            ]))
         }
     }
 
