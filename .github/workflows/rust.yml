@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: install ffmpeg
-      run: sudo apt-get install libavformat-dev libswscale-dev
+      run: sudo apt update && sudo apt-get install libavformat-dev libswscale-dev
     - uses: actions/checkout@v2
     - name: Cargo clippy
       run: cargo clippy --tests --examples --features ac-ffmpeg -- -D clippy::all

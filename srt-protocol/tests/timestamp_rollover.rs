@@ -37,6 +37,7 @@ fn timestamp_rollover() {
         crypto_manager: None,
         stream_id: None,
         bandwidth: LiveBandwidthMode::default(),
+        recv_buffer_size: 8192,
     };
 
     let s2 = ConnectionSettings {
@@ -54,6 +55,7 @@ fn timestamp_rollover() {
         crypto_manager: None,
         stream_id: None,
         bandwidth: LiveBandwidthMode::default(),
+        recv_buffer_size: 8192,
     };
 
     const PACKET_RATE: u32 = 10; // 10 packet/s
@@ -71,10 +73,11 @@ fn timestamp_rollover() {
         settings: s2,
         handshake: Handshake::Connector,
     });
-    let mut input_data = InputDataSimulation::new(
+    input_data_simulation(
         start,
         packs_to_send as usize,
         Duration::from_secs(1) / PACKET_RATE,
+        &mut network.sender,
     );
 
     let mut now = start;
@@ -83,8 +86,6 @@ fn timestamp_rollover() {
     let mut next_data = 1;
     loop {
         let sender_next_time = if sender.is_open() {
-            input_data.send_data_to(now, &mut network.sender);
-
             assert_eq!(sender.next_data(now), None);
 
             while let Some(packet) = sender.next_packet(now) {

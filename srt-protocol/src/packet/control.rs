@@ -2,9 +2,10 @@ use std::{
     convert::TryFrom,
     convert::TryInto,
     fmt::{self, Debug, Formatter},
+    iter::FromIterator,
     mem::size_of,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    ops::Add,
+    ops::{Add, Range, RangeInclusive},
 };
 
 use bitflags::bitflags;
@@ -90,11 +91,8 @@ pub enum ControlTypes {
         /// Stored in the "addditional info" field of the packet.
         msg_to_drop: MsgNumber,
 
-        /// The first sequence number in the message to drop
-        first: SeqNumber,
-
-        /// The last sequence number in the message to drop
-        last: SeqNumber,
+        /// The range of sequence numbers in the message to drop
+        range: RangeInclusive<SeqNumber>,
     },
 
     // Peer error, type 0x8
@@ -218,7 +216,7 @@ pub enum AckControlInfo {
 #[derive(Clone, PartialEq, Eq, Debug, Copy, Ord, PartialOrd)]
 pub struct FullAckSeqNumber(u32);
 
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct CompressedLossList(Vec<u32>);
 
 /// The socket type for a handshake.
@@ -462,6 +460,14 @@ impl Debug for ControlPacket {
 const SRT_MAGIC_CODE: u16 = 0x4A17;
 
 impl ControlTypes {
+    pub fn new_drop_request(msg_to_drop: MsgNumber, drop_range: Range<SeqNumber>) -> Self {
+        assert!(!drop_range.is_empty());
+        Self::DropRequest {
+            msg_to_drop,
+            range: RangeInclusive::new(drop_range.start, drop_range.end - 1),
+        }
+    }
+
     /// Deserialize a control info
     /// * `packet_type` - The packet ID byte, the second byte in the first row
     /// * `reserved` - the second 16 bytes of the first row, reserved for custom packets
@@ -730,10 +736,12 @@ impl ControlTypes {
                     return Err(PacketParseError::NotEnoughData);
                 }
 
+                let start = SeqNumber::new_truncate(buf.get_u32());
+                let end = SeqNumber::new_truncate(buf.get_u32());
+
                 Ok(ControlTypes::DropRequest {
                     msg_to_drop: MsgNumber::new_truncate(extra_info as u32), // cast is safe, just reinterpret
-                    first: SeqNumber::new_truncate(buf.get_u32()),
-                    last: SeqNumber::new_truncate(buf.get_u32()),
+                    range: RangeInclusive::new(start, end),
                 })
             }
             0x8 => {
@@ -875,14 +883,10 @@ impl ControlTypes {
                     into.put_u32(loss);
                 }
             }
-            ControlTypes::DropRequest {
-                msg_to_drop,
-                first,
-                last,
-            } => {
+            ControlTypes::DropRequest { msg_to_drop, range } => {
                 into.put_u32(msg_to_drop.as_raw());
-                into.put_u32(first.as_raw());
-                into.put_u32(last.as_raw());
+                into.put_u32(range.start().as_raw());
+                into.put_u32(range.end().as_raw());
             }
             ControlTypes::CongestionWarning
             | ControlTypes::Ack2(_)
@@ -914,11 +918,9 @@ impl Debug for ControlTypes {
             ControlTypes::CongestionWarning => write!(f, "CongestionWarning"),
             ControlTypes::Shutdown => write!(f, "Shutdown"),
             ControlTypes::Ack2(ackno) => write!(f, "Ack2({})", ackno.0),
-            ControlTypes::DropRequest {
-                msg_to_drop,
-                first,
-                last,
-            } => write!(f, "DropReq(msg={} {}-{})", msg_to_drop, first, last),
+            ControlTypes::DropRequest { msg_to_drop, range } => {
+                write!(f, "DropReq(msg={} {:?})", msg_to_drop, range)
+            }
             ControlTypes::PeerError(e) => write!(f, "PeerError({})", e),
             ControlTypes::Srt(srt) => write!(f, "{:?}", srt),
         }
@@ -926,7 +928,7 @@ impl Debug for ControlTypes {
 }
 
 impl CompressedLossList {
-    pub fn try_from(iter: impl Iterator<Item = SeqNumber>) -> Option<CompressedLossList> {
+    pub fn try_from_iter(iter: impl Iterator<Item = SeqNumber>) -> Option<CompressedLossList> {
         let loss_list = compress_loss_list(iter).collect::<Vec<_>>();
         if loss_list.is_empty() {
             None
@@ -935,8 +937,17 @@ impl CompressedLossList {
         }
     }
 
-    pub fn from_loss_list(iter: impl Iterator<Item = SeqNumber>) -> CompressedLossList {
-        Self::try_from(iter).unwrap()
+    pub fn try_from_range(r: Range<SeqNumber>) -> Option<CompressedLossList> {
+        if r.is_empty() {
+            None
+        } else if r.start + 1 == r.end {
+            Some(CompressedLossList(vec![r.start.as_raw()]))
+        } else {
+            Some(CompressedLossList(vec![
+                (1 << 31) | r.start.as_raw(),
+                (r.end - 1).as_raw(),
+            ]))
+        }
     }
 
     pub fn iter_compressed(&self) -> impl Iterator<Item = u32> + '_ {
@@ -949,6 +960,39 @@ impl CompressedLossList {
 
     pub fn into_iter_decompressed(self) -> impl Iterator<Item = SeqNumber> {
         decompress_loss_list(self.0.into_iter())
+    }
+}
+
+impl FromIterator<SeqNumber> for CompressedLossList {
+    fn from_iter<T: IntoIterator<Item = SeqNumber>>(iter: T) -> Self {
+        Self::try_from_iter(iter.into_iter()).unwrap()
+    }
+}
+
+impl<'a> FromIterator<&'a SeqNumber> for CompressedLossList {
+    fn from_iter<T: IntoIterator<Item = &'a SeqNumber>>(iter: T) -> Self {
+        Self::try_from_iter(iter.into_iter().copied()).unwrap()
+    }
+}
+
+impl From<Range<SeqNumber>> for CompressedLossList {
+    fn from(range: Range<SeqNumber>) -> Self {
+        Self::try_from_range(range).unwrap()
+    }
+}
+
+impl Debug for CompressedLossList {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut iter = self.0.iter();
+        while let Some(a) = iter.next() {
+            if a & 0x80000000 != 0 {
+                let b = iter.next().expect("Unterminated list");
+                write!(f, "{}..={},", a & 0x7fffffff, b)?;
+            } else {
+                write!(f, "{},", a)?;
+            }
+        }
+        Ok(())
     }
 }
 

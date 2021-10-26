@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use log::{error, warn};
 use rand::distributions::Bernoulli;
 use rand::prelude::*;
@@ -9,6 +8,7 @@ use srt_protocol::{Connection, ConnectionSettings, LiveBandwidthMode, Packet};
 use std::{
     cmp::max,
     collections::BinaryHeap,
+    convert::TryFrom,
     net::SocketAddr,
     time::{Duration, Instant},
 };
@@ -43,42 +43,18 @@ impl Ord for ScheduledInput {
     }
 }
 
-pub struct InputDataSimulation {
+pub fn input_data_simulation(
+    start: Instant,
     count: usize,
     pace: Duration,
-    next_send_time: Option<Instant>,
-    next_packet_id: usize,
-}
-
-impl InputDataSimulation {
-    pub fn new(start: Instant, count: usize, pace: Duration) -> InputDataSimulation {
-        InputDataSimulation {
-            count,
-            pace,
-            next_send_time: Some(start + pace),
-            next_packet_id: 0,
-        }
+    peer: &mut PeerSimulator,
+) {
+    let count = u32::try_from(count).unwrap();
+    for i in 1..=count {
+        let t = start + pace * i;
+        peer.schedule_input(t, Input::Data(Some((t, i.to_string().into()))));
     }
-
-    pub fn send_data_to(&mut self, now: Instant, peer: &mut PeerSimulator) {
-        let mut delta = Duration::from_nanos(0);
-        while let Some(time) = self.next_send_time {
-            if time > now {
-                break;
-            }
-
-            if self.next_packet_id < self.count {
-                self.next_send_time = Some(time + self.pace);
-                self.next_packet_id += 1;
-                let data = Bytes::from(self.next_packet_id.to_string());
-                peer.schedule_input(now + delta, Input::Data(Some((now, data))));
-            } else {
-                self.next_send_time = None;
-                peer.schedule_input(now + delta, Input::Data(None));
-            }
-            delta += Duration::from_micros(1);
-        }
-    }
+    peer.schedule_input(start + pace * (count + 1), Input::Data(None));
 }
 
 pub struct PeerSimulator {
@@ -224,6 +200,7 @@ impl RandomLossSimulation {
             crypto_manager: None,
             stream_id: None,
             bandwidth: LiveBandwidthMode::default(),
+            recv_buffer_size: 8192,
         }
     }
 }

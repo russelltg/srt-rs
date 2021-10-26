@@ -1,8 +1,13 @@
-use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::{
+    cmp::min,
+    collections::VecDeque,
+    convert::TryFrom,
+    ops::Range,
+    time::{Duration, Instant},
+};
 
 use bytes::{Bytes, BytesMut};
-use log::info;
+use log::{debug, info, warn};
 use take_until::TakeUntilExt;
 
 use crate::packet::{CompressedLossList, PacketLocation};
@@ -74,14 +79,18 @@ impl BufferPacket {
         }
     }
 
-    pub fn lost_list(&self) -> Option<SeqNumber> {
+    fn lost_or_dropped(&self) -> Option<SeqNumber> {
         match self {
-            BufferPacket::Lost(lost) => Some(lost.data_sequence_number),
+            BufferPacket::Lost(LostPacket {
+                data_sequence_number: sn,
+                ..
+            })
+            | BufferPacket::Dropped(sn) => Some(*sn),
             _ => None,
         }
     }
 
-    pub fn lost_ready_for_feeback_mut(
+    pub fn lost_ready_for_feedback_mut(
         &mut self,
         now: Instant,
         rtt_mean: TimeSpan,
@@ -94,15 +103,11 @@ impl BufferPacket {
         }
     }
 
-    pub fn update_data(
-        &mut self,
-        data: DataPacket,
-    ) -> Result<Option<CompressedLossList>, DataPacket> {
+    pub fn update_data(&mut self, data: DataPacket) {
         use BufferPacket::*;
         if matches!(self, Lost(_)) {
             *self = Received(data);
         }
-        Ok(None)
     }
 
     pub fn drop_unreceived(&mut self) -> Option<SeqNumber> {
@@ -156,10 +161,16 @@ impl MessagePacketCount {
 #[derive(Debug)]
 pub struct ReceiveBuffer {
     tsbpd_latency: Duration,
+
+    // Sequence number that all packets up to have been received + 1
     lrsn: SeqNumber,
-    next_packet_dsn: SeqNumber,
+
+    // first sequence number in the list
+    seqno0: SeqNumber,
+
     remote_clock: SynchronizedRemoteClock,
     buffer: VecDeque<BufferPacket>,
+    max_buffer_size: usize,
 }
 
 impl ReceiveBuffer {
@@ -167,13 +178,15 @@ impl ReceiveBuffer {
         socket_start_time: Instant,
         tsbpd_latency: Duration,
         init_seq_num: SeqNumber,
+        max_buffer_size: usize,
     ) -> Self {
         Self {
             tsbpd_latency,
             lrsn: init_seq_num,
-            next_packet_dsn: init_seq_num,
+            seqno0: init_seq_num,
             remote_clock: SynchronizedRemoteClock::new(socket_start_time),
-            buffer: VecDeque::new(),
+            buffer: VecDeque::with_capacity(max_buffer_size),
+            max_buffer_size,
         }
     }
 
@@ -193,23 +206,65 @@ impl ReceiveBuffer {
         self.remote_clock.synchronize(now, now_ts);
     }
 
+    /// Buffer available, in packets
+    pub fn buffer_available(&self) -> usize {
+        self.max_buffer_size - self.buffer.len()
+    }
+
+    // next expected packet (1 + last received packet)
+    fn next_packet_dsn(&self) -> SeqNumber {
+        self.seqno0 + u32::try_from(self.buffer.len()).unwrap()
+    }
+
+    // index in buffer for a given sequence number
+    // returns None if before the start of the buffer. Might return a index out of bounds
+    fn index_for_seqno(&self, s: SeqNumber) -> Option<usize> {
+        if s < self.seqno0 {
+            None
+        } else {
+            Some(usize::try_from(s - self.seqno0).unwrap())
+        }
+    }
+
     pub fn push_packet(
         &mut self,
         now: Instant,
         data: DataPacket,
     ) -> Result<Option<CompressedLossList>, DataPacket> {
         use std::cmp::Ordering::*;
-        match data.seq_number.cmp(&self.next_packet_dsn) {
+        match data.seq_number.cmp(&self.next_packet_dsn()) {
             Equal => {
                 self.append_data(data);
                 Ok(None)
             }
             Greater => {
-                let loss_list = self.calculate_loss_list(now, data.seq_number);
+                let lost = self.next_packet_dsn()..data.seq_number;
+                let lost_count = lost.end - lost.start;
+
+                // avoid buffer overrun
+                let buffer_required = usize::try_from(lost_count).unwrap() + 1; // +1 to store the packet itsself
+                if self.buffer_available() < buffer_required {
+                    warn!(
+                        "Packet received too far in the future for configured receive buffer size. Discarding packet (buffer would need to be {} packets larger)", 
+                        buffer_required - self.buffer_available()
+                    );
+                    return Err(data);
+                }
+
+                // append lost packets to end
+                for i in 0..lost_count {
+                    self.buffer
+                        .push_back(BufferPacket::Lost(LostPacket::new(lost.start + i, now)));
+                }
+
                 self.append_data(data);
-                Ok(loss_list)
+
+                Ok(CompressedLossList::try_from_range(lost))
             }
-            Less => self.recover_data(data),
+            Less => {
+                self.recover_data(data);
+                Ok(None)
+            }
         }
     }
 
@@ -232,6 +287,8 @@ impl ReceiveBuffer {
             let _ = self.drop_too_late_packets(now);
             return None;
         }
+
+        self.seqno0 += u32::try_from(packet_count?).unwrap();
 
         let release_time = self.remote_clock.monotonic_instant_from(timestamp?);
         // optimize for single packet messages
@@ -268,7 +325,7 @@ impl ReceiveBuffer {
         let loss_list = self
             .buffer
             .range_mut(self.lost_list_index()..)
-            .filter_map(|p| p.lost_ready_for_feeback_mut(now, rtt_mean))
+            .filter_map(|p| p.lost_ready_for_feedback_mut(now, rtt_mean))
             .map(|lost| {
                 // increment k and change feedback time, returning sequence numbers
                 lost.k += 1;
@@ -276,31 +333,27 @@ impl ReceiveBuffer {
                 lost.data_sequence_number
             });
 
-        CompressedLossList::try_from(loss_list)
+        CompressedLossList::try_from_iter(loss_list)
     }
 
-    pub fn drop_message(
-        &mut self,
-        first: SeqNumber,
-        last: SeqNumber,
-    ) -> Option<(SeqNumber, SeqNumber, usize)> {
-        use std::cmp::{max, min};
-        let front = self.buffer.front()?.data_sequence_number();
-        let back = self.buffer.back()?.data_sequence_number();
-        let begin = max(first, front);
-        let end = min(max(begin, last + 1), back + 1);
-        let begin_index = (begin - front) as usize;
-        let end_index = (end - front) as usize;
-        let dropped_count = self
-            .buffer
-            .range_mut(begin_index..end_index)
+    /// Returns how many packets were actually dropped
+    pub fn drop_message(&mut self, range: Range<SeqNumber>) -> usize {
+        // if start of the range has been dropped already, just drop everything after
+        let first_idx = min(
+            self.buffer.len(),
+            self.index_for_seqno(range.start).unwrap_or(0),
+        );
+
+        // clamp to end
+        let last_idx = min(
+            self.buffer.len(),
+            self.index_for_seqno(range.end).unwrap_or(0),
+        );
+
+        self.buffer
+            .range_mut(first_idx..last_idx)
             .filter_map(|p| p.drop_unreceived())
-            .count();
-        if dropped_count > 0 {
-            Some((begin, end, dropped_count))
-        } else {
-            None
-        }
+            .count()
     }
 
     pub fn next_message_release_time(&self) -> Option<Instant> {
@@ -313,29 +366,25 @@ impl ReceiveBuffer {
 
     fn append_data(&mut self, data: DataPacket) {
         let seq_number = data.seq_number;
+        if self.buffer_available() == 0 {
+            warn!("Dropping packet {}, receive buffer full", data.seq_number);
+            return;
+        }
+
+        assert_eq!(self.index_for_seqno(seq_number), Some(self.buffer.len()));
+
         self.buffer.push_back(BufferPacket::Received(data));
 
-        self.next_packet_dsn = seq_number + 1;
         if self.lrsn == seq_number {
             self.lrsn = seq_number + 1;
-        } else {
-            self.lrsn = self.calculate_lrsn();
         }
     }
 
-    fn calculate_lrsn(&mut self) -> SeqNumber {
-        self.buffer
-            .range(self.lost_list_index()..)
-            .filter_map(|p| p.lost_list())
-            .next()
-            .unwrap_or(self.next_packet_dsn)
-    }
-
     fn lost_list_index(&self) -> usize {
-        self.buffer.front().map_or(0, |p| {
-            let front = p.data_sequence_number();
-            (std::cmp::max(front, self.lrsn) - front) as usize
-        })
+        self.buffer
+            .iter()
+            .take_while(|b| b.data_packet().is_some())
+            .count()
     }
 
     fn next_message_packet_count(&self) -> Option<usize> {
@@ -348,44 +397,23 @@ impl ReceiveBuffer {
             .calculate()
     }
 
-    fn recover_data(&mut self, data: DataPacket) -> Result<Option<CompressedLossList>, DataPacket> {
-        let d = &data;
-        let front = self.buffer.front();
+    fn recover_data(&mut self, data: DataPacket) {
+        let seq_number = data.seq_number;
+        match self.index_for_seqno(seq_number) {
+            Some(idx) => {
+                assert!(idx < self.buffer.len());
+                self.buffer.get_mut(idx).unwrap().update_data(data);
 
-        if front.is_none() {
-            return Ok(None);
+                // first lost packet was recovered, update LRSN
+                if self.lrsn == seq_number {
+                    self.lrsn = self.recalculate_lrsn(idx);
+                }
+            }
+            None => debug!(
+                "Too-late packet {} was received, discarding",
+                data.seq_number
+            ),
         }
-
-        let front = front
-            .map(|p| p.data_sequence_number())
-            .filter(|front| *front < d.seq_number);
-
-        if front.is_none() {
-            return Ok(None);
-        }
-
-        let index = data.seq_number - front.unwrap();
-        self.buffer
-            .get_mut(index as usize)
-            .expect("invalid receive buffer index")
-            .update_data(data)
-    }
-
-    fn calculate_loss_list(&mut self, now: Instant, end: SeqNumber) -> Option<CompressedLossList> {
-        let begin = self.next_packet_dsn;
-        if end <= begin {
-            return None;
-        }
-
-        let count = end - begin;
-        let lost = (0..count).map(|n| {
-            let seq_num = begin + n;
-            let packet = BufferPacket::Lost(LostPacket::new(seq_num, now));
-            self.buffer.push_back(packet);
-            seq_num
-        });
-
-        CompressedLossList::try_from(lost)
     }
 
     /// Drops the packets that are deemed to be too late
@@ -408,7 +436,9 @@ impl ReceiveBuffer {
 
         let delay = TimeSpan::from_interval(timestamp + self.tsbpd_latency, now);
         let drop_count = self.buffer.drain(0..index).count();
-        self.lrsn = self.calculate_lrsn();
+
+        self.seqno0 = seq_number;
+        self.lrsn = self.recalculate_lrsn(0);
 
         info!(
             "Receiver dropping packets: [{},{}), {:?} too late",
@@ -419,19 +449,26 @@ impl ReceiveBuffer {
 
         Some((seq_number - drop_count as u32, seq_number - 1, delay))
     }
+
+    fn recalculate_lrsn(&self, start_idx: usize) -> SeqNumber {
+        self.buffer
+            .range(start_idx..)
+            .filter_map(|p| p.lost_or_dropped())
+            .next()
+            .unwrap_or_else(|| self.next_packet_dsn())
+    }
 }
 
 #[cfg(test)]
 mod receive_buffer {
     use super::*;
-    use crate::packet::{CompressedLossList, DataEncryption};
-    use crate::seq_number::seq_num_range;
+    use crate::packet::DataEncryption;
     use crate::{MsgNumber, SocketId};
 
     fn basic_pack() -> DataPacket {
         DataPacket {
             seq_number: SeqNumber(1),
-            message_loc: PacketLocation::FIRST,
+            message_loc: PacketLocation::ONLY,
             in_order_delivery: false,
             encryption: DataEncryption::None,
             retransmitted: false,
@@ -448,7 +485,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(3);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
 
         assert_eq!(buf.next_ack_dsn(), init_seq_num);
         assert_eq!(buf.next_message_release_time(), None);
@@ -461,7 +498,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
 
         assert_eq!(
             buf.push_packet(
@@ -485,7 +522,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
 
         assert_eq!(
             buf.push_packet(
@@ -512,7 +549,7 @@ mod receive_buffer {
                     ..basic_pack()
                 }
             ),
-            Ok(CompressedLossList::try_from(vec![SeqNumber(6)].into_iter()))
+            Ok(Some([SeqNumber(6)].iter().collect()))
         );
         assert_eq!(buf.next_ack_dsn(), init_seq_num + 1);
         assert_eq!(buf.next_message_release_time(), Some(start + tsbpd));
@@ -525,7 +562,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
 
         assert_eq!(
             buf.push_packet(
@@ -564,7 +601,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
 
         assert_eq!(
             buf.push_packet(
@@ -604,7 +641,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
         assert_eq!(
             buf.push_packet(
                 start,
@@ -615,10 +652,7 @@ mod receive_buffer {
                     ..basic_pack()
                 }
             ),
-            Ok(CompressedLossList::try_from(seq_num_range(
-                init_seq_num,
-                init_seq_num + 1
-            )))
+            Ok(Some((init_seq_num..init_seq_num + 2).into()))
         );
         assert_eq!(buf.next_ack_dsn(), init_seq_num);
         assert_eq!(buf.next_message_release_time(), None);
@@ -631,7 +665,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
         assert_eq!(
             buf.push_packet(
                 start,
@@ -686,7 +720,7 @@ mod receive_buffer {
         let init_seq_num = SeqNumber(5);
         let mean_rtt = TimeSpan::from_micros(10_000);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
 
         assert_eq!(buf.prepare_loss_list(start, mean_rtt), None);
 
@@ -713,10 +747,7 @@ mod receive_buffer {
                     ..basic_pack()
                 },
             ),
-            Ok(CompressedLossList::try_from(seq_num_range(
-                init_seq_num + 1,
-                init_seq_num + 4
-            )))
+            Ok(Some((init_seq_num + 1..init_seq_num + 5).into()))
         );
         assert_eq!(buf.prepare_loss_list(now, mean_rtt), None);
 
@@ -731,31 +762,27 @@ mod receive_buffer {
                     ..basic_pack()
                 }
             ),
-            Ok(CompressedLossList::try_from(seq_num_range(
-                init_seq_num + 6,
-                init_seq_num + 14
-            )))
+            Ok(Some((init_seq_num + 6..init_seq_num + 15).into()))
         );
         assert_eq!(buf.prepare_loss_list(now, mean_rtt), None);
 
         let now = now + mean_rtt * 3;
         assert_eq!(
             buf.prepare_loss_list(now, mean_rtt),
-            CompressedLossList::try_from(
-                seq_num_range(init_seq_num + 1, init_seq_num + 4)
-                    .chain(seq_num_range(init_seq_num + 6, init_seq_num + 14))
-            )
+            Some((1..5).chain(6..15).map(|a| init_seq_num + a).collect())
         );
         assert_eq!(buf.prepare_loss_list(now, mean_rtt), None);
     }
 
     #[test]
     fn drop_too_late_packets() {
+        let _ = pretty_env_logger::try_init();
+
         let tsbpd = Duration::from_secs(2);
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
 
         let now = start;
         let _ = buf.push_packet(
@@ -799,7 +826,7 @@ mod receive_buffer {
         assert_eq!(buf.pop_next_message(now), None);
         // it should drop all missing packets up to the next viable message
         // and begin to ack all viable packets
-        assert_eq!(buf.next_ack_dsn(), init_seq_num + 3);
+        assert_eq!(buf.next_ack_dsn(), init_seq_num + 3, "{:?}", buf);
 
         // 2 ms buffer release tolerance, we are ok with releasing them 2ms late
         let now = now + tsbpd + Duration::from_millis(5);
@@ -822,7 +849,7 @@ mod receive_buffer {
         let init_seq_num = SeqNumber(5);
         let mean_rtt = TimeSpan::from_micros(10_000);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
 
         let now = start;
         let _ = buf.push_packet(
@@ -835,14 +862,122 @@ mod receive_buffer {
             },
         );
 
+        // fully out of bounds
+        assert_eq!(buf.drop_message(init_seq_num + 9..init_seq_num + 12), 0);
+
         // only drop packets that are marked Lost, i.e. pending NAK
-        assert_eq!(
-            buf.drop_message(init_seq_num - 1, init_seq_num + 5),
-            Some((init_seq_num, init_seq_num + 4, 3))
-        );
+        assert_eq!(buf.drop_message(init_seq_num - 1..init_seq_num + 5), 3);
 
         // no longer schedule the dropped packets for NAK
         let now = now + mean_rtt * 3;
         assert_eq!(buf.prepare_loss_list(now, mean_rtt), None);
+    }
+
+    #[test]
+    fn buffer_sizing() {
+        let tsbpd = Duration::from_secs(2);
+        let start = Instant::now();
+        let init_seq_num = SeqNumber(5);
+
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 10);
+
+        assert_eq!(buf.buffer_available(), 10);
+
+        // in order, no overrun
+        assert_eq!(
+            buf.push_packet(
+                start,
+                DataPacket {
+                    seq_number: init_seq_num,
+                    ..basic_pack()
+                },
+            ),
+            Ok(None)
+        );
+
+        assert_eq!(buf.buffer_available(), 9);
+
+        // normal, no overrun
+        assert_eq!(
+            buf.push_packet(
+                start,
+                DataPacket {
+                    seq_number: init_seq_num + 8,
+                    ..basic_pack()
+                },
+            ),
+            Ok(Some((init_seq_num + 1..init_seq_num + 8).into()))
+        );
+
+        assert_eq!(buf.buffer_available(), 1);
+
+        // past end, overrun
+        assert_eq!(
+            buf.push_packet(
+                start,
+                DataPacket {
+                    seq_number: init_seq_num + 10,
+                    ..basic_pack()
+                },
+            ),
+            Err(DataPacket {
+                seq_number: init_seq_num + 10,
+                ..basic_pack()
+            })
+        );
+
+        assert_eq!(buf.buffer_available(), 1);
+
+        // make room for last packet
+        buf.pop_next_message(start + tsbpd).unwrap();
+
+        assert_eq!(buf.buffer_available(), 2);
+
+        // should work this time
+        assert_eq!(
+            buf.push_packet(
+                start + tsbpd,
+                DataPacket {
+                    seq_number: init_seq_num + 10,
+                    ..basic_pack()
+                },
+            ),
+            Ok(Some((init_seq_num + 9..init_seq_num + 10).into()))
+        );
+
+        assert_eq!(buf.buffer_available(), 0);
+    }
+
+    #[test]
+    fn wrong_lrsn_after_drop_all() {
+        let tsbpd = Duration::from_secs(2);
+        let start = Instant::now();
+        let init_seq_num = SeqNumber(5);
+
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+
+        let now = start;
+        let _ = buf.push_packet(
+            now,
+            DataPacket {
+                seq_number: init_seq_num + 3,
+                payload: b"yas"[..].into(),
+                ..basic_pack()
+            },
+        );
+
+        assert_eq!(buf.next_ack_dsn(), init_seq_num);
+
+        // pop_next_message is strange, may want some cleanup
+        assert_eq!(
+            buf.pop_next_message(now + tsbpd + Duration::from_millis(10)),
+            None
+        );
+        assert_eq!(
+            buf.pop_next_message(now + tsbpd + Duration::from_millis(10)),
+            Some((now, b"yas"[..].into()))
+        );
+
+        assert_eq!(buf.next_ack_dsn(), init_seq_num + 4);
     }
 }
