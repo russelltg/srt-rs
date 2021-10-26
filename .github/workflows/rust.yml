@@ -87,10 +87,10 @@ jobs:
     - name: Download grcov
       run: wget https://github.com/mozilla/grcov/releases/download/v0.8.2/grcov-linux-x86_64.tar.bz2 -O grcov.tar.bz2 && tar -xf grcov.tar.bz2
     - name: Build with profdata
-      run: RUSTFLAGS="-Zinstrument-coverage" cargo +nightly-2021-08-07 build --tests
+      run: RUSTFLAGS="-Zinstrument-coverage" cargo +nightly-2021-08-07 build --tests --features=log_disable
     - name: Generate reports
-      run: RUSTFLAGS="-Zinstrument-coverage" LLVM_PROFILE_FILE="srt.%p.profraw" cargo +nightly-2021-08-07 test
+      run: RUSTFLAGS="-Zinstrument-coverage" LLVM_PROFILE_FILE="srt.%p.profraw" cargo +nightly-2021-08-07 test --features=log_disable
     - name: Run grcov
-      run: RUSTUP_TOOLCHAIN=nightly-2021-08-07 ./grcov . --llvm --binary-path ./target/debug/ -t lcov -s . --ignore '*/tests/*' -o lcov.info
+      run: RUSTUP_TOOLCHAIN=nightly-2021-08-07 ./grcov . --llvm --binary-path ./target/debug/ -t lcov -s . --ignore '*/examples/*' --ignore '*/tests/*' -o lcov.info
     - name: Upload results
       run: bash <(curl -s https://codecov.io/bash) -f lcov.info

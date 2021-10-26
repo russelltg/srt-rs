@@ -39,3 +39,4 @@ features = ["rt-multi-thread"]
 
 [features]
 default = []
+log_disable = ["log/max_level_off"]
