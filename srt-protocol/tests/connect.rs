@@ -6,18 +6,16 @@ use std::{
 
 use log::debug;
 use rand::{prelude::StdRng, Rng, SeedableRng};
-
 use rand_distr::{Bernoulli, Normal};
+
 use simulator::*;
 use srt_protocol::{
-    accesscontrol::AllowAllStreamAcceptor,
-    connection::Input,
-    packet::ControlTypes,
-    pending_connection::{
-        connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnInitSettings,
-        ConnectionResult,
+    connection::{Connection, Input},
+    packet::*,
+    protocol::pending_connection::{
+        connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnectionResult,
     },
-    Connection, ControlPacket, Packet, SeqNumber, SocketId,
+    settings::*,
 };
 
 pub mod simulator;

@@ -1,12 +1,13 @@
-use std::{collections::BTreeMap, convert::TryFrom, time::Duration};
+use std::{
+    fmt::{self, Formatter},
+    {collections::BTreeMap, convert::TryFrom, time::Duration},
+};
 
 use bitflags::bitflags;
 use bytes::{Buf, BufMut};
 use log::warn;
 
-use crate::{PacketParseError, SrtVersion};
-use core::fmt;
-use std::fmt::Formatter;
+use crate::packet::{PacketParseError, SrtVersion};
 
 /// The SRT-specific control packets
 /// These are `Packet::Custom` types
@@ -662,11 +663,10 @@ impl TryFrom<u8> for CipherType {
 #[cfg(test)]
 mod tests {
     use super::{SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags};
-    use crate::packet::{Auth, CipherType, ControlTypes, KeyFlags, PacketType};
-    use crate::{protocol::TimeStamp, ControlPacket, Packet, SocketId, SrtVersion};
 
-    use std::io::Cursor;
-    use std::time::Duration;
+    use crate::packet::*;
+
+    use std::{io::Cursor, time::Duration};
 
     #[test]
     fn deser_ser_shake() {

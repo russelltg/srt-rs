@@ -7,7 +7,8 @@ use anyhow::Error;
 use bytes::Bytes;
 use futures::{stream, SinkExt, Stream, StreamExt, TryStreamExt};
 use log::info;
-use srt_protocol::LiveBandwidthMode::*;
+use srt_protocol::settings::LiveBandwidthMode::*;
+
 use srt_tokio::SrtSocketBuilder;
 
 fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {

@@ -1,17 +1,13 @@
 pub mod connect;
-mod cookie;
-mod hsv5;
 pub mod listen;
 pub mod rendezvous;
 
-use crate::protocol::sender::congestion_control::LiveBandwidthMode;
-use crate::{
-    crypto::CryptoOptions,
-    packet::{ControlTypes, HandshakeControlInfo, RejectReason},
-    Connection, DataPacket, Packet, SocketId,
-};
-use rand::random;
-use std::{error::Error, fmt, net::SocketAddr, time::Duration};
+mod cookie;
+mod hsv5;
+
+use std::{error::Error, fmt, net::SocketAddr};
+
+use crate::{connection::Connection, packet::*};
 
 #[non_exhaustive]
 #[derive(Debug)]
@@ -51,18 +47,6 @@ pub enum ConnectionResult {
     SendPacket((Packet, SocketAddr)),
     Connected(Option<(Packet, SocketAddr)>, Connection),
     NoAction,
-}
-
-#[derive(Debug, Clone)]
-pub struct ConnInitSettings {
-    pub local_sockid: SocketId,
-    pub crypto: Option<CryptoOptions>,
-    pub send_latency: Duration,
-    pub recv_latency: Duration,
-    pub bandwidth: LiveBandwidthMode,
-
-    /// Receive buffer size in packets
-    pub recv_buffer_size: usize,
 }
 
 impl fmt::Display for ConnectError {
@@ -135,28 +119,3 @@ impl ConnectionReject {
 }
 
 impl Error for ConnectionReject {}
-
-impl Default for ConnInitSettings {
-    fn default() -> Self {
-        ConnInitSettings {
-            crypto: None,
-            send_latency: Duration::from_millis(50),
-            recv_latency: Duration::from_micros(50),
-            local_sockid: random(),
-            bandwidth: LiveBandwidthMode::default(),
-            recv_buffer_size: 8192,
-        }
-    }
-}
-impl ConnInitSettings {
-    pub fn copy_randomize(&self) -> ConnInitSettings {
-        ConnInitSettings {
-            crypto: self.crypto.clone(),
-            send_latency: self.send_latency,
-            recv_latency: self.recv_latency,
-            local_sockid: random(),
-            bandwidth: LiveBandwidthMode::default(),
-            recv_buffer_size: 8192,
-        }
-    }
-}

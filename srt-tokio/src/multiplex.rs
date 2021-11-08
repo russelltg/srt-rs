@@ -1,7 +1,3 @@
-mod streamer_server;
-
-pub use self::streamer_server::StreamerServer;
-
 use std::{
     collections::HashMap,
     io::{self, Cursor},
@@ -12,7 +8,6 @@ use std::{
 
 use bytes::BytesMut;
 use futures::{prelude::*, stream::unfold};
-
 use log::{info, warn};
 use tokio::{
     net::UdpSocket,
@@ -20,11 +15,17 @@ use tokio::{
 };
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::{socket::create_bidrectional_srt, Packet, SocketId, SrtSocket};
 use srt_protocol::{
-    accesscontrol::StreamAcceptor,
-    pending_connection::{listen::Listen, ConnInitSettings, ConnectionResult},
+    packet::*,
+    settings::*,
+    protocol::pending_connection::{ConnectionResult, listen::Listen}
 };
+
+use crate::{socket::create_bidrectional_srt, SrtSocket};
+
+pub use self::streamer_server::StreamerServer;
+
+mod streamer_server;
 
 struct MultiplexState<A: StreamAcceptor> {
     sock: Arc<UdpSocket>,

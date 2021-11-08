@@ -1,12 +1,10 @@
-use bitflags::bitflags;
-use bytes::{Buf, BufMut, Bytes};
-
 use std::cmp::min;
 use std::{convert::TryFrom, fmt};
 
-use super::PacketParseError;
-use crate::protocol::TimeStamp;
-use crate::{MsgNumber, SeqNumber, SocketId};
+use bitflags::bitflags;
+use bytes::{Buf, BufMut, Bytes};
+
+use super::{MsgNumber, PacketParseError, SeqNumber, SocketId, TimeStamp};
 
 /// A UDT packet carrying data
 ///

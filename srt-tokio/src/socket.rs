@@ -1,22 +1,27 @@
-use crate::{ConnectionSettings, Packet};
-
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::{io, time::Instant};
+use std::{
+    io,
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Instant,
+};
 
 use bytes::Bytes;
-use futures::channel::mpsc;
-use futures::channel::mpsc::{Receiver, Sender};
-use futures::prelude::*;
-use futures::{ready, select};
+use futures::{
+    channel::mpsc::{self, Receiver, Sender},
+    prelude::*,
+    ready, select,
+};
 use log::{error, trace};
-use srt_protocol::connection::{Action, DuplexConnection, Input};
-use srt_protocol::protocol::TimeSpan;
-use srt_protocol::Connection;
-use std::sync::Arc;
-use tokio::net::UdpSocket;
-use tokio::time::sleep_until;
+use srt_protocol::{
+    connection::{Action, Connection, ConnectionSettings, DuplexConnection, Input},
+    packet::*,
+    statistics::SocketStatistics,
+};
+use tokio::{net::UdpSocket, sync::watch, time::sleep_until};
+use tokio_stream::wrappers::WatchStream;
+
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
@@ -33,6 +38,8 @@ pub struct SrtSocket {
     // sender datastructures
     input_data: mpsc::Sender<(Instant, Bytes)>,
 
+    statistics: WatchStream<SocketStatistics>,
+
     settings: ConnectionSettings,
 }
 
@@ -43,10 +50,12 @@ pub struct SrtSocket {
 pub fn create_bidrectional_srt(
     socket: Arc<UdpSocket>,
     packets: impl Stream<Item = (Packet, SocketAddr)> + Unpin + Send + 'static,
-    conn: crate::Connection,
+    conn: Connection,
 ) -> SrtSocket {
     let (output_data_sender, output_data_receiver) = mpsc::channel(128);
     let (input_data_sender, input_data_receiver) = mpsc::channel(128);
+    let (statistics_sender, statistics_receiver) = watch::channel(SocketStatistics::new());
+    let statistics_receiver = WatchStream::new(statistics_receiver);
     let conn_copy = conn.clone();
     tokio::spawn(async move {
         // Using run_input_loop breaks a couple of the stransmit_interop tests.
@@ -57,6 +66,7 @@ pub fn create_bidrectional_srt(
             run_handler_loop(
                 socket,
                 packets,
+                statistics_sender,
                 output_data_sender,
                 input_data_receiver,
                 conn_copy,
@@ -66,6 +76,7 @@ pub fn create_bidrectional_srt(
             run_input_loop(
                 socket,
                 packets,
+                statistics_sender,
                 output_data_sender,
                 input_data_receiver,
                 conn_copy,
@@ -75,6 +86,7 @@ pub fn create_bidrectional_srt(
     });
 
     SrtSocket {
+        statistics: statistics_receiver,
         output_data: output_data_receiver,
         input_data: input_data_sender,
         settings: conn.settings,
@@ -84,8 +96,9 @@ pub fn create_bidrectional_srt(
 async fn run_handler_loop(
     socket: Arc<UdpSocket>,
     packets: impl Stream<Item = (Packet, SocketAddr)> + Unpin + Send + 'static,
-    output_data: Sender<(Instant, Bytes)>,
-    input_data: Receiver<(Instant, Bytes)>,
+    statistics_sender: watch::Sender<SocketStatistics>,
+    output_data: mpsc::Sender<(Instant, Bytes)>,
+    input_data: mpsc::Receiver<(Instant, Bytes)>,
     connection: Connection,
 ) {
     let local_sockid = connection.settings.local_sockid;
@@ -95,11 +108,15 @@ async fn run_handler_loop(
     let mut connection = DuplexConnection::new(connection);
     let mut serialize_buffer = Vec::new();
     while connection.is_open() {
+        if connection.should_update_statistics(Instant::now()) {
+            let _ = statistics_sender.send(connection.statistics().clone());
+        }
+
         while let Some((packet, addr)) = connection.next_packet(Instant::now()) {
             serialize_buffer.clear();
             packet.serialize(&mut serialize_buffer);
             if let Err(e) = socket.send_to(&serialize_buffer, addr).await {
-                error!("Error while seding packet: {:?}", e); // TODO: real error handling
+                error!("Error while sending packet: {:?}", e); // TODO: real error handling
             }
         }
 
@@ -123,7 +140,7 @@ async fn run_handler_loop(
             sleep_until(timeout.into()).await
         };
 
-        let action = select! {
+        let input = select! {
             // one of the entities requested wakeup
             _ = timeout_fut.fuse() => Input::Timer,
             // new packet received
@@ -135,7 +152,7 @@ async fn run_handler_loop(
             }
         };
 
-        match action {
+        match input {
             Input::Packet(packet) => connection.handle_packet_input(Instant::now(), packet),
             Input::Data(data) => connection.handle_data_input(Instant::now(), data),
             _ => {}
@@ -149,6 +166,7 @@ async fn run_handler_loop(
 async fn run_input_loop(
     socket: Arc<UdpSocket>,
     packets: impl Stream<Item = (Packet, SocketAddr)> + Unpin + Send + 'static,
+    statistics_sender: watch::Sender<SocketStatistics>,
     output_data: Sender<(Instant, Bytes)>,
     input_data: Receiver<(Instant, Bytes)>,
     connection: Connection,
@@ -179,6 +197,10 @@ async fn run_input_loop(
                 }
                 Input::PacketSent
             }
+            Action::UpdateStatistics(statistics) => {
+                let _ = statistics_sender.send(statistics.clone());
+                Input::StatisticsUpdated
+            }
             Action::WaitForData(wait) => {
                 let timeout = now + wait;
                 select! {
@@ -200,6 +222,14 @@ async fn run_input_loop(
 impl SrtSocket {
     pub fn settings(&self) -> &ConnectionSettings {
         &self.settings
+    }
+
+    pub fn stats(&mut self) -> &mut impl Stream<Item = SocketStatistics> {
+        &mut self.statistics
+    }
+
+    pub fn statistics(&mut self) -> &mut impl Stream<Item = SocketStatistics> {
+        &mut self.statistics
     }
 }
 

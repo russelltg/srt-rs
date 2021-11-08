@@ -1,7 +1,9 @@
-use srt_protocol::accesscontrol::{AccessControlList, StandardAccessControlEntry};
-use srt_tokio::SrtSocketBuilder;
 use std::{env::args, io::Error, process::exit};
+
 use tokio_stream::StreamExt;
+use srt_protocol::settings::*;
+
+use srt_tokio::SrtSocketBuilder;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {

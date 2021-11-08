@@ -1,19 +1,15 @@
 use std::{net::SocketAddr, time::Instant};
 
-use crate::{
-    accesscontrol::StreamAcceptor,
-    packet::*,
-    protocol::{handshake::Handshake, TimeStamp},
-    Connection,
-};
+use ConnectionResult::*;
+use ListenState::*;
+
+use crate::{connection::Connection, packet::*, protocol::handshake::Handshake, settings::*};
 
 use super::{
     cookie::gen_cookie,
     hsv5::{gen_hsv5_response, GenHsv5Result},
-    ConnInitSettings, ConnectError, ConnectionReject, ConnectionResult,
+    ConnectError, ConnectionReject, ConnectionResult,
 };
-use ConnectionResult::*;
-use ListenState::*;
 
 pub struct Listen {
     init_settings: ConnInitSettings,
@@ -221,8 +217,6 @@ impl Listen {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
     use std::{
         net::{IpAddr, Ipv4Addr},
         time::Duration,
@@ -231,12 +225,7 @@ mod test {
     use bytes::Bytes;
     use rand::random;
 
-    use crate::{
-        accesscontrol::{AcceptParameters, AllowAllStreamAcceptor},
-        packet::{ControlPacket, DataPacket, HandshakeControlInfo, Packet, ShakeType},
-        pending_connection::ConnectionReject,
-        SrtVersion,
-    };
+    use super::*;
 
     fn conn_addr() -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8765)

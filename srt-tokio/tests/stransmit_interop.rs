@@ -19,8 +19,7 @@ use futures::{future::try_join, join, stream, SinkExt, Stream, StreamExt};
 use libc::sockaddr;
 use libloading::{Library, Symbol};
 use log::{debug, info};
-
-use tokio::{net::UdpSocket, task::spawn_blocking, time};
+use tokio::{net::UdpSocket, task::spawn_blocking};
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
 use srt_tokio::{ConnInitMethod, SrtSocketBuilder};

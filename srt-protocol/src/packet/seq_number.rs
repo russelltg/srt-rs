@@ -1,4 +1,4 @@
-use crate::modular_num;
+use super::modular_num::modular_num;
 
 modular_num! {
     pub SeqNumber(u32, 31)

@@ -1,13 +1,19 @@
-use log::trace;
-use srt_protocol::connection::{DuplexConnection, Input};
-use srt_protocol::protocol::handshake::Handshake;
-use srt_protocol::{Connection, ConnectionSettings, LiveBandwidthMode, SeqNumber, SocketId};
-use std::cmp::min;
-use std::time::{Duration, Instant};
-
 pub mod simulator;
-
 use simulator::*;
+
+use std::{
+    cmp::min,
+    time::{Duration, Instant},
+};
+
+use log::trace;
+
+use srt_protocol::{
+    connection::{Connection, ConnectionSettings, DuplexConnection, Input},
+    packet::*,
+    protocol::handshake::Handshake,
+    settings::*,
+};
 
 #[test]
 fn timestamp_rollover() {
@@ -38,6 +44,7 @@ fn timestamp_rollover() {
         stream_id: None,
         bandwidth: LiveBandwidthMode::default(),
         recv_buffer_size: 8192,
+        statistics_interval: Duration::from_secs(1),
     };
 
     let s2 = ConnectionSettings {
@@ -56,6 +63,7 @@ fn timestamp_rollover() {
         stream_id: None,
         bandwidth: LiveBandwidthMode::default(),
         recv_buffer_size: 8192,
+        statistics_interval: Duration::from_secs(1),
     };
 
     const PACKET_RATE: u32 = 10; // 10 packet/s

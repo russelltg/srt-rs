@@ -4,16 +4,21 @@ use std::{
 };
 
 use array_init::from_iter;
-use arraydeque::behavior::Wrapping;
-use arraydeque::ArrayDeque;
+use arraydeque::{behavior::Wrapping, ArrayDeque};
 use bytes::Bytes;
 
-use crate::packet::{AckControlInfo, CompressedLossList, FullAckSeqNumber};
-use crate::protocol::receiver::buffer::ReceiveBuffer;
-use crate::protocol::receiver::history::AckHistoryWindow;
-use crate::protocol::receiver::time::Rtt;
-use crate::protocol::{TimeSpan, TimeStamp};
-use crate::{DataPacket, SeqNumber};
+use crate::{
+    packet::*,
+    protocol::{
+        receiver::{
+            buffer::{MessageError, ReceiveBuffer},
+            history::AckHistoryWindow,
+            time::ClockAdjustment,
+            DataPacketAction, DataPacketError,
+        },
+        time::Rtt,
+    },
+};
 
 #[derive(Debug)]
 pub struct ArrivalSpeed {
@@ -207,32 +212,33 @@ impl AutomaticRepeatRequestAlgorithm {
             .reset(self.receive_buffer.next_ack_dsn());
     }
 
-    pub fn synchronize_clock(&mut self, now: Instant, now_ts: TimeStamp) {
-        self.receive_buffer.synchronize_clock(now, now_ts);
+    pub fn synchronize_clock(
+        &mut self,
+        now: Instant,
+        now_ts: TimeStamp,
+    ) -> Option<ClockAdjustment> {
+        self.receive_buffer.synchronize_clock(now, now_ts)
     }
 
-    pub fn on_full_ack_event(&mut self, now: Instant) -> Option<AckControlInfo> {
+    pub fn on_full_ack_event(&mut self, now: Instant) -> Option<Acknowledgement> {
         let (fasn, dsn) = self.ack_history_window.next_full_ack(
             now,
             self.rtt.mean(),
             self.receive_buffer.next_ack_dsn(),
         )?;
+
         let arrival_speed = self.arrival_speed.calculate();
 
-        let packet_recv_rate = arrival_speed.map(|(packets, _)| packets);
-        let data_recv_rate = arrival_speed.map(|(_, bytes)| bytes);
-        let est_link_cap = self.link_capacity_estimate.calculate();
-
-        Some(AckControlInfo::FullSmall {
-            full_ack_seq_number: Some(fasn),
-            ack_number: dsn,
+        let statistics = AckStatistics {
             rtt: self.rtt.mean(),
             rtt_variance: self.rtt.variance(),
             buffer_available: self.receive_buffer.buffer_available() as u32,
-            packet_recv_rate,
-            est_link_cap,
-            data_recv_rate,
-        })
+            packet_receive_rate: arrival_speed.map(|(packets, _)| packets),
+            estimated_link_capacity: arrival_speed.map(|(_, bytes)| bytes),
+            data_receive_rate: self.link_capacity_estimate.calculate(),
+        };
+
+        Some(Acknowledgement::Full(dsn, statistics, fasn))
     }
 
     pub fn on_nak_event(&mut self, now: Instant) -> Option<CompressedLossList> {
@@ -243,11 +249,22 @@ impl AutomaticRepeatRequestAlgorithm {
         &mut self,
         now: Instant,
         packet: DataPacket,
-    ) -> Result<(Option<CompressedLossList>, Option<AckControlInfo>), DataPacket> {
+    ) -> Result<DataPacketAction, DataPacketError> {
         let seq_number = packet.seq_number;
         let size = packet.payload.len();
-        let nak = self.receive_buffer.push_packet(now, packet)?;
+        let action = match self.receive_buffer.push_packet(now, packet)? {
+            DataPacketAction::Received { lrsn, recovered } => {
+                if !recovered {
+                    self.update_link_estimates(now, seq_number, size);
+                }
+                self.next_light_ack(lrsn, recovered)
+            }
+            action => action,
+        };
+        Ok(action)
+    }
 
+    fn update_link_estimates(&mut self, now: Instant, seq_number: SeqNumber, size: usize) {
         // 4) If the sequence number of the current data packet is 16n + 1,
         //     where n is an integer, record the time interval between this
         self.link_capacity_estimate
@@ -255,14 +272,17 @@ impl AutomaticRepeatRequestAlgorithm {
 
         // 5) Record the packet arrival time in PKT History Window.
         self.arrival_speed.record_data_packet(now, size);
+    }
 
-        let light_ack = self
-            .ack_history_window
-            .next_light_ack(self.receive_buffer.next_ack_dsn())
-            // k is initialized at 2, as stated on page 12 (very end)
-            .map(AckControlInfo::Lite);
-
-        Ok((nak, light_ack))
+    fn next_light_ack(&mut self, lrsn: SeqNumber, recovered: bool) -> DataPacketAction {
+        use DataPacketAction::*;
+        self.ack_history_window
+            .next_light_ack(lrsn)
+            .map(|light_ack| ReceivedWithLightAck {
+                light_ack,
+                recovered,
+            })
+            .unwrap_or(Received { lrsn, recovered })
     }
 
     pub fn handle_ack2_packet(
@@ -283,21 +303,24 @@ impl AutomaticRepeatRequestAlgorithm {
     }
 
     pub fn handle_drop_request(&mut self, _now: Instant, range: Range<SeqNumber>) -> usize {
-        self.receive_buffer.drop_message(range)
+        self.receive_buffer.drop_packets(range)
     }
 
-    pub fn pop_next_message(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
+    pub fn pop_next_message(
+        &mut self,
+        now: Instant,
+    ) -> Result<Option<(Instant, Bytes)>, MessageError> {
         self.receive_buffer.pop_next_message(now)
     }
 }
 
 #[cfg(test)]
 mod automatic_repeat_request_algorithm {
-    use super::*;
-    use crate::packet::{DataEncryption, PacketLocation};
-    use crate::protocol::TimeStamp;
-    use crate::{MsgNumber, SocketId};
     use bytes::Bytes;
+
+    use DataPacketAction::*;
+
+    use super::*;
 
     fn basic_pack() -> DataPacket {
         DataPacket {
@@ -322,7 +345,10 @@ mod automatic_repeat_request_algorithm {
 
         assert_eq!(arq.on_full_ack_event(start), None);
         assert_eq!(arq.on_nak_event(start), None);
-        assert_eq!(arq.pop_next_message(start + Duration::from_secs(10)), None);
+        assert_eq!(
+            arq.pop_next_message(start + Duration::from_secs(10)),
+            Ok(None)
+        );
         assert!(arq.is_flushed());
 
         assert_eq!(
@@ -333,7 +359,10 @@ mod automatic_repeat_request_algorithm {
                     ..basic_pack()
                 }
             ),
-            Ok((None, None))
+            Ok(Received {
+                lrsn: init_seq_num + 1,
+                recovered: false
+            })
         );
         assert!(!arq.is_flushed());
         assert_eq!(
@@ -344,11 +373,20 @@ mod automatic_repeat_request_algorithm {
                     ..basic_pack()
                 }
             ),
-            Ok((Some((init_seq_num + 1..init_seq_num + 3).into()), None))
+            Ok(ReceivedWithLoss(
+                (init_seq_num + 1..init_seq_num + 3).into()
+            ))
         );
+
         assert!(!arq.is_flushed());
 
-        assert_eq!(arq.pop_next_message(start + Duration::from_secs(10)), None);
+        assert_eq!(
+            arq.pop_next_message(start + Duration::from_secs(10)),
+            Err(MessageError {
+                too_late_packets: SeqNumber(5)..SeqNumber(8),
+                delay: TimeSpan::from_millis(8_000)
+            })
+        );
     }
 
     #[test]
@@ -366,7 +404,10 @@ mod automatic_repeat_request_algorithm {
                     ..basic_pack()
                 }
             ),
-            Ok((None, None))
+            Ok(Received {
+                lrsn: init_seq_num + 1,
+                recovered: false
+            })
         );
         assert_eq!(
             arq.handle_data_packet(
@@ -376,20 +417,25 @@ mod automatic_repeat_request_algorithm {
                     ..basic_pack()
                 }
             ),
-            Ok((None, None))
+            Ok(Received {
+                lrsn: init_seq_num + 2,
+                recovered: false
+            })
         );
         assert_eq!(
             arq.on_full_ack_event(start),
-            Some(AckControlInfo::FullSmall {
-                full_ack_seq_number: Some(FullAckSeqNumber::INITIAL),
-                ack_number: init_seq_num + 2,
-                rtt: Rtt::new().mean(),
-                rtt_variance: Rtt::new().variance(),
-                buffer_available: 8190,
-                packet_recv_rate: None,
-                est_link_cap: None,
-                data_recv_rate: None,
-            })
+            Some(Acknowledgement::Full(
+                init_seq_num + 2,
+                AckStatistics {
+                    rtt: Rtt::new().mean(),
+                    rtt_variance: Rtt::new().variance(),
+                    buffer_available: 8190,
+                    packet_receive_rate: None,
+                    estimated_link_capacity: None,
+                    data_receive_rate: None
+                },
+                FullAckSeqNumber::INITIAL
+            ))
         );
 
         assert_eq!(
@@ -400,7 +446,10 @@ mod automatic_repeat_request_algorithm {
                     ..basic_pack()
                 }
             ),
-            Ok((None, None))
+            Ok(Received {
+                lrsn: init_seq_num + 3,
+                recovered: false
+            })
         );
         assert!(!arq.is_flushed());
     }
@@ -461,16 +510,18 @@ mod automatic_repeat_request_algorithm {
 
         assert_eq!(
             arq.on_full_ack_event(start),
-            Some(AckControlInfo::FullSmall {
-                full_ack_seq_number: Some(FullAckSeqNumber::INITIAL),
-                ack_number: init_seq_num + 1,
-                rtt: Rtt::new().mean(),
-                rtt_variance: Rtt::new().variance(),
-                buffer_available: 8191,
-                packet_recv_rate: None,
-                est_link_cap: None,
-                data_recv_rate: None,
-            })
+            Some(Acknowledgement::Full(
+                init_seq_num + 1,
+                AckStatistics {
+                    rtt: Rtt::new().mean(),
+                    rtt_variance: Rtt::new().variance(),
+                    buffer_available: 8191,
+                    packet_receive_rate: None,
+                    estimated_link_capacity: None,
+                    data_receive_rate: None
+                },
+                FullAckSeqNumber::INITIAL
+            ))
         );
 
         let now = start + Duration::from_millis(10);
@@ -478,12 +529,12 @@ mod automatic_repeat_request_algorithm {
             arq.handle_ack2_packet(now, FullAckSeqNumber::INITIAL),
             Some(_)
         ));
-        assert_eq!(arq.pop_next_message(now), None, "{:?}", arq);
+        assert_eq!(arq.pop_next_message(now), Ok(None));
 
         let now = start + Duration::from_secs(10);
         assert_eq!(
             arq.pop_next_message(now),
-            Some((start, Bytes::from(vec![0u8; 10])))
+            Ok(Some((start, Bytes::from(vec![0u8; 10]))))
         );
         assert!(arq.is_flushed());
     }
@@ -533,7 +584,13 @@ mod automatic_repeat_request_algorithm {
 
         let now = start + tsbpd_latency + Duration::from_millis(10);
         // should drop late messages, not pop them
-        assert_eq!(arq.pop_next_message(now), None);
+        assert_eq!(
+            arq.pop_next_message(now),
+            Err(MessageError {
+                too_late_packets: SeqNumber(5)..SeqNumber(9),
+                delay: TimeSpan::from_millis(10)
+            })
+        );
         assert_eq!(arq.on_nak_event(now), None);
     }
 
