@@ -1,13 +1,10 @@
 use std::{convert::TryFrom, io, net::SocketAddr, time::Instant};
 
 use bytes::Bytes;
-use futures::{SinkExt, stream, StreamExt};
+use futures::{stream, SinkExt, StreamExt};
 use log::info;
 
-use srt_protocol::{
-    packet::*,
-    settings::*
-};
+use srt_protocol::{packet::*, settings::*};
 
 use srt_tokio::SrtSocketBuilder;
 

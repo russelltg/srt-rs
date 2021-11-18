@@ -6,12 +6,17 @@ use std::{
     time::Duration,
 };
 
-use futures::{Stream, stream::unfold, StreamExt};
+use futures::{stream::unfold, Stream, StreamExt};
 use log::error;
-use tokio::net::UdpSocket;
 use srt_protocol::settings::*;
+use tokio::net::UdpSocket;
 
-use crate::{multiplex, pending_connection::{self, get_packet}, socket::create_bidrectional_srt, SrtSocket};
+use crate::{
+    multiplex,
+    pending_connection::{self, get_packet},
+    socket::create_bidrectional_srt,
+    SrtSocket,
+};
 
 /// Struct to build sockets.
 ///

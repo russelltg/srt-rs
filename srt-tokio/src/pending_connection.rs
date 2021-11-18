@@ -13,11 +13,10 @@ use tokio::{net::UdpSocket, time::interval};
 use srt_protocol::{
     connection::Connection,
     packet::*,
-    settings::*,
     protocol::pending_connection::{
-        connect::Connect, ConnectionResult, listen::Listen,
-        rendezvous::Rendezvous,
+        connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnectionResult,
     },
+    settings::*,
 };
 
 pub async fn connect(

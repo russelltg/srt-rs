@@ -22,7 +22,6 @@ use srt_protocol::{
 use tokio::{net::UdpSocket, sync::watch, time::sleep_until};
 use tokio_stream::wrappers::WatchStream;
 
-
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
 /// These are bidirectional sockets, meaning data can be sent in either direction.

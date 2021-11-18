@@ -17,8 +17,8 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use srt_protocol::{
     packet::*,
+    protocol::pending_connection::{listen::Listen, ConnectionResult},
     settings::*,
-    protocol::pending_connection::{ConnectionResult, listen::Listen}
 };
 
 use crate::{socket::create_bidrectional_srt, SrtSocket};

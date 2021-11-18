@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use futures::prelude::*;
 use log::info;
-use tokio::time::sleep;
 use srt_protocol::packet::TimeSpan;
+use tokio::time::sleep;
 
 use srt_tokio::SrtSocketBuilder;
 
