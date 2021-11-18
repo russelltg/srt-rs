@@ -244,10 +244,7 @@ impl ReceiveBuffer {
 
     // index in buffer for a given sequence number clamped to 0 or buffer.len()
     fn clamped_index_for_seqno(&self, seq_number: SeqNumber) -> usize {
-        min(
-            seq_number.saturating_sub(self.seqno0),
-            self.buffer.len()
-        )
+        min(seq_number.saturating_sub(self.seqno0), self.buffer.len())
     }
 
     pub fn push_packet(
@@ -359,7 +356,7 @@ impl ReceiveBuffer {
     pub fn drop_packets(&mut self, range: Range<SeqNumber>) -> usize {
         // if start of the range has been dropped already, just drop everything after
         let first_idx = self.clamped_index_for_seqno(range.start);
-        let last_idx =  self.clamped_index_for_seqno(range.end);
+        let last_idx = self.clamped_index_for_seqno(range.end);
         self.buffer
             .range_mut(first_idx..last_idx)
             .filter_map(|p| p.drop_unreceived())

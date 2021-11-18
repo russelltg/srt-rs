@@ -13,6 +13,6 @@ impl SeqNumber {
     }
 
     pub fn saturating_sub(self, other: Self) -> usize {
-       self.0.saturating_sub(other.0) as usize
+        self.0.saturating_sub(other.0) as usize
     }
 }
