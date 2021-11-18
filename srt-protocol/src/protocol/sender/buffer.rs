@@ -512,7 +512,7 @@ mod test {
         for n in 0..=16 {
             let actions = buffer.next_snd_actions(start, 1, false).collect::<Vec<_>>();
             match n {
-                0..15 => assert_eq!(actions, vec![send_data_packet(n)], "n={}", n),
+                0..=14 => assert_eq!(actions, vec![send_data_packet(n)], "n={}", n),
                 // even if only 1 packet is requested, it should send the 16th packet immediately anyway
                 15 => assert_eq!(actions, vec![send_data_packet(n), send_data_packet(n + 1)]),
                 _ => assert_eq!(actions, vec![WaitForInput]),
