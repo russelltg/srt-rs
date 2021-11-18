@@ -24,7 +24,6 @@ impl TimeBase {
         }
     }
 
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn timestamp_from(&self, instant: Instant) -> TimeStamp {
         if instant < self.reference_time {
             self.reference_ts - (self.reference_time - instant)
@@ -33,7 +32,6 @@ impl TimeBase {
         }
     }
 
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn instant_from(&self, timestamp: TimeStamp) -> Instant {
         self.reference_time + (timestamp - self.reference_ts)
     }
@@ -48,10 +46,6 @@ impl TimeBase {
             self.reference_time = self.reference_time + delta;
             self.reference_ts = self.reference_ts + delta;
         }
-    }
-
-    pub fn origin_time(&self) -> Instant {
-        self.origin_time
     }
 }
 

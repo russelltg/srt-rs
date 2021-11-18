@@ -13,8 +13,6 @@ pub struct SynchronizedRemoteClock {
     time_base: TimeBase,
     last_monotonic_instant: Option<Instant>,
     stats: Option<OnlineStats>,
-    adjustments: u64,
-    drift: (TimeSpan, TimeSpan),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -36,8 +34,6 @@ impl SynchronizedRemoteClock {
             drift_deviation_tolerance: Self::DRIFT_DEVIATION_TOLERANCE,
             time_base: TimeBase::new(now),
             last_monotonic_instant: None,
-            adjustments: 0,
-            drift: (TimeSpan::ZERO, TimeSpan::ZERO),
             stats: None,
         }
     }

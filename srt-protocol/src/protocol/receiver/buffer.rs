@@ -164,13 +164,6 @@ impl MessagePacketCount {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct ReceiveBufferStatistics {
-    pub rx_unique_data: u64,     // pktRecvUniqueTotal
-    pub rx_loss_data: u64,       // pktRcvLossTotal
-    pub rx_retransmit_data: u64, // pktRcvRetransTotal
-}
-
 #[derive(Debug, Eq, PartialEq)]
 pub struct MessageError {
     pub too_late_packets: Range<SeqNumber>,
@@ -245,10 +238,16 @@ impl ReceiveBuffer {
         if seq_number < self.seqno0 {
             None
         } else {
-            let index = usize::try_from(seq_number - self.seqno0).unwrap();
-            //            assert!(index < self.buffer.len(), "{:?} !< {:?}", index, self.buffer.len());
-            Some(index)
+            Some((seq_number - self.seqno0) as usize)
         }
+    }
+
+    // index in buffer for a given sequence number clamped to 0 or buffer.len()
+    fn clamped_index_for_seqno(&self, seq_number: SeqNumber) -> usize {
+        min(
+            seq_number.saturating_sub(self.seqno0),
+            self.buffer.len()
+        )
     }
 
     pub fn push_packet(
@@ -359,17 +358,8 @@ impl ReceiveBuffer {
     /// Returns how many packets were actually dropped
     pub fn drop_packets(&mut self, range: Range<SeqNumber>) -> usize {
         // if start of the range has been dropped already, just drop everything after
-        let first_idx = min(
-            self.buffer.len(),
-            self.index_for_seqno(range.start).unwrap_or(0),
-        );
-
-        // clamp to end
-        let last_idx = min(
-            self.buffer.len(),
-            self.index_for_seqno(range.end).unwrap_or(0),
-        );
-
+        let first_idx = self.clamped_index_for_seqno(range.start);
+        let last_idx =  self.clamped_index_for_seqno(range.end);
         self.buffer
             .range_mut(first_idx..last_idx)
             .filter_map(|p| p.drop_unreceived())

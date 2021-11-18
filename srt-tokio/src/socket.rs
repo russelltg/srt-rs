@@ -223,10 +223,6 @@ impl SrtSocket {
         &self.settings
     }
 
-    pub fn stats(&mut self) -> &mut impl Stream<Item = SocketStatistics> {
-        &mut self.statistics
-    }
-
     pub fn statistics(&mut self) -> &mut impl Stream<Item = SocketStatistics> {
         &mut self.statistics
     }

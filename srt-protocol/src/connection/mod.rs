@@ -376,20 +376,27 @@ impl DuplexConnection {
     }
 
     fn debug(&self, tag: &str, now: Instant, debug: &impl Debug) {
-        self.log(log::Level::Debug, tag, now, debug);
+        log::debug!(
+            "{:?}|{:?}|{} - {:?}",
+            TimeSpan::from_interval(self.settings.socket_start_time, now),
+            self.settings.local_sockid,
+            tag,
+            debug
+        );
     }
 
     fn info(&self, tag: &str, now: Instant, debug: &impl Debug) {
-        self.log(log::Level::Info, tag, now, debug);
+        log::info!(
+            "{:?}|{:?}|{} - {:?}",
+            TimeSpan::from_interval(self.settings.socket_start_time, now),
+            self.settings.local_sockid,
+            tag,
+            debug
+        );
     }
 
     fn warn(&self, tag: &str, now: Instant, debug: &impl Debug) {
-        self.log(log::Level::Warn, tag, now, debug);
-    }
-
-    fn log(&self, level: log::Level, tag: &str, now: Instant, debug: &impl Debug) {
-        log::log!(
-            level,
+        log::warn!(
             "{:?}|{:?}|{} - {:?}",
             TimeSpan::from_interval(self.settings.socket_start_time, now),
             self.settings.local_sockid,

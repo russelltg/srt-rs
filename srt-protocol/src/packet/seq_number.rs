@@ -11,4 +11,8 @@ impl SeqNumber {
         *self += 1;
         next
     }
+
+    pub fn saturating_sub(self, other: Self) -> usize {
+       self.0.saturating_sub(other.0) as usize
+    }
 }

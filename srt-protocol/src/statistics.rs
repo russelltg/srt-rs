@@ -6,6 +6,7 @@ use std::time::Duration;
 /// Statistics are calculated independently on each side (receiver and sender) and are not exchanged
 /// between peers unless explicitly stated.
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
+#[non_exhaustive]
 pub struct SocketStatistics {
     /// The time elapsed, in milliseconds, since the SRT socket was created.
     pub elapsed_time: Duration, // msTimeStamp
