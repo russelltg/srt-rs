@@ -5,7 +5,11 @@ use log::{debug, error, info, trace, warn};
 
 use crate::{
     connection::ConnectionStatus,
-    packet::{ControlPacket, ControlTypes, DataPacket, FullAckSeqNumber, Packet},
+    packet::{
+        control::SrtKeyMessage, ControlPacket, ControlTypes, DataPacket, FullAckSeqNumber, Packet,
+        SrtControlPacket,
+    },
+    pending_connection::ConnectionReject,
     protocol::{
         encryption::Cipher,
         receiver::{arq::AutomaticRepeatRequestAlgorithm, time::ReceiveTimers},
@@ -145,17 +149,23 @@ impl Receiver {
 
     pub fn rekey(
         &mut self,
-        key_message: &crate::packet::control::SrtKeyMessage,
-    ) -> Result<(), crate::pending_connection::ConnectionReject> {
-        match self.settings.crypto_manager {
-            None => {
-                error!(
-                    "Unexpcted re-key message on unencrypted connection {:?}",
-                    key_message
-                );
-                Ok(())
-            }
-            Some(ref mut crypto_manager) => crypto_manager.rekey(key_message),
+        now: Instant,
+        key_message: &SrtKeyMessage,
+    ) -> Result<(), ConnectionReject> {
+        if let Some(ref mut crypto_manager) = self.settings.crypto_manager {
+            let km = crypto_manager.rekey(key_message)?;
+            self.send_control(
+                now,
+                ControlTypes::Srt(SrtControlPacket::KeyManagerResponse(km)),
+            );
+
+            Ok(())
+        } else {
+            error!(
+                "Unexpcted re-key message on unencrypted connection {:?}",
+                key_message
+            );
+            Ok(())
         }
     }
 

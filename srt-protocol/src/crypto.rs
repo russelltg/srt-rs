@@ -2,6 +2,7 @@ use aes::NewBlockCipher;
 use aes::{Aes128, Aes128Ctr, Aes192, Aes192Ctr, Aes256, Aes256Ctr};
 use cipher::{NewCipher, StreamCipher};
 use hmac::Hmac;
+use log::info;
 use pbkdf2::pbkdf2;
 use sha1::Sha1;
 
@@ -25,7 +26,7 @@ pub struct CryptoOptions {
 }
 
 // i would love for this to be not clone, maybe someday
-#[derive(Clone)]
+// #[derive(Clone)]
 pub struct CryptoManager {
     options: CryptoOptions,
     salt: [u8; 16],
@@ -54,8 +55,57 @@ impl CryptoManager {
         options: CryptoOptions,
         kmreq: &SrtKeyMessage,
     ) -> Result<Self, ConnectionReject> {
+        let (even, odd, salt) = CryptoManager::unwrap_keys(kmreq, &options)?;
+
+        Ok(Self::new(options, &salt, even, odd))
+    }
+
+    fn new(
+        options: CryptoOptions,
+        salt: &[u8; 16],
+        even_sek: Option<Vec<u8>>,
+        odd_sek: Option<Vec<u8>>,
+    ) -> Self {
+        let kek = CryptoManager::gen_kek(&options, salt);
+        CryptoManager {
+            options,
+            salt: *salt,
+            kek,
+            even_sek,
+            odd_sek,
+            current_key: DataEncryption::Even, // TODO: this is likely not right!
+        }
+    }
+
+    fn gen_kek(options: &CryptoOptions, salt: &[u8; 16]) -> Vec<u8> {
+        // Generate the key encrypting key from the passphrase, caching it in the struct
+        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_sa.c#L69-L103
+
+        // the reference implementation uses the last 8 (at max) bytes of the salt. Sources:
+        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/haicrypt.h#L72
+        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_sa.c#L77-L85
+        let salt_len = usize::min(8, salt.len());
+
+        let mut kek = vec![0; usize::from(options.size)];
+
+        pbkdf2::<Hmac<Sha1>>(
+            options.passphrase.as_bytes(),
+            &salt[salt.len() - salt_len..], // last salt_len bytes
+            2048, // is what the reference implementation uses.https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/haicrypt.h#L73
+            &mut kek[..],
+        );
+
+        kek
+    }
+
+    /// Unwrap the keys from a kmreq
+    /// Returns (even, odd, salt)
+    fn unwrap_keys(
+        kmreq: &SrtKeyMessage,
+        options: &CryptoOptions,
+    ) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>, [u8; 16]), ConnectionReject> {
         let salt = kmreq.salt[..].try_into().unwrap();
-        let kek = CryptoManager::gen_kek(&options, &salt);
+        let kek = CryptoManager::gen_kek(options, &salt);
 
         assert_eq!(
             kmreq.wrapped_keys.len(),
@@ -104,45 +154,7 @@ impl CryptoManager {
             None
         };
 
-        Ok(Self::new(options, &salt, even, odd))
-    }
-
-    fn new(
-        options: CryptoOptions,
-        salt: &[u8; 16],
-        even_sek: Option<Vec<u8>>,
-        odd_sek: Option<Vec<u8>>,
-    ) -> Self {
-        let kek = CryptoManager::gen_kek(&options, salt);
-        CryptoManager {
-            options,
-            salt: *salt,
-            kek,
-            even_sek,
-            odd_sek,
-            current_key: DataEncryption::Even, // TODO: this is likely not right!
-        }
-    }
-
-    fn gen_kek(options: &CryptoOptions, salt: &[u8; 16]) -> Vec<u8> {
-        // Generate the key encrypting key from the passphrase, caching it in the struct
-        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_sa.c#L69-L103
-
-        // the reference implementation uses the last 8 (at max) bytes of the salt. Sources:
-        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/haicrypt.h#L72
-        // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_sa.c#L77-L85
-        let salt_len = usize::min(8, salt.len());
-
-        let mut kek = vec![0; usize::from(options.size)];
-
-        pbkdf2::<Hmac<Sha1>>(
-            options.passphrase.as_bytes(),
-            &salt[salt.len() - salt_len..], // last salt_len bytes
-            2048, // is what the reference implementation uses.https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/haicrypt.h#L73
-            &mut kek[..],
-        );
-
-        kek
+        Ok((even, odd, salt))
     }
 
     pub fn key_length(&self) -> u8 {
@@ -195,13 +207,15 @@ impl CryptoManager {
     }
 
     fn get_key(&self, enc: DataEncryption) -> &[u8] {
-        &if enc == DataEncryption::Even {
+        dbg!(&self.even_sek, &self.odd_sek);
+
+        if enc == DataEncryption::Even {
             &self.even_sek
         } else {
             &self.odd_sek
         }
-        .as_ref()
-        .expect("Tried to decrypt but key was none")[..]
+        .as_deref()
+        .expect("Tried to decrypt but key was none")
     }
 
     pub fn decrypt(&self, seq: SeqNumber, enc: DataEncryption, data: &mut [u8]) {
@@ -269,66 +283,21 @@ impl CryptoManager {
         ret
     }
 
-    pub fn rekey(&mut self, kmreq: &SrtKeyMessage) -> Result<(), ConnectionReject> {
-        assert_eq!(kmreq.pt, PacketType::KeyingMaterial);
-
-        let salt = kmreq.salt[..].try_into().unwrap();
-        let kek = CryptoManager::gen_kek(&self.options, &salt);
-
-        assert_eq!(
-            kmreq.wrapped_keys.len(),
-            kmreq.key_flags.bits().count_ones() as usize * usize::from(self.options.size) + 8
-        );
-
-        let mut keys = vec![0; kmreq.wrapped_keys.len() - 8];
-
-        let mut iv = [0; 8];
-        match kek.len() {
-            16 => wrap::aes_unwrap(
-                &Aes128::new(kek[..].into()),
-                &mut iv,
-                &mut keys,
-                &kmreq.wrapped_keys,
-            ),
-            24 => wrap::aes_unwrap(
-                &Aes192::new(kek[..].into()),
-                &mut iv,
-                &mut keys,
-                &kmreq.wrapped_keys,
-            ),
-            32 => wrap::aes_unwrap(
-                &Aes256::new(kek[..].into()),
-                &mut iv,
-                &mut keys,
-                &kmreq.wrapped_keys,
-            ),
-            _ => panic!("Invalid key size"),
-        }
-
-        if iv != wrap::DEFAULT_IV {
-            return Err(ConnectionReject::Rejecting(
-                CoreRejectReason::BadSecret.into(),
-            ));
-        }
-
-        let even = if kmreq.key_flags.contains(KeyFlags::EVEN) {
-            Some(keys[0..usize::from(self.options.size)].into())
-        } else {
-            None
-        };
-        let odd = if kmreq.key_flags.contains(KeyFlags::ODD) {
-            Some((keys[keys.len() - usize::from(self.options.size)..]).into())
-        } else {
-            None
-        };
+    // https://github.com/Haivision/srt/blob/257e022337cc6e15239663d34b0d8fe2a6d61ac0/haicrypt/hcrypt_ctx_rx.c#L132
+    pub fn rekey(&mut self, kmreq: &SrtKeyMessage) -> Result<SrtKeyMessage, ConnectionReject> {
+        let (even, odd, salt) = CryptoManager::unwrap_keys(&kmreq, &self.options)?;
 
         self.salt = salt;
-        self.odd_sek = odd;
-        self.even_sek = even;
+        if let Some(even) = even {
+            self.even_sek = Some(even);
+            info!("Re-keying even key");
+        }
+        if let Some(odd) = odd {
+            self.odd_sek = Some(odd);
+            info!("Re-keying odd key");
+        }
 
-        log::info!("Re-key complete");
-
-        Ok(())
+        Ok(self.generate_km())
     }
 }
 
