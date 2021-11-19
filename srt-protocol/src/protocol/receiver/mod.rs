@@ -114,8 +114,10 @@ impl<'a> ReceiverContext<'a> {
     pub fn handle_data_packet(&mut self, now: Instant, data: DataPacket) {
         use Acknowledgement::*;
         use ControlTypes::*;
-        self.statistics.rx_data += 1;
         let bytes = data.payload.len() as u64;
+        self.statistics.rx_data += 1;
+        self.statistics.rx_bytes += bytes;
+
         let data = self
             .receiver
             .cipher
