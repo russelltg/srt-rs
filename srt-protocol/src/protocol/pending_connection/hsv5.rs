@@ -1,19 +1,15 @@
 //! Defines the HSV5 "state machine"
 
-use super::{ConnInitSettings, ConnectError, ConnectionReject};
-use crate::{
-    accesscontrol::StreamAcceptor,
-    crypto::CryptoManager,
-    packet::{
-        HandshakeControlInfo, HandshakeVsInfo, HsV5Info, ServerRejectReason, SrtControlPacket,
-        SrtHandshake, SrtShakeFlags,
-    },
-    ConnectionSettings, LiveBandwidthMode, SrtVersion,
-};
 use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
+
+use crate::{
+    connection::ConnectionSettings, packet::*, protocol::crypto::CryptoManager, settings::*,
+};
+
+use super::{ConnectError, ConnectionReject};
 
 pub enum GenHsv5Result {
     Accept(HandshakeVsInfo, ConnectionSettings),
@@ -109,6 +105,7 @@ pub fn gen_hsv5_response(
             crypto_manager: cm,
             bandwidth: settings.bandwidth.clone(),
             stream_id: incoming.sid.clone(),
+            statistics_interval: settings.statistics_interval,
         },
     )
 }
@@ -200,6 +197,7 @@ impl StartedInitiator {
             stream_id: self.streamid,
             bandwidth: LiveBandwidthMode::default(),
             recv_buffer_size: self.settings.recv_buffer_size,
+            statistics_interval: self.settings.statistics_interval,
         })
     }
 }

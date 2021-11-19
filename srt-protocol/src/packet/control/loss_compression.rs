@@ -1,6 +1,6 @@
 use std::iter::Iterator;
 
-use crate::SeqNumber;
+use super::SeqNumber;
 
 /// Iterator for compressing loss lists
 pub struct CompressLossList<I> {
@@ -146,9 +146,7 @@ pub fn decompress_loss_list<I: Iterator<Item = u32>>(loss_list: I) -> Decompress
 
 #[cfg(test)]
 mod test {
-
-    use super::{compress_loss_list, decompress_loss_list};
-    use crate::SeqNumber;
+    use super::*;
 
     const ONE: u32 = 1 << 31;
 

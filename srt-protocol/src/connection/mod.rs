@@ -1,17 +1,27 @@
-use std::cmp::min;
+pub mod status;
+pub use status::*;
+
 use std::{
+    fmt::Debug,
     net::SocketAddr,
     time::{Duration, Instant},
 };
 
-use crate::{
-    crypto::CryptoManager,
-    packet::{ControlTypes, SrtControlPacket},
-    protocol::{handshake::Handshake, receiver::Receiver, sender::Sender, TimeSpan},
-    ControlPacket, LiveBandwidthMode, Packet, SeqNumber, SocketId,
-};
 use bytes::Bytes;
-use log::{debug, info, warn};
+
+use crate::{
+    packet::*,
+    protocol::{
+        crypto::CryptoManager,
+        handshake::Handshake,
+        output::Output,
+        receiver::{Receiver, ReceiverContext},
+        sender::{Sender, SenderContext},
+        time::Timers,
+    },
+    settings::LiveBandwidthMode,
+    statistics::SocketStatistics,
+};
 
 #[derive(Clone, Debug)]
 pub struct Connection {
@@ -58,87 +68,27 @@ pub struct ConnectionSettings {
 
     pub stream_id: Option<String>,
     pub bandwidth: LiveBandwidthMode,
+    pub statistics_interval: Duration,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum ConnectionStatus {
-    Open(Duration),
-    Shutdown(Instant),
-    Drain(Instant),
-    Closed,
-}
-
-impl ConnectionStatus {
-    pub fn is_open(&self) -> bool {
-        matches!(*self, ConnectionStatus::Open(_))
-    }
-
-    pub fn is_closed(&self) -> bool {
-        matches!(*self, ConnectionStatus::Closed)
-    }
-
-    pub fn should_drain(&self) -> bool {
-        use ConnectionStatus::*;
-        matches!(*self, Shutdown(_) | Drain(_))
-    }
-
-    pub fn shutdown(&mut self, now: Instant) {
-        use ConnectionStatus::*;
-        if let Open(timeout) = *self {
-            *self = Shutdown(now + timeout);
-        }
-    }
-
-    pub fn drain(&mut self, now: Instant) {
-        use ConnectionStatus::*;
-        if let Open(timeout) = *self {
-            *self = Drain(now + timeout);
-        }
-    }
-
-    pub fn check_shutdown<S: Fn() -> bool>(&mut self, now: Instant, is_flushed: S) -> bool {
-        use ConnectionStatus::*;
-        match *self {
-            Shutdown(timeout) if is_flushed() || now > timeout => {
-                *self = Drain(timeout);
-                true
-            }
-            Drain(timeout) if is_flushed() || now > timeout => {
-                *self = Closed;
-                false
-            }
-            _ => false,
-        }
-    }
-
-    pub fn check_close_timeout(&mut self, now: Instant, flushed: bool) -> bool {
-        use ConnectionStatus::*;
-        match *self {
-            Shutdown(timeout) | Drain(timeout) if now > timeout => {
-                *self = Closed;
-                true
-            }
-            Shutdown(_) | Drain(_) if flushed => {
-                *self = Closed;
-                false
-            }
-            _ => false,
-        }
-    }
-}
-
+#[derive(Debug)]
 pub struct DuplexConnection {
     settings: ConnectionSettings,
+    timers: Timers,
+    handshake: Handshake,
+    output: Output,
     sender: Sender,
     receiver: Receiver,
+    statistics: SocketStatistics,
     status: ConnectionStatus,
 }
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Action {
+pub enum Action<'a> {
     ReleaseData((Instant, Bytes)),
     SendPacket((Packet, SocketAddr)),
+    UpdateStatistics(&'a SocketStatistics),
     WaitForData(Duration),
     Close,
 }
@@ -150,6 +100,7 @@ pub enum Input {
     Packet(Option<(Packet, SocketAddr)>),
     DataReleased,
     PacketSent,
+    StatisticsUpdated,
     Timer,
 }
 
@@ -157,20 +108,20 @@ impl DuplexConnection {
     pub fn new(connection: Connection) -> DuplexConnection {
         let settings = connection.settings;
         DuplexConnection {
-            status: ConnectionStatus::Open(settings.send_tsbpd_latency),
             settings: settings.clone(),
+            timers: Timers::new(settings.socket_start_time, settings.statistics_interval),
+            handshake: connection.handshake,
+            output: Output::new(&settings),
+
+            status: ConnectionStatus::new(settings.send_tsbpd_latency),
+            statistics: SocketStatistics::new(),
             receiver: Receiver::new(settings.clone()),
-            sender: Sender::new(settings, connection.handshake),
+            sender: Sender::new(settings),
         }
     }
 
     pub fn handle_input(&mut self, now: Instant, input: Input) -> Action {
-        debug!(
-            "{:?}|{:?}|input - {:?}",
-            TimeSpan::from_interval(self.settings.socket_start_time, now),
-            self.settings.local_sockid,
-            input
-        );
+        self.debug("input", now, &input);
 
         match input {
             Input::Data(data) => self.handle_data_input(now, data),
@@ -180,6 +131,8 @@ impl DuplexConnection {
 
         let action = if self.should_close(now) {
             Action::Close
+        } else if self.should_update_statistics(now) {
+            Action::UpdateStatistics(&self.statistics)
         } else if let Some(packet) = self.next_packet(now) {
             Action::SendPacket(packet)
         } else if let Some(data) = self.next_data(now) {
@@ -188,55 +141,69 @@ impl DuplexConnection {
             Action::WaitForData(self.next_timer(now) - now)
         };
 
-        debug!(
-            "{:?}|{:?}|action - {:?}",
-            TimeSpan::from_interval(self.settings.socket_start_time, now),
-            self.settings.local_sockid,
-            action
-        );
-
+        self.debug("action", now, &action);
         action
     }
 
     pub fn is_open(&self) -> bool {
-        !(self.status.is_closed()
-            || (self.sender.is_closed() && self.receiver.is_flushed())
-            || self.receiver.is_closed())
+        self.status.is_open()
+    }
+
+    pub fn update_statistics(&mut self, now: Instant) {
+        self.statistics.elapsed_time = now - self.settings.socket_start_time;
     }
 
     pub fn next_packet(&mut self, now: Instant) -> Option<(Packet, SocketAddr)> {
-        let packet = self.sender.next_packet().or_else(|| {
-            self.receiver.next_packet().map(|p| {
-                self.sender.reset_keep_alive(now);
-                p
-            })
-        });
-        if let Some(p) = &packet {
-            debug!(
-                "{:?}|{:?}|send - {:?}",
-                TimeSpan::from_interval(self.settings.socket_start_time, now),
-                self.settings.local_sockid,
-                p
-            );
-        }
-        packet
+        self.output.pop_packet().map(|p| {
+            self.timers.reset_keepalive(now);
+            self.statistics.tx_all_packets += 1;
+            // payload length + (20 bytes IPv4 + 8 bytes UDP + 16 bytes SRT)
+            match &p {
+                Packet::Data(d) => {
+                    self.statistics.tx_data += 1;
+                    // payload length + (20 bytes IPv4 + 8 bytes UDP + 16 bytes SRT)
+                    self.statistics.tx_bytes += d.payload.len() as u64 + 44;
+                }
+                Packet::Control(c) => match c.control_type {
+                    ControlTypes::Ack(_) => {
+                        self.statistics.tx_ack += 1;
+                    }
+                    ControlTypes::Nak(_) => {
+                        self.statistics.tx_nak += 1;
+                    }
+                    ControlTypes::Ack2(_) => {
+                        self.statistics.tx_ack2 += 1;
+                    }
+                    _ => {}
+                },
+            }
+            self.debug("send", now, &p);
+            (p, self.settings.remote)
+        })
     }
 
     pub fn next_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
-        let data = self.receiver.next_data(now);
-        if let Some(d) = &data {
-            debug!(
-                "{:?}|{:?}|output - {:?}",
-                TimeSpan::from_interval(self.settings.socket_start_time, now),
-                self.settings.local_sockid,
-                d
-            );
+        match self.receiver.arq.pop_next_message(now) {
+            Ok(Some(data)) => {
+                self.debug("output", now, &data);
+                Some(data)
+            }
+            Err(error) => {
+                self.warn("output", now, &error);
+                let dropped = error.too_late_packets.end - error.too_late_packets.start;
+                self.statistics.rx_dropped_data += dropped as u64;
+                None
+            }
+            _ => None,
         }
-        data
     }
 
     pub fn next_timer(&self, now: Instant) -> Instant {
-        min(self.sender.next_timer(now), self.receiver.next_timer(now))
+        let has_packets_to_send = self.sender.has_packets_to_send();
+        let next_message = self.receiver.arq.next_message_release_time();
+        let unacked_packets = self.receiver.arq.unacked_packet_count();
+        self.timers
+            .next_timer(now, has_packets_to_send, next_message, unacked_packets)
     }
 
     pub fn should_close(&mut self, now: Instant) -> bool {
@@ -248,26 +215,54 @@ impl DuplexConnection {
         }
     }
 
-    pub fn check_timers(&mut self, now: Instant) -> Instant {
-        let sender = &mut self.sender;
-        let receiver = &mut self.receiver;
+    pub fn should_update_statistics(&mut self, now: Instant) -> bool {
+        self.timers.check_statistics(now).is_some()
+    }
 
-        receiver.check_timers(now);
-        sender.check_timers(now);
+    pub fn statistics(&self) -> &SocketStatistics {
+        &self.statistics
+    }
+
+    pub fn check_timers(&mut self, now: Instant) -> Instant {
+        if self.timers.check_full_ack(now).is_some() {
+            self.receiver().on_full_ack_event(now);
+        }
+        if self.timers.check_nak(now).is_some() {
+            self.receiver().on_nak_event(now);
+        }
+        if self.timers.check_peer_idle_timeout(now).is_some() {
+            self.on_peer_idle_timeout(now);
+        }
+        if let Some(elapsed_periods) = self.timers.check_snd(now) {
+            self.sender().on_snd_event(now, elapsed_periods)
+        }
+        if self.timers.check_keepalive(now).is_some() {
+            self.output.send_control(now, ControlTypes::KeepAlive);
+        }
+
+        if self
+            .status
+            .check_receive_close_timeout(now, self.receiver.is_flushed())
+        {
+            self.receiver().on_close_timeout(now);
+        }
+        if self.status.check_sender_shutdown(
+            now,
+            self.sender.is_flushed(),
+            self.receiver.is_flushed(),
+            self.output.is_empty(),
+        ) {
+            self.output.send_control(now, ControlTypes::Shutdown);
+        }
 
         self.next_timer(now)
     }
 
     pub fn handle_data_input(&mut self, now: Instant, data: Option<(Instant, Bytes)>) {
-        debug!(
-            "{:?}|{:?}|input - {:?}",
-            TimeSpan::from_interval(self.settings.socket_start_time, now),
-            self.settings.local_sockid,
-            data
-        );
+        self.debug("input", now, &data);
         match data {
             Some(item) => {
-                self.sender.handle_data(item, now);
+                self.sender().handle_data(now, item);
             }
             None => {
                 self.handle_data_stream_close(now);
@@ -276,76 +271,64 @@ impl DuplexConnection {
     }
 
     pub fn handle_packet_input(&mut self, now: Instant, packet: Option<(Packet, SocketAddr)>) {
-        debug!(
-            "{:?}|{:?}|packet - {:?}",
-            TimeSpan::from_interval(self.settings.socket_start_time, now),
-            self.settings.local_sockid,
-            packet
-        );
+        self.debug("packet", now, &packet);
         match packet {
             Some(packet) => self.handle_packet(now, packet),
-            None => self.handle_socket_close(),
+            None => self.handle_socket_close(now),
         }
     }
 
     fn handle_data_stream_close(&mut self, now: Instant) {
-        debug!("Incoming data stream closed");
-        self.sender.handle_close(now);
+        self.debug("closed data", now, &());
+        self.status.on_data_stream_closed(now);
     }
 
-    fn handle_socket_close(&mut self) {
-        info!(
-            "{:?} Exiting because underlying stream ended",
-            self.settings.local_sockid
-        );
-        self.status = ConnectionStatus::Closed;
+    fn handle_socket_close(&mut self, now: Instant) {
+        self.warn("closed socket", now, &());
+        self.status.on_socket_closed(now);
+    }
+
+    pub fn on_peer_idle_timeout(&mut self, now: Instant) {
+        self.output.send_control(now, ControlTypes::Shutdown);
+        self.status.on_peer_idle_timeout(now);
     }
 
     fn handle_packet(&mut self, now: Instant, (packet, from): (Packet, SocketAddr)) {
         // TODO: record/report packets from invalid hosts?
         // We don't care about packets from elsewhere
         if from != self.settings.remote {
-            info!("Packet received from unknown address: {:?}", from);
+            self.info("invalid address", now, &(packet, from));
             return;
         }
 
         if self.settings.local_sockid != packet.dest_sockid() {
-            // packet isn't applicable
-            info!(
-                "Packet send to socket id ({:?}) that does not match local ({:?})",
-                packet.dest_sockid(),
-                self.settings.local_sockid
-            );
+            self.info("invalid socket id", now, &(packet, from));
             return;
         }
 
-        self.receiver.reset_exp(now);
+        self.timers.reset_exp(now);
+
+        self.statistics.rx_all_packets += 1;
         match packet {
-            Packet::Data(data) => self.receiver.handle_data_packet(now, data),
+            Packet::Data(data) => self.receiver().handle_data_packet(now, data),
             Packet::Control(control) => self.handle_control_packet(now, control),
         }
     }
 
     fn handle_control_packet(&mut self, now: Instant, control: ControlPacket) {
-        use ControlTypes::*;
+        self.receiver().synchronize_clock(now, control.timestamp);
 
-        self.receiver.synchronize_clock(now, control.timestamp);
+        use ControlTypes::*;
         match control.control_type {
-            // sender-responsble packets
-            Ack(info) => self.sender.handle_ack_packet(now, info),
-            DropRequest { range, .. } => self.receiver.handle_drop_request(
-                now,
-                *range.start()..*range.end() + 1, // inclusive to exclusive
-            ),
-            Handshake(shake) => self.sender.handle_handshake_packet(shake, now),
-            Nak(nack) => self.sender.handle_nak_packet(now, nack),
-            // receiver-respnsible
-            Ack2(seq_num) => self.receiver.handle_ack2_packet(seq_num, now),
+            // sender-responsible packets
+            Ack(ack) => self.sender().handle_ack_packet(now, ack),
+            DropRequest { range, .. } => self.receiver().handle_drop_request(now, range),
+            Handshake(shake) => self.handle_handshake_packet(now, shake),
+            Nak(nak) => self.sender().handle_nak_packet(now, nak),
+            // receiver-responsible
+            Ack2(seq_num) => self.receiver().handle_ack2_packet(now, seq_num),
             // both
-            Shutdown => {
-                self.sender.handle_shutdown_packet(now);
-                self.receiver.handle_shutdown_packet(now);
-            }
+            Shutdown => self.status.handle_shutdown_packet(now),
             // neither--this exists just to keep the connection alive
             KeepAlive => {}
             // TODO: case UMSG_CGWARNING: // 100 - Delay Warning
@@ -355,27 +338,81 @@ impl DuplexConnection {
             // TODO: case UMSG_PEERERROR: // 1000 - An error has happened to the peer side
             PeerError(_) => todo!(),
             // TODO: case UMSG_EXT: // 0x7FFF - reserved and user defined messages
-            Srt(s) => self.handle_srt_control_packet(s),
+            Srt(s) => self.handle_srt_control_packet(now, s),
         }
     }
 
-    // handles a SRT control packet
-    fn handle_srt_control_packet(&mut self, pack: SrtControlPacket) {
+    fn handle_handshake_packet(&mut self, now: Instant, handshake: HandshakeControlInfo) {
+        if let Some(control) = self.handshake.handle_handshake(handshake) {
+            self.output.send_control(now, control);
+        }
+    }
+
+    fn handle_srt_control_packet(&mut self, now: Instant, pack: SrtControlPacket) {
         use self::SrtControlPacket::*;
         match pack {
-            HandshakeRequest(_) | HandshakeResponse(_) => {
-                warn!("Received handshake SRT packet, HSv5 expected");
-            }
+            HandshakeRequest(_) | HandshakeResponse(_) => self.warn("handshake", now, &pack),
             _ => unimplemented!(),
         }
+    }
+
+    fn sender(&mut self) -> SenderContext {
+        SenderContext::new(
+            &mut self.status,
+            &mut self.timers,
+            &mut self.output,
+            &mut self.statistics,
+            &mut self.sender,
+        )
+    }
+
+    fn receiver(&mut self) -> ReceiverContext {
+        ReceiverContext::new(
+            &mut self.timers,
+            &mut self.output,
+            &mut self.statistics,
+            &mut self.receiver,
+        )
+    }
+
+    fn debug(&self, tag: &str, now: Instant, debug: &impl Debug) {
+        log::debug!(
+            "{:?}|{:?}|{} - {:?}",
+            TimeSpan::from_interval(self.settings.socket_start_time, now),
+            self.settings.local_sockid,
+            tag,
+            debug
+        );
+    }
+
+    fn info(&self, tag: &str, now: Instant, debug: &impl Debug) {
+        log::info!(
+            "{:?}|{:?}|{} - {:?}",
+            TimeSpan::from_interval(self.settings.socket_start_time, now),
+            self.settings.local_sockid,
+            tag,
+            debug
+        );
+    }
+
+    fn warn(&self, tag: &str, now: Instant, debug: &impl Debug) {
+        log::warn!(
+            "{:?}|{:?}|{} - {:?}",
+            TimeSpan::from_interval(self.settings.socket_start_time, now),
+            self.settings.local_sockid,
+            tag,
+            debug
+        );
     }
 }
 
 #[cfg(test)]
 mod duplex_connection {
+    use Action::*;
+    use ControlTypes::*;
+    use Packet::*;
+
     use super::*;
-    use crate::protocol::TimeStamp;
-    use crate::{LiveBandwidthMode, MsgNumber};
 
     const MILLIS: Duration = Duration::from_millis(1);
     const SND: Duration = MILLIS;
@@ -409,9 +446,10 @@ mod duplex_connection {
                 recv_buffer_size: 1024 * 1316,
                 crypto_manager: None,
                 stream_id: None,
-                bandwidth: LiveBandwidthMode::default(),
+                bandwidth: LiveBandwidthMode::Unlimited,
+                statistics_interval: Duration::from_secs(10),
             },
-            handshake: Handshake::Connector,
+            handshake: crate::protocol::handshake::Handshake::Connector,
         }
     }
 
@@ -419,11 +457,6 @@ mod duplex_connection {
     fn input_data_close() {
         let start = Instant::now();
         let mut connection = DuplexConnection::new(new_connection(start));
-
-        use crate::ControlPacket;
-        use Action::*;
-        use ControlTypes::*;
-        use Packet::*;
 
         let mut now = start;
         assert_eq!(
@@ -441,19 +474,43 @@ mod duplex_connection {
             "input data 'close' should drain the send buffers"
         );
 
-        // drain
         now += SND;
         assert!(matches!(
             connection.handle_input(now, Input::Timer),
-            SendPacket((Data(_), _))
+            SendPacket((Data(_), _)),
         ));
+
+        // acknowledgement
+        now += SND;
+        let packet = Control(ControlPacket {
+            timestamp: TimeStamp::MIN,
+            dest_sockid: SocketId(2),
+            control_type: Ack(Acknowledgement::Full(
+                SeqNumber(1),
+                AckStatistics {
+                    rtt: TimeSpan::ZERO,
+                    rtt_variance: TimeSpan::ZERO,
+                    buffer_available: 10000,
+                    packet_receive_rate: None,
+                    estimated_link_capacity: None,
+                    data_receive_rate: None,
+                },
+                FullAckSeqNumber::INITIAL,
+            )),
+        });
         assert_eq!(
-            connection.handle_input(now, Input::Data(None)),
-            WaitForData(101 * MILLIS)
+            connection.handle_input(now, Input::Packet(Some((packet, remote_addr())))),
+            SendPacket((
+                Control(ControlPacket {
+                    timestamp: TimeStamp::from_micros(2_000),
+                    dest_sockid: SocketId(2),
+                    control_type: Ack2(FullAckSeqNumber::INITIAL),
+                }),
+                remote_addr()
+            ))
         );
 
         // closing: drain last item in send buffer
-        now += SND;
         assert!(matches!(
             connection.handle_input(now, Input::Timer),
             SendPacket((Data(_), _))
@@ -479,11 +536,6 @@ mod duplex_connection {
     fn too_late_packet_drop() {
         let start = Instant::now();
         let mut connection = DuplexConnection::new(new_connection(start));
-
-        use crate::ControlPacket;
-        use Action::*;
-        use ControlTypes::*;
-        use Packet::*;
 
         let mut now = start;
         assert_eq!(
@@ -514,6 +566,16 @@ mod duplex_connection {
 
         // timeout
         now += TSBPD + TSBPD / 4; // TSBPD * 1.25
+        assert!(matches!(
+            connection.handle_input(now, Input::Timer),
+            SendPacket((
+                Control(ControlPacket {
+                    control_type: KeepAlive,
+                    ..
+                }),
+                _
+            ))
+        ));
         assert!(matches!(
             connection.handle_input(now, Input::Timer),
             WaitForData(_)

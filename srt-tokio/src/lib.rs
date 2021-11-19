@@ -50,13 +50,9 @@
 mod builder;
 mod multiplex;
 mod pending_connection;
-pub mod socket;
+mod socket;
+pub mod statistics;
 
 pub use crate::builder::{ConnInitMethod, SrtSocketBuilder};
 pub use crate::multiplex::{multiplex, StreamerServer};
 pub use crate::socket::SrtSocket;
-
-use srt_protocol::connection::{Connection, ConnectionSettings};
-use srt_protocol::crypto;
-use srt_protocol::packet::Packet;
-use srt_protocol::SocketId;

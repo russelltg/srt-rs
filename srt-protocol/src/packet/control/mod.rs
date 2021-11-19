@@ -1,28 +1,25 @@
+mod loss_compression;
+mod srt;
+
+pub use srt::*;
+
 use std::{
     convert::TryFrom,
     convert::TryInto,
-    fmt::{self, Debug, Formatter},
+    fmt::{self, Debug, Display, Formatter},
     iter::FromIterator,
     mem::size_of,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    ops::{Add, Range, RangeInclusive},
+    ops::{Add, Range, RangeInclusive, Sub},
 };
 
 use bitflags::bitflags;
 use bytes::{Buf, BufMut};
 use log::warn;
 
-use crate::protocol::{TimeSpan, TimeStamp};
-use crate::{MsgNumber, SeqNumber, SocketId};
+use super::*;
 
-mod loss_compression;
-mod srt;
-use self::loss_compression::{compress_loss_list, decompress_loss_list};
-pub use self::srt::*;
-
-use super::PacketParseError;
-use fmt::Display;
-use std::ops::Sub;
+use loss_compression::{compress_loss_list, decompress_loss_list};
 
 /// A UDP packet carrying control information
 ///
@@ -69,7 +66,7 @@ pub enum ControlTypes {
     KeepAlive,
 
     /// ACK packet, type 0x2
-    Ack(AckControlInfo),
+    Ack(Acknowledgement),
 
     /// NAK packet, type 0x3
     /// Additional Info isn't used
@@ -173,6 +170,25 @@ pub struct HandshakeControlInfo {
     pub info: HandshakeVsInfo,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct AckStatistics {
+    /// Round trip time
+    pub rtt: TimeSpan,
+    /// RTT variance
+    pub rtt_variance: TimeSpan,
+    /// available buffer, in packets
+    pub buffer_available: u32,
+    /// receive rate, in packets/sec
+    pub packet_receive_rate: Option<u32>,
+    /// Estimated Link capacity in packets/sec
+    pub estimated_link_capacity: Option<u32>,
+    /// Receive rate, in bytes/sec
+    pub data_receive_rate: Option<u32>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Copy, Ord, PartialOrd)]
+pub struct FullAckSeqNumber(u32);
+
 /// Data included in a ACK packet. [spec](https://datatracker.ietf.org/doc/html/draft-sharabayko-mops-srt-00#section-3.2.3)
 ///
 /// There are three types of ACK packets:
@@ -183,38 +199,15 @@ pub struct HandshakeControlInfo {
 /// However, these aren't necessarily clean categories--there may be some
 /// amount of overlap so full acks are allowed to have no extra info and short acks
 /// are allowed to have all the info
+///
+/// SeqNumber is the packet sequence number that all packets have been received until (excluding)
+///
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum AckControlInfo {
-    FullSmall {
-        /// The packet sequence number that all packets have been recieved until (excluding)
-        ack_number: SeqNumber,
-
-        /// Round trip time
-        rtt: TimeSpan,
-
-        /// RTT variance
-        rtt_variance: TimeSpan,
-
-        /// available buffer, in packets
-        buffer_available: u32,
-
-        /// receive rate, in packets/sec
-        packet_recv_rate: Option<u32>,
-
-        /// Estimated Link capacity in packets/sec
-        est_link_cap: Option<u32>,
-
-        /// Receive rate, in bytes/sec
-        data_recv_rate: Option<u32>,
-
-        /// Some for full ack, none otherwise
-        full_ack_seq_number: Option<FullAckSeqNumber>,
-    },
+pub enum Acknowledgement {
     Lite(SeqNumber),
+    Small(SeqNumber, AckStatistics),
+    Full(SeqNumber, AckStatistics, FullAckSeqNumber),
 }
-
-#[derive(Clone, PartialEq, Eq, Debug, Copy, Ord, PartialOrd)]
-pub struct FullAckSeqNumber(u32);
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct CompressedLossList(Vec<u32>);
@@ -363,10 +356,10 @@ impl HandshakeVsInfo {
                 (u32::from(hs.crypto_size) >> 3 << 16)
                     // when this is an induction packet, includ the magic code instead of flags
                     | if shake_type == ShakeType::Induction {
-                        u32::from(SRT_MAGIC_CODE)
-                    } else {
-                        u32::from(flags.bits())
-                    }
+                    u32::from(SRT_MAGIC_CODE)
+                } else {
+                    u32::from(flags.bits())
+                }
             }
         }
     }
@@ -670,32 +663,36 @@ impl ControlTypes {
                 let ack_number = SeqNumber::new_truncate(buf.get_u32());
                 let full_ack_seq_number = FullAckSeqNumber::new(extra_info);
 
-                // short/full
-                if buf.remaining() >= 3 * size_of::<u32>() {
+                let ack = if buf.remaining() < 3 * size_of::<u32>() {
+                    Acknowledgement::Lite(ack_number)
+                } else {
+                    // short/full
                     let rtt = TimeSpan::from_micros(buf.get_i32());
                     let rtt_variance = TimeSpan::from_micros(buf.get_i32());
                     let buffer_available = buf.get_u32();
 
-                    let packet_recv_rate =
+                    let packet_receive_rate =
                         (buf.remaining() >= size_of::<u32>()).then(|| buf.get_u32());
-                    let est_link_cap = (buf.remaining() >= size_of::<u32>()).then(|| buf.get_u32());
-                    let data_recv_rate =
+                    let estimated_link_capacity =
+                        (buf.remaining() >= size_of::<u32>()).then(|| buf.get_u32());
+                    let data_receive_rate =
                         (buf.remaining() >= size_of::<u32>()).then(|| buf.get_u32());
 
-                    Ok(ControlTypes::Ack(AckControlInfo::FullSmall {
-                        ack_number,
+                    let stats = AckStatistics {
                         rtt,
                         rtt_variance,
                         buffer_available,
-                        packet_recv_rate,
-                        est_link_cap,
-                        data_recv_rate,
-                        full_ack_seq_number,
-                    }))
-                } else {
-                    // lite ack
-                    Ok(ControlTypes::Ack(AckControlInfo::Lite(ack_number)))
-                }
+                        packet_receive_rate,
+                        estimated_link_capacity,
+                        data_receive_rate,
+                    };
+
+                    match full_ack_seq_number {
+                        None => Acknowledgement::Small(ack_number, stats),
+                        Some(full_ack) => Acknowledgement::Full(ack_number, stats, full_ack),
+                    }
+                };
+                Ok(ControlTypes::Ack(ack))
             }
             0x3 => {
                 // NAK
@@ -780,11 +777,9 @@ impl ControlTypes {
         match self {
             // These types have additional info
             ControlTypes::DropRequest { msg_to_drop: a, .. } => a.as_raw(),
-            ControlTypes::Ack2(a)
-            | ControlTypes::Ack(AckControlInfo::FullSmall {
-                full_ack_seq_number: Some(a),
-                ..
-            }) => (*a).into(),
+            ControlTypes::Ack2(a) | ControlTypes::Ack(Acknowledgement::Full(_, _, a)) => {
+                (*a).into()
+            }
             ControlTypes::PeerError(err) => *err,
             // These do not, just use zero
             ControlTypes::Ack(_)
@@ -848,35 +843,25 @@ impl ControlTypes {
                     }
                 }
             }
-            ControlTypes::Ack(AckControlInfo::FullSmall {
-                ack_number,
-                rtt,
-                rtt_variance,
-                buffer_available,
-                packet_recv_rate,
-                est_link_cap,
-                data_recv_rate,
-                full_ack_seq_number: _,
-            }) => {
-                into.put_u32(ack_number.as_raw());
-                into.put_i32(rtt.as_micros());
-                into.put_i32(rtt_variance.as_micros());
-                into.put_u32(*buffer_available);
+            ControlTypes::Ack(ack) => {
+                into.put_u32(ack.ack_number().as_raw());
+                if let Some(stats) = ack.statistics() {
+                    into.put_i32(stats.rtt.as_micros());
+                    into.put_i32(stats.rtt_variance.as_micros());
+                    into.put_u32(stats.buffer_available);
 
-                // Make sure fields are always in the right order
-                // Would rather not transmit than transmit incorrectly
-                if let Some(prr) = packet_recv_rate {
-                    into.put_u32(*prr);
-                    if let Some(elc) = est_link_cap {
-                        into.put_u32(*elc);
-                        if let Some(drr) = data_recv_rate {
-                            into.put_u32(*drr);
+                    // Make sure fields are always in the right order
+                    // Would rather not transmit than transmit incorrectly
+                    if let Some(prr) = stats.packet_receive_rate {
+                        into.put_u32(prr);
+                        if let Some(elc) = stats.estimated_link_capacity {
+                            into.put_u32(elc);
+                            if let Some(drr) = stats.data_receive_rate {
+                                into.put_u32(drr);
+                            }
                         }
                     }
                 }
-            }
-            ControlTypes::Ack(AckControlInfo::Lite(ack_no)) => {
-                into.put_u32(ack_no.as_raw());
             }
             ControlTypes::Nak(ref n) => {
                 for loss in n.iter_compressed() {
@@ -1034,12 +1019,26 @@ impl Sub<FullAckSeqNumber> for FullAckSeqNumber {
     }
 }
 
-impl AckControlInfo {
+impl Acknowledgement {
     pub fn ack_number(&self) -> SeqNumber {
         match self {
-            AckControlInfo::FullSmall { ack_number, .. } | AckControlInfo::Lite(ack_number) => {
-                *ack_number
-            }
+            Acknowledgement::Lite(seq_number)
+            | Acknowledgement::Small(seq_number, _)
+            | Acknowledgement::Full(seq_number, _, _) => *seq_number,
+        }
+    }
+
+    pub fn full_ack_seq_number(&self) -> Option<FullAckSeqNumber> {
+        match self {
+            Acknowledgement::Full(_, _, full_ack_seq_number) => Some(*full_ack_seq_number),
+            Acknowledgement::Lite(_) | Acknowledgement::Small(_, _) => None,
+        }
+    }
+
+    pub fn statistics(&self) -> Option<&AckStatistics> {
+        match self {
+            Acknowledgement::Small(_, stats) | Acknowledgement::Full(_, stats, _) => Some(stats),
+            Acknowledgement::Lite(_) => None,
         }
     }
 }
@@ -1253,37 +1252,36 @@ impl From<ServerRejectReason> for i32 {
 impl Display for ServerRejectReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-                ServerRejectReason::Fallback =>
-                    write!(f, "the application wants to report some problem, but can't precisely specify it"),
-                ServerRejectReason::KeyNotSup =>
-                    write!(f, "The key used in the StreamID keyed string is not supported by the service"),
-                ServerRejectReason::Filepath =>write!(f, "The resource type designates a file and the path is either wrong syntax or not found"),
-                ServerRejectReason::HostNotFound => write!(f, "The `h` host specification was not recognized by the service"),
-                ServerRejectReason::BadRequest => write!(f, "General syntax error in the SocketID specification (also a fallback code for undefined cases)"),
-                ServerRejectReason::Unauthorized => write!(f, "Authentication failed, provided that the user was correctly identified and access to the required resource would be granted"),
-                ServerRejectReason::Overload => write!(f, "The server is too heavily loaded, or you have exceeded credits for accessing the service and the resource"),
-                ServerRejectReason::Forbidden => write!(f, "Access denied to the resource by any kind of reason"),
-                ServerRejectReason::Notfound => write!(f, "Resource not found at this time"),
-                ServerRejectReason::BadMode => write!(f, "The mode specified in `m` key in StreamID is not supported for this request"),
-                ServerRejectReason::Unacceptable => write!(f, "The requested parameters specified in SocketID cannot be satisfied for the requested resource. Also when m=publish and the data format is not acceptable"),
-                ServerRejectReason::Conflict => write!(f, "The resource being accessed is already locked for modification. This is in case of m=publish and the specified resource is currently read-only"),
-                ServerRejectReason::NotSupMedia => write!(f, "The media type is not supported by the application. This is the `t` key that specifies the media type as stream, file and auth, possibly extended by the application"),
-                ServerRejectReason::Locked => write!(f, "The resource being accessed is locked for any access"),
-                ServerRejectReason::FailedDepend => write!(f, "The request failed because it specified a dependent session ID that has been disconnected"),
-                ServerRejectReason::InternalServerError => write!(f, "Unexpected internal server error"),
-                ServerRejectReason::Unimplemented => write!(f, "The request was recognized, but the current version doesn't support it (unimplemented)"),
-                ServerRejectReason::Gateway => write!(f, "The server acts as a gateway and the target endpoint rejected the connection"),
-                ServerRejectReason::Down => write!(f, "The service has been temporarily taken over by a stub reporting this error. The real service can be down for maintenance or crashed"),
-                ServerRejectReason::Version => write!(f, "SRT version not supported. This might be either unsupported backward compatibility, or an upper value of a version"),
-                ServerRejectReason::NoRoom => write!(f, "The data stream cannot be archived due to lacking storage space. This is in case when the request type was to send a file or the live stream to be archived"),
-            }
+            ServerRejectReason::Fallback =>
+                write!(f, "the application wants to report some problem, but can't precisely specify it"),
+            ServerRejectReason::KeyNotSup =>
+                write!(f, "The key used in the StreamID keyed string is not supported by the service"),
+            ServerRejectReason::Filepath =>write!(f, "The resource type designates a file and the path is either wrong syntax or not found"),
+            ServerRejectReason::HostNotFound => write!(f, "The `h` host specification was not recognized by the service"),
+            ServerRejectReason::BadRequest => write!(f, "General syntax error in the SocketID specification (also a fallback code for undefined cases)"),
+            ServerRejectReason::Unauthorized => write!(f, "Authentication failed, provided that the user was correctly identified and access to the required resource would be granted"),
+            ServerRejectReason::Overload => write!(f, "The server is too heavily loaded, or you have exceeded credits for accessing the service and the resource"),
+            ServerRejectReason::Forbidden => write!(f, "Access denied to the resource by any kind of reason"),
+            ServerRejectReason::Notfound => write!(f, "Resource not found at this time"),
+            ServerRejectReason::BadMode => write!(f, "The mode specified in `m` key in StreamID is not supported for this request"),
+            ServerRejectReason::Unacceptable => write!(f, "The requested parameters specified in SocketID cannot be satisfied for the requested resource. Also when m=publish and the data format is not acceptable"),
+            ServerRejectReason::Conflict => write!(f, "The resource being accessed is already locked for modification. This is in case of m=publish and the specified resource is currently read-only"),
+            ServerRejectReason::NotSupMedia => write!(f, "The media type is not supported by the application. This is the `t` key that specifies the media type as stream, file and auth, possibly extended by the application"),
+            ServerRejectReason::Locked => write!(f, "The resource being accessed is locked for any access"),
+            ServerRejectReason::FailedDepend => write!(f, "The request failed because it specified a dependent session ID that has been disconnected"),
+            ServerRejectReason::InternalServerError => write!(f, "Unexpected internal server error"),
+            ServerRejectReason::Unimplemented => write!(f, "The request was recognized, but the current version doesn't support it (unimplemented)"),
+            ServerRejectReason::Gateway => write!(f, "The server acts as a gateway and the target endpoint rejected the connection"),
+            ServerRejectReason::Down => write!(f, "The service has been temporarily taken over by a stub reporting this error. The real service can be down for maintenance or crashed"),
+            ServerRejectReason::Version => write!(f, "SRT version not supported. This might be either unsupported backward compatibility, or an upper value of a version"),
+            ServerRejectReason::NoRoom => write!(f, "The data stream cannot be archived due to lacking storage space. This is in case when the request type was to send a file or the live stream to be archived"),
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{SeqNumber, SocketId, SrtVersion};
     use std::{array::IntoIter, time::Duration};
     use std::{convert::TryInto, io::Cursor};
 
@@ -1304,7 +1302,7 @@ mod test {
         ser_des_test(ControlPacket {
             timestamp: TimeStamp::from_micros(1234),
             dest_sockid: SocketId(0),
-            control_type: ControlTypes::Ack(AckControlInfo::Lite(SeqNumber::new_truncate(1234))),
+            control_type: ControlTypes::Ack(Acknowledgement::Lite(SeqNumber::new_truncate(1234))),
         });
     }
 
@@ -1342,16 +1340,18 @@ mod test {
         ser_des_test(ControlPacket {
             timestamp: TimeStamp::from_micros(113_703),
             dest_sockid: SocketId(2_453_706_529),
-            control_type: ControlTypes::Ack(AckControlInfo::FullSmall {
-                ack_number: SeqNumber::new_truncate(282_049_186),
-                rtt: TimeSpan::from_micros(10_002),
-                rtt_variance: TimeSpan::from_micros(1000),
-                buffer_available: 1314,
-                full_ack_seq_number: FullAckSeqNumber::new(1),
-                packet_recv_rate: Some(0),
-                est_link_cap: Some(0),
-                data_recv_rate: Some(0),
-            }),
+            control_type: ControlTypes::Ack(Acknowledgement::Full(
+                SeqNumber::new_truncate(282_049_186),
+                AckStatistics {
+                    rtt: TimeSpan::from_micros(10_002),
+                    rtt_variance: TimeSpan::from_micros(1000),
+                    buffer_available: 1314,
+                    packet_receive_rate: Some(0),
+                    estimated_link_capacity: Some(0),
+                    data_receive_rate: Some(0),
+                },
+                FullAckSeqNumber::new(1).unwrap(),
+            )),
         });
     }
 
@@ -1753,7 +1753,7 @@ mod test {
                         wrapped_keys: hex::decode(
                             "4631aef7ac0b8a46b77b8c0b97d4061e565dcb86e4c5cc3701e1f992a5b2de3651c937c94f3333a6"
                         )
-                        .unwrap()
+                            .unwrap()
                     })),
                     ext_group: None,
                     sid: Some("#!::u=hex".into()),

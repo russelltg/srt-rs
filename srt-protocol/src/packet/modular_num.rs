@@ -20,6 +20,7 @@ macro_rules! modular_num {
         $crate::modular_num_impls!((), $x, $type, $num);
     };
 }
+pub use modular_num;
 
 #[doc(hidden)]
 #[macro_export]
@@ -36,9 +37,9 @@ macro_rules! modular_num_impls {
             pub fn new_truncate(from: $type) -> $x {
                 $x(from % $x::MAX)
             }
-            pub fn new(from: $type) -> Result<$x, $crate::modular_num::OutOfRangeError> {
+            pub fn new(from: $type) -> Result<$x, $crate::packet::modular_num::OutOfRangeError> {
                 if from > $x::MAX {
-                    Err($crate::modular_num::OutOfRangeError(stringify!($x)))
+                    Err($crate::packet::modular_num::OutOfRangeError(stringify!($x)))
                 } else {
                     Ok($x(from))
                 }
@@ -50,7 +51,7 @@ macro_rules! modular_num_impls {
         }
 
         impl ::std::convert::TryFrom<$type> for $x {
-            type Error = $crate::modular_num::OutOfRangeError;
+            type Error = $crate::packet::modular_num::OutOfRangeError;
 
             fn try_from(from: $type) -> Result<Self, Self::Error> {
                 $x::new(from)
@@ -155,6 +156,7 @@ macro_rules! modular_num_impls {
         }
     };
 }
+pub use modular_num_impls;
 
 #[cfg(test)]
 mod tests {
