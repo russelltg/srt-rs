@@ -1,9 +1,11 @@
-use crate::crypto::CryptoManager;
-use crate::packet::DataEncryption;
-use crate::DataPacket;
 use bytes::BytesMut;
 
-#[derive(Debug)]
+use crate::{
+    packet::{DataEncryption, DataPacket},
+    protocol::crypto::CryptoManager,
+};
+
+#[derive(Debug, Eq, PartialEq)]
 pub enum DecryptionError {
     UnexpectedUnencryptedPacket(DataPacket),
     UnexpectedEncryptedPacket(DataPacket),

@@ -1,32 +1,20 @@
-use aes::NewBlockCipher;
-use aes::{Aes128, Aes128Ctr, Aes192, Aes192Ctr, Aes256, Aes256Ctr};
+use fmt::Debug;
+use std::{convert::TryInto, fmt};
+
+use aes::{Aes128, Aes128Ctr, Aes192, Aes192Ctr, Aes256, Aes256Ctr, NewBlockCipher};
 use cipher::{NewCipher, StreamCipher};
 use hmac::Hmac;
 use log::info;
 use pbkdf2::pbkdf2;
+use rand::{rngs::OsRng, RngCore};
 use sha1::Sha1;
 
-use crate::{
-    packet::{
-        Auth, CipherType, CoreRejectReason, DataEncryption, KeyFlags, PacketType, SrtKeyMessage,
-    },
-    pending_connection::ConnectionReject,
-    SeqNumber,
-};
-use fmt::Debug;
-use rand::{rngs::OsRng, RngCore};
-use std::{convert::TryInto, fmt};
+use crate::{packet::*, protocol::pending_connection::ConnectionReject, settings::CryptoOptions};
 
 mod wrap;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CryptoOptions {
-    pub size: u8,
-    pub passphrase: String,
-}
-
 // i would love for this to be not clone, maybe someday
-// #[derive(Clone)]
+#[derive(Clone)]
 pub struct CryptoManager {
     options: CryptoOptions,
     salt: [u8; 16],
@@ -36,7 +24,6 @@ pub struct CryptoManager {
     odd_sek: Option<Vec<u8>>,
 }
 
-#[allow(dead_code)] // TODO: remove and flesh out this struct
 impl CryptoManager {
     pub fn new_random(options: CryptoOptions) -> Self {
         let mut salt = [0; 16];
@@ -310,9 +297,9 @@ impl Debug for CryptoManager {
 
 #[cfg(test)]
 mod test {
+    use std::convert::TryInto;
 
     use super::*;
-    use std::convert::TryInto;
 
     #[test]
     fn kek_generate() {

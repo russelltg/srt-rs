@@ -1,24 +1,24 @@
-use crate::packet::{DataEncryption, PacketLocation};
-use crate::protocol::{TimeBase, TimeStamp};
-use crate::{ConnectionSettings, DataPacket, MsgNumber, SeqNumber, SocketId};
 use bytes::Bytes;
-use std::time::Instant;
+
+use crate::{connection::ConnectionSettings, packet::*};
 
 #[derive(Debug)]
 pub struct Encapsulate {
     remote_socket_id: SocketId,
     max_packet_size: usize,
-    time_base: TimeBase,
     next_message_number: MsgNumber,
-    pub next_sequence_number: SeqNumber,
+    next_sequence_number: SeqNumber,
 }
 
 impl Encapsulate {
+    const UDP_HEADER_SIZE: u64 = 28; // 20 bytes for IPv4 header, 8 bytes for UDP header
+    const HEADER_SIZE: u64 = 16;
+    const SRT_DATA_HEADER_SIZE: u64 = Self::UDP_HEADER_SIZE + Self::HEADER_SIZE;
+
     pub fn new(settings: &ConnectionSettings) -> Self {
         Self {
             remote_socket_id: settings.remote_sockid,
             max_packet_size: settings.max_packet_size as usize,
-            time_base: TimeBase::new(settings.socket_start_time),
             next_sequence_number: settings.init_seq_num,
             next_message_number: MsgNumber::new_truncate(0),
         }
@@ -28,56 +28,57 @@ impl Encapsulate {
     /// It will be split into multiple packets
     pub fn encapsulate<PacketFn: FnMut(DataPacket)>(
         &mut self,
-        data: (Instant, Bytes),
+        timestamp: TimeStamp,
+        data: Bytes,
         mut handle_packet: PacketFn,
-    ) -> u64 {
-        let (time, mut payload) = data;
+    ) -> (u64, u64) {
+        let mut remaining = data;
         let mut location = PacketLocation::FIRST;
-        let mut packet_count = 0;
+        let mut count = 0;
+        let mut bytes = 0;
         let message_number = self.next_message_number.increment();
         loop {
-            if payload.len() > self.max_packet_size as usize {
-                let this_payload = payload.slice(0..self.max_packet_size as usize);
-                let packet = self.new_data_packet(time, message_number, this_payload, location);
+            if remaining.len() > self.max_packet_size {
+                let this_payload = remaining.slice(0..self.max_packet_size);
+                count += 1;
+                bytes += Self::SRT_DATA_HEADER_SIZE + this_payload.len() as u64;
+                let packet =
+                    self.new_data_packet(timestamp, message_number, this_payload, location);
                 handle_packet(packet);
-                payload = payload.slice(self.max_packet_size as usize..payload.len());
+                remaining = remaining.slice(self.max_packet_size..remaining.len());
                 location = PacketLocation::empty();
-                packet_count += 1;
             } else {
+                count += 1;
+                bytes += Self::SRT_DATA_HEADER_SIZE + remaining.len() as u64;
                 let packet = self.new_data_packet(
-                    time,
+                    timestamp,
                     message_number,
-                    payload,
+                    remaining,
                     location | PacketLocation::LAST,
                 );
                 handle_packet(packet);
-                return packet_count + 1;
+                return (count, bytes);
             }
         }
     }
 
     fn new_data_packet(
         &mut self,
-        time: Instant,
-        message_num: MsgNumber,
+        timestamp: TimeStamp,
+        message_number: MsgNumber,
         payload: Bytes,
-        location: PacketLocation,
+        message_loc: PacketLocation,
     ) -> DataPacket {
         DataPacket {
             dest_sockid: self.remote_socket_id,
             in_order_delivery: false, // TODO: research this
-            message_loc: location,
+            message_loc,
             encryption: DataEncryption::None,
             retransmitted: false,
-            // if this marks the beginning of the next message, get a new message number, else don't
-            message_number: message_num,
+            message_number,
             seq_number: self.next_sequence_number.increment(),
-            timestamp: self.timestamp_from(time),
+            timestamp,
             payload,
         }
-    }
-
-    pub fn timestamp_from(&self, at: Instant) -> TimeStamp {
-        self.time_base.timestamp_from(at)
     }
 }

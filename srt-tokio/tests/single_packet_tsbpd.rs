@@ -1,12 +1,12 @@
-use srt_tokio::SrtSocketBuilder;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures::prelude::*;
 use log::info;
+use srt_protocol::packet::TimeSpan;
 use tokio::time::sleep;
 
-use srt_protocol::protocol::TimeSpan;
-use std::time::{Duration, Instant};
+use srt_tokio::SrtSocketBuilder;
 
 /// Send a single packet, with a large tsbpd, then close. Make sure it gets delivered with the delay.
 #[tokio::test]

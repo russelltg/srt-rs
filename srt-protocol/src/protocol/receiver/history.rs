@@ -1,9 +1,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::packet::FullAckSeqNumber;
-use crate::protocol::TimeSpan;
-use crate::SeqNumber;
+use crate::packet::{FullAckSeqNumber, SeqNumber, TimeSpan};
 
 #[derive(Debug)]
 struct AckHistoryEntry {

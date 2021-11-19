@@ -1,4 +1,3 @@
-use crate::{crypto::CryptoOptions, packet::RejectReason};
 use std::{
     convert::TryFrom,
     error::Error,
@@ -7,6 +6,9 @@ use std::{
     net::SocketAddr,
     str::FromStr,
 };
+
+use crate::packet::RejectReason;
+use crate::settings::crypto::CryptoOptions;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct AccessControlList(pub Vec<AccessControlEntry>);

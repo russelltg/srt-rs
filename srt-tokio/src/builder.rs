@@ -1,21 +1,21 @@
-use std::{io, time::Duration};
 use std::{
+    cmp::max,
+    io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
     sync::Arc,
+    time::Duration,
 };
 
-use pending_connection::get_packet;
+use futures::{stream::unfold, Stream, StreamExt};
+use log::error;
+use srt_protocol::settings::*;
 use tokio::net::UdpSocket;
 
-use futures::{stream::unfold, Stream, StreamExt};
-
-use crate::socket::create_bidrectional_srt;
-use crate::{crypto::CryptoOptions, multiplex, pending_connection, SrtSocket};
-use log::error;
-use srt_protocol::{
-    accesscontrol::{AllowAllStreamAcceptor, StreamAcceptor},
-    pending_connection::ConnInitSettings,
-    LiveBandwidthMode,
+use crate::{
+    multiplex,
+    pending_connection::{self, get_packet},
+    socket::create_bidrectional_srt,
+    SrtSocket,
 };
 
 /// Struct to build sockets.
@@ -190,6 +190,11 @@ impl SrtSocketBuilder {
 
     pub fn bandwidth(mut self, bandwidth: LiveBandwidthMode) -> Self {
         self.init_settings.bandwidth = bandwidth;
+        self
+    }
+
+    pub fn statistics_interval(mut self, interval: Duration) -> Self {
+        self.init_settings.statistics_interval = max(interval, Duration::from_millis(200));
         self
     }
 

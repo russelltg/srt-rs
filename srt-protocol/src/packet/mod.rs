@@ -1,20 +1,28 @@
 // Packet structures
 // see https://tools.ietf.org/html/draft-gg-udt-03#page-5
 
+mod control;
+mod data;
+mod error;
+mod modular_num;
+mod msg_number;
+mod seq_number;
+mod socket_id;
+mod srt_version;
+mod time;
+
+pub use control::*;
+pub use data::*;
+pub use error::*;
+pub use msg_number::*;
+pub use seq_number::*;
+pub use socket_id::*;
+pub use srt_version::*;
+pub use time::*;
+
 use std::fmt::{self, Debug, Formatter};
 
 use bytes::{Buf, BufMut};
-
-pub(crate) mod control;
-mod data;
-mod error;
-
-pub use self::control::*;
-pub use self::data::*;
-pub use error::PacketParseError;
-
-use crate::protocol::TimeStamp;
-use crate::SocketId;
 
 /// Represents A UDT/SRT packet
 #[derive(Clone, PartialEq, Eq)]

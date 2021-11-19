@@ -1,16 +1,20 @@
-use log::{error, warn};
-use rand::distributions::Bernoulli;
-use rand::prelude::*;
-use rand_distr::Normal;
-use srt_protocol::connection::{DuplexConnection, Input};
-use srt_protocol::protocol::handshake::Handshake;
-use srt_protocol::{Connection, ConnectionSettings, LiveBandwidthMode, Packet};
 use std::{
     cmp::max,
     collections::BinaryHeap,
     convert::TryFrom,
     net::SocketAddr,
     time::{Duration, Instant},
+};
+
+use log::{error, warn};
+use rand::{distributions::Bernoulli, prelude::*};
+use rand_distr::Normal;
+
+use srt_protocol::{
+    connection::{Connection, ConnectionSettings, DuplexConnection, Input},
+    packet::*,
+    protocol::handshake::Handshake,
+    settings::*,
 };
 
 #[derive(Eq, PartialEq)]
@@ -201,6 +205,7 @@ impl RandomLossSimulation {
             stream_id: None,
             bandwidth: LiveBandwidthMode::default(),
             recv_buffer_size: 8192,
+            statistics_interval: Duration::from_secs(1),
         }
     }
 }
