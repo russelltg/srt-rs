@@ -21,6 +21,12 @@ fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
     })
 }
 
+#[allow(clippy::large_enum_variant)]
+enum Select {
+    Message((Instant, Bytes)),
+    Statistics(SocketStatistics),
+}
+
 #[tokio::test]
 async fn high_bandwidth() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
@@ -58,11 +64,6 @@ async fn high_bandwidth() -> Result<(), Error> {
         let mut window = VecDeque::new();
         let mut bytes_received = 0;
         let window_size = Duration::from_secs(1);
-
-        enum Select {
-            Message((Instant, Bytes)),
-            Statistics(SocketStatistics),
-        };
 
         loop {
             use Select::*;
