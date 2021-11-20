@@ -23,7 +23,7 @@ use crate::{
     statistics::SocketStatistics,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Connection {
     pub settings: ConnectionSettings,
     pub handshake: Handshake,

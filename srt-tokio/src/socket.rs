@@ -54,7 +54,7 @@ pub fn create_bidrectional_srt(
     let (output_data_sender, output_data_receiver) = mpsc::channel(128);
     let (input_data_sender, input_data_receiver) = mpsc::channel(128);
     let (statistics_sender, statistics_receiver) = watch::channel(SocketStatistics::new());
-    let conn_copy = conn.clone();
+    let settings = conn.settings.clone();
     tokio::spawn(async move {
         // Using run_input_loop breaks a couple of the stransmit_interop tests.
         // Both stransmit_decrypt and stransmit_server run indefinitely. For now,
@@ -67,7 +67,7 @@ pub fn create_bidrectional_srt(
                 statistics_sender,
                 output_data_sender,
                 input_data_receiver,
-                conn_copy,
+                conn,
             )
             .await;
         } else {
@@ -77,7 +77,7 @@ pub fn create_bidrectional_srt(
                 statistics_sender,
                 output_data_sender,
                 input_data_receiver,
-                conn_copy,
+                conn,
             )
             .await;
         }
@@ -87,7 +87,7 @@ pub fn create_bidrectional_srt(
         statistics: SrtSocketStatistics::new(statistics_receiver),
         output_data: output_data_receiver,
         input_data: input_data_sender,
-        settings: conn.settings,
+        settings,
     }
 }
 
