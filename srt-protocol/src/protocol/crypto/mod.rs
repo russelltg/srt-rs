@@ -32,10 +32,11 @@ impl CryptoManager {
         let mut even_key = vec![0; usize::from(options.size)];
         OsRng.fill_bytes(&mut even_key[..]);
 
+        // TODO: should this generate both??
         // let mut odd_key = vec![0; usize::from(options.size)];
         // rand_bytes(&mut odd_key[..]).unwrap();
 
-        Self::new(options, &salt, Some(even_key), None) // TODO: should this generate both??
+        Self::new(options, &salt, Some(even_key), None)
     }
 
     pub fn new_from_kmreq(
@@ -194,8 +195,6 @@ impl CryptoManager {
     }
 
     fn get_key(&self, enc: DataEncryption) -> &[u8] {
-        dbg!(&self.even_sek, &self.odd_sek);
-
         if enc == DataEncryption::Even {
             &self.even_sek
         } else {
