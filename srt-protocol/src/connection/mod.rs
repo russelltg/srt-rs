@@ -352,6 +352,7 @@ impl DuplexConnection {
         use self::SrtControlPacket::*;
         match pack {
             HandshakeRequest(_) | HandshakeResponse(_) => self.warn("handshake", now, &pack),
+            KeyManagerRequest(km) => self.receiver().handle_rekey(now, km),
             _ => unimplemented!(),
         }
     }

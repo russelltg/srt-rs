@@ -6,6 +6,7 @@ mod time;
 use std::{ops::RangeInclusive, time::Instant};
 
 use arq::AutomaticRepeatRequestAlgorithm;
+use log::debug;
 
 use crate::{
     connection::ConnectionSettings,
@@ -184,6 +185,16 @@ impl<'a> ReceiverContext<'a> {
         if dropped > 0 {
             //self.warn("packets dropped", now, &(dropped, drop));
             self.statistics.rx_dropped_data += dropped;
+        }
+    }
+
+    pub fn handle_rekey(&mut self, now: Instant, km: SrtKeyMessage) {
+        if let Some(kmresp) = self.receiver.cipher.rekey(km) {
+            debug!("Rekey-complete");
+            self.output.send_control(
+                now,
+                ControlTypes::Srt(SrtControlPacket::KeyManagerResponse(kmresp)),
+            )
         }
     }
 

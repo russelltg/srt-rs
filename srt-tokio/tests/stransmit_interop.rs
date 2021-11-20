@@ -318,6 +318,40 @@ async fn stransmit_decrypt() -> Result<(), Error> {
     Ok(())
 }
 
+#[tokio::test]
+async fn stransmit_encrypt_rekey() -> Result<(), Error> {
+    let _ = pretty_env_logger::try_init();
+
+    const PACKETS: u32 = 1_000;
+
+    let mut child = allow_not_found!(Command::new("srt-live-transmit")
+        .arg("udp://:2011")
+        .arg("srt://:2012?passphrase=password123&pbkeylen=16&kmrefreshrate=128&kmpreannounce=60")
+        .arg("-a:no")
+        .arg("-loglevel:debug")
+        .spawn());
+
+    let recvr_fut = async move {
+        let recv = SrtSocketBuilder::new_connect("127.0.0.1:2012")
+            .crypto(16, "password123")
+            .connect()
+            .await
+            .unwrap();
+
+        try_join(
+            receiver(PACKETS, recv.map(|f| f.unwrap().1)),
+            udp_sender(PACKETS, 2011),
+        )
+        .await
+        .unwrap();
+    };
+
+    recvr_fut.await;
+    child.wait().unwrap();
+
+    Ok(())
+}
+
 // reported by @ian-spoonradio
 #[tokio::test]
 #[cfg(not(target_os = "windows"))]
