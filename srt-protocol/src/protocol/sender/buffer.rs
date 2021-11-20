@@ -470,7 +470,7 @@ mod test {
             max_flow_size: 8192,
             send_tsbpd_latency: TSBPD,
             recv_tsbpd_latency: TSBPD,
-            crypto_manager: None,
+            cipher: None,
             stream_id: None,
             bandwidth: LiveBandwidthMode::default(),
             recv_buffer_size: 8196,

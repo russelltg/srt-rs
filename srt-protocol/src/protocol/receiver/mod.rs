@@ -6,7 +6,6 @@ mod time;
 use std::{ops::RangeInclusive, time::Instant};
 
 use arq::AutomaticRepeatRequestAlgorithm;
-use log::debug;
 
 use crate::{
     connection::ConnectionSettings,
@@ -60,7 +59,6 @@ pub enum DataPacketAction {
 #[derive(Debug)]
 pub struct Receiver {
     pub arq: AutomaticRepeatRequestAlgorithm,
-    pub cipher: Cipher,
 }
 
 impl Receiver {
@@ -72,7 +70,6 @@ impl Receiver {
 impl Receiver {
     pub fn new(settings: ConnectionSettings) -> Self {
         Receiver {
-            cipher: Cipher::new(settings.crypto_manager),
             arq: AutomaticRepeatRequestAlgorithm::new(
                 settings.socket_start_time,
                 settings.recv_tsbpd_latency,
@@ -87,6 +84,7 @@ pub struct ReceiverContext<'a> {
     timers: &'a mut Timers,
     output: &'a mut Output,
     statistics: &'a mut SocketStatistics,
+    cipher: &'a mut Cipher,
     receiver: &'a mut Receiver,
 }
 
@@ -95,12 +93,14 @@ impl<'a> ReceiverContext<'a> {
         timers: &'a mut Timers,
         output: &'a mut Output,
         statistics: &'a mut SocketStatistics,
+        cipher: &'a mut Cipher,
         receiver: &'a mut Receiver,
     ) -> Self {
         Self {
             timers,
             statistics,
             output,
+            cipher,
             receiver,
         }
     }
@@ -120,11 +120,15 @@ impl<'a> ReceiverContext<'a> {
         self.statistics.rx_bytes += bytes;
 
         let data = self
-            .receiver
             .cipher
             .decrypt(data)
             .map_err(DataPacketError::DecryptionError)
-            .and_then(|data| self.receiver.arq.handle_data_packet(now, data));
+            .and_then(|(decrypted_bytes, data)| {
+                if decrypted_bytes > 0 {
+                    self.statistics.rx_decrypted_data += 1;
+                }
+                self.receiver.arq.handle_data_packet(now, data)
+            });
 
         match data {
             Ok(action) => {
@@ -185,16 +189,6 @@ impl<'a> ReceiverContext<'a> {
         if dropped > 0 {
             //self.warn("packets dropped", now, &(dropped, drop));
             self.statistics.rx_dropped_data += dropped;
-        }
-    }
-
-    pub fn handle_rekey(&mut self, now: Instant, km: SrtKeyMessage) {
-        if let Some(kmresp) = self.receiver.cipher.rekey(km) {
-            debug!("Rekey-complete");
-            self.output.send_control(
-                now,
-                ControlTypes::Srt(SrtControlPacket::KeyManagerResponse(kmresp)),
-            )
         }
     }
 

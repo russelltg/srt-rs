@@ -1,11 +1,11 @@
 mod accesscontrol;
 mod bandwidth;
 mod connection;
-mod crypto;
+mod encryption;
 
 pub use accesscontrol::*;
 pub use bandwidth::*;
 pub use connection::*;
-pub use crypto::*;
+pub use encryption::*;
 
 pub use crate::packet::SocketId;

@@ -1,4 +1,3 @@
-pub mod crypto;
 pub mod encryption;
 pub mod handshake;
 pub mod output;

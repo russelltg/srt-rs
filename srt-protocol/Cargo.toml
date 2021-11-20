@@ -24,10 +24,10 @@ bitflags = "1"
 arraydeque = "0.4.5"
 array-init = "2.0.0"
 take-until = "0.1.0"
+hex = "0.4"
 
 [dev-dependencies]
 proptest = "1.0"
-hex = "0.4"
 rand_distr = "0.4"
 pretty_env_logger = { version = "0.4", default-features = false }
 

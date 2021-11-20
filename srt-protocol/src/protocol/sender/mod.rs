@@ -25,7 +25,6 @@ use encapsulate::Encapsulate;
 pub struct Sender {
     time_base: TimeBase,
     encapsulate: Encapsulate,
-    encrypt: Cipher,
     send_buffer: SendBuffer,
     congestion_control: SenderCongestionControl,
 }
@@ -35,7 +34,6 @@ impl Sender {
         Self {
             time_base: TimeBase::new(settings.socket_start_time),
             encapsulate: Encapsulate::new(&settings),
-            encrypt: Cipher::new(settings.crypto_manager.clone()),
             send_buffer: SendBuffer::new(&settings),
             congestion_control: SenderCongestionControl::new(settings.bandwidth.clone()),
         }
@@ -55,6 +53,7 @@ pub struct SenderContext<'a> {
     timers: &'a mut Timers,
     output: &'a mut Output,
     statistics: &'a mut SocketStatistics,
+    cipher: &'a mut Cipher,
     sender: &'a mut Sender,
 }
 
@@ -64,6 +63,7 @@ impl<'a> SenderContext<'a> {
         timers: &'a mut Timers,
         output: &'a mut Output,
         statistics: &'a mut SocketStatistics,
+        cipher: &'a mut Cipher,
         sender: &'a mut Sender,
     ) -> Self {
         Self {
@@ -71,6 +71,7 @@ impl<'a> SenderContext<'a> {
             timers,
             output,
             statistics,
+            cipher,
             sender,
         }
     }
@@ -80,10 +81,22 @@ impl<'a> SenderContext<'a> {
         let ts = self.sender.time_base.timestamp_from(time);
         let encapsulate = &mut self.sender.encapsulate;
         let buffer = &mut self.sender.send_buffer;
-        let encrypt = &mut self.sender.encrypt;
+        let cipher = &mut self.cipher;
+        let statistics = &mut self.statistics;
+        let output = &mut self.output;
         let (packets, bytes) = encapsulate.encapsulate(ts, data, |packet| {
-            let (packet, _) = encrypt.encrypt(packet);
-            buffer.push_data(packet);
+            if let Some((bytes_encrypted, packet, key_refresh_request)) = cipher.encrypt(packet) {
+                if bytes_encrypted > 0 {
+                    statistics.tx_encrypted_data += 1;
+                }
+                buffer.push_data(packet);
+
+                if let Some(key_refresh_request) =
+                    key_refresh_request.map(ControlTypes::new_key_refresh_request)
+                {
+                    output.send_control(now, key_refresh_request);
+                }
+            }
         });
         let snd_period = self.sender.congestion_control.on_input(now, packets, bytes);
         if let Some(snd_period) = snd_period {

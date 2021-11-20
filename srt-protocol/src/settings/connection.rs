@@ -7,7 +7,7 @@ use super::*;
 #[derive(Debug, Clone)]
 pub struct ConnInitSettings {
     pub local_sockid: SocketId,
-    pub crypto: Option<CryptoOptions>,
+    pub key_settings: Option<KeySettings>,
     pub send_latency: Duration,
     pub recv_latency: Duration,
     pub bandwidth: LiveBandwidthMode,
@@ -20,7 +20,7 @@ pub struct ConnInitSettings {
 impl Default for ConnInitSettings {
     fn default() -> Self {
         ConnInitSettings {
-            crypto: None,
+            key_settings: None,
             send_latency: Duration::from_millis(50),
             recv_latency: Duration::from_micros(50),
             local_sockid: random(),
@@ -34,7 +34,7 @@ impl Default for ConnInitSettings {
 impl ConnInitSettings {
     pub fn copy_randomize(&self) -> ConnInitSettings {
         ConnInitSettings {
-            crypto: self.crypto.clone(),
+            key_settings: self.key_settings.clone(),
             send_latency: self.send_latency,
             recv_latency: self.recv_latency,
             local_sockid: random(),

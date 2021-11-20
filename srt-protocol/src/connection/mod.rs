@@ -12,14 +12,14 @@ use bytes::Bytes;
 use crate::{
     packet::*,
     protocol::{
-        crypto::CryptoManager,
+        encryption::Cipher,
         handshake::Handshake,
         output::Output,
         receiver::{Receiver, ReceiverContext},
         sender::{Sender, SenderContext},
         time::Timers,
     },
-    settings::LiveBandwidthMode,
+    settings::{CipherSettings, LiveBandwidthMode},
     statistics::SocketStatistics,
 };
 
@@ -62,10 +62,7 @@ pub struct ConnectionSettings {
 
     /// Size of the receive buffer, in packets
     pub recv_buffer_size: usize,
-
-    // if this stream is encrypted, it needs a crypto manager
-    pub crypto_manager: Option<CryptoManager>,
-
+    pub cipher: Option<CipherSettings>,
     pub stream_id: Option<String>,
     pub bandwidth: LiveBandwidthMode,
     pub statistics_interval: Duration,
@@ -77,6 +74,7 @@ pub struct DuplexConnection {
     timers: Timers,
     handshake: Handshake,
     output: Output,
+    cipher: Cipher,
     sender: Sender,
     receiver: Receiver,
     statistics: SocketStatistics,
@@ -109,19 +107,19 @@ impl DuplexConnection {
         let settings = connection.settings;
         DuplexConnection {
             settings: settings.clone(),
-            timers: Timers::new(settings.socket_start_time, settings.statistics_interval),
             handshake: connection.handshake,
             output: Output::new(&settings),
-
             status: ConnectionStatus::new(settings.send_tsbpd_latency),
+            timers: Timers::new(settings.socket_start_time, settings.statistics_interval),
             statistics: SocketStatistics::new(),
+            cipher: Cipher::new(settings.cipher.clone()),
             receiver: Receiver::new(settings.clone()),
             sender: Sender::new(settings),
         }
     }
 
     pub fn handle_input(&mut self, now: Instant, input: Input) -> Action {
-        self.debug("input", now, &input);
+        self.debug("input", &input);
 
         match input {
             Input::Data(data) => self.handle_data_input(now, data),
@@ -141,7 +139,7 @@ impl DuplexConnection {
             Action::WaitForData(self.next_timer(now) - now)
         };
 
-        self.debug("action", now, &action);
+        self.debug("action", &action);
         action
     }
 
@@ -177,7 +175,7 @@ impl DuplexConnection {
                     _ => {}
                 },
             }
-            self.debug("send", now, &p);
+            self.debug("send", &p);
             (p, self.settings.remote)
         })
     }
@@ -185,11 +183,11 @@ impl DuplexConnection {
     pub fn next_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
         match self.receiver.arq.pop_next_message(now) {
             Ok(Some(data)) => {
-                self.debug("output", now, &data);
+                self.debug("output", &data);
                 Some(data)
             }
             Err(error) => {
-                self.warn("output", now, &error);
+                self.warn("output", &error);
                 let dropped = error.too_late_packets.end - error.too_late_packets.start;
                 self.statistics.rx_dropped_data += dropped as u64;
                 None
@@ -259,7 +257,7 @@ impl DuplexConnection {
     }
 
     pub fn handle_data_input(&mut self, now: Instant, data: Option<(Instant, Bytes)>) {
-        self.debug("input", now, &data);
+        self.debug("input", &data);
         match data {
             Some(item) => {
                 self.sender().handle_data(now, item);
@@ -271,7 +269,7 @@ impl DuplexConnection {
     }
 
     pub fn handle_packet_input(&mut self, now: Instant, packet: Option<(Packet, SocketAddr)>) {
-        self.debug("packet", now, &packet);
+        self.debug("packet", &packet);
         match packet {
             Some(packet) => self.handle_packet(now, packet),
             None => self.handle_socket_close(now),
@@ -279,12 +277,12 @@ impl DuplexConnection {
     }
 
     fn handle_data_stream_close(&mut self, now: Instant) {
-        self.debug("closed data", now, &());
+        self.debug("closed data", &());
         self.status.on_data_stream_closed(now);
     }
 
     fn handle_socket_close(&mut self, now: Instant) {
-        self.warn("closed socket", now, &());
+        self.warn("closed socket", &());
         self.status.on_socket_closed(now);
     }
 
@@ -297,12 +295,12 @@ impl DuplexConnection {
         // TODO: record/report packets from invalid hosts?
         // We don't care about packets from elsewhere
         if from != self.settings.remote {
-            self.info("invalid address", now, &(packet, from));
+            self.info("invalid address", &(packet, from));
             return;
         }
 
         if self.settings.local_sockid != packet.dest_sockid() {
-            self.info("invalid socket id", now, &(packet, from));
+            self.info("invalid socket id", &(packet, from));
             return;
         }
 
@@ -351,9 +349,38 @@ impl DuplexConnection {
     fn handle_srt_control_packet(&mut self, now: Instant, pack: SrtControlPacket) {
         use self::SrtControlPacket::*;
         match pack {
-            HandshakeRequest(_) | HandshakeResponse(_) => self.warn("handshake", now, &pack),
-            KeyManagerRequest(km) => self.receiver().handle_rekey(now, km),
-            _ => unimplemented!(),
+            HandshakeRequest(_) | HandshakeResponse(_) => self.warn("handshake", &pack),
+            KeyRefreshRequest(keying_material) => {
+                self.handle_key_refresh_request(now, keying_material)
+            }
+            KeyRefreshResponse(keying_material) => {
+                self.handle_key_refresh_response(keying_material)
+            }
+            _ => unimplemented!("{:?}", pack),
+        }
+    }
+
+    fn handle_key_refresh_request(&mut self, now: Instant, keying_material: KeyingMaterialMessage) {
+        match self.cipher.refresh_key_material(keying_material) {
+            Ok(Some(response)) => {
+                // TODO: add statistic or "event" notification?
+                // key rotation
+                self.output.send_control(
+                    now,
+                    ControlTypes::Srt(SrtControlPacket::KeyRefreshResponse(response)),
+                )
+            }
+            Ok(None) => self.debug("key refresh request", &"duplicate key"),
+            Err(err) => self.warn("key refresh", &err),
+        }
+    }
+
+    fn handle_key_refresh_response(&mut self, keying_material: KeyingMaterialMessage) {
+        match self.cipher.validate_key_material(keying_material) {
+            Ok(()) => {
+                // TODO: add statistic or "event" notification?
+            }
+            Err(err) => self.warn("key refresh response", &err),
         }
     }
 
@@ -363,6 +390,7 @@ impl DuplexConnection {
             &mut self.timers,
             &mut self.output,
             &mut self.statistics,
+            &mut self.cipher,
             &mut self.sender,
         )
     }
@@ -372,34 +400,35 @@ impl DuplexConnection {
             &mut self.timers,
             &mut self.output,
             &mut self.statistics,
+            &mut self.cipher,
             &mut self.receiver,
         )
     }
 
-    fn debug(&self, tag: &str, now: Instant, debug: &impl Debug) {
+    fn debug(&self, tag: &str, debug: &impl Debug) {
         log::debug!(
             "{:?}|{:?}|{} - {:?}",
-            TimeSpan::from_interval(self.settings.socket_start_time, now),
+            TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
             self.settings.local_sockid,
             tag,
             debug
         );
     }
 
-    fn info(&self, tag: &str, now: Instant, debug: &impl Debug) {
+    fn info(&self, tag: &str, debug: &impl Debug) {
         log::info!(
             "{:?}|{:?}|{} - {:?}",
-            TimeSpan::from_interval(self.settings.socket_start_time, now),
+            TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
             self.settings.local_sockid,
             tag,
             debug
         );
     }
 
-    fn warn(&self, tag: &str, now: Instant, debug: &impl Debug) {
+    fn warn(&self, tag: &str, debug: &impl Debug) {
         log::warn!(
             "{:?}|{:?}|{} - {:?}",
-            TimeSpan::from_interval(self.settings.socket_start_time, now),
+            TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
             self.settings.local_sockid,
             tag,
             debug
@@ -445,7 +474,7 @@ mod duplex_connection {
                 send_tsbpd_latency: TSBPD,
                 recv_tsbpd_latency: TSBPD,
                 recv_buffer_size: 1024 * 1316,
-                crypto_manager: None,
+                cipher: None,
                 stream_id: None,
                 bandwidth: LiveBandwidthMode::Unlimited,
                 statistics_interval: Duration::from_secs(10),

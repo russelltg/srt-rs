@@ -461,6 +461,10 @@ impl ControlTypes {
         }
     }
 
+    pub fn new_key_refresh_request(key_material: KeyingMaterialMessage) -> ControlTypes {
+        ControlTypes::Srt(SrtControlPacket::KeyRefreshRequest(key_material))
+    }
+
     /// Deserialize a control info
     /// * `packet_type` - The packet ID byte, the second byte in the first row
     /// * `reserved` - the second 16 bytes of the first row, reserved for custom packets
@@ -1647,7 +1651,7 @@ mod test {
                             send_latency: Duration::from_millis(500),
                             recv_latency: Duration::from_millis(500)
                         })),
-                        ext_km: Some(SrtControlPacket::KeyManagerRequest(SrtKeyMessage {
+                        ext_km: Some(SrtControlPacket::KeyRefreshRequest(KeyingMaterialMessage {
                             pt: PacketType::KeyingMaterial,
                             key_flags: KeyFlags::EVEN,
                             keki: 0,
@@ -1743,7 +1747,7 @@ mod test {
                         send_latency: Duration::from_millis(60),
                         recv_latency: Duration::from_millis(60)
                     })),
-                    ext_km: Some(SrtControlPacket::KeyManagerRequest(SrtKeyMessage {
+                    ext_km: Some(SrtControlPacket::KeyRefreshRequest(KeyingMaterialMessage {
                         pt: PacketType::KeyingMaterial,
                         key_flags: KeyFlags::EVEN,
                         keki: 0,

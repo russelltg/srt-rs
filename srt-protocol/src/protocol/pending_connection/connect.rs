@@ -276,7 +276,7 @@ mod test {
             [127, 0, 0, 1].into(),
             ConnInitSettings {
                 local_sockid: TEST_SOCKID,
-                crypto: None,
+                key_settings: None,
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
                 bandwidth: LiveBandwidthMode::default(),

@@ -1,5 +1,6 @@
 use std::{
     cmp::max,
+    convert::TryInto,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
     sync::Arc,
@@ -8,8 +9,9 @@ use std::{
 
 use futures::{stream::unfold, Stream, StreamExt};
 use log::error;
-use srt_protocol::settings::*;
 use tokio::net::UdpSocket;
+
+use srt_protocol::settings::*;
 
 use crate::{
     multiplex,
@@ -204,21 +206,14 @@ impl SrtSocketBuilder {
         self
     }
 
-    /// Se the crypto paramters. However, this is currently unimplemented.
+    /// Set the crypto parameters.
     ///
     /// # Panics:
     /// * size is not 16, 24, or 32.
-    pub fn crypto(mut self, size: u8, passphrase: impl Into<String>) -> Self {
-        match size {
-            // OK
-            16 | 24 | 32 => {}
-            // NOT
-            size => panic!("Invaid crypto size {}", size),
-        }
-        self.init_settings.crypto = Some(CryptoOptions {
-            size,
-            passphrase: passphrase.into(),
-        });
+    pub fn crypto(mut self, key_size: u8, passphrase: impl Into<String>) -> Self {
+        let key_size = key_size.try_into().unwrap();
+        let passphrase = passphrase.into().into();
+        self.init_settings.key_settings = Some(KeySettings::new(key_size, passphrase));
 
         self
     }
