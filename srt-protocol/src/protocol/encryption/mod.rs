@@ -1,7 +1,8 @@
 use bytes::BytesMut;
+use log::warn;
 
 use crate::{
-    packet::{DataEncryption, DataPacket},
+    packet::{DataEncryption, DataPacket, SrtKeyMessage},
     protocol::crypto::CryptoManager,
 };
 
@@ -52,6 +53,21 @@ impl Cipher {
 
                 Ok(data)
             }
+        }
+    }
+
+    pub fn rekey(&mut self, km: SrtKeyMessage) -> Option<SrtKeyMessage> {
+        if let Some(cm) = &mut self.0 {
+            match cm.rekey(&km) {
+                Ok(k) => Some(k),
+                Err(e) => {
+                    warn!("Failed to rekey: {:?}", e);
+                    None
+                }
+            }
+        } else {
+            warn!("Unexpected rekey on unencrypted connection, discarding");
+            None
         }
     }
 }
