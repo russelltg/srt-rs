@@ -11,6 +11,7 @@ use crate::{
 
 use super::{ConnectError, ConnectionReject};
 
+#[allow(clippy::large_enum_variant)]
 pub enum GenHsv5Result {
     Accept(HandshakeVsInfo, ConnectionSettings),
     NotHandled(ConnectError),

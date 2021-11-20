@@ -24,6 +24,12 @@ pub struct CryptoManager {
     odd_sek: Option<Vec<u8>>,
 }
 
+struct SrtKeys {
+    even: Option<Vec<u8>>,
+    odd: Option<Vec<u8>>,
+    salt: [u8; 16],
+}
+
 impl CryptoManager {
     pub fn new_random(options: CryptoOptions) -> Self {
         let mut salt = [0; 16];
@@ -43,7 +49,7 @@ impl CryptoManager {
         options: CryptoOptions,
         kmreq: &SrtKeyMessage,
     ) -> Result<Self, ConnectionReject> {
-        let (even, odd, salt) = CryptoManager::unwrap_keys(kmreq, &options)?;
+        let SrtKeys { even, odd, salt } = CryptoManager::unwrap_keys(kmreq, &options)?;
 
         Ok(Self::new(options, &salt, even, odd))
     }
@@ -91,7 +97,7 @@ impl CryptoManager {
     fn unwrap_keys(
         kmreq: &SrtKeyMessage,
         options: &CryptoOptions,
-    ) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>, [u8; 16]), ConnectionReject> {
+    ) -> Result<SrtKeys, ConnectionReject> {
         let salt = kmreq.salt[..].try_into().unwrap();
         let kek = CryptoManager::gen_kek(options, &salt);
 
@@ -142,7 +148,7 @@ impl CryptoManager {
             None
         };
 
-        Ok((even, odd, salt))
+        Ok(SrtKeys { even, odd, salt })
     }
 
     pub fn key_length(&self) -> u8 {
@@ -271,7 +277,7 @@ impl CryptoManager {
 
     // https://github.com/Haivision/srt/blob/257e022337cc6e15239663d34b0d8fe2a6d61ac0/haicrypt/hcrypt_ctx_rx.c#L132
     pub fn rekey(&mut self, kmreq: &SrtKeyMessage) -> Result<SrtKeyMessage, ConnectionReject> {
-        let (even, odd, salt) = CryptoManager::unwrap_keys(&kmreq, &self.options)?;
+        let SrtKeys { even, odd, salt } = CryptoManager::unwrap_keys(kmreq, &self.options)?;
 
         self.salt = salt;
         if let Some(even) = even {
