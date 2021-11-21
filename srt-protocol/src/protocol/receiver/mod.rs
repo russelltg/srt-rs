@@ -83,7 +83,7 @@ impl Receiver {
 pub struct ReceiverContext<'a> {
     timers: &'a mut Timers,
     output: &'a mut Output,
-    statistics: &'a mut SocketStatistics,
+    stats: &'a mut SocketStatistics,
     cipher: &'a mut Cipher,
     receiver: &'a mut Receiver,
 }
@@ -92,13 +92,13 @@ impl<'a> ReceiverContext<'a> {
     pub fn new(
         timers: &'a mut Timers,
         output: &'a mut Output,
-        statistics: &'a mut SocketStatistics,
+        stats: &'a mut SocketStatistics,
         cipher: &'a mut Cipher,
         receiver: &'a mut Receiver,
     ) -> Self {
         Self {
             timers,
-            statistics,
+            stats,
             output,
             cipher,
             receiver,
@@ -108,7 +108,7 @@ impl<'a> ReceiverContext<'a> {
     pub fn synchronize_clock(&mut self, now: Instant, ts: TimeStamp) {
         if let Some(_adjustment) = self.receiver.arq.synchronize_clock(now, ts) {
             //self.debug("clock sync", now, &adjustment);
-            self.statistics.rx_clock_adjustments += 1;
+            self.stats.rx_clock_adjustments += 1;
         }
     }
 
@@ -116,8 +116,8 @@ impl<'a> ReceiverContext<'a> {
         use Acknowledgement::*;
         use ControlTypes::*;
         let bytes = data.payload.len() as u64;
-        self.statistics.rx_data += 1;
-        self.statistics.rx_bytes += bytes;
+        self.stats.rx_data += 1;
+        self.stats.rx_bytes += bytes;
 
         let data = self
             .cipher
@@ -125,21 +125,21 @@ impl<'a> ReceiverContext<'a> {
             .map_err(DataPacketError::DecryptionError)
             .and_then(|(decrypted_bytes, data)| {
                 if decrypted_bytes > 0 {
-                    self.statistics.rx_decrypted_data += 1;
+                    self.stats.rx_decrypted_data += 1;
                 }
                 self.receiver.arq.handle_data_packet(now, data)
             });
 
         match data {
             Ok(action) => {
-                self.statistics.rx_unique_data += 1;
-                self.statistics.rx_unique_bytes += bytes;
+                self.stats.rx_unique_data += 1;
+                self.stats.rx_unique_bytes += bytes;
 
                 use DataPacketAction::*;
                 match action {
                     Received { recovered, .. } => {
                         if recovered {
-                            self.statistics.rx_retransmit_data += 1;
+                            self.stats.rx_retransmit_data += 1;
                         }
                     }
                     ReceivedWithLoss(loss_list) => {
@@ -150,7 +150,7 @@ impl<'a> ReceiverContext<'a> {
                         recovered,
                     } => {
                         if recovered {
-                            self.statistics.rx_retransmit_data += 1;
+                            self.stats.rx_retransmit_data += 1;
                         }
                         self.output.send_control(now, Ack(Lite(light_ack)));
                     }
@@ -160,12 +160,12 @@ impl<'a> ReceiverContext<'a> {
                 use DataPacketError::*;
                 match e {
                     BufferFull { .. } | PacketTooEarly { .. } | PacketTooLate { .. } => {
-                        self.statistics.rx_dropped_data += 1;
-                        self.statistics.rx_dropped_bytes += bytes;
+                        self.stats.rx_dropped_data += 1;
+                        self.stats.rx_dropped_bytes += bytes;
                     }
                     DecryptionError(_) => {
-                        self.statistics.rx_decrypt_errors += 1;
-                        self.statistics.rx_decrypt_error_bytes += bytes;
+                        self.stats.rx_decrypt_errors += 1;
+                        self.stats.rx_decrypt_error_bytes += bytes;
                     }
                     DiscardedDuplicate { .. } => {}
                 }
@@ -174,12 +174,12 @@ impl<'a> ReceiverContext<'a> {
     }
 
     pub fn handle_ack2_packet(&mut self, now: Instant, seq_num: FullAckSeqNumber) {
-        self.statistics.rx_ack2 += 1;
+        self.stats.rx_ack2 += 1;
         let rtt = self.receiver.arq.handle_ack2_packet(now, seq_num);
         if let Some(rtt) = rtt {
             self.timers.update_rtt(rtt);
             //self.warn("ack not found", now, &seq_num);
-            self.statistics.rx_ack2_errors += 1;
+            self.stats.rx_ack2_errors += 1;
         }
     }
 
@@ -188,7 +188,7 @@ impl<'a> ReceiverContext<'a> {
         let dropped = self.receiver.arq.handle_drop_request(now, range) as u64;
         if dropped > 0 {
             //self.warn("packets dropped", now, &(dropped, drop));
-            self.statistics.rx_dropped_data += dropped;
+            self.stats.rx_dropped_data += dropped;
         }
     }
 

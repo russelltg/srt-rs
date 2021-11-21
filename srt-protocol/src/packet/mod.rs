@@ -33,6 +33,13 @@ pub enum Packet {
 }
 
 impl Packet {
+    const IPV4_HEADER_SIZE: u64 = 20;
+    const UDP_HEADER_SIZE: u64 = 8;
+    const SRT_HEADER_SIZE: u64 = 16;
+
+    pub const HEADER_SIZE: u64 =
+        Self::IPV4_HEADER_SIZE + Self::UDP_HEADER_SIZE + Self::SRT_HEADER_SIZE;
+
     pub fn timestamp(&self) -> TimeStamp {
         match *self {
             Packet::Data(DataPacket { timestamp, .. })

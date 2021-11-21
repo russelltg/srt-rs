@@ -19,12 +19,12 @@ use crate::{
 
 use buffer::{AckAction, Loss, SendBuffer, SenderAction};
 use congestion_control::SenderCongestionControl;
-use encapsulate::Encapsulate;
+use encapsulate::Encapsulation;
 
 #[derive(Debug)]
 pub struct Sender {
     time_base: TimeBase,
-    encapsulate: Encapsulate,
+    encapsulation: Encapsulation,
     send_buffer: SendBuffer,
     congestion_control: SenderCongestionControl,
 }
@@ -33,7 +33,7 @@ impl Sender {
     pub fn new(settings: ConnectionSettings) -> Self {
         Self {
             time_base: TimeBase::new(settings.socket_start_time),
-            encapsulate: Encapsulate::new(&settings),
+            encapsulation: Encapsulation::new(&settings),
             send_buffer: SendBuffer::new(&settings),
             congestion_control: SenderCongestionControl::new(settings.bandwidth.clone()),
         }
@@ -52,7 +52,7 @@ pub struct SenderContext<'a> {
     status: &'a mut ConnectionStatus,
     timers: &'a mut Timers,
     output: &'a mut Output,
-    statistics: &'a mut SocketStatistics,
+    stats: &'a mut SocketStatistics,
     cipher: &'a mut Cipher,
     sender: &'a mut Sender,
 }
@@ -62,7 +62,7 @@ impl<'a> SenderContext<'a> {
         status: &'a mut ConnectionStatus,
         timers: &'a mut Timers,
         output: &'a mut Output,
-        statistics: &'a mut SocketStatistics,
+        stats: &'a mut SocketStatistics,
         cipher: &'a mut Cipher,
         sender: &'a mut Sender,
     ) -> Self {
@@ -70,7 +70,7 @@ impl<'a> SenderContext<'a> {
             status,
             timers,
             output,
-            statistics,
+            stats,
             cipher,
             sender,
         }
@@ -78,26 +78,25 @@ impl<'a> SenderContext<'a> {
 
     pub fn handle_data(&mut self, now: Instant, item: (Instant, Bytes)) {
         let (time, data) = item;
+        let (mut packets, mut bytes) = (0, 0);
         let ts = self.sender.time_base.timestamp_from(time);
-        let encapsulate = &mut self.sender.encapsulate;
-        let buffer = &mut self.sender.send_buffer;
-        let cipher = &mut self.cipher;
-        let statistics = &mut self.statistics;
-        let output = &mut self.output;
-        let (packets, bytes) = encapsulate.encapsulate(ts, data, |packet| {
-            if let Some((bytes_encrypted, packet, key_refresh_request)) = cipher.encrypt(packet) {
-                if bytes_encrypted > 0 {
-                    statistics.tx_encrypted_data += 1;
-                }
-                buffer.push_data(packet);
+        for packet in self.sender.encapsulation.encapsulate(ts, data) {
+            if let Some((bytes_enc, packet, km)) = self.cipher.encrypt(packet) {
+                packets += 1;
+                bytes += packet.payload.len() as u64;
+                self.sender.send_buffer.push_data(packet);
 
-                if let Some(key_refresh_request) =
-                    key_refresh_request.map(ControlTypes::new_key_refresh_request)
-                {
-                    output.send_control(now, key_refresh_request);
+                if bytes_enc > 0 {
+                    self.stats.tx_encrypted_data += 1;
+                }
+
+                let control = km.map(ControlTypes::new_key_refresh_request);
+                if let Some(control) = control {
+                    self.output.send_control(now, control);
                 }
             }
-        });
+        }
+
         let snd_period = self.sender.congestion_control.on_input(now, packets, bytes);
         if let Some(snd_period) = snd_period {
             self.timers.update_snd_period(snd_period)
@@ -105,7 +104,7 @@ impl<'a> SenderContext<'a> {
     }
 
     pub fn handle_ack_packet(&mut self, now: Instant, ack: Acknowledgement) {
-        self.statistics.rx_ack += 1;
+        self.stats.rx_ack += 1;
         match self
             .sender
             .send_buffer
@@ -121,7 +120,7 @@ impl<'a> SenderContext<'a> {
                     // TODO: add these to connection statistics
                 }
                 if let Some(full_ack) = send_ack2 {
-                    self.statistics.tx_ack2 += 1;
+                    self.stats.tx_ack2 += 1;
                     self.output.send_control(now, ControlTypes::Ack2(full_ack))
                 }
             }
@@ -134,7 +133,7 @@ impl<'a> SenderContext<'a> {
     }
 
     pub fn handle_nak_packet(&mut self, now: Instant, nak: CompressedLossList) {
-        self.statistics.rx_nak += 1;
+        self.stats.rx_nak += 1;
         // 1) Add all sequence numbers carried in the NAK into the sender's loss list.
         for (loss, range) in self.sender.send_buffer.add_to_loss_list(nak) {
             //self.debug("nak", now, &(&loss, &range));
@@ -142,13 +141,13 @@ impl<'a> SenderContext<'a> {
             use Loss::*;
             match loss {
                 Ignored => {
-                    self.statistics.rx_loss_data += 1;
+                    self.stats.rx_loss_data += 1;
                 }
                 Added => {
-                    self.statistics.rx_loss_data += 1;
+                    self.stats.rx_loss_data += 1;
                 }
                 Dropped => {
-                    self.statistics.rx_dropped_data += 1;
+                    self.stats.rx_dropped_data += 1;
 
                     // On a Live stream, where each packet is a message, just one NAK with
                     // a compressed packet loss interval of significant size (e.g. [1,

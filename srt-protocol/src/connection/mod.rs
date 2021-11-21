@@ -77,7 +77,7 @@ pub struct DuplexConnection {
     cipher: Cipher,
     sender: Sender,
     receiver: Receiver,
-    statistics: SocketStatistics,
+    stats: SocketStatistics,
     status: ConnectionStatus,
 }
 
@@ -111,7 +111,7 @@ impl DuplexConnection {
             output: Output::new(&settings),
             status: ConnectionStatus::new(settings.send_tsbpd_latency),
             timers: Timers::new(settings.socket_start_time, settings.statistics_interval),
-            statistics: SocketStatistics::new(),
+            stats: SocketStatistics::new(),
             cipher: Cipher::new(settings.cipher.clone()),
             receiver: Receiver::new(settings.clone()),
             sender: Sender::new(settings),
@@ -130,7 +130,7 @@ impl DuplexConnection {
         let action = if self.should_close(now) {
             Action::Close
         } else if self.should_update_statistics(now) {
-            Action::UpdateStatistics(&self.statistics)
+            Action::UpdateStatistics(&self.stats)
         } else if let Some(packet) = self.next_packet(now) {
             Action::SendPacket(packet)
         } else if let Some(data) = self.next_data(now) {
@@ -148,29 +148,28 @@ impl DuplexConnection {
     }
 
     pub fn update_statistics(&mut self, now: Instant) {
-        self.statistics.elapsed_time = now - self.settings.socket_start_time;
+        self.stats.elapsed_time = now - self.settings.socket_start_time;
     }
 
     pub fn next_packet(&mut self, now: Instant) -> Option<(Packet, SocketAddr)> {
         self.output.pop_packet().map(|p| {
             self.timers.reset_keepalive(now);
-            self.statistics.tx_all_packets += 1;
+            self.stats.tx_all_packets += 1;
             // payload length + (20 bytes IPv4 + 8 bytes UDP + 16 bytes SRT)
             match &p {
                 Packet::Data(d) => {
-                    self.statistics.tx_data += 1;
-                    // payload length + (20 bytes IPv4 + 8 bytes UDP + 16 bytes SRT)
-                    self.statistics.tx_bytes += d.payload.len() as u64 + 44;
+                    self.stats.tx_data += 1;
+                    self.stats.tx_bytes += d.payload.len() as u64 + DataPacket::HEADER_SIZE;
                 }
                 Packet::Control(c) => match c.control_type {
                     ControlTypes::Ack(_) => {
-                        self.statistics.tx_ack += 1;
+                        self.stats.tx_ack += 1;
                     }
                     ControlTypes::Nak(_) => {
-                        self.statistics.tx_nak += 1;
+                        self.stats.tx_nak += 1;
                     }
                     ControlTypes::Ack2(_) => {
-                        self.statistics.tx_ack2 += 1;
+                        self.stats.tx_ack2 += 1;
                     }
                     _ => {}
                 },
@@ -189,7 +188,7 @@ impl DuplexConnection {
             Err(error) => {
                 self.warn("output", &error);
                 let dropped = error.too_late_packets.end - error.too_late_packets.start;
-                self.statistics.rx_dropped_data += dropped as u64;
+                self.stats.rx_dropped_data += dropped as u64;
                 None
             }
             _ => None,
@@ -218,7 +217,7 @@ impl DuplexConnection {
     }
 
     pub fn statistics(&self) -> &SocketStatistics {
-        &self.statistics
+        &self.stats
     }
 
     pub fn check_timers(&mut self, now: Instant) -> Instant {
@@ -306,7 +305,7 @@ impl DuplexConnection {
 
         self.timers.reset_exp(now);
 
-        self.statistics.rx_all_packets += 1;
+        self.stats.rx_all_packets += 1;
         match packet {
             Packet::Data(data) => self.receiver().handle_data_packet(now, data),
             Packet::Control(control) => self.handle_control_packet(now, control),
@@ -389,7 +388,7 @@ impl DuplexConnection {
             &mut self.status,
             &mut self.timers,
             &mut self.output,
-            &mut self.statistics,
+            &mut self.stats,
             &mut self.cipher,
             &mut self.sender,
         )
@@ -399,7 +398,7 @@ impl DuplexConnection {
         ReceiverContext::new(
             &mut self.timers,
             &mut self.output,
-            &mut self.statistics,
+            &mut self.stats,
             &mut self.cipher,
             &mut self.receiver,
         )
