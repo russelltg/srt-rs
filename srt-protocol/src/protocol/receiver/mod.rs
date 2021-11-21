@@ -117,7 +117,7 @@ impl<'a> ReceiverContext<'a> {
         use ControlTypes::*;
         let bytes = data.payload.len() as u64;
         self.stats.rx_data += 1;
-        self.stats.rx_bytes += bytes;
+        self.stats.rx_bytes += bytes + DataPacket::HEADER_SIZE;
 
         let data = self
             .cipher
