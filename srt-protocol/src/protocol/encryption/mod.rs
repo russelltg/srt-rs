@@ -128,7 +128,7 @@ mod cipher {
         assert_ne!(encrypted_packet, original_packet);
         assert_eq!(key_material, None);
 
-        let (bytes, decrypted_packet) = cipher.decrypt(encrypted_packet.clone()).unwrap();
+        let (bytes, decrypted_packet) = cipher.decrypt(encrypted_packet).unwrap();
         assert_eq!(bytes, original_packet.payload.len());
         assert_eq!(decrypted_packet, original_packet);
     }
@@ -208,7 +208,7 @@ mod cipher {
         assert_eq!(first_bytes, second_bytes);
         assert_ne!(first_packet, second_packet);
 
-        let (bytes, decrypted_packet) = cipher.decrypt(second_packet.clone()).unwrap();
+        let (bytes, decrypted_packet) = cipher.decrypt(second_packet).unwrap();
         assert_eq!(bytes, original_packet.payload.len());
         assert_eq!(decrypted_packet, original_packet);
     }

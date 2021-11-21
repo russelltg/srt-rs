@@ -157,11 +157,11 @@ impl CipherSettings {
 }
 
 #[cfg(test)]
-mod encryption {
+mod tests {
     use super::*;
 
     #[test]
-    fn formating() {
+    fn formatting() {
         assert_eq!(format!("{:?}", Passphrase::from("test")), "Passphrase");
     }
 }
