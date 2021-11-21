@@ -247,7 +247,7 @@ mod test {
         };
 
         let stream_encryption =
-            StreamEncryption::unwrap_from(&passphrase, key_size, &keying_material.clone()).unwrap();
+            StreamEncryption::unwrap_from(&passphrase, key_size, &keying_material).unwrap();
 
         assert_eq!(
             stream_encryption.wrap_with(&passphrase, key_size),
