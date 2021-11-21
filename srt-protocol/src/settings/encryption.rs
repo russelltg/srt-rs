@@ -123,11 +123,11 @@ pub struct CipherSettings {
 }
 
 impl CipherSettings {
-    pub fn new_random(key_settings: KeySettings) -> Self {
+    pub fn new_random(key_settings: &KeySettings) -> Self {
         Self {
             stream_encryption: StreamEncryption::new_random(key_settings.key_size),
             active_sek: DataEncryption::Even,
-            key_settings,
+            key_settings: key_settings.clone(),
         }
     }
 
@@ -137,29 +137,31 @@ impl CipherSettings {
     ) -> Result<Self, WrapInitializationVector> {
         Ok(Self {
             key_settings: key_settings.clone(),
-            stream_encryption: StreamEncryption::unwrap_from(
-                &key_settings.passphrase,
-                key_settings.key_size,
-                key_material,
-            )?,
+            stream_encryption: StreamEncryption::unwrap_from(key_settings, key_material)?,
             active_sek: DataEncryption::Even,
         })
     }
 
     pub fn wrap_keying_material(&self) -> Option<KeyingMaterialMessage> {
-        self.stream_encryption
-            .wrap_with(&self.key_settings.passphrase, self.key_settings.key_size)
+        self.stream_encryption.wrap_with(&self.key_settings)
     }
 
     pub fn update_with_key_material(
         &mut self,
         keying_material: &KeyingMaterialMessage,
     ) -> Result<(), WrapInitializationVector> {
-        self.stream_encryption = StreamEncryption::unwrap_from(
-            &self.key_settings.passphrase,
-            self.key_settings.key_size,
-            keying_material,
-        )?;
+        self.stream_encryption =
+            StreamEncryption::unwrap_from(&self.key_settings, keying_material)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod encryption {
+    use super::*;
+
+    #[test]
+    fn formating() {
+        assert_eq!(format!("{:?}", Passphrase::from("test")), "Passphrase");
     }
 }

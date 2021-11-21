@@ -2,6 +2,7 @@ use std::{
     array::TryFromSliceError,
     convert::TryInto,
     fmt::{self, Debug, Formatter},
+    ops::Deref,
 };
 
 use aes::{Aes128, Aes192, Aes256};
@@ -9,12 +10,14 @@ use hmac::Hmac;
 use rand::{rngs::OsRng, RngCore};
 use sha1::Sha1;
 
-use crate::{packet::SeqNumber, settings::KeySize};
+use crate::{
+    packet::SeqNumber,
+    settings::{KeySettings, KeySize, Passphrase},
+};
 
 use super::wrap;
-use crate::settings::Passphrase;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Salt([u8; 16]);
 
 impl Salt {
@@ -59,6 +62,12 @@ impl Salt {
 
     pub fn as_slice(&self) -> &[u8] {
         &self.0
+    }
+}
+
+impl Debug for Salt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Salt(0x{})", hex::encode_upper(self.0))
     }
 }
 
@@ -163,7 +172,10 @@ impl fmt::Debug for EncryptionKey {
 pub struct KeyEncryptionKey(EncryptionKey);
 
 impl KeyEncryptionKey {
-    pub fn new(passphrase: &Passphrase, key_size: KeySize, salt: &Salt) -> Self {
+    pub fn new(key_settings: &KeySettings, salt: &Salt) -> Self {
+        let key_size = key_settings.key_size;
+        let passphrase = &key_settings.passphrase;
+
         // Generate the key encrypting key from the passphrase, caching it in the struct
         // https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_sa.c#L69-L103
 
@@ -260,8 +272,12 @@ impl KeyEncryptionKey {
         }
         Ok(keys)
     }
+}
 
-    pub fn as_key(&self) -> &EncryptionKey {
+impl Deref for KeyEncryptionKey {
+    type Target = EncryptionKey;
+
+    fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
@@ -285,15 +301,20 @@ mod test {
     #[test]
     fn kek_generate() {
         // this is an example taken from the reference impl
-        let key_size = KeySize::Bytes16;
-        let passphrase = "password123".to_string().into();
+        let key_settings = KeySettings::new(KeySize::Bytes16, "password123".to_string().into());
         let expected_kek = &hex::decode(b"08F2758F41E4244D00057C9CEBEB95FC").unwrap()[..];
         let salt =
             Salt::try_from(&hex::decode(b"7D59759C2B1A3F0B06C7028790C81C7D").unwrap()[..]).unwrap();
 
-        let kek = KeyEncryptionKey::new(&passphrase, key_size, &salt);
+        let kek = KeyEncryptionKey::new(&key_settings, &salt);
 
         assert_eq!(kek.0.as_bytes(), expected_kek);
+
+        // ensure that secrets don't make it into any logs
+        assert_eq!(format!("{:?}", kek), "KeyEncryptionKey::Bytes16");
+        assert_eq!(format!("{:?}", kek.deref()), "EncryptionKey::Bytes16");
+
+        assert_ne!(Salt::new_random(), Salt::new_random());
     }
 
     #[test]
@@ -309,5 +330,16 @@ mod test {
         let iv = salt.generate_strean_iv_for(SeqNumber(709520665));
 
         assert_eq!(iv, expected_iv);
+
+        assert_eq!(
+            format!("{:?}", iv),
+            "StreamIV(0x87647F8A2361FB1A9E6907AF1B810000)"
+        );
+        assert_eq!(
+            format!("{:?}", salt),
+            "Salt(0x87647F8A2361FB1A9E692DE576985949)"
+        );
+
+        assert_ne!(Salt::new_random(), Salt::new_random());
     }
 }

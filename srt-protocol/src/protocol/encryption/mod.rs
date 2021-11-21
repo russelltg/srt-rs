@@ -100,3 +100,116 @@ impl Cipher {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod cipher {
+    use super::*;
+    use bytes::Bytes;
+
+    #[test]
+    fn round_trip() {
+        let key_settings = KeySettings::new(KeySize::Bytes24, "test".into());
+        let mut cipher = Cipher::new(Some(CipherSettings::new_random(&key_settings)));
+        let original_packet = DataPacket {
+            seq_number: SeqNumber(3),
+            message_loc: PacketLocation::ONLY,
+            in_order_delivery: false,
+            encryption: DataEncryption::None,
+            retransmitted: false,
+            message_number: MsgNumber(1),
+            timestamp: TimeStamp::MIN,
+            dest_sockid: SocketId(0),
+            payload: Bytes::from("test round_trip"),
+        };
+
+        let (bytes, encrypted_packet, key_material) =
+            cipher.encrypt(original_packet.clone()).unwrap();
+        assert_eq!(bytes, original_packet.payload.len());
+        assert_ne!(encrypted_packet, original_packet);
+        assert_eq!(key_material, None);
+
+        let (bytes, decrypted_packet) = cipher.decrypt(encrypted_packet.clone()).unwrap();
+        assert_eq!(bytes, original_packet.payload.len());
+        assert_eq!(decrypted_packet, original_packet);
+    }
+
+    #[test]
+    fn decryption() {
+        use DecryptionError::*;
+        let new_packet = |encryption| DataPacket {
+            seq_number: SeqNumber(3),
+            message_loc: PacketLocation::ONLY,
+            in_order_delivery: false,
+            encryption,
+            retransmitted: false,
+            message_number: MsgNumber(1),
+            timestamp: TimeStamp::MIN,
+            dest_sockid: SocketId(0),
+            payload: Bytes::from("test decryption"),
+        };
+        let with_encryption = |encrypt| {
+            if encrypt {
+                let key_settings = KeySettings::new(KeySize::Bytes24, "test".into());
+                Cipher::new(Some(CipherSettings::new_random(&key_settings)))
+            } else {
+                Cipher::new(None)
+            }
+        };
+
+        let packet = new_packet(DataEncryption::None);
+        assert_eq!(
+            with_encryption(true).decrypt(packet.clone()),
+            Err(UnexpectedUnencryptedPacket(packet))
+        );
+
+        let packet = new_packet(DataEncryption::Even);
+        assert_eq!(
+            with_encryption(false).decrypt(packet.clone()),
+            Err(UnexpectedEncryptedPacket(packet))
+        );
+
+        let packet = new_packet(DataEncryption::Odd);
+        assert_eq!(
+            with_encryption(false).decrypt(packet.clone()),
+            Err(UnexpectedEncryptedPacket(packet))
+        );
+
+        let packet = new_packet(DataEncryption::None);
+        assert_eq!(
+            with_encryption(false).decrypt(packet.clone()),
+            Ok((0, packet))
+        );
+    }
+
+    #[test]
+    fn refresh_key_material() {
+        let key_settings = KeySettings::new(KeySize::Bytes24, "test".into());
+        let mut cipher = Cipher::new(Some(CipherSettings::new_random(&key_settings)));
+        let original_packet = DataPacket {
+            seq_number: SeqNumber(3),
+            message_loc: PacketLocation::ONLY,
+            in_order_delivery: false,
+            encryption: DataEncryption::None,
+            retransmitted: false,
+            message_number: MsgNumber(1),
+            timestamp: TimeStamp::MIN,
+            dest_sockid: SocketId(0),
+            payload: Bytes::from("test refresh_key_material"),
+        };
+
+        let (first_bytes, first_packet, _) = cipher.encrypt(original_packet.clone()).unwrap();
+
+        let stream_encryption = StreamEncryption::new_random(KeySize::Bytes24);
+        let key_material = stream_encryption.wrap_with(&key_settings).unwrap();
+        let response = cipher.refresh_key_material(key_material.clone());
+        assert_eq!(response, Ok(Some(key_material)));
+
+        let (second_bytes, second_packet, _) = cipher.encrypt(original_packet.clone()).unwrap();
+        assert_eq!(first_bytes, second_bytes);
+        assert_ne!(first_packet, second_packet);
+
+        let (bytes, decrypted_packet) = cipher.decrypt(second_packet.clone()).unwrap();
+        assert_eq!(bytes, original_packet.payload.len());
+        assert_eq!(decrypted_packet, original_packet);
+    }
+}

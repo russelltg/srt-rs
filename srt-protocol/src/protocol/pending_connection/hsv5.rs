@@ -144,7 +144,7 @@ pub fn start_hsv5_initiation(
     // }
 
     let (cipher, ext_km) = if let Some(ks) = &settings.key_settings {
-        let cipher = CipherSettings::new_random(ks.clone());
+        let cipher = CipherSettings::new_random(ks);
         let keying_material = cipher
             .wrap_keying_material()
             .map(SrtControlPacket::KeyRefreshRequest);

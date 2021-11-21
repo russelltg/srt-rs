@@ -2,10 +2,12 @@ use std::fmt::Debug;
 
 use aes::{cipher::StreamCipher, Aes128Ctr, Aes192Ctr, Aes256Ctr};
 
-use crate::{packet::*, settings::KeySize};
+use crate::{
+    packet::*,
+    settings::{KeySettings, KeySize},
+};
 
 use super::key::*;
-use crate::settings::Passphrase;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamEncryption {
@@ -32,24 +34,25 @@ impl StreamEncryption {
     }
 
     pub fn unwrap_from(
-        passphrase: &Passphrase,
-        key_size: KeySize,
+        key_settings: &KeySettings,
         key_material: &KeyingMaterialMessage,
     ) -> Result<Self, WrapInitializationVector> {
+        // TODO: revisit errors, KeyingMaterialMessage has a lot of fields that ought be validated
         let salt = Salt::try_from(key_material.salt.as_slice()).unwrap();
-        let kek = KeyEncryptionKey::new(passphrase, key_size, &salt);
+        let kek = KeyEncryptionKey::new(key_settings, &salt);
 
         // TODO: this is raw input, return an error result on failure instead of assert
         assert_eq!(
             key_material.wrapped_keys.len(),
-            key_material.key_flags.bits().count_ones() as usize * key_size.as_usize() + 8
+            key_material.key_flags.bits().count_ones() as usize * key_settings.key_size.as_usize()
+                + 8
         );
 
         let wrapped_keys = key_material.wrapped_keys.as_slice();
         let keys = kek.decrypt_wrapped_keys(wrapped_keys)?;
 
         let key_flags = key_material.key_flags;
-        let key_size = kek.as_key().len();
+        let key_size = kek.len();
         let even_key = if key_flags.contains(KeyFlags::EVEN) {
             Some(EncryptionKey::try_from(&keys[0..key_size]).unwrap())
         } else {
@@ -68,12 +71,8 @@ impl StreamEncryption {
         })
     }
 
-    pub fn wrap_with(
-        &self,
-        passphrase: &Passphrase,
-        key_size: KeySize,
-    ) -> Option<KeyingMaterialMessage> {
-        let kek = KeyEncryptionKey::new(passphrase, key_size, &self.salt);
+    pub fn wrap_with(&self, key_settings: &KeySettings) -> Option<KeyingMaterialMessage> {
+        let kek = KeyEncryptionKey::new(key_settings, &self.salt);
 
         let mut keys = Vec::new();
         if let Some(k) = &self.even_key {
@@ -159,8 +158,7 @@ mod test {
 
     #[test]
     fn wrap_keys() {
-        let passphrase = "password123".to_string().into();
-        let key_size = KeySize::Bytes16;
+        let key_settings = KeySettings::new(KeySize::Bytes16, "password123".to_string().into());
 
         let salt = b"\x00\x00\x00\x00\x00\x00\x00\x00\x85\x2c\x3c\xcd\x02\x65\x1a\x22";
         let stream_encryption = StreamEncryption {
@@ -170,9 +168,9 @@ mod test {
                 .ok(),
         };
 
-        let kek = KeyEncryptionKey::new(&passphrase, key_size, &stream_encryption.salt);
+        let kek = KeyEncryptionKey::new(&key_settings, &stream_encryption.salt);
         assert_eq!(
-            kek.as_key().as_bytes(),
+            kek.as_bytes(),
             b"\xe9\xa0\xa4\x30\x2f\x59\xd0\x63\xc8\x83\x32\xbe\x35\x88\x82\x08"
         );
 
@@ -188,7 +186,7 @@ mod test {
             wrapped_keys: expected_wrapped_keys.to_vec(),
         };
 
-        let keying_material = stream_encryption.wrap_with(&passphrase, key_size);
+        let keying_material = stream_encryption.wrap_with(&key_settings);
         assert_eq!(
             &keying_material.as_ref().unwrap().wrapped_keys[..],
             &expected_wrapped_keys[..]
@@ -199,8 +197,8 @@ mod test {
 
     #[test]
     fn bad_password() {
-        let passphrase = "badpassword".into();
-        let key_size = KeySize::Bytes16;
+        let key_settings = KeySettings::new(KeySize::Bytes16, "badpassword".to_string().into());
+
         let key_material = KeyingMaterialMessage {
             pt: PacketType::KeyingMaterial,
             key_flags: KeyFlags::ODD,
@@ -212,15 +210,14 @@ mod test {
                 .into(),
         };
 
-        let res = StreamEncryption::unwrap_from(&passphrase, key_size, &key_material);
+        let res = StreamEncryption::unwrap_from(&key_settings, &key_material);
 
         assert!(matches!(res, Err(_)));
     }
 
     #[test]
     fn wrap_key2() {
-        let passphrase = "password123".into();
-        let key_size = KeySize::Bytes16;
+        let key_settings = KeySettings::new(KeySize::Bytes16, "password123".to_string().into());
 
         let salt = b"\x00\x00\x00\x00\x00\x00\x00\x00n\xd5+\x196\nq8";
         let stream_encryption = StreamEncryption {
@@ -229,9 +226,9 @@ mod test {
             even_key: None,
         };
 
-        let kek = KeyEncryptionKey::new(&passphrase, key_size, &stream_encryption.salt);
+        let kek = KeyEncryptionKey::new(&key_settings, &stream_encryption.salt);
         assert_eq!(
-            kek.as_key().as_bytes(),
+            kek.as_bytes(),
             b"\xde#\x1b\xfd9\x93z\xfb\xc3w\xa7\x80\xee\x80'\xa3"
         );
 
@@ -247,10 +244,10 @@ mod test {
         };
 
         let stream_encryption =
-            StreamEncryption::unwrap_from(&passphrase, key_size, &keying_material).unwrap();
+            StreamEncryption::unwrap_from(&key_settings, &keying_material).unwrap();
 
         assert_eq!(
-            stream_encryption.wrap_with(&passphrase, key_size),
+            stream_encryption.wrap_with(&key_settings),
             Some(keying_material)
         );
     }
