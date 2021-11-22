@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 use std::{
     env,
-    ffi::CStr,
+    ffi::{CStr, CString},
     intrinsics::transmute,
     io::ErrorKind,
     mem::size_of,
@@ -595,8 +595,9 @@ fn open_libsrt() -> Option<Library> {
     }
 
     for name in &possible_names {
-        if let Ok(lib) = unsafe { Library::new(*name) } {
-            return Some(lib);
+        match unsafe { Library::new(*name) } {
+            Ok(lib) => return Some(lib),
+            Err(e) => println!("Failed to load from {}: {}", name, e),
         }
     }
     None
@@ -610,16 +611,19 @@ struct HaiSettings {
     pbkeylen: Option<i32>,
 }
 
+lazy_static::lazy_static! {
+    static ref LIBSRT: Library = open_libsrt().unwrap();
+    static ref SRT: HaivisionSrt<'static> = unsafe {
+        let srt = HaivisionSrt::new(&*LIBSRT);
+        (srt.startup)();
+        srt
+    };
+}
+
 // this mimics test_c_client from the repository
 fn test_c_client(port: u16) {
     unsafe {
-        // load symbols
-        let lib = open_libsrt().unwrap();
-        let srt = HaivisionSrt::new(&lib);
-
-        (srt.startup)();
-
-        let ss = (srt.create_socket)();
+        let ss = (SRT.create_socket)();
         if ss == -1 {
             panic!("Failed to create socket");
         }
@@ -627,23 +631,23 @@ fn test_c_client(port: u16) {
         let sa = make_sockaddr(port);
 
         let yes: c_int = 1;
-        (srt.setsockflag)(
+        (SRT.setsockflag)(
             ss,
             SRTO_SENDER,
             &yes as *const i32 as *const (),
             size_of::<c_int>() as c_int,
         );
 
-        let st = (srt.connect)(ss, &sa, size_of::<sockaddr>() as c_int);
+        let st = (SRT.connect)(ss, &sa, size_of::<sockaddr>() as c_int);
         if st == -1 {
             panic!(
                 "Failed to connect {:?}",
-                CStr::from_ptr((srt.getlasterror_str)())
+                CStr::from_ptr((SRT.getlasterror_str)())
             );
         }
 
         for _ in 0..100 {
-            let st = (srt.sendmsg2)(
+            let st = (SRT.sendmsg2)(
                 ss,
                 TEST_C_CLIENT_MESSAGE.as_ptr(),
                 TEST_C_CLIENT_MESSAGE.len() as c_int,
@@ -658,22 +662,17 @@ fn test_c_client(port: u16) {
 
         thread::sleep(Duration::from_millis(100));
 
-        if (srt.close)(ss) == -1 {
+        if (SRT.close)(ss) == -1 {
             panic!();
         }
 
-        // (srt.cleanup)();
+        // (SRT.cleanup)();
     }
 }
 
 fn haivision_echo(port: u16, packets: usize, settings: HaiSettings) {
     unsafe {
-        let lib = open_libsrt().unwrap();
-        let srt = HaivisionSrt::new(&lib);
-
-        (srt.startup)();
-
-        let ss = (srt.create_socket)();
+        let ss = (SRT.create_socket)();
         if ss == -1 {
             panic!("Failed to create socket");
         }
@@ -681,7 +680,7 @@ fn haivision_echo(port: u16, packets: usize, settings: HaiSettings) {
         let sa = make_sockaddr(port);
 
         if let Some(kmrr) = settings.km_refreshrate {
-            (srt.setsockflag)(
+            (SRT.setsockflag)(
                 ss,
                 SRTO_KMREFRESHRATE,
                 &kmrr as *const i32 as *const (),
@@ -689,7 +688,7 @@ fn haivision_echo(port: u16, packets: usize, settings: HaiSettings) {
             );
         }
         if let Some(kmpa) = settings.km_preannounce {
-            (srt.setsockflag)(
+            (SRT.setsockflag)(
                 ss,
                 SRTO_KMPREANNOUNCE,
                 &kmpa as *const i32 as *const (),
@@ -697,15 +696,16 @@ fn haivision_echo(port: u16, packets: usize, settings: HaiSettings) {
             );
         }
         if let Some(passphrase) = settings.passphrase {
-            (srt.setsockflag)(
+            let cstr = CString::new(passphrase).unwrap();
+            (SRT.setsockflag)(
                 ss,
                 SRTO_PASSPHRASE,
-                passphrase.as_bytes().as_ptr() as *const (),
-                passphrase.as_bytes().len() as c_int,
+                cstr.as_ptr() as *const (),
+                cstr.as_bytes().len() as i32,
             );
         }
         if let Some(pbkeylen) = settings.pbkeylen {
-            (srt.setsockflag)(
+            (SRT.setsockflag)(
                 ss,
                 SRTO_PBKEYLEN,
                 &pbkeylen as *const i32 as *const (),
@@ -713,12 +713,12 @@ fn haivision_echo(port: u16, packets: usize, settings: HaiSettings) {
             );
         }
 
-        let st = (srt.connect)(ss, &sa, size_of::<sockaddr>() as c_int);
+        let st = (SRT.connect)(ss, &sa, size_of::<sockaddr>() as c_int);
 
         if st == -1 {
             panic!(
                 "Failed to connect {:?}",
-                CStr::from_ptr((srt.getlasterror_str)())
+                CStr::from_ptr((SRT.getlasterror_str)())
             );
         }
 
@@ -726,12 +726,12 @@ fn haivision_echo(port: u16, packets: usize, settings: HaiSettings) {
 
         // receive + send n packets
         for _ in 0..packets {
-            let size = (srt.recvmsg2)(ss, buffer.as_mut_ptr(), buffer.len() as c_int, null());
+            let size = (SRT.recvmsg2)(ss, buffer.as_mut_ptr(), buffer.len() as c_int, null());
             if size == -1 {
                 panic!()
             }
 
-            let st = (srt.sendmsg2)(ss, buffer.as_ptr(), size, null());
+            let st = (SRT.sendmsg2)(ss, buffer.as_ptr(), size, null());
 
             if st == -1 {
                 panic!()
@@ -740,7 +740,7 @@ fn haivision_echo(port: u16, packets: usize, settings: HaiSettings) {
 
         thread::sleep(Duration::from_secs(2)); // make sure the receiver gets the last message before closing
 
-        if (srt.close)(ss) == -1 {
+        if (SRT.close)(ss) == -1 {
             panic!();
         }
     }
