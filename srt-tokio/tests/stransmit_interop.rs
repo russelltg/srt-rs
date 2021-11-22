@@ -417,7 +417,64 @@ async fn bidirectional_interop() -> Result<(), Error> {
         Ok(())
     };
 
-    let jh = spawn_blocking(move || haivision_echo(2812));
+    let jh = spawn_blocking(move || haivision_echo(2812, 10, HaiSettings::default()));
+
+    try_join(srt_rs_side, jh).await.unwrap();
+
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(not(target_os = "windows"))]
+#[cfg(not(target_os = "macos"))]
+async fn bidirectional_interop_encrypt_rekey() -> Result<(), Error> {
+    let _ = pretty_env_logger::try_init();
+
+    let srt_rs_side = async move {
+        let sock = SrtSocketBuilder::new_listen()
+            .local_port(2813)
+            .crypto(16, "password123") // TOOD: configure short rekey period here too
+            .connect()
+            .await
+            .unwrap();
+
+        time::sleep(Duration::from_millis(500)).await;
+
+        let (mut s, mut r) = sock.split();
+
+        let s = async move {
+            for _ in 0..1024 {
+                debug!("Sending...");
+                s.send((Instant::now(), Bytes::from_static(b"1234")))
+                    .await
+                    .unwrap();
+                debug!("Sent");
+            }
+        };
+        let r = async move {
+            for _ in 0..1024 {
+                let (_, buf) = r.next().await.unwrap().unwrap();
+                debug!("Recvd");
+                assert_eq!(&*buf, b"1234");
+            }
+        };
+        join!(s, r);
+
+        Ok(())
+    };
+
+    let jh = spawn_blocking(move || {
+        haivision_echo(
+            2813,
+            1024,
+            HaiSettings {
+                km_preannounce: Some(60),
+                km_refreshrate: Some(128),
+                passphrase: Some("password123".into()),
+                pbkeylen: Some(16),
+            },
+        )
+    });
 
     try_join(srt_rs_side, jh).await.unwrap();
 
@@ -427,6 +484,10 @@ async fn bidirectional_interop() -> Result<(), Error> {
 type HaiSocket = i32;
 
 const SRTO_SENDER: c_int = 21;
+const SRTO_KMREFRESHRATE: c_int = 51;
+const SRTO_KMPREANNOUNCE: c_int = 52;
+const SRTO_PASSPHRASE: c_int = 26;
+const SRTO_PBKEYLEN: c_int = 27;
 
 struct HaivisionSrt<'l> {
     create_socket: Symbol<'l, unsafe extern "C" fn() -> HaiSocket>,
@@ -520,6 +581,14 @@ fn open_libsrt() -> Option<Library> {
     None
 }
 
+#[derive(Default)]
+struct HaiSettings {
+    km_refreshrate: Option<i32>,
+    km_preannounce: Option<i32>,
+    passphrase: Option<String>,
+    pbkeylen: Option<i32>,
+}
+
 // this mimics test_c_client from the repository
 fn test_c_client(port: u16) {
     unsafe {
@@ -576,7 +645,7 @@ fn test_c_client(port: u16) {
     }
 }
 
-fn haivision_echo(port: u16) {
+fn haivision_echo(port: u16, packets: usize, settings: HaiSettings) {
     unsafe {
         let lib = open_libsrt().unwrap();
         let srt = HaivisionSrt::new(&lib);
@@ -590,6 +659,39 @@ fn haivision_echo(port: u16) {
 
         let sa = make_sockaddr(port);
 
+        if let Some(kmrr) = settings.km_refreshrate {
+            (srt.setsockflag)(
+                ss,
+                SRTO_KMREFRESHRATE,
+                &kmrr as *const i32 as *const (),
+                size_of::<c_int>() as c_int,
+            );
+        }
+        if let Some(kmpa) = settings.km_preannounce {
+            (srt.setsockflag)(
+                ss,
+                SRTO_KMPREANNOUNCE,
+                &kmpa as *const i32 as *const (),
+                size_of::<c_int>() as c_int,
+            );
+        }
+        if let Some(passphrase) = settings.passphrase {
+            (srt.setsockflag)(
+                ss,
+                SRTO_PASSPHRASE,
+                passphrase.as_bytes().as_ptr() as *const (),
+                passphrase.as_bytes().len() as c_int,
+            );
+        }
+        if let Some(pbkeylen) = settings.pbkeylen {
+            (srt.setsockflag)(
+                ss,
+                SRTO_PBKEYLEN,
+                &pbkeylen as *const i32 as *const (),
+                size_of::<c_int>() as c_int,
+            );
+        }
+
         let st = (srt.connect)(ss, &sa, size_of::<sockaddr>() as c_int);
 
         if st == -1 {
@@ -601,8 +703,8 @@ fn haivision_echo(port: u16) {
 
         let mut buffer = [0; 1316];
 
-        // receive 10 packets, send 10 packets
-        for _ in 0..10 {
+        // receive + send n packets
+        for _ in 0..packets {
             let size = (srt.recvmsg2)(ss, buffer.as_mut_ptr(), buffer.len() as c_int, null());
             if size == -1 {
                 panic!()
