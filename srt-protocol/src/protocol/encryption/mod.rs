@@ -80,7 +80,7 @@ struct EncryptionState {
 impl Encryption {
     pub fn new(settings: Option<CipherSettings>) -> Self {
         Self(settings.map(|settings| EncryptionState {
-            next_key_switchover: settings.key_refresh.period,
+            next_key_switchover: settings.key_refresh.period(),
             key_settings: settings.key_settings,
             key_refresh: settings.key_refresh,
             stream_keys: settings.stream_keys,
@@ -106,7 +106,7 @@ impl Encryption {
                 packet.payload = data.freeze();
 
                 let refresh = &settings.key_refresh;
-                let km = if settings.next_key_switchover == refresh.pre_announcement_period {
+                let km = if settings.next_key_switchover == refresh.pre_announcement_period() {
                     settings
                         .stream_keys
                         .commission_next_key(active_sek, &settings.key_settings)
@@ -121,7 +121,7 @@ impl Encryption {
                         Odd => Even,
                         None => None,
                     };
-                    settings.next_key_switchover = settings.key_refresh.period;
+                    settings.next_key_switchover = settings.key_refresh.period();
                 }
 
                 settings.next_key_switchover = settings.next_key_switchover.checked_sub(1).unwrap();
@@ -234,17 +234,14 @@ mod tests {
     #[test]
     fn refresh_key_material() {
         let settings = CipherSettings {
-            key_refresh: KeyMaterialRefreshSettings {
-                period: 5,
-                pre_announcement_period: 2,
-            },
+            key_refresh: KeyMaterialRefreshSettings::new(5, 2).unwrap(),
             ..new_settings()
         };
         let mut encryption = Encryption::new(Some(settings.clone()));
         let mut decryption = Decryption::new(Some(settings.clone()));
         let original_packet = data_packet(DataEncryption::None, "test refresh_key_material");
 
-        let count = settings.key_refresh.period - settings.key_refresh.pre_announcement_period;
+        let count = settings.key_refresh.period() - settings.key_refresh.pre_announcement_period();
         for _ in 0..count {
             let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
             assert_eq!(km, None);
@@ -259,7 +256,7 @@ mod tests {
         let response = decryption.refresh_key_material(key_material.clone());
         assert_eq!(response, Ok(Some(key_material)));
 
-        for _ in 0..settings.key_refresh.pre_announcement_period {
+        for _ in 0..settings.key_refresh.pre_announcement_period() {
             let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
             assert_eq!(km, None);
             assert_eq!(packet.encryption, DataEncryption::Even);
