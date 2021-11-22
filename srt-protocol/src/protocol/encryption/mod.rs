@@ -108,7 +108,7 @@ impl Encryption {
                 packet.encryption = active_sek;
                 packet.payload = data.freeze();
 
-                let km = if settings.packets_until_preannounce.checked_sub(1).is_none() {
+                let km = if settings.packets_until_preannounce == 0 {
                     settings.packets_until_preannounce = settings.key_refresh.period();
                     settings
                         .stream_keys
@@ -118,7 +118,7 @@ impl Encryption {
                     None
                 };
 
-                if settings.packets_until_key_switch.checked_sub(1).is_none() {
+                if settings.packets_until_key_switch == 0 {
                     use DataEncryption::*;
 
                     settings.packets_until_key_switch = settings.key_refresh.period();
@@ -128,6 +128,9 @@ impl Encryption {
                         None => None,
                     };
                 }
+
+                settings.packets_until_preannounce -= 1;
+                settings.packets_until_key_switch -= 1;
 
                 Some((bytes, packet, km))
             }
