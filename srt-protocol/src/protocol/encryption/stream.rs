@@ -10,26 +10,52 @@ use crate::{
 use super::key::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StreamEncryption {
+pub struct StreamEncryptionKeys {
     salt: Salt,
-    odd_key: Option<EncryptionKey>,
     even_key: Option<EncryptionKey>,
+    odd_key: Option<EncryptionKey>,
 }
 
-impl StreamEncryption {
+impl StreamEncryptionKeys {
     pub fn new(salt: Salt) -> Self {
         Self {
             salt,
-            odd_key: None,
             even_key: None,
+            odd_key: None,
         }
     }
 
     pub fn new_random(key_size: KeySize) -> Self {
         Self {
             salt: Salt::new_random(),
-            odd_key: Some(EncryptionKey::new_random(key_size)),
             even_key: Some(EncryptionKey::new_random(key_size)),
+            odd_key: Some(EncryptionKey::new_random(key_size)),
+        }
+    }
+
+    pub fn commission_next_key(
+        &mut self,
+        active_sek: DataEncryption,
+        key_settings: &KeySettings,
+    ) -> Option<KeyingMaterialMessage> {
+        use DataEncryption::*;
+        match active_sek {
+            Even => {
+                self.odd_key = Some(EncryptionKey::new_random(key_settings.key_size));
+            }
+            Odd => self.odd_key = Some(EncryptionKey::new_random(key_settings.key_size)),
+            None => return Option::None,
+        }
+        self.wrap_with(key_settings)
+    }
+
+    pub fn first_active_sek(&self) -> DataEncryption {
+        if self.even_key.is_some() {
+            DataEncryption::Even
+        } else if self.odd_key.is_some() {
+            DataEncryption::Odd
+        } else {
+            DataEncryption::None
         }
     }
 
@@ -64,10 +90,10 @@ impl StreamEncryption {
             None
         };
 
-        Ok(StreamEncryption {
+        Ok(StreamEncryptionKeys {
             salt,
-            odd_key,
             even_key,
+            odd_key,
         })
     }
 
@@ -156,19 +182,24 @@ impl StreamEncryption {
 mod test {
     use super::*;
 
+    fn key_settings() -> KeySettings {
+        KeySettings {
+            key_size: KeySize::Bytes16,
+            passphrase: "password123".into(),
+        }
+    }
+
     #[test]
     fn wrap_keys() {
-        let key_settings = KeySettings::new(KeySize::Bytes16, "password123".to_string().into());
-
         let salt = b"\x00\x00\x00\x00\x00\x00\x00\x00\x85\x2c\x3c\xcd\x02\x65\x1a\x22";
-        let stream_encryption = StreamEncryption {
+        let stream_encryption = StreamEncryptionKeys {
             salt: Salt::try_from(salt).unwrap(),
             odd_key: None,
             even_key: EncryptionKey::try_from(b"\r\xab\xc8n/2\xb4\xa7\xb9\xbb\xa2\xf31*\xe4\"")
                 .ok(),
         };
 
-        let kek = KeyEncryptionKey::new(&key_settings, &stream_encryption.salt);
+        let kek = KeyEncryptionKey::new(&key_settings(), &stream_encryption.salt);
         assert_eq!(
             kek.as_bytes(),
             b"\xe9\xa0\xa4\x30\x2f\x59\xd0\x63\xc8\x83\x32\xbe\x35\x88\x82\x08"
@@ -186,7 +217,7 @@ mod test {
             wrapped_keys: expected_wrapped_keys.to_vec(),
         };
 
-        let keying_material = stream_encryption.wrap_with(&key_settings);
+        let keying_material = stream_encryption.wrap_with(&key_settings());
         assert_eq!(
             &keying_material.as_ref().unwrap().wrapped_keys[..],
             &expected_wrapped_keys[..]
@@ -197,8 +228,10 @@ mod test {
 
     #[test]
     fn bad_password() {
-        let key_settings = KeySettings::new(KeySize::Bytes16, "badpassword".to_string().into());
-
+        let key_settings = &KeySettings {
+            key_size: KeySize::Bytes16,
+            passphrase: "badpassword".into(),
+        };
         let key_material = KeyingMaterialMessage {
             pt: PacketType::KeyingMaterial,
             key_flags: KeyFlags::ODD,
@@ -210,23 +243,21 @@ mod test {
                 .into(),
         };
 
-        let res = StreamEncryption::unwrap_from(&key_settings, &key_material);
+        let res = StreamEncryptionKeys::unwrap_from(key_settings, &key_material);
 
         assert!(matches!(res, Err(_)));
     }
 
     #[test]
     fn wrap_key2() {
-        let key_settings = KeySettings::new(KeySize::Bytes16, "password123".to_string().into());
-
         let salt = b"\x00\x00\x00\x00\x00\x00\x00\x00n\xd5+\x196\nq8";
-        let stream_encryption = StreamEncryption {
+        let stream_encryption = StreamEncryptionKeys {
             salt: Salt::try_from(salt).unwrap(),
             odd_key: EncryptionKey::try_from(b"\r\xab\xc8n/2\xb4\xa7\xb9\xbb\xa2\xf31*\xe4\"").ok(),
             even_key: None,
         };
 
-        let kek = KeyEncryptionKey::new(&key_settings, &stream_encryption.salt);
+        let kek = KeyEncryptionKey::new(&key_settings(), &stream_encryption.salt);
         assert_eq!(
             kek.as_bytes(),
             b"\xde#\x1b\xfd9\x93z\xfb\xc3w\xa7\x80\xee\x80'\xa3"
@@ -244,10 +275,10 @@ mod test {
         };
 
         let stream_encryption =
-            StreamEncryption::unwrap_from(&key_settings, &keying_material).unwrap();
+            StreamEncryptionKeys::unwrap_from(&key_settings(), &keying_material).unwrap();
 
         assert_eq!(
-            stream_encryption.wrap_with(&key_settings),
+            stream_encryption.wrap_with(&key_settings()),
             Some(keying_material)
         );
     }

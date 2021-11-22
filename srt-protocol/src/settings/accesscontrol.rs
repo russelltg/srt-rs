@@ -201,9 +201,7 @@ impl AcceptParameters {
     pub fn set_key_settings(&mut self, passphrase: impl Into<String>, size: u8) -> &mut Self {
         self.key_settings = Some(KeySettings {
             key_size: size.try_into().unwrap(),
-            passphrase: passphrase.into().into(),
-            km_refresh_period: 2 ^ 25,
-            km_pre_announcement_period: 4_000,
+            passphrase: passphrase.into().try_into().unwrap(),
         });
         self
     }

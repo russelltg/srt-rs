@@ -11,7 +11,7 @@ use crate::{
     connection::ConnectionSettings,
     packet::*,
     protocol::{
-        encryption::{Cipher, DecryptionError},
+        encryption::{Decryption, DecryptionError},
         output::Output,
         time::Timers,
     },
@@ -59,12 +59,7 @@ pub enum DataPacketAction {
 #[derive(Debug)]
 pub struct Receiver {
     pub arq: AutomaticRepeatRequestAlgorithm,
-}
-
-impl Receiver {
-    pub fn is_flushed(&self) -> bool {
-        self.arq.is_flushed()
-    }
+    pub decryption: Decryption,
 }
 
 impl Receiver {
@@ -76,7 +71,12 @@ impl Receiver {
                 settings.init_seq_num,
                 settings.recv_buffer_size,
             ),
+            decryption: Decryption::new(settings.cipher),
         }
+    }
+
+    pub fn is_flushed(&self) -> bool {
+        self.arq.is_flushed()
     }
 }
 
@@ -84,7 +84,6 @@ pub struct ReceiverContext<'a> {
     timers: &'a mut Timers,
     output: &'a mut Output,
     stats: &'a mut SocketStatistics,
-    cipher: &'a mut Cipher,
     receiver: &'a mut Receiver,
 }
 
@@ -93,14 +92,12 @@ impl<'a> ReceiverContext<'a> {
         timers: &'a mut Timers,
         output: &'a mut Output,
         stats: &'a mut SocketStatistics,
-        cipher: &'a mut Cipher,
         receiver: &'a mut Receiver,
     ) -> Self {
         Self {
             timers,
             stats,
             output,
-            cipher,
             receiver,
         }
     }
@@ -120,7 +117,8 @@ impl<'a> ReceiverContext<'a> {
         self.stats.rx_bytes += bytes + DataPacket::HEADER_SIZE;
 
         let data = self
-            .cipher
+            .receiver
+            .decryption
             .decrypt(data)
             .map_err(DataPacketError::DecryptionError)
             .and_then(|(decrypted_bytes, data)| {
@@ -189,6 +187,33 @@ impl<'a> ReceiverContext<'a> {
         if dropped > 0 {
             //self.warn("packets dropped", now, &(dropped, drop));
             self.stats.rx_dropped_data += dropped;
+        }
+    }
+
+    pub fn handle_key_refresh_request(
+        &mut self,
+        now: Instant,
+        keying_material: KeyingMaterialMessage,
+    ) {
+        match self
+            .receiver
+            .decryption
+            .refresh_key_material(keying_material)
+        {
+            Ok(Some(response)) => {
+                // TODO: add statistic or "event" notification?
+                // key rotation
+                self.output.send_control(
+                    now,
+                    ControlTypes::Srt(SrtControlPacket::KeyRefreshResponse(response)),
+                )
+            }
+            Ok(None) => {
+                //self.debug("key refresh request", &"duplicate key"),
+            }
+            Err(_err) => {
+                //self.warn("key refresh", &err),
+            }
         }
     }
 

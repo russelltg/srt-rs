@@ -12,7 +12,6 @@ use bytes::Bytes;
 use crate::{
     packet::*,
     protocol::{
-        encryption::Cipher,
         handshake::Handshake,
         output::Output,
         receiver::{Receiver, ReceiverContext},
@@ -74,7 +73,6 @@ pub struct DuplexConnection {
     timers: Timers,
     handshake: Handshake,
     output: Output,
-    cipher: Cipher,
     sender: Sender,
     receiver: Receiver,
     stats: SocketStatistics,
@@ -112,7 +110,6 @@ impl DuplexConnection {
             status: ConnectionStatus::new(settings.send_tsbpd_latency),
             timers: Timers::new(settings.socket_start_time, settings.statistics_interval),
             stats: SocketStatistics::new(),
-            cipher: Cipher::new(settings.cipher.clone()),
             receiver: Receiver::new(settings.clone()),
             sender: Sender::new(settings),
         }
@@ -349,37 +346,13 @@ impl DuplexConnection {
         use self::SrtControlPacket::*;
         match pack {
             HandshakeRequest(_) | HandshakeResponse(_) => self.warn("handshake", &pack),
-            KeyRefreshRequest(keying_material) => {
-                self.handle_key_refresh_request(now, keying_material)
-            }
+            KeyRefreshRequest(keying_material) => self
+                .receiver()
+                .handle_key_refresh_request(now, keying_material),
             KeyRefreshResponse(keying_material) => {
-                self.handle_key_refresh_response(keying_material)
+                self.sender().handle_key_refresh_response(keying_material)
             }
             _ => unimplemented!("{:?}", pack),
-        }
-    }
-
-    fn handle_key_refresh_request(&mut self, now: Instant, keying_material: KeyingMaterialMessage) {
-        match self.cipher.refresh_key_material(keying_material) {
-            Ok(Some(response)) => {
-                // TODO: add statistic or "event" notification?
-                // key rotation
-                self.output.send_control(
-                    now,
-                    ControlTypes::Srt(SrtControlPacket::KeyRefreshResponse(response)),
-                )
-            }
-            Ok(None) => self.debug("key refresh request", &"duplicate key"),
-            Err(err) => self.warn("key refresh", &err),
-        }
-    }
-
-    fn handle_key_refresh_response(&mut self, keying_material: KeyingMaterialMessage) {
-        match self.cipher.validate_key_material(keying_material) {
-            Ok(()) => {
-                // TODO: add statistic or "event" notification?
-            }
-            Err(err) => self.warn("key refresh response", &err),
         }
     }
 
@@ -389,7 +362,6 @@ impl DuplexConnection {
             &mut self.timers,
             &mut self.output,
             &mut self.stats,
-            &mut self.cipher,
             &mut self.sender,
         )
     }
@@ -399,7 +371,6 @@ impl DuplexConnection {
             &mut self.timers,
             &mut self.output,
             &mut self.stats,
-            &mut self.cipher,
             &mut self.receiver,
         )
     }

@@ -301,7 +301,10 @@ mod test {
     #[test]
     fn kek_generate() {
         // this is an example taken from the reference impl
-        let key_settings = KeySettings::new(KeySize::Bytes16, "password123".to_string().into());
+        let key_settings = KeySettings {
+            key_size: KeySize::Bytes16,
+            passphrase: "password123".into(),
+        };
         let expected_kek = &hex::decode(b"08F2758F41E4244D00057C9CEBEB95FC").unwrap()[..];
         let salt =
             Salt::try_from(&hex::decode(b"7D59759C2B1A3F0B06C7028790C81C7D").unwrap()[..]).unwrap();

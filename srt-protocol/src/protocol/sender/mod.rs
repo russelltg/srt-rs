@@ -10,7 +10,7 @@ use crate::{
     connection::{ConnectionSettings, ConnectionStatus},
     packet::*,
     protocol::{
-        encryption::Cipher,
+        encryption::Encryption,
         output::Output,
         time::{TimeBase, Timers},
     },
@@ -25,6 +25,7 @@ use encapsulate::Encapsulation;
 pub struct Sender {
     time_base: TimeBase,
     encapsulation: Encapsulation,
+    encryption: Encryption,
     send_buffer: SendBuffer,
     congestion_control: SenderCongestionControl,
 }
@@ -34,6 +35,7 @@ impl Sender {
         Self {
             time_base: TimeBase::new(settings.socket_start_time),
             encapsulation: Encapsulation::new(&settings),
+            encryption: Encryption::new(settings.cipher.clone()),
             send_buffer: SendBuffer::new(&settings),
             congestion_control: SenderCongestionControl::new(settings.bandwidth.clone()),
         }
@@ -53,7 +55,6 @@ pub struct SenderContext<'a> {
     timers: &'a mut Timers,
     output: &'a mut Output,
     stats: &'a mut SocketStatistics,
-    cipher: &'a mut Cipher,
     sender: &'a mut Sender,
 }
 
@@ -63,7 +64,6 @@ impl<'a> SenderContext<'a> {
         timers: &'a mut Timers,
         output: &'a mut Output,
         stats: &'a mut SocketStatistics,
-        cipher: &'a mut Cipher,
         sender: &'a mut Sender,
     ) -> Self {
         Self {
@@ -71,7 +71,6 @@ impl<'a> SenderContext<'a> {
             timers,
             output,
             stats,
-            cipher,
             sender,
         }
     }
@@ -81,7 +80,7 @@ impl<'a> SenderContext<'a> {
         let (mut packets, mut bytes) = (0, 0);
         let ts = self.sender.time_base.timestamp_from(time);
         for packet in self.sender.encapsulation.encapsulate(ts, data) {
-            if let Some((bytes_enc, packet, km)) = self.cipher.encrypt(packet) {
+            if let Some((bytes_enc, packet, km)) = self.sender.encryption.encrypt(packet) {
                 packets += 1;
                 bytes += packet.payload.len() as u64;
                 self.sender.send_buffer.push_data(packet);
@@ -165,6 +164,21 @@ impl<'a> SenderContext<'a> {
                         ControlTypes::new_drop_request(MsgNumber::new_truncate(0), range),
                     )
                 }
+            }
+        }
+    }
+
+    pub fn handle_key_refresh_response(&mut self, keying_material: KeyingMaterialMessage) {
+        match self
+            .sender
+            .encryption
+            .validate_key_material(keying_material)
+        {
+            Ok(()) => {
+                // TODO: add statistic or "event" notification?
+            }
+            Err(_err) => {
+                //self.warn("key refresh response", &err),
             }
         }
     }

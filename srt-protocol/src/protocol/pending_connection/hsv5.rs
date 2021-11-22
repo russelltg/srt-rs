@@ -57,14 +57,15 @@ pub fn gen_hsv5_response(
                 unimplemented!("Key size mismatch");
             }
 
-            Some(match CipherSettings::new(key_settings, km) {
+            let cipher = match CipherSettings::new(key_settings, &settings.key_refresh, km) {
                 Ok(cm) => cm,
                 Err(_) => {
                     return GenHsv5Result::Reject(ConnectionReject::Rejecting(
                         CoreRejectReason::BadSecret.into(),
                     ))
                 }
-            })
+            };
+            Some(cipher)
         }
         // ok, neither have crypto
         (None, None) => None,
@@ -144,7 +145,7 @@ pub fn start_hsv5_initiation(
     // }
 
     let (cipher, ext_km) = if let Some(ks) = &settings.key_settings {
-        let cipher = CipherSettings::new_random(ks);
+        let cipher = CipherSettings::new_random(ks, &settings.key_refresh);
         let keying_material = cipher
             .wrap_keying_material()
             .map(SrtControlPacket::KeyRefreshRequest);

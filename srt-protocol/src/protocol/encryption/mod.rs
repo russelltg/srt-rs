@@ -20,59 +20,31 @@ pub enum DecryptionError {
 #[derive(Debug, Eq, PartialEq)]
 pub enum KeyMaterialError {
     NoKeys, // "No keys!"
+    Invalid(KeyingMaterialMessage),
 }
 
 #[derive(Debug)]
-pub struct Cipher {
-    settings: Option<CipherSettings>,
-    packets_encrypted: usize,
-}
+pub struct Decryption(Option<(StreamEncryptionKeys, KeySettings)>);
 
-impl Cipher {
+impl Decryption {
     pub fn new(settings: Option<CipherSettings>) -> Self {
-        Self {
-            settings,
-            packets_encrypted: 0,
-        }
-    }
-
-    pub fn encrypt(
-        &mut self,
-        mut packet: DataPacket,
-    ) -> Option<(usize, DataPacket, Option<KeyingMaterialMessage>)> {
-        match &mut self.settings {
-            Some(cipher) => {
-                // this requires an extra copy here...maybe DataPacket should have a BytesMut in it instead...
-                let mut data = BytesMut::with_capacity(packet.payload.len());
-                data.extend_from_slice(&packet.payload[..]);
-                let active_sek = cipher.active_sek;
-                let bytes =
-                    cipher
-                        .stream_encryption
-                        .encrypt(active_sek, packet.seq_number, &mut data)?;
-                packet.encryption = active_sek;
-                packet.payload = data.freeze();
-                Some((bytes, packet, None))
-            }
-            None => Some((0, packet, None)),
-        }
+        Self(settings.map(|settings| (settings.stream_keys, settings.key_settings)))
     }
 
     pub fn decrypt(&self, packet: DataPacket) -> Result<(usize, DataPacket), DecryptionError> {
         use DecryptionError::*;
         let mut packet = packet;
-        match (packet.encryption, &self.settings) {
+        match (packet.encryption, &self.0) {
             (DataEncryption::None, None) => Ok((0, packet)),
             (DataEncryption::None, Some(_)) => Err(UnexpectedUnencryptedPacket(packet)),
             (DataEncryption::Even | DataEncryption::Odd, None) => {
                 Err(UnexpectedEncryptedPacket(packet))
             }
-            (selected_sek, Some(cipher)) => {
+            (selected_sek, Some((stream_keys, _))) => {
                 // this requires an extra copy here...maybe DataPacket should have a BytesMut in it instead...
                 let mut data = BytesMut::with_capacity(packet.payload.len());
                 data.extend_from_slice(&packet.payload[..]);
-                let bytes = cipher
-                    .stream_encryption
+                let bytes = stream_keys
                     .decrypt(selected_sek, packet.seq_number, &mut data)
                     .ok_or(DecryptionFailure)?;
                 packet.encryption = DataEncryption::None;
@@ -86,57 +58,114 @@ impl Cipher {
         &mut self,
         keying_material: KeyingMaterialMessage,
     ) -> Result<Option<KeyingMaterialMessage>, KeyMaterialError> {
-        let cipher = self.settings.as_mut().ok_or(KeyMaterialError::NoKeys)?;
-        cipher
-            .update_with_key_material(&keying_material)
+        let (stream_keys, key_settings) = self.0.as_mut().ok_or(KeyMaterialError::NoKeys)?;
+        *stream_keys = StreamEncryptionKeys::unwrap_from(key_settings, &keying_material)
             .map_err(|_| KeyMaterialError::NoKeys)?;
         Ok(Some(keying_material))
+    }
+}
+
+#[derive(Debug)]
+pub struct Encryption(Option<EncryptionState>);
+
+#[derive(Debug)]
+struct EncryptionState {
+    key_settings: KeySettings,
+    key_refresh: KeyMaterialRefreshSettings,
+    stream_keys: StreamEncryptionKeys,
+    active_sek: DataEncryption,
+    next_key_switchover: usize,
+}
+
+impl Encryption {
+    pub fn new(settings: Option<CipherSettings>) -> Self {
+        Self(settings.map(|settings| EncryptionState {
+            next_key_switchover: settings.key_refresh.period,
+            key_settings: settings.key_settings,
+            key_refresh: settings.key_refresh,
+            stream_keys: settings.stream_keys,
+            active_sek: DataEncryption::Even,
+        }))
+    }
+
+    pub fn encrypt(
+        &mut self,
+        mut packet: DataPacket,
+    ) -> Option<(usize, DataPacket, Option<KeyingMaterialMessage>)> {
+        match &mut self.0 {
+            Some(settings) => {
+                // this requires an extra copy here...maybe DataPacket should have a BytesMut in it instead...
+                let mut data = BytesMut::with_capacity(packet.payload.len());
+                data.extend_from_slice(&packet.payload[..]);
+                let active_sek = settings.active_sek;
+                let bytes =
+                    settings
+                        .stream_keys
+                        .encrypt(active_sek, packet.seq_number, &mut data)?;
+                packet.encryption = active_sek;
+                packet.payload = data.freeze();
+
+                let refresh = &settings.key_refresh;
+                let km = if settings.next_key_switchover == refresh.pre_announcement_period {
+                    settings
+                        .stream_keys
+                        .commission_next_key(active_sek, &settings.key_settings)
+                } else {
+                    None
+                };
+
+                if settings.next_key_switchover == 0 {
+                    use DataEncryption::*;
+                    settings.active_sek = match active_sek {
+                        Even => Odd,
+                        Odd => Even,
+                        None => None,
+                    };
+                    settings.next_key_switchover = settings.key_refresh.period;
+                }
+
+                settings.next_key_switchover = settings.next_key_switchover.checked_sub(1).unwrap();
+                Some((bytes, packet, km))
+            }
+            None => Some((0, packet, None)),
+        }
     }
 
     pub fn validate_key_material(
         &self,
-        _keying_material: KeyingMaterialMessage,
+        keying_material: KeyingMaterialMessage,
     ) -> Result<(), KeyMaterialError> {
+        if let Some(settings) = self.0.as_ref() {
+            if Some(&keying_material)
+                != settings
+                    .stream_keys
+                    .wrap_with(&settings.key_settings)
+                    .as_ref()
+            {
+                return Err(KeyMaterialError::Invalid(keying_material));
+            }
+        }
         Ok(())
     }
 }
 
 #[cfg(test)]
-mod cipher {
+mod tests {
     use super::*;
-    use bytes::Bytes;
 
-    #[test]
-    fn round_trip() {
-        let key_settings = KeySettings::new(KeySize::Bytes24, "test".into());
-        let mut cipher = Cipher::new(Some(CipherSettings::new_random(&key_settings)));
-        let original_packet = DataPacket {
-            seq_number: SeqNumber(3),
-            message_loc: PacketLocation::ONLY,
-            in_order_delivery: false,
-            encryption: DataEncryption::None,
-            retransmitted: false,
-            message_number: MsgNumber(1),
-            timestamp: TimeStamp::MIN,
-            dest_sockid: SocketId(0),
-            payload: Bytes::from("test round_trip"),
-        };
-
-        let (bytes, encrypted_packet, key_material) =
-            cipher.encrypt(original_packet.clone()).unwrap();
-        assert_eq!(bytes, original_packet.payload.len());
-        assert_ne!(encrypted_packet, original_packet);
-        assert_eq!(key_material, None);
-
-        let (bytes, decrypted_packet) = cipher.decrypt(encrypted_packet).unwrap();
-        assert_eq!(bytes, original_packet.payload.len());
-        assert_eq!(decrypted_packet, original_packet);
+    fn key_settings() -> KeySettings {
+        KeySettings {
+            key_size: KeySize::Bytes24,
+            passphrase: "1234567890".into(),
+        }
     }
 
-    #[test]
-    fn decryption() {
-        use DecryptionError::*;
-        let new_packet = |encryption| DataPacket {
+    fn new_settings() -> CipherSettings {
+        CipherSettings::new_random(&key_settings(), &Default::default())
+    }
+
+    fn data_packet(encryption: DataEncryption, payload: &str) -> DataPacket {
+        DataPacket {
             seq_number: SeqNumber(3),
             message_loc: PacketLocation::ONLY,
             in_order_delivery: false,
@@ -145,70 +174,106 @@ mod cipher {
             message_number: MsgNumber(1),
             timestamp: TimeStamp::MIN,
             dest_sockid: SocketId(0),
-            payload: Bytes::from("test decryption"),
-        };
-        let with_encryption = |encrypt| {
-            if encrypt {
-                let key_settings = KeySettings::new(KeySize::Bytes24, "test".into());
-                Cipher::new(Some(CipherSettings::new_random(&key_settings)))
+            payload: bytes::Bytes::copy_from_slice(payload.as_bytes()),
+        }
+    }
+
+    #[test]
+    fn round_trip() {
+        let settings = new_settings();
+        let original_packet = data_packet(DataEncryption::None, "test round_trip");
+
+        let mut encryption = Encryption::new(Some(settings.clone()));
+        let (bytes, encrypted_packet, key_material) =
+            encryption.encrypt(original_packet.clone()).unwrap();
+        assert_eq!(bytes, original_packet.payload.len());
+        assert_ne!(encrypted_packet, original_packet);
+        assert_eq!(key_material, None);
+
+        let decryption = Decryption::new(Some(settings));
+        let (bytes, decrypted_packet) = decryption.decrypt(encrypted_packet).unwrap();
+        assert_eq!(bytes, original_packet.payload.len());
+        assert_eq!(decrypted_packet, original_packet);
+    }
+
+    #[test]
+    fn decryption_falure() {
+        use DecryptionError::*;
+        let with_keys = |with_keys| {
+            if with_keys {
+                Decryption::new(Some(new_settings()))
             } else {
-                Cipher::new(None)
+                Decryption::new(None)
             }
         };
 
+        let new_packet = |encryption| data_packet(encryption, "test decryption_falureR");
+
         let packet = new_packet(DataEncryption::None);
         assert_eq!(
-            with_encryption(true).decrypt(packet.clone()),
+            with_keys(true).decrypt(packet.clone()),
             Err(UnexpectedUnencryptedPacket(packet))
         );
 
         let packet = new_packet(DataEncryption::Even);
         assert_eq!(
-            with_encryption(false).decrypt(packet.clone()),
+            with_keys(false).decrypt(packet.clone()),
             Err(UnexpectedEncryptedPacket(packet))
         );
 
         let packet = new_packet(DataEncryption::Odd);
         assert_eq!(
-            with_encryption(false).decrypt(packet.clone()),
+            with_keys(false).decrypt(packet.clone()),
             Err(UnexpectedEncryptedPacket(packet))
         );
 
         let packet = new_packet(DataEncryption::None);
-        assert_eq!(
-            with_encryption(false).decrypt(packet.clone()),
-            Ok((0, packet))
-        );
+        assert_eq!(with_keys(false).decrypt(packet.clone()), Ok((0, packet)));
     }
 
     #[test]
     fn refresh_key_material() {
-        let key_settings = KeySettings::new(KeySize::Bytes24, "test".into());
-        let mut cipher = Cipher::new(Some(CipherSettings::new_random(&key_settings)));
-        let original_packet = DataPacket {
-            seq_number: SeqNumber(3),
-            message_loc: PacketLocation::ONLY,
-            in_order_delivery: false,
-            encryption: DataEncryption::None,
-            retransmitted: false,
-            message_number: MsgNumber(1),
-            timestamp: TimeStamp::MIN,
-            dest_sockid: SocketId(0),
-            payload: Bytes::from("test refresh_key_material"),
+        let settings = CipherSettings {
+            key_refresh: KeyMaterialRefreshSettings {
+                period: 5,
+                pre_announcement_period: 2,
+            },
+            ..new_settings()
         };
+        let mut encryption = Encryption::new(Some(settings.clone()));
+        let mut decryption = Decryption::new(Some(settings.clone()));
+        let original_packet = data_packet(DataEncryption::None, "test refresh_key_material");
 
-        let (first_bytes, first_packet, _) = cipher.encrypt(original_packet.clone()).unwrap();
+        let count = settings.key_refresh.period - settings.key_refresh.pre_announcement_period;
+        for _ in 0..count {
+            let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
+            assert_eq!(km, None);
+            assert_eq!(packet.encryption, DataEncryption::Even);
+        }
 
-        let stream_encryption = StreamEncryption::new_random(KeySize::Bytes24);
-        let key_material = stream_encryption.wrap_with(&key_settings).unwrap();
-        let response = cipher.refresh_key_material(key_material.clone());
+        let (_, first_packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
+        assert_ne!(km, None);
+        assert_eq!(first_packet.encryption, DataEncryption::Even);
+
+        let key_material = km.unwrap();
+        let response = decryption.refresh_key_material(key_material.clone());
         assert_eq!(response, Ok(Some(key_material)));
 
-        let (second_bytes, second_packet, _) = cipher.encrypt(original_packet.clone()).unwrap();
-        assert_eq!(first_bytes, second_bytes);
-        assert_ne!(first_packet, second_packet);
+        for _ in 0..settings.key_refresh.pre_announcement_period {
+            let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
+            assert_eq!(km, None);
+            assert_eq!(packet.encryption, DataEncryption::Even);
+        }
 
-        let (bytes, decrypted_packet) = cipher.decrypt(second_packet).unwrap();
+        let (_, second_packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
+        assert_eq!(km, None);
+        assert_eq!(second_packet.encryption, DataEncryption::Odd);
+
+        let (bytes, decrypted_packet) = decryption.decrypt(first_packet).unwrap();
+        assert_eq!(bytes, original_packet.payload.len());
+        assert_eq!(decrypted_packet, original_packet);
+
+        let (bytes, decrypted_packet) = decryption.decrypt(second_packet).unwrap();
         assert_eq!(bytes, original_packet.payload.len());
         assert_eq!(decrypted_packet, original_packet);
     }
