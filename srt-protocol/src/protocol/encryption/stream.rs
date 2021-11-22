@@ -43,7 +43,7 @@ impl StreamEncryptionKeys {
             Even => {
                 self.odd_key = Some(EncryptionKey::new_random(key_settings.key_size));
             }
-            Odd => self.odd_key = Some(EncryptionKey::new_random(key_settings.key_size)),
+            Odd => self.even_key = Some(EncryptionKey::new_random(key_settings.key_size)),
             None => return Option::None,
         }
         self.wrap_with(key_settings)

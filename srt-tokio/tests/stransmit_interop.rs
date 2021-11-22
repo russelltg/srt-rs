@@ -444,6 +444,8 @@ async fn bidirectional_interop() -> Result<(), Error> {
 #[tokio::test]
 #[cfg(not(target_os = "windows"))]
 async fn bidirectional_interop_encrypt_rekey() -> Result<(), Error> {
+    use tokio::time::sleep;
+
     #[cfg(target_os = "macos")]
     if Instant::now().elapsed() < Duration::MAX {
         return Ok(());
@@ -472,6 +474,7 @@ async fn bidirectional_interop_encrypt_rekey() -> Result<(), Error> {
                     .await
                     .unwrap();
                 debug!("Sent");
+                sleep(Duration::from_millis(10)).await;
             }
         };
         let r = async move {
@@ -512,6 +515,8 @@ const SRTO_KMPREANNOUNCE: c_int = 52;
 const SRTO_PASSPHRASE: c_int = 26;
 const SRTO_PBKEYLEN: c_int = 27;
 
+const LOG_DEBUG: c_int = 7;
+
 struct HaivisionSrt<'l> {
     create_socket: Symbol<'l, unsafe extern "C" fn() -> HaiSocket>,
     setsockflag: Symbol<'l, unsafe extern "C" fn(HaiSocket, c_int, *const (), c_int) -> c_int>,
@@ -522,6 +527,7 @@ struct HaivisionSrt<'l> {
     startup: Symbol<'l, unsafe extern "C" fn() -> c_int>,
     // cleanup: Symbol<'l, unsafe extern "C" fn() -> c_int>,
     getlasterror_str: Symbol<'l, unsafe extern "C" fn() -> *const c_char>,
+    setloglevel: Symbol<'l, unsafe extern "C" fn(c_int) -> ()>,
 }
 
 impl<'l> HaivisionSrt<'l> {
@@ -536,6 +542,7 @@ impl<'l> HaivisionSrt<'l> {
             startup: lib.get(b"srt_startup").unwrap(),
             // cleanup: lib.get(b"srt_cleanup").unwrap(),
             getlasterror_str: lib.get(b"srt_getlasterror_str").unwrap(),
+            setloglevel: lib.get(b"srt_setloglevel").unwrap(),
         }
     }
 }
@@ -618,6 +625,7 @@ lazy_static::lazy_static! {
     static ref SRT: HaivisionSrt<'static> = unsafe {
         let srt = HaivisionSrt::new(&*LIBSRT);
         (srt.startup)();
+        (srt.setloglevel)(LOG_DEBUG);
         srt
     };
 }
