@@ -676,10 +676,11 @@ fn haivision_echo(port: u16, packets: usize, settings: HaiSettings) {
             );
         }
         if let Some(passphrase) = settings.passphrase {
+            let cstr = format!("{}\0", passphrase);
             (srt.setsockflag)(
                 ss,
                 SRTO_PASSPHRASE,
-                passphrase.as_bytes().as_ptr() as *const (),
+                cstr.as_bytes().as_ptr() as *const (),
                 passphrase.as_bytes().len() as c_int,
             );
         }
