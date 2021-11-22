@@ -118,7 +118,7 @@ impl Default for KeyMaterialRefreshSettings {
     fn default() -> Self {
         Self {
             pre_announcement_period: 4_000,
-            period: 2 ^ 25,
+            period: 1 << 25, // 2^25
         }
     }
 }

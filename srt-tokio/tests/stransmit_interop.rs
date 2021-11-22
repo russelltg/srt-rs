@@ -454,7 +454,9 @@ async fn bidirectional_interop_encrypt_rekey() -> Result<(), Error> {
     let srt_rs_side = async move {
         let sock = SrtSocketBuilder::new_listen()
             .local_port(2813)
-            .crypto(16, "password123") // TOOD: configure short rekey period here too
+            .crypto(16, "password123")
+            .km_pre_announcement_period(60)
+            .km_refresh_period(128)
             .connect()
             .await
             .unwrap();
