@@ -281,16 +281,16 @@ mod tests {
         assert_eq!(bytes, original_packet.payload.len());
         assert_eq!(decrypted_packet, original_packet);
 
-        let count = settings.key_refresh.period() - settings.key_refresh.pre_announcement_period();
-        for _ in 0..count {
+        let count = settings.key_refresh.period() - settings.key_refresh.pre_announcement_period() - 1;
+        for _ in 1..count {
             let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
             assert_eq!(km, None);
-            assert_eq!(packet.encryption, DataEncryption::Even);
+            assert_eq!(packet.encryption, DataEncryption::Odd);
         }
 
         let (_, third_packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
         assert_ne!(km, None);
-        assert_eq!(third_packet.encryption, DataEncryption::Even);
+        assert_eq!(third_packet.encryption, DataEncryption::Odd);
 
         let key_material = km.unwrap();
         let response = decryption.refresh_key_material(key_material.clone());
