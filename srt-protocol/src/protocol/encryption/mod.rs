@@ -281,8 +281,8 @@ mod tests {
         assert_eq!(bytes, original_packet.payload.len());
         assert_eq!(decrypted_packet, original_packet);
 
-        let count = settings.key_refresh.period() - settings.key_refresh.pre_announcement_period() - 1;
-        for _ in 1..count {
+        let count = settings.key_refresh.period() - settings.key_refresh.pre_announcement_period();
+        for _ in 1..count - 1 {
             let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
             assert_eq!(km, None);
             assert_eq!(packet.encryption, DataEncryption::Odd);
