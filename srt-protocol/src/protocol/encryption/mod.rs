@@ -74,13 +74,16 @@ struct EncryptionState {
     key_refresh: KeyMaterialRefreshSettings,
     stream_keys: StreamEncryptionKeys,
     active_sek: DataEncryption,
-    next_key_switchover: usize,
+    packets_until_preannounce: usize,
+    packets_until_key_switch: usize,
 }
 
 impl Encryption {
     pub fn new(settings: Option<CipherSettings>) -> Self {
         Self(settings.map(|settings| EncryptionState {
-            next_key_switchover: settings.key_refresh.period(),
+            packets_until_preannounce: settings.key_refresh.period()
+                - settings.key_refresh.pre_announcement_period(),
+            packets_until_key_switch: settings.key_refresh.period(),
             key_settings: settings.key_settings,
             key_refresh: settings.key_refresh,
             stream_keys: settings.stream_keys,
@@ -105,26 +108,27 @@ impl Encryption {
                 packet.encryption = active_sek;
                 packet.payload = data.freeze();
 
-                let refresh = &settings.key_refresh;
-                let km = if settings.next_key_switchover == refresh.pre_announcement_period() {
+                let km = if settings.packets_until_preannounce.checked_sub(1).is_none() {
+                    settings.packets_until_preannounce = settings.key_refresh.period();
                     settings
                         .stream_keys
                         .commission_next_key(active_sek, &settings.key_settings)
+                    // TODO: need to retranmsit this until response
                 } else {
                     None
                 };
 
-                if settings.next_key_switchover == 0 {
+                if settings.packets_until_key_switch.checked_sub(1).is_none() {
                     use DataEncryption::*;
+
+                    settings.packets_until_key_switch = settings.key_refresh.period();
                     settings.active_sek = match active_sek {
                         Even => Odd,
                         Odd => Even,
                         None => None,
                     };
-                    settings.next_key_switchover = settings.key_refresh.period();
                 }
 
-                settings.next_key_switchover = settings.next_key_switchover.checked_sub(1).unwrap();
                 Some((bytes, packet, km))
             }
             None => Some((0, packet, None)),
