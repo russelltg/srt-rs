@@ -155,12 +155,16 @@ async fn stransmit_client() -> Result<(), Error> {
     stransmit.wait()?;
 
     if time::Instant::now().elapsed() > Duration::MAX {
-        haivision_echo(1, 0, HaiSettings {
-            km_refreshrate: None,
-            km_preannounce: None,
-            passphrase: None,
-            pbkeylen: None
-        });
+        haivision_echo(
+            1,
+            0,
+            HaiSettings {
+                km_refreshrate: None,
+                km_preannounce: None,
+                passphrase: None,
+                pbkeylen: None,
+            },
+        );
     }
 
     Ok(())
@@ -401,7 +405,7 @@ async fn test_c_client_interop() -> Result<(), Error> {
 async fn bidirectional_interop() -> Result<(), Error> {
     #[cfg(target_os = "macos")]
     if Instant::now().elapsed() < Duration::MAX {
-        return Ok(())
+        return Ok(());
     }
 
     let _ = pretty_env_logger::try_init();
@@ -442,7 +446,7 @@ async fn bidirectional_interop() -> Result<(), Error> {
 async fn bidirectional_interop_encrypt_rekey() -> Result<(), Error> {
     #[cfg(target_os = "macos")]
     if Instant::now().elapsed() < Duration::MAX {
-        return Ok(())
+        return Ok(());
     }
 
     let _ = pretty_env_logger::try_init();
