@@ -2,7 +2,7 @@ mod buffer;
 mod congestion_control;
 mod encapsulate;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 
@@ -47,6 +47,10 @@ impl Sender {
 
     pub fn has_packets_to_send(&self) -> bool {
         self.send_buffer.has_packets_to_send()
+    }
+
+    pub fn tx_buffer_time(&self) -> Duration {
+        self.send_buffer.duration()
     }
 }
 
@@ -93,6 +97,10 @@ impl<'a> SenderContext<'a> {
 
     pub fn handle_ack_packet(&mut self, now: Instant, ack: Acknowledgement) {
         self.statistics.rx_ack += 1;
+        if matches!(ack, Acknowledgement::Lite(_)) {
+            self.statistics.rx_light_ack += 1;
+        }
+
         match self
             .sender
             .send_buffer
@@ -108,7 +116,6 @@ impl<'a> SenderContext<'a> {
                     // TODO: add these to connection statistics
                 }
                 if let Some(full_ack) = send_ack2 {
-                    self.statistics.tx_ack2 += 1;
                     self.output.send_control(now, ControlTypes::Ack2(full_ack))
                 }
             }
@@ -129,13 +136,13 @@ impl<'a> SenderContext<'a> {
             use Loss::*;
             match loss {
                 Ignored => {
-                    self.statistics.rx_loss_data += 1;
+                    self.statistics.tx_loss_data += 1;
                 }
                 Added => {
-                    self.statistics.rx_loss_data += 1;
+                    self.statistics.tx_loss_data += 1;
                 }
                 Dropped => {
-                    self.statistics.rx_dropped_data += 1;
+                    self.statistics.tx_dropped_data += 1;
 
                     // On a Live stream, where each packet is a message, just one NAK with
                     // a compressed packet loss interval of significant size (e.g. [1,
@@ -171,6 +178,7 @@ impl<'a> SenderContext<'a> {
                     self.output.send_data(now, d);
                 }
                 Retransmit(d) => {
+                    self.statistics.tx_retransmit_data += 1;
                     self.output.send_data(now, d);
                 }
                 Drop(_) => {}

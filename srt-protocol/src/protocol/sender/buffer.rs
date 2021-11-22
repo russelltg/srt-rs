@@ -1,6 +1,7 @@
 use std::{
     cmp::max,
     collections::{BTreeSet, VecDeque},
+    convert::TryFrom,
     ops::Range,
     time::Duration,
 };
@@ -49,6 +50,15 @@ impl SendBuffer {
 
     pub fn has_packets_to_send(&self) -> bool {
         self.peek_next_packet().is_some() || !self.lost_list.is_empty()
+    }
+
+    pub fn duration(&self) -> Duration {
+        match (self.buffer.front(), self.buffer.back()) {
+            (Some(f), Some(l)) => Duration::from_micros(
+                u64::try_from((l.timestamp - f.timestamp).as_micros()).unwrap_or(0),
+            ),
+            _ => Duration::from_secs(0),
+        }
     }
 
     pub fn update_largest_acked_seq_number(
@@ -747,5 +757,30 @@ mod test {
         );
         assert!(!buffer.has_packets_to_send());
         assert!(buffer.lost_list.is_empty());
+    }
+
+    #[test]
+    fn buffer_duration() {
+        use SenderAction::*;
+
+        let mut buffer = SendBuffer::new(&new_settings());
+        assert_eq!(buffer.duration(), Duration::from_micros(0));
+
+        for n in 0..10 {
+            buffer.push_data(test_data_packet(n, false));
+            assert_eq!(buffer.duration(), Duration::from_millis(1) * n)
+        }
+
+        for n in 0..10 {
+            let a = buffer
+                .next_snd_actions(TimeStamp::MIN + n * TimeSpan::from_micros(1_000), 1, false)
+                .collect::<Vec<_>>();
+            assert_eq!(a.len(), 1);
+            assert!(matches!(a[0], Send(_)));
+            assert_eq!(
+                buffer.duration(),
+                Duration::from_millis(1) * (10 - n as u32 - 1)
+            )
+        }
     }
 }

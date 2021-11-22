@@ -132,6 +132,7 @@ impl DuplexConnection {
         let action = if self.should_close(now) {
             Action::Close
         } else if self.should_update_statistics(now) {
+            self.update_statistics(now);
             Action::UpdateStatistics(&self.statistics)
         } else if let Some(packet) = self.next_packet(now) {
             Action::SendPacket(packet)
@@ -151,6 +152,7 @@ impl DuplexConnection {
 
     pub fn update_statistics(&mut self, now: Instant) {
         self.statistics.elapsed_time = now - self.settings.socket_start_time;
+        self.statistics.tx_buffer_time = self.sender.tx_buffer_time();
     }
 
     pub fn next_packet(&mut self, now: Instant) -> Option<(Packet, SocketAddr)> {
@@ -165,8 +167,11 @@ impl DuplexConnection {
                     self.statistics.tx_bytes += d.payload.len() as u64 + 44;
                 }
                 Packet::Control(c) => match c.control_type {
-                    ControlTypes::Ack(_) => {
+                    ControlTypes::Ack(ref a) => {
                         self.statistics.tx_ack += 1;
+                        if matches!(a, Acknowledgement::Lite(_)) {
+                            self.statistics.tx_light_ack += 1;
+                        }
                     }
                     ControlTypes::Nak(_) => {
                         self.statistics.tx_nak += 1;
