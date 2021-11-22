@@ -9,6 +9,15 @@ use crate::{
 
 use super::key::*;
 
+#[derive(Debug, Eq, PartialEq)]
+pub enum KeyMaterialError {
+    NoKeys,
+    InvalidSaltLength,
+    InvalidKeyFlags(KeyFlags, KeySize, usize),
+    InvalidInitializationVector(WrapInitializationVector),
+    InvalidRefreshResponse(KeyingMaterialMessage),
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamEncryptionKeys {
     salt: Salt,
@@ -61,20 +70,27 @@ impl StreamEncryptionKeys {
     pub fn unwrap_from(
         key_settings: &KeySettings,
         key_material: &KeyingMaterialMessage,
-    ) -> Result<Self, WrapInitializationVector> {
+    ) -> Result<Self, KeyMaterialError> {
+        use KeyMaterialError::*;
         // TODO: revisit errors, KeyingMaterialMessage has a lot of fields that ought be validated
-        let salt = Salt::try_from(key_material.salt.as_slice()).unwrap();
+        let salt = Salt::try_from(key_material.salt.as_slice()).map_err(|_| InvalidSaltLength)?;
         let kek = KeyEncryptionKey::new(key_settings, &salt);
 
-        // TODO: this is raw input, return an error result on failure instead of assert
-        assert_eq!(
-            key_material.wrapped_keys.len(),
-            key_material.key_flags.bits().count_ones() as usize * key_settings.key_size.as_usize()
-                + 8
-        );
+        if key_material.key_flags.bits().count_ones() as usize * key_settings.key_size.as_usize()
+            + 8
+            != key_material.wrapped_keys.len()
+        {
+            return Err(KeyMaterialError::InvalidKeyFlags(
+                key_material.key_flags,
+                key_settings.key_size,
+                key_material.wrapped_keys.len(),
+            ));
+        }
 
         let wrapped_keys = key_material.wrapped_keys.as_slice();
-        let keys = kek.decrypt_wrapped_keys(wrapped_keys)?;
+        let keys = kek
+            .decrypt_wrapped_keys(wrapped_keys)
+            .map_err(InvalidInitializationVector)?;
 
         let key_flags = key_material.key_flags;
         let key_size = kek.len();

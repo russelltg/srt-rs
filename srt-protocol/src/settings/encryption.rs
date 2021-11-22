@@ -6,8 +6,7 @@ pub use crate::{
     protocol::encryption::{
         key::WrapInitializationVector,
         key::{EncryptionKey, Salt},
-        stream::StreamEncryptionKeys,
-        KeyMaterialError,
+        stream::{KeyMaterialError, StreamEncryptionKeys},
     },
 };
 
@@ -204,7 +203,7 @@ impl CipherSettings {
         key_settings: &KeySettings,
         km_refresh: &KeyMaterialRefreshSettings,
         key_material: &KeyingMaterialMessage,
-    ) -> Result<Self, WrapInitializationVector> {
+    ) -> Result<Self, KeyMaterialError> {
         Ok(Self {
             stream_keys: StreamEncryptionKeys::unwrap_from(key_settings, key_material)?,
             key_settings: key_settings.clone(),

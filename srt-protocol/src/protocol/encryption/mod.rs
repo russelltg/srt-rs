@@ -1,12 +1,14 @@
+pub mod key;
+pub mod stream;
+mod wrap;
+
 use std::fmt::Debug;
 
 use bytes::BytesMut;
 
 use crate::{packet::*, settings::*};
 
-pub mod key;
-pub mod stream;
-mod wrap;
+use stream::KeyMaterialError;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum DecryptionError {
@@ -15,12 +17,6 @@ pub enum DecryptionError {
     UnexpectedEncryptedPacket(DataPacket),
     EncryptionFailure,
     DecryptionFailure,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum KeyMaterialError {
-    NoKeys, // "No keys!"
-    Invalid(KeyingMaterialMessage),
 }
 
 #[derive(Debug)]
@@ -59,8 +55,7 @@ impl Decryption {
         keying_material: KeyingMaterialMessage,
     ) -> Result<Option<KeyingMaterialMessage>, KeyMaterialError> {
         let (stream_keys, key_settings) = self.0.as_mut().ok_or(KeyMaterialError::NoKeys)?;
-        *stream_keys = StreamEncryptionKeys::unwrap_from(key_settings, &keying_material)
-            .map_err(|_| KeyMaterialError::NoKeys)?;
+        *stream_keys = StreamEncryptionKeys::unwrap_from(key_settings, &keying_material)?;
         Ok(Some(keying_material))
     }
 }
@@ -142,14 +137,14 @@ impl Encryption {
         &self,
         keying_material: KeyingMaterialMessage,
     ) -> Result<(), KeyMaterialError> {
+        use KeyMaterialError::*;
         if let Some(settings) = self.0.as_ref() {
-            if Some(&keying_material)
-                != settings
-                    .stream_keys
-                    .wrap_with(&settings.key_settings)
-                    .as_ref()
-            {
-                return Err(KeyMaterialError::Invalid(keying_material));
+            let expected_key_material = settings
+                .stream_keys
+                .wrap_with(&settings.key_settings)
+                .ok_or(NoKeys)?;
+            if keying_material != expected_key_material {
+                return Err(InvalidRefreshResponse(keying_material));
             }
         }
         Ok(())
