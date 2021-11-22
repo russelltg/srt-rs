@@ -39,11 +39,10 @@ impl StreamEncryptionKeys {
         key_settings: &KeySettings,
     ) -> Option<KeyingMaterialMessage> {
         use DataEncryption::*;
+        let new_random_key = EncryptionKey::new_random;
         match active_sek {
-            Even => {
-                self.odd_key = Some(EncryptionKey::new_random(key_settings.key_size));
-            }
-            Odd => self.even_key = Some(EncryptionKey::new_random(key_settings.key_size)),
+            Even => self.odd_key = Some(new_random_key(key_settings.key_size)),
+            Odd => self.even_key = Some(new_random_key(key_settings.key_size)),
             None => return Option::None,
         }
         self.wrap_with(key_settings)
