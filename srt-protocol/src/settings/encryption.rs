@@ -127,7 +127,7 @@ pub struct KeyMaterialRefreshSettingsError(usize, usize);
 
 impl Display for KeyMaterialRefreshSettingsError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "KM Refresh Period ({}) must be non-zero and greater than the KM Pre Announce Period ({}).", self.0, self.1)
+        write!(f, "KM Refresh Period ({}) must be non-zero and greater than 1/2 the KM Pre Announce Period ({}).", self.0, self.1)
     }
 }
 
@@ -136,7 +136,7 @@ impl KeyMaterialRefreshSettings {
         period: usize,
         pre_announcement_period: usize,
     ) -> Result<Self, KeyMaterialRefreshSettingsError> {
-        if period > 0 && period > pre_announcement_period {
+        if period > 0 && period / pre_announcement_period >= 2 {
             Ok(Self {
                 period,
                 pre_announcement_period,

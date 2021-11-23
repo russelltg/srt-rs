@@ -69,63 +69,95 @@ struct EncryptionState {
     key_refresh: KeyMaterialRefreshSettings,
     stream_keys: StreamEncryptionKeys,
     active_sek: DataEncryption,
-    packets_until_preannounce: usize,
+    packets_until_pre_announcement: usize,
+    packets_until_transmit: usize,
     packets_until_key_switch: usize,
+    last_key_material: Option<KeyingMaterialMessage>,
+}
+
+impl EncryptionState {
+    fn try_encrypt_packet(&mut self, mut packet: DataPacket) -> Option<(usize, DataPacket)> {
+        // this requires an extra copy here...maybe DataPacket should have a BytesMut in it instead...
+        let mut data = BytesMut::with_capacity(packet.payload.len());
+        data.extend_from_slice(&packet.payload[..]);
+        let bytes = self
+            .stream_keys
+            .encrypt(self.active_sek, packet.seq_number, &mut data)?;
+        packet.encryption = self.active_sek;
+        packet.payload = data.freeze();
+        Some((bytes, packet))
+    }
+
+    fn try_schedule_pre_announcment(&mut self) {
+        if self.packets_until_pre_announcement == 0 {
+            self.packets_until_pre_announcement = self.key_refresh.period();
+            self.packets_until_transmit = 0;
+
+            if self.last_key_material.is_none() {
+                self.last_key_material = self
+                    .stream_keys
+                    .commission_next_key(self.active_sek, &self.key_settings);
+            }
+        }
+    }
+
+    fn try_send_key_material(&mut self) -> Option<KeyingMaterialMessage> {
+        let km = self.last_key_material.as_ref()?;
+        if self.packets_until_transmit == 0 {
+            self.packets_until_transmit =
+                std::cmp::min(self.key_refresh.pre_announcement_period(), 1_000);
+            Some(km.clone())
+        } else {
+            self.packets_until_transmit -= 1;
+            None
+        }
+    }
+
+    fn try_switch_stream_keys(&mut self) {
+        use DataEncryption::*;
+        if self.packets_until_key_switch == 0 {
+            self.packets_until_key_switch = self.key_refresh.period();
+            if self.last_key_material.is_none() {
+                self.active_sek = match self.active_sek {
+                    Even => Odd,
+                    Odd => Even,
+                    None => None,
+                };
+            }
+        }
+    }
 }
 
 impl Encryption {
     pub fn new(settings: Option<CipherSettings>) -> Self {
         Self(settings.map(|settings| EncryptionState {
-            packets_until_preannounce: settings.key_refresh.period()
-                - settings.key_refresh.pre_announcement_period(),
-            packets_until_key_switch: settings.key_refresh.period(),
             key_settings: settings.key_settings,
-            key_refresh: settings.key_refresh,
+            key_refresh: settings.key_refresh.clone(),
             stream_keys: settings.stream_keys,
             active_sek: DataEncryption::Even,
+
+            packets_until_pre_announcement: settings.key_refresh.period()
+                - settings.key_refresh.pre_announcement_period(),
+            packets_until_transmit: 0,
+            packets_until_key_switch: settings.key_refresh.period(),
+            last_key_material: None,
         }))
     }
 
     pub fn encrypt(
         &mut self,
-        mut packet: DataPacket,
+        packet: DataPacket,
     ) -> Option<(usize, DataPacket, Option<KeyingMaterialMessage>)> {
         match &mut self.0 {
-            Some(settings) => {
-                // this requires an extra copy here...maybe DataPacket should have a BytesMut in it instead...
-                let mut data = BytesMut::with_capacity(packet.payload.len());
-                data.extend_from_slice(&packet.payload[..]);
-                let active_sek = settings.active_sek;
-                let bytes =
-                    settings
-                        .stream_keys
-                        .encrypt(active_sek, packet.seq_number, &mut data)?;
-                packet.encryption = active_sek;
-                packet.payload = data.freeze();
+            Some(this) => {
+                let (bytes, packet) = this.try_encrypt_packet(packet)?;
 
-                let km = if settings.packets_until_preannounce == 0 {
-                    settings.packets_until_preannounce = settings.key_refresh.period();
-                    settings
-                        .stream_keys
-                        .commission_next_key(active_sek, &settings.key_settings)
-                    // TODO: need to retranmsit this until response
-                } else {
-                    None
-                };
+                this.try_schedule_pre_announcment();
+                this.try_switch_stream_keys();
+                let km = this.try_send_key_material();
 
-                if settings.packets_until_key_switch == 0 {
-                    use DataEncryption::*;
-
-                    settings.packets_until_key_switch = settings.key_refresh.period();
-                    settings.active_sek = match active_sek {
-                        Even => Odd,
-                        Odd => Even,
-                        None => None,
-                    };
-                }
-
-                settings.packets_until_preannounce -= 1;
-                settings.packets_until_key_switch -= 1;
+                this.packets_until_pre_announcement -= 1;
+                this.packets_until_key_switch -= 1;
 
                 Some((bytes, packet, km))
             }
@@ -134,16 +166,16 @@ impl Encryption {
     }
 
     pub fn validate_key_material(
-        &self,
+        &mut self,
         keying_material: KeyingMaterialMessage,
     ) -> Result<(), KeyMaterialError> {
         use KeyMaterialError::*;
-        if let Some(settings) = self.0.as_ref() {
-            let expected_key_material = settings
-                .stream_keys
-                .wrap_with(&settings.key_settings)
-                .ok_or(NoKeys)?;
-            if keying_material != expected_key_material {
+        if let Some(settings) = self.0.as_mut() {
+            let expected_key_material = settings.last_key_material.as_ref().ok_or(NoKeys)?;
+            if keying_material == *expected_key_material {
+                settings.packets_until_transmit = 0;
+                settings.last_key_material = None;
+            } else {
                 return Err(InvalidRefreshResponse(keying_material));
             }
         }
@@ -236,7 +268,7 @@ mod tests {
     #[test]
     fn refresh_key_material() {
         let settings = CipherSettings {
-            key_refresh: KeyMaterialRefreshSettings::new(5, 2).unwrap(),
+            key_refresh: KeyMaterialRefreshSettings::new(3_000, 1_000).unwrap(),
             ..new_settings()
         };
         let mut encryption = Encryption::new(Some(settings.clone()));
@@ -244,10 +276,10 @@ mod tests {
         let original_packet = data_packet(DataEncryption::None, "test refresh_key_material");
 
         let count = settings.key_refresh.period() - settings.key_refresh.pre_announcement_period();
-        for _ in 0..count {
+        for i in 0..count {
             let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
             assert_eq!(km, None);
-            assert_eq!(packet.encryption, DataEncryption::Even);
+            assert_eq!(packet.encryption, DataEncryption::Even, "{:?}", i);
         }
 
         let (_, first_packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
@@ -256,11 +288,13 @@ mod tests {
 
         let key_material = km.unwrap();
         let response = decryption.refresh_key_material(key_material.clone());
-        assert_eq!(response, Ok(Some(key_material)));
+        assert_eq!(response, Ok(Some(key_material.clone())));
 
-        for _ in 0..settings.key_refresh.pre_announcement_period() {
+        assert_eq!(encryption.validate_key_material(key_material), Ok(()));
+
+        for i in 0..settings.key_refresh.pre_announcement_period() {
             let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
-            assert_eq!(km, None);
+            assert_eq!(km, None, "{:?}", i);
             assert_eq!(packet.encryption, DataEncryption::Even);
         }
 
@@ -294,5 +328,25 @@ mod tests {
         let (bytes, decrypted_packet) = decryption.decrypt(third_packet).unwrap();
         assert_eq!(bytes, original_packet.payload.len());
         assert_eq!(decrypted_packet, original_packet);
+    }
+
+    #[test]
+    fn retry_refresh_key_material() {
+        let settings = CipherSettings {
+            key_refresh: KeyMaterialRefreshSettings::new(44_000, 20_000).unwrap(),
+            ..new_settings()
+        };
+        let mut encryption = Encryption::new(Some(settings.clone()));
+        let original_packet = data_packet(DataEncryption::None, "test refresh_key_material");
+
+        let count = (0..settings.key_refresh.period())
+            .into_iter()
+            .filter_map(|_| {
+                let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
+                km.map(|k| (packet.encryption, k))
+            })
+            .count();
+
+        assert_eq!(count, 20);
     }
 }
