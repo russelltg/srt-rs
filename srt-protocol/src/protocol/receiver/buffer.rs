@@ -9,12 +9,12 @@ use std::{
 use bytes::{Bytes, BytesMut};
 use take_until::TakeUntilExt;
 
+use crate::packet::*;
+
 use super::{
     time::{ClockAdjustment, SynchronizedRemoteClock},
     DataPacketAction, DataPacketError,
 };
-
-use crate::packet::*;
 
 #[derive(Debug)]
 pub struct LostPacket {

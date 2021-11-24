@@ -190,7 +190,7 @@ impl Rendezvous {
     }
 
     fn set_connected(
-        &mut self,
+        &self,
         settings: ConnectionSettings,
         agreement: Option<HandshakeControlInfo>,
         to_send: Option<HandshakeControlInfo>,
@@ -222,7 +222,7 @@ impl Rendezvous {
     ) -> ConnectionResult {
         assert!(matches!(self.state, Waving));
 
-        // NOTE: the cookie comparsion behavior is not correctly documented. See haivision/srt#1267
+        // NOTE: the cookie comparison behavior is not correctly documented. See haivision/srt#1267
         let role = match self.cookie.wrapping_sub(info.syn_cookie).cmp(&0) {
             Ordering::Greater => Initiator,
             Ordering::Less => Responder,

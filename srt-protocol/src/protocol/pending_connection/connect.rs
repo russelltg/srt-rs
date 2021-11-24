@@ -193,7 +193,7 @@ mod test {
 
     use rand::random;
 
-    use crate::{protocol::pending_connection::ConnectionReject, settings::LiveBandwidthMode};
+    use crate::protocol::pending_connection::ConnectionReject;
 
     use super::*;
 
@@ -276,10 +276,11 @@ mod test {
             [127, 0, 0, 1].into(),
             ConnInitSettings {
                 local_sockid: TEST_SOCKID,
-                crypto: None,
+                key_settings: None,
+                key_refresh: Default::default(),
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
-                bandwidth: LiveBandwidthMode::default(),
+                bandwidth: Default::default(),
                 statistics_interval: Duration::from_secs(1),
                 recv_buffer_size: 8192,
             },

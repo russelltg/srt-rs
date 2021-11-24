@@ -201,7 +201,7 @@ impl RandomLossSimulation {
             max_flow_size: 8192,
             send_tsbpd_latency: latency,
             recv_tsbpd_latency: latency,
-            crypto_manager: None,
+            cipher: None,
             stream_id: None,
             bandwidth: LiveBandwidthMode::default(),
             recv_buffer_size: 8192,
