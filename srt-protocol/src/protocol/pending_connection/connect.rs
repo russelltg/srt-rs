@@ -155,8 +155,12 @@ impl Connect {
         }
     }
 
-    pub fn handle_packet(&mut self, next: (Packet, SocketAddr), now: Instant) -> ConnectionResult {
-        let (packet, from) = next;
+    pub fn handle_packet(
+        &mut self,
+        next: (usize, Packet, SocketAddr),
+        now: Instant,
+    ) -> ConnectionResult {
+        let (_, packet, from) = next;
         match (self.state.clone(), packet) {
             (InductionResponseWait(_), Packet::Control(control)) => match control.control_type {
                 ControlTypes::Handshake(shake) => {
@@ -219,7 +223,7 @@ mod test {
             }),
         });
 
-        let resp = c.handle_packet((first, test_remote()), Instant::now());
+        let resp = c.handle_packet((0, first, test_remote()), Instant::now());
         assert!(
             matches!(
                 resp,
@@ -252,7 +256,7 @@ mod test {
             }),
         });
 
-        let resp = c.handle_packet((rejection, test_remote()), Instant::now());
+        let resp = c.handle_packet((0, rejection, test_remote()), Instant::now());
         assert!(
             matches!(
                 resp,

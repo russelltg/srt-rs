@@ -3,6 +3,7 @@ pub use status::*;
 
 use std::{
     fmt::Debug,
+    io,
     net::SocketAddr,
     time::{Duration, Instant},
 };
@@ -90,10 +91,10 @@ pub enum Action<'a> {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Input {
     Data(Option<(Instant, Bytes)>),
-    Packet(Option<(Packet, SocketAddr)>),
+    Packet(ReceivePacketResult),
     DataReleased,
     PacketSent,
     StatisticsUpdated,
@@ -264,11 +265,13 @@ impl DuplexConnection {
         }
     }
 
-    pub fn handle_packet_input(&mut self, now: Instant, packet: Option<(Packet, SocketAddr)>) {
+    pub fn handle_packet_input(&mut self, now: Instant, packet: ReceivePacketResult) {
         self.debug(now, "packet", &packet);
+        use PacketParseError::*;
         match packet {
-            Some(packet) => self.handle_packet(now, packet),
-            None => self.handle_socket_close(now),
+            Ok(packet) => self.handle_packet(now, packet),
+            Err(Io(error)) => self.handle_socket_close(now, error),
+            Err(e) => self.warn(now, "packet", &e),
         }
     }
 
@@ -277,8 +280,8 @@ impl DuplexConnection {
         self.status.on_data_stream_closed(now);
     }
 
-    fn handle_socket_close(&mut self, now: Instant) {
-        self.warn(now, "closed socket", &());
+    fn handle_socket_close(&mut self, now: Instant, error: io::Error) {
+        self.warn(now, "closed socket", &error);
         self.status.on_socket_closed(now);
     }
 
@@ -287,7 +290,7 @@ impl DuplexConnection {
         self.status.on_peer_idle_timeout(now);
     }
 
-    fn handle_packet(&mut self, now: Instant, (packet, from): (Packet, SocketAddr)) {
+    fn handle_packet(&mut self, now: Instant, (size, packet, from): (usize, Packet, SocketAddr)) {
         // TODO: record/report packets from invalid hosts?
         // We don't care about packets from elsewhere
         if from != self.settings.remote {
@@ -303,6 +306,7 @@ impl DuplexConnection {
         self.timers.reset_exp(now);
 
         self.stats.rx_all_packets += 1;
+        self.stats.rx_all_bytes += size as u64;
         match packet {
             Packet::Data(data) => self.receiver().handle_data_packet(now, data),
             Packet::Control(control) => self.handle_control_packet(now, control),
@@ -499,7 +503,7 @@ mod duplex_connection {
             )),
         });
         assert_eq!(
-            connection.handle_input(now, Input::Packet(Some((packet, remote_addr())))),
+            connection.handle_input(now, Input::Packet(Ok((0, packet, remote_addr())))),
             SendPacket((
                 Control(ControlPacket {
                     timestamp: TimeStamp::from_micros(2_000),
@@ -601,7 +605,8 @@ mod duplex_connection {
         assert_eq!(
             connection.handle_input(
                 now,
-                Input::Packet(Some((
+                Input::Packet(Ok((
+                    0,
                     Control(ControlPacket {
                         timestamp: TimeStamp::MIN + SND + TSBPD + TSBPD / 4,
                         dest_sockid: remote_sockid(),

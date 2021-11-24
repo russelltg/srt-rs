@@ -48,12 +48,12 @@ impl ConnectEntity {
     ) {
         let res = match self {
             ConnectEntity::PendingL(l) => l.handle_packet(
-                (packet, remote_sa),
+                (0, packet, remote_sa),
                 now,
                 &mut AllowAllStreamAcceptor::default(),
             ),
-            ConnectEntity::PendingC(c, _) => c.handle_packet((packet, remote_sa), now),
-            ConnectEntity::PendingR(r, _) => r.handle_packet((packet, remote_sa), now),
+            ConnectEntity::PendingC(c, _) => c.handle_packet((0, packet, remote_sa), now),
+            ConnectEntity::PendingR(r, _) => r.handle_packet((0, packet, remote_sa), now),
             ConnectEntity::Done(Some(c)) => {
                 if let Packet::Control(ControlPacket {
                     control_type: ControlTypes::Handshake(hs),
@@ -337,7 +337,7 @@ fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {
                     .next_tick_time()
                     .unwrap_or(current_time + Duration::from_secs(1)),
             ) {
-                (time, Input::Packet(Some((packet, sa)))) => {
+                (time, Input::Packet(Ok((0, packet, sa)))) => {
                     debug!("b->a {:?}", packet);
                     conn.a
                         .handle_packet(packet, time, sa, &mut conn.conn, &mut conn.sim)
@@ -353,7 +353,7 @@ fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {
                     .next_tick_time()
                     .unwrap_or(current_time + Duration::from_secs(1)),
             ) {
-                (time, Input::Packet(Some((packet, sa)))) => {
+                (time, Input::Packet(Ok((_, packet, sa)))) => {
                     debug!("a->b {:?}", packet);
                     conn.b
                         .handle_packet(packet, time, sa, &mut conn.conn, &mut conn.sim)

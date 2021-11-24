@@ -478,7 +478,7 @@ impl Rendezvous {
 
     pub fn handle_packet(
         &mut self,
-        (packet, from): (Packet, SocketAddr),
+        (_, packet, from): (usize, Packet, SocketAddr),
         now: Instant,
     ) -> ConnectionResult {
         if from != self.remote_public {

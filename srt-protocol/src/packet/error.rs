@@ -29,6 +29,7 @@ impl fmt::Display for PacketParseError {
         <Self as fmt::Debug>::fmt(self, f)
     }
 }
+
 impl Error for PacketParseError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         if let PacketParseError::Io(e) = self {
@@ -48,5 +49,39 @@ impl From<PacketParseError> for io::Error {
 impl From<io::Error> for PacketParseError {
     fn from(s: io::Error) -> PacketParseError {
         PacketParseError::Io(s)
+    }
+}
+
+impl Eq for PacketParseError {}
+
+impl PartialEq for PacketParseError {
+    fn eq(&self, other: &Self) -> bool {
+        use PacketParseError::*;
+        match (self, other) {
+            (BadSrtExtensionMessage, BadSrtExtensionMessage)
+            | (StreamEncapsulationNotSrt, StreamEncapsulationNotSrt)
+            | (ZeroAckSequenceNumber, ZeroAckSequenceNumber) => true,
+
+            (BadUdtVersion(s), BadUdtVersion(o)) | (BadConnectionType(s), BadConnectionType(o)) => {
+                s == o
+            }
+
+            (BadSocketType(s), BadSocketType(o))
+            | (BadControlType(s), BadControlType(o))
+            | (UnsupportedSrtExtensionType(s), UnsupportedSrtExtensionType(o))
+            | (BadKeySign(s), BadKeySign(o)) => s == o,
+
+            (BadCipherKind(s), BadCipherKind(o))
+            | (BadKeyPacketType(s), BadKeyPacketType(o))
+            | (BadAuth(s), BadAuth(o))
+            | (BadStreamEncapsulation(s), BadStreamEncapsulation(o))
+            | (BadDataEncryption(s), BadDataEncryption(o)) => s == o,
+
+            (StreamTypeNotUtf8(s), StreamTypeNotUtf8(o)) => s == o,
+            (BadFilter(s), BadFilter(o)) => s == o,
+
+            (Io(s), Io(o)) => s.kind() == o.kind() && s.raw_os_error() == o.raw_os_error(),
+            _ => false,
+        }
     }
 }
