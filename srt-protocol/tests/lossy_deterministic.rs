@@ -57,7 +57,8 @@ fn do_lossy_test(seed: u64, count: usize) {
         delay_dist: Normal::new(delay_mean.as_secs_f64(), delay_stdev.as_secs_f64()).unwrap(),
         drop_dist: Bernoulli::new(DROP_RATE).unwrap(),
     };
-    let (mut network, mut sender, mut receiver) = simulation.build(start, Duration::from_secs(1));
+    let (mut network, mut sender, mut receiver) =
+        simulation.build(start, Duration::from_secs(1), 8192);
     input_data_simulation(start, count, PACKET_SPACING, &mut network.sender);
 
     let mut now = start;
@@ -141,6 +142,8 @@ fn do_lossy_test(seed: u64, count: usize) {
 
 #[test]
 fn high_bandwidth_deterministic() {
+    let _ = pretty_env_logger::try_init();
+
     let once_failing_seeds = [13087270514753106960];
 
     for seed in once_failing_seeds {
@@ -164,18 +167,23 @@ fn do_high_bandwidth_deterministic(seed: u64, count: usize) {
     let packet_spacing =
         Duration::from_secs_f64(f64::from(packet_size) / bandwidth_mbps / (1024. * 1024.)); // s/packet
 
+    let latency = Duration::from_secs(1);
+    // double to be safe
+    let recv_buffer_size = 2 * (1. / packet_spacing.as_secs_f64() * latency.as_secs_f64()) as usize;
+
     let mut simulation = RandomLossSimulation {
         rng: StdRng::seed_from_u64(seed),
         delay_dist: Normal::new(delay_mean.as_secs_f64(), delay_stdev.as_secs_f64()).unwrap(),
         drop_dist: Bernoulli::new(drop_rate).unwrap(),
     };
-    let (mut network, mut sender, mut receiver) = simulation.build(start, Duration::from_secs(1));
+    let (mut network, mut sender, mut receiver) =
+        simulation.build(start, latency, recv_buffer_size);
     input_data_simulation(start, count, packet_spacing, &mut network.sender);
 
     let mut now = start;
 
     let window_size = Duration::from_secs(1);
-    let startup_packets = 1_000;
+    let startup_packets = 50_000;
 
     let mut window = VecDeque::new();
     let mut bytes_received = 0;
@@ -220,23 +228,22 @@ fn do_high_bandwidth_deterministic(seed: u64, count: usize) {
 
                 let rate_mbps = bytes_received as f64 / 1024. / 1024.;
 
-                // TODO: uncomment this
-                // if packets_received >= startup_packets {
-                //     assert!(
-                //         rate_mbps > bandwidth_mbps * 0.9,
-                //         "Rate was {}, expected at least {}",
-                //         rate_mbps,
-                //         bandwidth_mbps * 0.9
-                //     );
-                //     assert!(
-                //         rate_mbps > bandwidth_mbps * 1.1,
-                //         "Rate was {}, expecte less than {}",
-                //         rate_mbps,
-                //         bandwidth_mbps * 1.1
-                //     );
-                // }
-
+                if packets_received >= startup_packets {
+                    assert!(
+                        rate_mbps > bandwidth_mbps * 0.9,
+                        "Rate was {}, expected at least {}",
+                        rate_mbps,
+                        bandwidth_mbps * 0.9
+                    );
+                    assert!(
+                        rate_mbps < bandwidth_mbps * 1.1,
+                        "Rate was {}, expected less than {}",
+                        rate_mbps,
+                        bandwidth_mbps * 1.1
+                    );
+                }
                 print!("Received {:10.3}MB/s\r", rate_mbps);
+                // println!("Received {:10.3}MB/s", rate_mbps);
             }
 
             while let Some(packet) = receiver.next_packet(now) {
@@ -270,5 +277,16 @@ fn do_high_bandwidth_deterministic(seed: u64, count: usize) {
         now = next_time;
     }
 
-    assert_eq!(packets_received, count);
+    // 3 is arbitrary.....this needs to be researced more
+    let probability_of_total_loss = drop_rate.powf(3.);
+
+    // 2x to be conservtive
+    let expected_fully_lost = (2. * count as f64 * probability_of_total_loss) as usize;
+
+    assert!(
+        packets_received > count - expected_fully_lost,
+        "Expected at least {} packets, got {}",
+        count - expected_fully_lost,
+        packets_received
+    );
 }

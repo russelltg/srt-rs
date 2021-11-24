@@ -160,6 +160,7 @@ impl<'a> ReceiverContext<'a> {
                     BufferFull { .. } | PacketTooEarly { .. } | PacketTooLate { .. } => {
                         self.stats.rx_dropped_data += 1;
                         self.stats.rx_dropped_bytes += bytes;
+                        log::warn!("QoS warning--dropping data in the receive buffer");
                     }
                     DecryptionError(_) => {
                         self.stats.rx_decrypt_errors += 1;

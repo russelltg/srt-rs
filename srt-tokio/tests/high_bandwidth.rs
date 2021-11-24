@@ -55,6 +55,7 @@ async fn high_bandwidth() -> Result<(), Error> {
             .local_port(6654)
             .latency(Duration::from_millis(150))
             .statistics_interval(Duration::from_secs(2))
+            .recv_buffer_size(8192 * 10)
             .connect()
             .await?
             .fuse();
