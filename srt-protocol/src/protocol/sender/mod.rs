@@ -172,7 +172,7 @@ impl<'a> SenderContext<'a> {
         match self
             .sender
             .encryption
-            .validate_key_material(keying_material)
+            .handle_key_refresh_response(keying_material)
         {
             Ok(()) => {
                 // TODO: add statistic or "event" notification?

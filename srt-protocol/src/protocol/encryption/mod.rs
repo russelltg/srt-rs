@@ -165,7 +165,7 @@ impl Encryption {
         }
     }
 
-    pub fn validate_key_material(
+    pub fn handle_key_refresh_response(
         &mut self,
         keying_material: KeyingMaterialMessage,
     ) -> Result<(), KeyMaterialError> {
@@ -290,7 +290,7 @@ mod tests {
         let response = decryption.refresh_key_material(key_material.clone());
         assert_eq!(response, Ok(Some(key_material.clone())));
 
-        assert_eq!(encryption.validate_key_material(key_material), Ok(()));
+        assert_eq!(encryption.handle_key_refresh_response(key_material), Ok(()));
 
         for i in 0..settings.key_refresh.pre_announcement_period() {
             let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
@@ -339,7 +339,27 @@ mod tests {
         let mut encryption = Encryption::new(Some(settings.clone()));
         let original_packet = data_packet(DataEncryption::None, "test refresh_key_material");
 
-        let count = (0..settings.key_refresh.period())
+        let mut km_resp = None;
+        let count = (0..settings.key_refresh.period() - 10_000)
+            // let count = (0..settings.key_refresh.period())
+            .into_iter()
+            .filter_map(|_| {
+                let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
+                if let Some(km) = &km {
+                    km_resp = Some(km.clone());
+                }
+                km.map(|k| (packet.encryption, k))
+            })
+            .count();
+
+        assert_eq!(count, 10);
+
+        encryption
+            .handle_key_refresh_response(km_resp.unwrap())
+            .unwrap();
+
+        let count = (0..10_000
+            + (settings.key_refresh.period() - settings.key_refresh.pre_announcement_period()))
             .into_iter()
             .filter_map(|_| {
                 let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
@@ -347,6 +367,7 @@ mod tests {
             })
             .count();
 
-        assert_eq!(count, 20);
+        // none received after the response
+        assert_eq!(count, 0);
     }
 }
