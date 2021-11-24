@@ -141,10 +141,18 @@ fn do_lossy_test(seed: u64, count: usize) {
 
 #[test]
 fn high_bandwidth_deterministic() {
-    do_high_bandwidth_deterministic(rand::random(), 100_000);
+    let once_failing_seeds = [13087270514753106960];
+
+    for seed in once_failing_seeds {
+        do_high_bandwidth_deterministic(seed, 100_000);
+    }
+
+    // do_high_bandwidth_deterministic(rand::random(), 100_000);
 }
 
 fn do_high_bandwidth_deterministic(seed: u64, count: usize) {
+    println!("Seed is: {}, count is: {}", seed, count);
+
     let start = Instant::now();
 
     let delay_mean = Duration::from_millis(10);
