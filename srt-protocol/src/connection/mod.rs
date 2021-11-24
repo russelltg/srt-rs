@@ -116,7 +116,7 @@ impl DuplexConnection {
     }
 
     pub fn handle_input(&mut self, now: Instant, input: Input) -> Action {
-        self.debug("input", &input);
+        self.debug(now, "input", &input);
 
         match input {
             Input::Data(data) => self.handle_data_input(now, data),
@@ -136,7 +136,7 @@ impl DuplexConnection {
             Action::WaitForData(self.next_timer(now) - now)
         };
 
-        self.debug("action", &action);
+        self.debug(now, "action", &action);
         action
     }
 
@@ -171,7 +171,7 @@ impl DuplexConnection {
                     _ => {}
                 },
             }
-            self.debug("send", &p);
+            self.debug(now, "send", &p);
             (p, self.settings.remote)
         })
     }
@@ -179,11 +179,11 @@ impl DuplexConnection {
     pub fn next_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
         match self.receiver.arq.pop_next_message(now) {
             Ok(Some(data)) => {
-                self.debug("output", &data);
+                self.debug(now, "output", &data);
                 Some(data)
             }
             Err(error) => {
-                self.warn("output", &error);
+                self.warn(now, "output", &error);
                 let dropped = error.too_late_packets.end - error.too_late_packets.start;
                 self.stats.rx_dropped_data += dropped as u64;
                 None
@@ -253,7 +253,7 @@ impl DuplexConnection {
     }
 
     pub fn handle_data_input(&mut self, now: Instant, data: Option<(Instant, Bytes)>) {
-        self.debug("input", &data);
+        self.debug(now, "input", &data);
         match data {
             Some(item) => {
                 self.sender().handle_data(now, item);
@@ -265,7 +265,7 @@ impl DuplexConnection {
     }
 
     pub fn handle_packet_input(&mut self, now: Instant, packet: Option<(Packet, SocketAddr)>) {
-        self.debug("packet", &packet);
+        self.debug(now, "packet", &packet);
         match packet {
             Some(packet) => self.handle_packet(now, packet),
             None => self.handle_socket_close(now),
@@ -273,12 +273,12 @@ impl DuplexConnection {
     }
 
     fn handle_data_stream_close(&mut self, now: Instant) {
-        self.debug("closed data", &());
+        self.debug(now, "closed data", &());
         self.status.on_data_stream_closed(now);
     }
 
     fn handle_socket_close(&mut self, now: Instant) {
-        self.warn("closed socket", &());
+        self.warn(now, "closed socket", &());
         self.status.on_socket_closed(now);
     }
 
@@ -291,12 +291,12 @@ impl DuplexConnection {
         // TODO: record/report packets from invalid hosts?
         // We don't care about packets from elsewhere
         if from != self.settings.remote {
-            self.info("invalid address", &(packet, from));
+            self.info(now, "invalid address", &(packet, from));
             return;
         }
 
         if self.settings.local_sockid != packet.dest_sockid() {
-            self.info("invalid socket id", &(packet, from));
+            self.info(now, "invalid socket id", &(packet, from));
             return;
         }
 
@@ -345,7 +345,7 @@ impl DuplexConnection {
     fn handle_srt_control_packet(&mut self, now: Instant, pack: SrtControlPacket) {
         use self::SrtControlPacket::*;
         match pack {
-            HandshakeRequest(_) | HandshakeResponse(_) => self.warn("handshake", &pack),
+            HandshakeRequest(_) | HandshakeResponse(_) => self.warn(now, "handshake", &pack),
             KeyRefreshRequest(keying_material) => self
                 .receiver()
                 .handle_key_refresh_request(now, keying_material),
@@ -375,30 +375,30 @@ impl DuplexConnection {
         )
     }
 
-    fn debug(&self, tag: &str, debug: &impl Debug) {
+    fn debug(&self, now: Instant, tag: &str, debug: &impl Debug) {
         log::debug!(
             "{:?}|{:?}|{} - {:?}",
-            TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
+            TimeSpan::from_interval(self.settings.socket_start_time, now),
             self.settings.local_sockid,
             tag,
             debug
         );
     }
 
-    fn info(&self, tag: &str, debug: &impl Debug) {
+    fn info(&self, now: Instant, tag: &str, debug: &impl Debug) {
         log::info!(
             "{:?}|{:?}|{} - {:?}",
-            TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
+            TimeSpan::from_interval(self.settings.socket_start_time, now),
             self.settings.local_sockid,
             tag,
             debug
         );
     }
 
-    fn warn(&self, tag: &str, debug: &impl Debug) {
+    fn warn(&self, now: Instant, tag: &str, debug: &impl Debug) {
         log::warn!(
             "{:?}|{:?}|{} - {:?}",
-            TimeSpan::from_interval(self.settings.socket_start_time, Instant::now()),
+            TimeSpan::from_interval(self.settings.socket_start_time, now),
             self.settings.local_sockid,
             tag,
             debug
