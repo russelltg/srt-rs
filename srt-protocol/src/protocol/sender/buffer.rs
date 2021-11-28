@@ -40,8 +40,8 @@ impl SendBuffer {
     }
 
     pub fn push_data(&mut self, packet: DataPacket) {
+        // Don't update buffer length twice here
         if self.buffer.is_empty() {
-            self.buffer_len_bytes += packet.wire_size();
             self.buffer.push_back(packet.clone());
         }
         self.buffer_len_bytes += packet.wire_size();
@@ -66,7 +66,9 @@ impl SendBuffer {
     }
 
     pub fn len(&self) -> usize {
-        self.buffer.len()
+        // TODO: this is because of the extra push_back in Self::push_data
+        // to be removed eventually
+        self.buffer.len().saturating_sub(1)
     }
 
     pub fn len_bytes(&self) -> usize {
@@ -782,13 +784,13 @@ mod test {
         let mut buffer = SendBuffer::new(&new_settings());
         assert_eq!(buffer.duration(), Duration::from_micros(0));
 
-        let _wire_size = test_data_packet(0, false).wire_size();
+        let wire_size = test_data_packet(0, false).wire_size();
 
         for n in 0..10 {
             buffer.push_data(test_data_packet(n, false));
             assert_eq!(buffer.duration(), Duration::from_millis(1) * n);
-            // assert_eq!(buffer.len(), n as usize + 1);
-            // assert_eq!(buffer.len_bytes(), wire_size * (n as usize + 1));
+            assert_eq!(buffer.len(), n as usize + 1);
+            assert_eq!(buffer.len_bytes(), wire_size * (n as usize + 1));
         }
 
         for n in 0..10 {
@@ -799,8 +801,8 @@ mod test {
             assert!(matches!(a[0], Send(_)));
             assert_eq!(buffer.duration(), Duration::from_millis(9)); // not removed from buffer until ack
 
-            //  assert_eq!(buffer.len(), 10);
-            // assert_eq!(buffer.len_bytes(), wire_size * 10);
+            assert_eq!(buffer.len(), 10);
+            assert_eq!(buffer.len_bytes(), wire_size * 10);
         }
 
         for n in 0..10 {
@@ -809,8 +811,8 @@ mod test {
                 .unwrap();
 
             assert_eq!(buffer.duration(), Duration::from_millis(u64::from(9 - n)));
-            // assert_eq!(buffer.len(), 9 - n as usize);
-            // assert_eq!(buffer.len_bytes(), wire_size * (9 - n as usize));
+            assert_eq!(buffer.len(), 9 - n as usize);
+            assert_eq!(buffer.len_bytes(), wire_size * (9 - n as usize));
         }
     }
 }
