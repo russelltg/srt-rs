@@ -59,6 +59,10 @@ pub struct DataPacket {
     pub payload: Bytes,
 }
 
+impl DataPacket {
+    pub const HEADER_SIZE: u64 = super::Packet::HEADER_SIZE;
+}
+
 bitflags! {
     /// Signifies the packet location in a message for a data packet
     /// The bitflag just represents the first byte in the second line

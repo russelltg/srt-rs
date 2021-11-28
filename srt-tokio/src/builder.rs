@@ -1,5 +1,6 @@
 use std::{
     cmp::max,
+    convert::TryInto,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
     sync::Arc,
@@ -8,8 +9,9 @@ use std::{
 
 use futures::{stream::unfold, Stream, StreamExt};
 use log::error;
-use srt_protocol::settings::*;
 use tokio::net::UdpSocket;
+
+use srt_protocol::settings::*;
 
 use crate::{
     multiplex,
@@ -204,21 +206,46 @@ impl SrtSocketBuilder {
         self
     }
 
-    /// Se the crypto paramters. However, this is currently unimplemented.
+    /// Set the crypto parameters.
     ///
     /// # Panics:
     /// * size is not 16, 24, or 32.
-    pub fn crypto(mut self, size: u8, passphrase: impl Into<String>) -> Self {
-        match size {
-            // OK
-            16 | 24 | 32 => {}
-            // NOT
-            size => panic!("Invaid crypto size {}", size),
-        }
-        self.init_settings.crypto = Some(CryptoOptions {
-            size,
-            passphrase: passphrase.into(),
+    pub fn crypto(mut self, key_size: u8, passphrase: impl Into<String>) -> Self {
+        self.init_settings.key_settings = Some(KeySettings {
+            key_size: key_size.try_into().unwrap(),
+            passphrase: passphrase.into().try_into().unwrap(),
         });
+
+        self
+    }
+
+    /// KM Refresh Period specifies the number of packets to be sent
+    /// before switching to the new SEK
+    ///
+    /// The recommended KM Refresh Period is after 2^25 packets encrypted
+    /// with the same SEK are sent.
+    pub fn km_refresh_period(mut self, period: usize) -> Self {
+        self.init_settings.key_refresh =
+            self.init_settings.key_refresh.with_period(period).unwrap();
+
+        self
+    }
+
+    /// KM Pre-Announcement Period specifies when a new key is announced
+    /// in a number of packets before key switchover.  The same value is
+    /// used to determine when to decommission the old key after
+    /// switchover.
+    ///
+    /// The recommended KM Pre-Announcement Period is 4000 packets (i.e.
+    /// a new key is generated, wrapped, and sent at 2^25 minus 4000
+    /// packets; the old key is decommissioned at 2^25 plus 4000
+    /// packets).
+    pub fn km_pre_announcement_period(mut self, pre_announcement_period: usize) -> Self {
+        self.init_settings.key_refresh = self
+            .init_settings
+            .key_refresh
+            .with_pre_announcement_period(pre_announcement_period)
+            .unwrap();
 
         self
     }

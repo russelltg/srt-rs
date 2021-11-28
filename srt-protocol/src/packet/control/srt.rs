@@ -27,11 +27,11 @@ pub enum SrtControlPacket {
 
     /// Key manager request
     /// ID = 3
-    KeyManagerRequest(SrtKeyMessage),
+    KeyRefreshRequest(KeyingMaterialMessage),
 
     /// Key manager response
     /// ID = 4
-    KeyManagerResponse(SrtKeyMessage),
+    KeyRefreshResponse(KeyingMaterialMessage),
 
     /// Stream identifier
     /// ID = 5
@@ -72,8 +72,9 @@ bitflags! {
 }
 
 /// from https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_msg.h#L76-L96
+/// or https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-3.2.2
 ///
-/// HaiCrypt KMmsg (Keying Material):
+/// HaiCrypt KMmsg (Keying Material Message):
 ///
 /// ```ignore,
 ///        0                   1                   2                   3
@@ -96,7 +97,7 @@ bitflags! {
 /// ```
 ///
 #[derive(Clone, Eq, PartialEq)]
-pub struct SrtKeyMessage {
+pub struct KeyingMaterialMessage {
     pub pt: PacketType, // TODO: i think this is always KeyingMaterial....
     pub key_flags: KeyFlags,
     pub keki: u32,
@@ -132,9 +133,9 @@ impl From<u8> for GroupType {
     }
 }
 
-impl fmt::Debug for SrtKeyMessage {
+impl fmt::Debug for KeyingMaterialMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SrtKeyMessage")
+        f.debug_struct("KeyingMaterialMessage")
             .field("pt", &self.pt)
             .field("key_flags", &self.key_flags)
             .field("keki", &self.keki)
@@ -177,10 +178,11 @@ impl TryFrom<u8> for StreamEncapsulation {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+// see htcryp_msg.h:43...
+// 7: Reserved to discriminate MPEG-TS packet (0x47=sync byte).
 pub enum PacketType {
-    MediaStream = 1,
-    KeyingMaterial = 2,
-    // see htcryp_msg.h:43...
+    MediaStream = 1,    // Media Stream Message (MSmsg)
+    KeyingMaterial = 2, // Keying Material Message (KMmsg)
 }
 
 bitflags! {
@@ -321,8 +323,8 @@ impl SrtControlPacket {
             0 => Ok(Reject),
             1 => Ok(HandshakeRequest(SrtHandshake::parse(buf)?)),
             2 => Ok(HandshakeResponse(SrtHandshake::parse(buf)?)),
-            3 => Ok(KeyManagerRequest(SrtKeyMessage::parse(buf)?)),
-            4 => Ok(KeyManagerResponse(SrtKeyMessage::parse(buf)?)),
+            3 => Ok(KeyRefreshRequest(KeyingMaterialMessage::parse(buf)?)),
+            4 => Ok(KeyRefreshResponse(KeyingMaterialMessage::parse(buf)?)),
             5 => {
                 // the stream id string is stored as 32-bit little endian words
                 // https://tools.ietf.org/html/draft-sharabayko-mops-srt-01#section-3.2.1.3
@@ -370,8 +372,8 @@ impl SrtControlPacket {
             Reject => 0,
             HandshakeRequest(_) => 1,
             HandshakeResponse(_) => 2,
-            KeyManagerRequest(_) => 3,
-            KeyManagerResponse(_) => 4,
+            KeyRefreshRequest(_) => 3,
+            KeyRefreshResponse(_) => 4,
             StreamId(_) => 5,
             Congestion(_) => 6,
             Filter(_) => 7,
@@ -385,7 +387,7 @@ impl SrtControlPacket {
             HandshakeRequest(s) | HandshakeResponse(s) => {
                 s.serialize(into);
             }
-            KeyManagerRequest(k) | KeyManagerResponse(k) => {
+            KeyRefreshRequest(k) | KeyRefreshResponse(k) => {
                 k.serialize(into);
             }
             Filter(filter) => {
@@ -412,7 +414,7 @@ impl SrtControlPacket {
             // 3 32-bit words, version, flags, latency
             HandshakeRequest(_) | HandshakeResponse(_) => 3,
             // 4 32-bit words + salt + key + wrap [2]
-            KeyManagerRequest(ref k) | KeyManagerResponse(ref k) => {
+            KeyRefreshRequest(ref k) | KeyRefreshResponse(ref k) => {
                 4 + k.salt.len() as u16 / 4 + k.wrapped_keys.len() as u16 / 4
             }
             Congestion(str) | StreamId(str) => ((str.len() + 3) / 4) as u16, // round up to nearest multiple of 4
@@ -462,13 +464,13 @@ impl SrtHandshake {
     }
 }
 
-impl SrtKeyMessage {
+impl KeyingMaterialMessage {
     // from hcrypt_msg.h:39
     // also const traits aren't a thing yet, so u16::from can't be used
     const SIGN: u16 =
         ((b'H' - b'@') as u16) << 10 | ((b'A' - b'@') as u16) << 5 | (b'I' - b'@') as u16;
 
-    pub fn parse(buf: &mut impl Buf) -> Result<SrtKeyMessage, PacketParseError> {
+    pub fn parse(buf: &mut impl Buf) -> Result<KeyingMaterialMessage, PacketParseError> {
         // first 32-bit word:
         //
         //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -568,7 +570,7 @@ impl SrtKeyMessage {
             wrapped_keys.extend_from_slice(&buf.get_u32().to_be_bytes()[..]);
         }
 
-        Ok(SrtKeyMessage {
+        Ok(KeyingMaterialMessage {
             pt,
             key_flags,
             keki,
@@ -638,8 +640,8 @@ impl fmt::Debug for SrtControlPacket {
             SrtControlPacket::Reject => write!(f, "reject"),
             SrtControlPacket::HandshakeRequest(req) => write!(f, "hsreq={:?}", req),
             SrtControlPacket::HandshakeResponse(resp) => write!(f, "hsresp={:?}", resp),
-            SrtControlPacket::KeyManagerRequest(req) => write!(f, "kmreq={:?}", req),
-            SrtControlPacket::KeyManagerResponse(resp) => write!(f, "kmresp={:?}", resp),
+            SrtControlPacket::KeyRefreshRequest(req) => write!(f, "kmreq={:?}", req),
+            SrtControlPacket::KeyRefreshResponse(resp) => write!(f, "kmresp={:?}", resp),
             SrtControlPacket::StreamId(sid) => write!(f, "streamid={}", sid),
             SrtControlPacket::Congestion(ctype) => write!(f, "congestion={}", ctype),
             SrtControlPacket::Filter(filter) => write!(f, "filter={:?}", filter),
@@ -665,7 +667,7 @@ impl TryFrom<u8> for CipherType {
 
 #[cfg(test)]
 mod tests {
-    use super::{SrtControlPacket, SrtHandshake, SrtKeyMessage, SrtShakeFlags};
+    use super::{KeyingMaterialMessage, SrtControlPacket, SrtHandshake, SrtShakeFlags};
 
     use crate::packet::*;
 
@@ -713,7 +715,7 @@ mod tests {
         let salt = b"\x00\x00\x00\x00\x00\x00\x00\x00\x85\x2c\x3c\xcd\x02\x65\x1a\x22";
         let wrapped = b"U\x06\xe9\xfd\xdfd\xf1'nr\xf4\xe9f\x81#(\xb7\xb5D\x19{\x9b\xcdx";
 
-        let km = SrtKeyMessage {
+        let km = KeyingMaterialMessage {
             pt: PacketType::KeyingMaterial,
             key_flags: KeyFlags::EVEN,
             keki: 0,
@@ -723,6 +725,6 @@ mod tests {
             wrapped_keys: wrapped[..].into(),
         };
 
-        assert_eq!(format!("{:?}", km), "SrtKeyMessage { pt: KeyingMaterial, key_flags: EVEN, keki: 0, cipher: Ctr, auth: None }")
+        assert_eq!(format!("{:?}", km), "KeyingMaterialMessage { pt: KeyingMaterial, key_flags: EVEN, keki: 0, cipher: Ctr, auth: None }")
     }
 }

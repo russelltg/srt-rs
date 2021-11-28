@@ -31,6 +31,7 @@ rand_distr = "0.4"
 tokio-util = { version = "0.6", features = ["net", "codec"] }
 tokio-stream = { version = "0.1.7", features = ["sync"] }
 libloading = "0.7"
+lazy_static = "1"
 libc = "0.2"
 
 [dev-dependencies.tokio]
