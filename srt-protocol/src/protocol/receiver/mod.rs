@@ -3,7 +3,10 @@ mod buffer;
 mod history;
 mod time;
 
-use std::{ops::RangeInclusive, time::Instant};
+use std::{
+    ops::RangeInclusive,
+    time::{Duration, Instant},
+};
 
 use arq::AutomaticRepeatRequestAlgorithm;
 
@@ -77,6 +80,10 @@ impl Receiver {
 
     pub fn is_flushed(&self) -> bool {
         self.arq.is_flushed()
+    }
+
+    pub fn rx_acknowledged_time(&self) -> Duration {
+        self.arq.rx_acknowledged_time()
     }
 }
 
