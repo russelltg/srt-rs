@@ -197,7 +197,10 @@ impl SendBuffer {
         if should_drain && self.buffer.len() == 1 {
             self.next_send = None;
             let p = self.buffer.pop_front();
-            self.buffer_len_bytes -= p.as_ref().unwrap().wire_size();
+            // This needs to be saturating because of the hack in Self::push_data, can be regular subtract otherwise
+            self.buffer_len_bytes = self
+                .buffer_len_bytes
+                .saturating_sub(p.as_ref().unwrap().wire_size());
             p
         } else {
             None
