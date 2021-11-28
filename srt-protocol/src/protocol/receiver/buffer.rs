@@ -503,6 +503,21 @@ impl ReceiveBuffer {
             .next()
             .unwrap_or_else(|| self.next_packet_dsn())
     }
+
+    pub fn rx_acknowledged_time(&self) -> Duration {
+        let start_idx = 0;
+        let end_idx = self.clamped_index_for_seqno(self.lrsn - 1);
+
+        if let (Some(BufferPacket::Received(s)), Some(BufferPacket::Received(e))) =
+            (self.buffer.get(start_idx), self.buffer.get(end_idx))
+        {
+            Duration::from_micros(
+                u64::try_from((e.timestamp - s.timestamp).as_micros()).unwrap_or(0),
+            )
+        } else {
+            Duration::from_micros(0)
+        }
+    }
 }
 
 #[cfg(test)]

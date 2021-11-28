@@ -2,7 +2,10 @@ mod buffer;
 mod congestion_control;
 mod encapsulate;
 
-use std::time::{Duration, Instant};
+use std::{
+    convert::TryFrom,
+    time::{Duration, Instant},
+};
 
 use bytes::Bytes;
 
@@ -49,8 +52,16 @@ impl Sender {
         self.send_buffer.has_packets_to_send()
     }
 
-    pub fn tx_buffer_time(&self) -> Duration {
+    pub fn tx_buffered_time(&self) -> Duration {
         self.send_buffer.duration()
+    }
+
+    pub fn tx_buffered_packets(&self) -> u64 {
+        u64::try_from(self.send_buffer.len()).unwrap()
+    }
+
+    pub fn tx_buffered_bytes(&self) -> u64 {
+        u64::try_from(self.send_buffer.len_bytes()).unwrap()
     }
 }
 
@@ -135,10 +146,7 @@ impl<'a> SenderContext<'a> {
             // TODO: figure out better statistics
             use Loss::*;
             match loss {
-                Ignored => {
-                    self.statistics.tx_loss_data += 1;
-                }
-                Added => {
+                Ignored | Added => {
                     self.statistics.tx_loss_data += 1;
                 }
                 Dropped => {
@@ -175,6 +183,7 @@ impl<'a> SenderContext<'a> {
         for action in actions {
             match action {
                 Send(d) => {
+                    self.statistics.tx_unique_data += 1;
                     self.output.send_data(now, d);
                 }
                 Retransmit(d) => {

@@ -4,6 +4,7 @@ mod srt;
 pub use srt::*;
 
 use std::{
+    array::IntoIter,
     convert::TryFrom,
     convert::TryInto,
     fmt::{self, Debug, Display, Formatter},
@@ -435,6 +436,24 @@ impl ControlPacket {
             None
         }
     }
+
+    pub fn wire_size(&self) -> usize {
+        // 20 bytes IPv4 + 8 bytes of UDP + 16 bytes SRT header.
+        20 + 8
+            + 16
+            + match &self.control_type {
+                ControlTypes::Handshake(hs) => hs.serialized_size(),
+                ControlTypes::Ack(ack) => ack.serialized_size(),
+                ControlTypes::Nak(nak) => nak.0.len() * size_of::<u32>(),
+                ControlTypes::DropRequest { .. } => 3 * size_of::<u32>(),
+                ControlTypes::Srt(srt) => usize::from(srt.size_words()) * size_of::<u32>(),
+                ControlTypes::CongestionWarning
+                | ControlTypes::Ack2(_)
+                | ControlTypes::Shutdown
+                | ControlTypes::KeepAlive
+                | ControlTypes::PeerError(_) => 4,
+            }
+    }
 }
 
 impl Debug for ControlPacket {
@@ -801,68 +820,8 @@ impl ControlTypes {
 
     fn serialize<T: BufMut>(&self, into: &mut T) {
         match self {
-            ControlTypes::Handshake(ref c) => {
-                into.put_u32(c.info.version());
-                into.put_u32(c.info.type_flags(c.shake_type));
-                into.put_u32(c.init_seq_num.as_raw());
-                into.put_u32(c.max_packet_size);
-                into.put_u32(c.max_flow_size);
-                into.put_i32(c.shake_type.into());
-                into.put_u32(c.socket_id.0);
-                into.put_i32(c.syn_cookie);
-
-                match c.peer_addr {
-                    IpAddr::V4(four) => {
-                        let v = u32::from(four);
-                        into.put_u32_le(v);
-
-                        // the data structure reuiqres enough space for an ipv6, so pad the end with 16 - 4 = 12 bytes
-                        into.put(&[0; 12][..]);
-                    }
-                    IpAddr::V6(six) => {
-                        let v = u128::from(six);
-
-                        into.put_u128(v);
-                    }
-                }
-
-                // serialzie extensions
-                if let HandshakeVsInfo::V5(hs) = &c.info {
-                    for ext in [
-                        &hs.ext_hs,
-                        &hs.ext_km,
-                        &hs.sid.clone().map(SrtControlPacket::StreamId),
-                    ]
-                    .iter()
-                    .filter_map(|&s| s.as_ref())
-                    {
-                        into.put_u16(ext.type_id());
-                        // put the size in 32-bit integers
-                        into.put_u16(ext.size_words());
-                        ext.serialize(into);
-                    }
-                }
-            }
-            ControlTypes::Ack(ack) => {
-                into.put_u32(ack.ack_number().as_raw());
-                if let Some(stats) = ack.statistics() {
-                    into.put_i32(stats.rtt.as_micros());
-                    into.put_i32(stats.rtt_variance.as_micros());
-                    into.put_u32(stats.buffer_available);
-
-                    // Make sure fields are always in the right order
-                    // Would rather not transmit than transmit incorrectly
-                    if let Some(prr) = stats.packet_receive_rate {
-                        into.put_u32(prr);
-                        if let Some(elc) = stats.estimated_link_capacity {
-                            into.put_u32(elc);
-                            if let Some(drr) = stats.data_receive_rate {
-                                into.put_u32(drr);
-                            }
-                        }
-                    }
-                }
-            }
+            ControlTypes::Handshake(ref c) => c.serialize(into),
+            ControlTypes::Ack(ack) => ack.serialize(into),
             ControlTypes::Nak(ref n) => {
                 for loss in n.iter_compressed() {
                     into.put_u32(loss);
@@ -1040,6 +999,50 @@ impl Acknowledgement {
             Acknowledgement::Small(_, stats) | Acknowledgement::Full(_, stats, _) => Some(stats),
             Acknowledgement::Lite(_) => None,
         }
+    }
+
+    pub fn serialize(&self, into: &mut impl BufMut) {
+        into.put_u32(self.ack_number().as_raw());
+        if let Some(stats) = self.statistics() {
+            into.put_i32(stats.rtt.as_micros());
+            into.put_i32(stats.rtt_variance.as_micros());
+            into.put_u32(stats.buffer_available);
+
+            // Make sure fields are always in the right order
+            // Would rather not transmit than transmit incorrectly
+            if let Some(prr) = stats.packet_receive_rate {
+                into.put_u32(prr);
+                if let Some(elc) = stats.estimated_link_capacity {
+                    into.put_u32(elc);
+                    if let Some(drr) = stats.data_receive_rate {
+                        into.put_u32(drr);
+                    }
+                }
+            }
+        }
+    }
+
+    fn serialized_size(&self) -> usize {
+        size_of::<u32>()
+            + self
+                .statistics()
+                .map(|st| {
+                    3 * size_of::<u32>()
+                        + st.packet_receive_rate
+                            .map(|_| {
+                                size_of::<u32>()
+                                    + st.estimated_link_capacity
+                                        .map(|_| {
+                                            size_of::<u32>()
+                                                + st.data_receive_rate
+                                                    .map(|_| size_of::<u32>())
+                                                    .unwrap_or(0)
+                                        })
+                                        .unwrap_or(0)
+                            })
+                            .unwrap_or(0)
+                })
+                .unwrap_or(0)
     }
 }
 
@@ -1279,6 +1282,65 @@ impl Display for ServerRejectReason {
     }
 }
 
+impl HandshakeControlInfo {
+    fn serialized_size(&self) -> usize {
+        8 * size_of::<u32>() +  // version/cookie/etc
+        size_of::<u128>() + // ip address
+        match &self.info {
+            HandshakeVsInfo::V4(_) => 0,
+            HandshakeVsInfo::V5(info) => {
+                info.ext_hs.as_ref().map(|hs| 2 * size_of::<u16>() + usize::from(hs.size_words()) * size_of::<u32>()).unwrap_or(0)
+                +
+                info.ext_km.as_ref().map(|hs| 2 * size_of::<u16>() + usize::from(hs.size_words()) * size_of::<u32>()).unwrap_or(0)
+                +
+                info.sid.as_ref().map(|sid| 2 * size_of::<u16>() + ((sid.len() + 3) / 4 * 4)).unwrap_or(0)
+            }
+        }
+    }
+
+    fn serialize(&self, into: &mut impl BufMut) {
+        into.put_u32(self.info.version());
+        into.put_u32(self.info.type_flags(self.shake_type));
+        into.put_u32(self.init_seq_num.as_raw());
+        into.put_u32(self.max_packet_size);
+        into.put_u32(self.max_flow_size);
+        into.put_i32(self.shake_type.into());
+        into.put_u32(self.socket_id.0);
+        into.put_i32(self.syn_cookie);
+
+        match self.peer_addr {
+            IpAddr::V4(four) => {
+                let v = u32::from(four);
+                into.put_u32_le(v);
+
+                // the data structure reuiqres enough space for an ipv6, so pad the end with 16 - 4 = 12 bytes
+                into.put(&[0; 12][..]);
+            }
+            IpAddr::V6(six) => {
+                let v = u128::from(six);
+
+                into.put_u128(v);
+            }
+        }
+
+        // serialzie extensions
+        if let HandshakeVsInfo::V5(hs) = &self.info {
+            for ext in IntoIter::new([
+                &hs.ext_hs,
+                &hs.ext_km,
+                &hs.sid.clone().map(SrtControlPacket::StreamId),
+            ])
+            .filter_map(|s| s.as_ref())
+            {
+                into.put_u16(ext.type_id());
+                // put the size in 32-bit integers
+                into.put_u16(ext.size_words());
+                ext.serialize(into);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1293,6 +1355,12 @@ mod test {
         let des = ControlPacket::parse(&mut cursor, false).unwrap();
         assert_eq!(cursor.remaining(), 0);
         assert_eq!(pack, des);
+        assert_eq!(
+            pack.wire_size(),
+            buf.len() + 28,
+            "Packet {:?} wrong wire size",
+            pack
+        ); // 28 is is IP+UDP buffer
 
         buf
     }

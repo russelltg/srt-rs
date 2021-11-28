@@ -2,6 +2,7 @@ pub mod status;
 pub use status::*;
 
 use std::{
+    convert::TryFrom,
     fmt::Debug,
     net::SocketAddr,
     time::{Duration, Instant},
@@ -152,13 +153,19 @@ impl DuplexConnection {
 
     pub fn update_statistics(&mut self, now: Instant) {
         self.statistics.elapsed_time = now - self.settings.socket_start_time;
-        self.statistics.tx_buffer_time = self.sender.tx_buffer_time();
+        self.statistics.tx_buffered_time = self.sender.tx_buffered_time();
+        self.statistics.tx_buffered_data = self.sender.tx_buffered_packets();
+        self.statistics.tx_buffered_bytes = self.sender.tx_buffered_bytes();
+
+        self.statistics.rx_acknowledged_time = self.receiver.rx_acknowledged_time();
     }
 
     pub fn next_packet(&mut self, now: Instant) -> Option<(Packet, SocketAddr)> {
         self.output.pop_packet().map(|p| {
             self.timers.reset_keepalive(now);
             self.statistics.tx_all_packets += 1;
+            self.statistics.tx_all_bytes += u64::try_from(p.wire_size()).unwrap();
+
             // payload length + (20 bytes IPv4 + 8 bytes UDP + 16 bytes SRT)
             match &p {
                 Packet::Data(d) => {
@@ -314,6 +321,7 @@ impl DuplexConnection {
         self.timers.reset_exp(now);
 
         self.statistics.rx_all_packets += 1;
+        self.statistics.rx_all_bytes += u64::try_from(packet.wire_size()).unwrap();
         match packet {
             Packet::Data(data) => self.receiver().handle_data_packet(now, data),
             Packet::Control(control) => self.handle_control_packet(now, control),

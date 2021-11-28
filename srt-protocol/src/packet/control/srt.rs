@@ -302,6 +302,14 @@ fn string_to_le_bytes(str: &str, into: &mut impl BufMut) {
     }
 }
 
+fn generate_filter_string(filter: &BTreeMap<String, String>) -> String {
+    filter
+        .iter()
+        .map(|(a, b)| format!("{}:{}", a, b))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 impl SrtControlPacket {
     pub fn parse<T: Buf>(
         packet_type: u16,
@@ -380,18 +388,8 @@ impl SrtControlPacket {
             KeyManagerRequest(k) | KeyManagerResponse(k) => {
                 k.serialize(into);
             }
-            StreamId(sid) => {
-                // the stream id string is stored as 32-bit little endian words
-                // https://tools.ietf.org/html/draft-sharabayko-mops-srt-01#section-3.2.1.3
-                string_to_le_bytes(&*sid, into);
-            }
             Filter(filter) => {
-                let filter_str = filter
-                    .iter()
-                    .map(|(a, b)| format!("{}:{}", a, b))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                string_to_le_bytes(&filter_str, into);
+                string_to_le_bytes(&generate_filter_string(filter), into);
             }
             Group { ty, flags, weight } => {
                 into.put_u8((*ty).into());
@@ -399,8 +397,10 @@ impl SrtControlPacket {
                 into.put_u16_le(*weight);
             }
             Reject => {}
-            Congestion(c) => {
-                string_to_le_bytes(c, into);
+            StreamId(str) | Congestion(str) => {
+                // the stream id string and congestion string is stored as 32-bit little endian words
+                // https://tools.ietf.org/html/draft-sharabayko-mops-srt-01#section-3.2.1.3
+                string_to_le_bytes(str, into);
             }
         }
     }
@@ -415,8 +415,11 @@ impl SrtControlPacket {
             KeyManagerRequest(ref k) | KeyManagerResponse(ref k) => {
                 4 + k.salt.len() as u16 / 4 + k.wrapped_keys.len() as u16 / 4
             }
-            StreamId(sid) => ((sid.len() + 3) / 4) as u16, // round up to nearest multiple of 4
-            _ => unimplemented!(),
+            Congestion(str) | StreamId(str) => ((str.len() + 3) / 4) as u16, // round up to nearest multiple of 4
+            // 1 32-bit word packed with type, flags, and weight
+            Group { .. } => 1,
+            Filter(filter) => ((generate_filter_string(filter).len() + 3) / 4) as u16, // TODO: not optimial performace, but probably okay
+            _ => unimplemented!("{:?}", self),
         }
     }
 }

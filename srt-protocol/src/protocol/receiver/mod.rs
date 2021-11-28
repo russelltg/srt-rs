@@ -3,7 +3,10 @@ mod buffer;
 mod history;
 mod time;
 
-use std::{ops::RangeInclusive, time::Instant};
+use std::{
+    ops::RangeInclusive,
+    time::{Duration, Instant},
+};
 
 use arq::AutomaticRepeatRequestAlgorithm;
 use log::debug;
@@ -67,6 +70,10 @@ impl Receiver {
     pub fn is_flushed(&self) -> bool {
         self.arq.is_flushed()
     }
+
+    pub fn rx_acknowledged_time(&self) -> Duration {
+        self.arq.rx_acknowledged_time()
+    }
 }
 
 impl Receiver {
@@ -115,7 +122,7 @@ impl<'a> ReceiverContext<'a> {
     pub fn handle_data_packet(&mut self, now: Instant, data: DataPacket) {
         use Acknowledgement::*;
         use ControlTypes::*;
-        let bytes = data.payload.len() as u64;
+        let bytes = data.wire_size() as u64;
         self.statistics.rx_data += 1;
         self.statistics.rx_bytes += bytes;
 
@@ -128,26 +135,20 @@ impl<'a> ReceiverContext<'a> {
 
         match data {
             Ok(action) => {
-                self.statistics.rx_unique_data += 1;
-                self.statistics.rx_unique_bytes += bytes;
+                if action.is_recovered() {
+                    self.statistics.rx_retransmit_data += 1;
+                } else {
+                    self.statistics.rx_unique_data += 1;
+                    self.statistics.rx_unique_bytes += bytes;
+                }
 
                 use DataPacketAction::*;
                 match action {
-                    Received { recovered, .. } => {
-                        if recovered {
-                            self.statistics.rx_retransmit_data += 1;
-                        }
-                    }
+                    Received { recovered, .. } => if recovered {},
                     ReceivedWithLoss(loss_list) => {
                         self.output.send_control(now, Nak(loss_list));
                     }
-                    ReceivedWithLightAck {
-                        light_ack,
-                        recovered,
-                    } => {
-                        if recovered {
-                            self.statistics.rx_retransmit_data += 1;
-                        }
+                    ReceivedWithLightAck { light_ack, .. } => {
                         self.output.send_control(now, Ack(Lite(light_ack)));
                     }
                 }
@@ -215,5 +216,15 @@ impl<'a> ReceiverContext<'a> {
     pub fn on_close_timeout(&mut self, _now: Instant) {
         //self.debug("timed out", now, &self.receiver.arq);
         self.receiver.arq.clear()
+    }
+}
+
+impl DataPacketAction {
+    pub fn is_recovered(&self) -> bool {
+        use DataPacketAction::*;
+        match self {
+            Received { recovered, .. } | ReceivedWithLightAck { recovered, .. } => *recovered,
+            ReceivedWithLoss(_) => false,
+        }
     }
 }

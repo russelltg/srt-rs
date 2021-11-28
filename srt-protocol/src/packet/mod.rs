@@ -73,6 +73,14 @@ impl Packet {
         )
     }
 
+    /// Wire size of the packet, including IP+UDP+SRT headers
+    pub fn wire_size(&self) -> usize {
+        match self {
+            Packet::Data(d) => d.wire_size(),
+            Packet::Control(c) => c.wire_size(),
+        }
+    }
+
     pub fn parse<T: Buf>(buf: &mut T, is_ipv6: bool) -> Result<Packet, PacketParseError> {
         // Buffer must be at least 16 bytes,
         // the length of a header packet

@@ -13,6 +13,7 @@ pub struct SendBuffer {
     latency_window: Duration,
     flow_window_size: Option<usize>,
     buffer: VecDeque<DataPacket>,
+    buffer_len_bytes: usize, // Invariant: buffer_len_bytes = sum of wire sizes of buffer
     next_send: Option<SeqNumber>,
     next_full_ack: FullAckSeqNumber,
     // 1) Sender's Loss List: The sender's loss list is used to store the
@@ -26,6 +27,7 @@ impl SendBuffer {
     pub fn new(settings: &ConnectionSettings) -> Self {
         Self {
             buffer: VecDeque::new(),
+            buffer_len_bytes: 0,
             next_send: None,
             next_full_ack: FullAckSeqNumber::INITIAL,
             lost_list: BTreeSet::new(),
@@ -39,8 +41,10 @@ impl SendBuffer {
 
     pub fn push_data(&mut self, packet: DataPacket) {
         if self.buffer.is_empty() {
+            self.buffer_len_bytes += packet.wire_size();
             self.buffer.push_back(packet.clone());
         }
+        self.buffer_len_bytes += packet.wire_size();
         self.buffer.push_back(packet);
     }
 
@@ -59,6 +63,14 @@ impl SendBuffer {
             ),
             _ => Duration::from_secs(0),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    pub fn len_bytes(&self) -> usize {
+        self.buffer_len_bytes
     }
 
     pub fn update_largest_acked_seq_number(
@@ -95,7 +107,9 @@ impl SendBuffer {
         }
 
         while self.front_packet().filter(|f| *f < ack_number).is_some() {
-            let _ = self.buffer.pop_front();
+            let p = self.buffer.pop_front();
+            self.buffer_len_bytes -= p.unwrap().wire_size();
+
             received += 1;
         }
 
@@ -180,7 +194,9 @@ impl SendBuffer {
     fn flush_on_close(&mut self, should_drain: bool) -> Option<DataPacket> {
         if should_drain && self.buffer.len() == 1 {
             self.next_send = None;
-            self.buffer.pop_front()
+            let p = self.buffer.pop_front();
+            self.buffer_len_bytes -= p.as_ref().unwrap().wire_size();
+            p
         } else {
             None
         }
@@ -760,15 +776,19 @@ mod test {
     }
 
     #[test]
-    fn buffer_duration() {
+    fn buffer_duration_size() {
         use SenderAction::*;
 
         let mut buffer = SendBuffer::new(&new_settings());
         assert_eq!(buffer.duration(), Duration::from_micros(0));
 
+        let _wire_size = 20 + 8 + 16 + 0;
+
         for n in 0..10 {
             buffer.push_data(test_data_packet(n, false));
-            assert_eq!(buffer.duration(), Duration::from_millis(1) * n)
+            assert_eq!(buffer.duration(), Duration::from_millis(1) * n);
+            // assert_eq!(buffer.len(), n as usize + 1);
+            // assert_eq!(buffer.len_bytes(), wire_size * (n as usize + 1));
         }
 
         for n in 0..10 {
@@ -777,10 +797,20 @@ mod test {
                 .collect::<Vec<_>>();
             assert_eq!(a.len(), 1);
             assert!(matches!(a[0], Send(_)));
-            assert_eq!(
-                buffer.duration(),
-                Duration::from_millis(1) * (10 - n as u32 - 1)
-            )
+            assert_eq!(buffer.duration(), Duration::from_millis(9)); // not removed from buffer until ack
+
+            //  assert_eq!(buffer.len(), 10);
+            // assert_eq!(buffer.len_bytes(), wire_size * 10);
+        }
+
+        for n in 0..10 {
+            buffer
+                .update_largest_acked_seq_number(SeqNumber(n + 1), None)
+                .unwrap();
+
+            assert_eq!(buffer.duration(), Duration::from_millis(u64::from(9 - n)));
+            // assert_eq!(buffer.len(), 9 - n as usize);
+            // assert_eq!(buffer.len_bytes(), wire_size * (9 - n as usize));
         }
     }
 }
