@@ -158,6 +158,7 @@ impl RandomLossSimulation {
         &mut self,
         start: Instant,
         latency: Duration,
+        recv_buffer_size: usize,
     ) -> (NetworkSimulator, DuplexConnection, DuplexConnection) {
         let sender = self.new_connection_settings(start, latency);
         let receiver = ConnectionSettings {
@@ -165,6 +166,7 @@ impl RandomLossSimulation {
             remote_sockid: sender.local_sockid,
             local_sockid: sender.remote_sockid,
             init_seq_num: sender.init_seq_num,
+            recv_buffer_size,
             ..sender.clone()
         };
 

@@ -42,7 +42,8 @@ fn do_not_enough_latency(seed: u64, packets: usize) {
         drop_dist: Bernoulli::new(0.01).unwrap(),
     };
 
-    let (mut network, mut sender, mut receiver) = simulation.build(start, Duration::from_secs(2));
+    let (mut network, mut sender, mut receiver) =
+        simulation.build(start, Duration::from_secs(2), 8192);
 
     input_data_simulation(start, packets, PACKET_SPACING, &mut network.sender);
 
