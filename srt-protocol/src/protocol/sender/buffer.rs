@@ -782,7 +782,7 @@ mod test {
         let mut buffer = SendBuffer::new(&new_settings());
         assert_eq!(buffer.duration(), Duration::from_micros(0));
 
-        let _wire_size = 20 + 8 + 16 + 0;
+        let _wire_size = test_data_packet(0, false).wire_size();
 
         for n in 0..10 {
             buffer.push_data(test_data_packet(n, false));
