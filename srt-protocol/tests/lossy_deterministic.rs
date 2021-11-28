@@ -144,11 +144,8 @@ fn do_lossy_test(seed: u64, count: usize) {
 fn high_bandwidth_deterministic() {
     let _ = pretty_env_logger::try_init();
 
-    let once_failing_seeds = [13087270514753106960];
-
-    for seed in once_failing_seeds {
-        do_high_bandwidth_deterministic(seed, 100_000);
-    }
+    // once failing
+    do_high_bandwidth_deterministic(13087270514753106960, 100_000);
 
     for _ in 0..5 {
         do_high_bandwidth_deterministic(rand::random(), 100_000);
@@ -190,6 +187,7 @@ fn do_high_bandwidth_deterministic(seed: u64, count: usize) {
     let mut window = VecDeque::new();
     let mut bytes_received = 0;
     let mut packets_received = 0;
+    let mut last_packet = None;
     loop {
         let sender_next_time = if sender.is_open() {
             assert_eq!(sender.next_data(now), None);
@@ -214,7 +212,7 @@ fn do_high_bandwidth_deterministic(seed: u64, count: usize) {
         };
 
         let receiver_next_time = if receiver.is_open() {
-            while let Some((ts, _payload)) = receiver.next_data(now) {
+            while let Some((ts, payload)) = receiver.next_data(now) {
                 bytes_received += packet_size;
                 window.push_back((ts, packet_size));
                 packets_received += 1;
@@ -244,6 +242,14 @@ fn do_high_bandwidth_deterministic(seed: u64, count: usize) {
                         bandwidth_mbps * 1.1
                     );
                 }
+
+                // make sure no loss
+                let actual: i32 = str::from_utf8(&payload[..]).unwrap().parse().unwrap();
+                if let Some(last_packet) = last_packet {
+                    assert_eq!(last_packet + 1, actual);
+                }
+                last_packet = Some(actual);
+
                 // print!("Received {:10.3}MB/s\r", rate_mbps);
             }
 
@@ -278,14 +284,10 @@ fn do_high_bandwidth_deterministic(seed: u64, count: usize) {
         now = next_time;
     }
 
-    // 1 is arbitrary.....this needs to be researced more. It seems like there is more packet loss than I would expect.
-    let probability_of_total_loss = drop_rate.powf(1.);
-    let expected_fully_lost = (count as f64 * probability_of_total_loss) as usize;
-
     assert!(
-        packets_received > count - expected_fully_lost * 2, // TODO: this should not require doubling.
+        packets_received > count * 2 / 3,
         "Expected at least {} packets, got {}",
-        count - expected_fully_lost,
-        packets_received
+        count * 2 / 3,
+        packets_received,
     );
 }
