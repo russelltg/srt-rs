@@ -40,18 +40,13 @@ impl Error for PacketParseError {
     }
 }
 
-impl From<PacketParseError> for io::Error {
-    fn from(s: PacketParseError) -> Self {
-        io::Error::new(io::ErrorKind::InvalidData, s)
-    }
-}
-
 impl From<io::Error> for PacketParseError {
     fn from(s: io::Error) -> PacketParseError {
         PacketParseError::Io(s)
     }
 }
 
+// NOTE: can't derive Eq or PartialEq because io::Error does not implement either.
 impl Eq for PacketParseError {}
 
 impl PartialEq for PacketParseError {
