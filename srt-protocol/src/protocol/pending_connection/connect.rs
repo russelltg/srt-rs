@@ -177,7 +177,7 @@ impl Connect {
                 (_, Packet::Data(data)) => NotHandled(ControlExpected(data)),
                 (_, _) => NoAction,
             },
-            Err(PacketParseError::Io(error)) => return Failure(error),
+            Err(PacketParseError::Io(error)) => Failure(error),
             Err(e) => NotHandled(ConnectError::ParseFailed(e)),
         }
     }

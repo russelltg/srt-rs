@@ -215,7 +215,7 @@ impl Listen {
                 }
                 Packet::Data(data) => NotHandled(ConnectError::ControlExpected(data)),
             },
-            Err(PacketParseError::Io(error)) => return Failure(error),
+            Err(PacketParseError::Io(error)) => Failure(error),
             Err(e) => NotHandled(ConnectError::ParseFailed(e)),
         }
     }
