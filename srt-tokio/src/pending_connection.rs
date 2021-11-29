@@ -39,7 +39,7 @@ pub async fn connect(
     loop {
         let result = select! {
             now = tick_interval.tick().fuse() => connect.handle_tick(now.into()),
-            packet = socket.receive().fuse() => connect.handle_packet(packet?, Instant::now()),
+            packet = socket.receive().fuse() => connect.handle_packet(packet, Instant::now()),
         };
 
         debug!("{:?}:connect - {:?}", streamid, result);
@@ -66,6 +66,7 @@ pub async fn connect(
                 return Ok(conn);
             }
             ConnectionResult::NoAction => {}
+            ConnectionResult::Failure(error) => return Err(error),
         }
     }
 }
@@ -78,7 +79,7 @@ pub async fn listen(
     let mut a = AllowAllStreamAcceptor::default();
     let mut listen = Listen::new(init_settings);
     loop {
-        let packet = sockt.receive().await?;
+        let packet = sockt.receive().await;
         debug!("{:?}:listen  - {:?}", streamid, packet);
 
         let result = listen.handle_packet(packet, Instant::now(), &mut a);
@@ -99,6 +100,7 @@ pub async fn listen(
                 return Ok(c);
             }
             ConnectionResult::NoAction => {}
+            ConnectionResult::Failure(error) => return Err(error),
         }
     }
 }
@@ -116,7 +118,7 @@ pub async fn rendezvous(
     loop {
         let result = select! {
             now = tick_interval.tick().fuse() => rendezvous.handle_tick(now.into()),
-            packet = socket.receive().fuse() => rendezvous.handle_packet(packet?, Instant::now()),
+            packet = socket.receive().fuse() => rendezvous.handle_packet(packet, Instant::now()),
         };
 
         debug!("{:?}:rendezvous - {:?}", sockid, result);
@@ -135,6 +137,7 @@ pub async fn rendezvous(
                 return Ok(c);
             }
             ConnectionResult::NoAction => {}
+            ConnectionResult::Failure(error) => return Err(error),
         }
     }
 }

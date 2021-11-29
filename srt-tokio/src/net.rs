@@ -86,7 +86,7 @@ impl PacketSocket {
             &mut Cursor::new(&self.buffer[0..size]),
             self.socket.local_addr()?.is_ipv6(),
         )?;
-        Ok((size, packet, from))
+        Ok((packet, from))
     }
 }
 

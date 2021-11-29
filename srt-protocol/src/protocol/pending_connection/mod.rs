@@ -5,7 +5,7 @@ pub mod rendezvous;
 mod cookie;
 mod hsv5;
 
-use std::{error::Error, fmt, net::SocketAddr};
+use std::{error::Error, fmt, io, net::SocketAddr};
 
 use crate::{connection::Connection, packet::*};
 
@@ -28,6 +28,7 @@ pub enum ConnectError {
     ExpectedHsResp,
     ExpectedExtFlags,
     ExpectedNoExtFlags,
+    ParseFailed(PacketParseError),
 }
 
 #[derive(Debug)]
@@ -47,6 +48,7 @@ pub enum ConnectionResult {
     SendPacket((Packet, SocketAddr)),
     Connected(Option<(Packet, SocketAddr)>, Connection),
     NoAction,
+    Failure(io::Error),
 }
 
 impl fmt::Display for ConnectError {
@@ -94,6 +96,7 @@ impl fmt::Display for ConnectError {
             ExpectedNoExtFlags => {
                 write!(f, "Initiator did not expect handshake flags, but got some")
             }
+            ParseFailed(e) => write!(f, "Failed to parse packet: {}", e),
         }
     }
 }

@@ -138,4 +138,4 @@ impl Debug for Packet {
     }
 }
 
-pub type ReceivePacketResult = Result<(usize, Packet, SocketAddr), PacketParseError>;
+pub type ReceivePacketResult = Result<(Packet, SocketAddr), PacketParseError>;

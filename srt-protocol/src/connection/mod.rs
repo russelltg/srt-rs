@@ -290,7 +290,7 @@ impl DuplexConnection {
         self.status.on_peer_idle_timeout(now);
     }
 
-    fn handle_packet(&mut self, now: Instant, (size, packet, from): (usize, Packet, SocketAddr)) {
+    fn handle_packet(&mut self, now: Instant, (packet, from): (Packet, SocketAddr)) {
         // TODO: record/report packets from invalid hosts?
         // We don't care about packets from elsewhere
         if from != self.settings.remote {
@@ -306,7 +306,6 @@ impl DuplexConnection {
         self.timers.reset_exp(now);
 
         self.stats.rx_all_packets += 1;
-        self.stats.rx_all_bytes += size as u64;
         match packet {
             Packet::Data(data) => self.receiver().handle_data_packet(now, data),
             Packet::Control(control) => self.handle_control_packet(now, control),
@@ -503,7 +502,7 @@ mod duplex_connection {
             )),
         });
         assert_eq!(
-            connection.handle_input(now, Input::Packet(Ok((0, packet, remote_addr())))),
+            connection.handle_input(now, Input::Packet(Ok((packet, remote_addr())))),
             SendPacket((
                 Control(ControlPacket {
                     timestamp: TimeStamp::from_micros(2_000),
@@ -606,7 +605,6 @@ mod duplex_connection {
             connection.handle_input(
                 now,
                 Input::Packet(Ok((
-                    0,
                     Control(ControlPacket {
                         timestamp: TimeStamp::MIN + SND + TSBPD + TSBPD / 4,
                         dest_sockid: remote_sockid(),

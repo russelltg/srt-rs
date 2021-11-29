@@ -476,35 +476,37 @@ impl Rendezvous {
         )
     }
 
-    pub fn handle_packet(
-        &mut self,
-        (_, packet, from): (usize, Packet, SocketAddr),
-        now: Instant,
-    ) -> ConnectionResult {
-        if from != self.remote_public {
-            return NotHandled(UnexpectedHost(self.remote_public, from));
-        }
+    pub fn handle_packet(&mut self, packet: ReceivePacketResult, now: Instant) -> ConnectionResult {
+        match packet {
+            Ok((packet, from)) => {
+                if from != self.remote_public {
+                    return NotHandled(UnexpectedHost(self.remote_public, from));
+                }
 
-        let hs = get_handshake(&packet);
-        match (self.state.clone(), hs) {
-            (Waving, Ok(hs)) => self.handle_waving(hs, packet.timestamp(), now),
-            (AttentionInitiator(hsv5, initiator), Ok(hs)) => {
-                self.handle_attention_initiator(hs, hsv5, initiator, now)
+                let hs = get_handshake(&packet);
+                match (self.state.clone(), hs) {
+                    (Waving, Ok(hs)) => self.handle_waving(hs, packet.timestamp(), now),
+                    (AttentionInitiator(hsv5, initiator), Ok(hs)) => {
+                        self.handle_attention_initiator(hs, hsv5, initiator, now)
+                    }
+                    (AttentionResponder(induction_time), Ok(hs)) => {
+                        self.handle_attention_responder(hs, packet.timestamp(), induction_time, now)
+                    }
+                    (InitiatedInitiator(initiator), Ok(hs)) => {
+                        self.handle_initiated_initiator(hs, initiator, now)
+                    }
+                    (InitiatedResponder(connection), _) => {
+                        self.handle_initiated_responder(&packet, connection)
+                    }
+                    (FineInitiator(hsv5, initiator), Ok(hs)) => {
+                        self.handle_fine_initiator(hs, hsv5, initiator, now)
+                    }
+                    (FineResponder(conn), _) => self.handle_fine_responder(&packet, conn),
+                    (_, Err(e)) => NotHandled(e),
+                }
             }
-            (AttentionResponder(induction_time), Ok(hs)) => {
-                self.handle_attention_responder(hs, packet.timestamp(), induction_time, now)
-            }
-            (InitiatedInitiator(initiator), Ok(hs)) => {
-                self.handle_initiated_initiator(hs, initiator, now)
-            }
-            (InitiatedResponder(connection), _) => {
-                self.handle_initiated_responder(&packet, connection)
-            }
-            (FineInitiator(hsv5, initiator), Ok(hs)) => {
-                self.handle_fine_initiator(hs, hsv5, initiator, now)
-            }
-            (FineResponder(conn), _) => self.handle_fine_responder(&packet, conn),
-            (_, Err(e)) => NotHandled(e),
+            Err(PacketParseError::Io(error)) => return Failure(error),
+            Err(e) => NotHandled(ConnectError::ParseFailed(e)),
         }
     }
 

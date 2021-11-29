@@ -155,26 +155,30 @@ impl Connect {
         }
     }
 
-    pub fn handle_packet(
-        &mut self,
-        next: (usize, Packet, SocketAddr),
-        now: Instant,
-    ) -> ConnectionResult {
-        let (_, packet, from) = next;
-        match (self.state.clone(), packet) {
-            (InductionResponseWait(_), Packet::Control(control)) => match control.control_type {
-                ControlTypes::Handshake(shake) => {
-                    self.wait_for_induction(from, control.timestamp, shake, now)
+    pub fn handle_packet(&mut self, packet: ReceivePacketResult, now: Instant) -> ConnectionResult {
+        match packet {
+            Ok((packet, from)) => match (self.state.clone(), packet) {
+                (InductionResponseWait(_), Packet::Control(control)) => {
+                    match control.control_type {
+                        ControlTypes::Handshake(shake) => {
+                            self.wait_for_induction(from, control.timestamp, shake, now)
+                        }
+                        control_type => NotHandled(HandshakeExpected(control_type)),
+                    }
                 }
-                control_type => NotHandled(HandshakeExpected(control_type)),
+                (ConclusionResponseWait(_, cm), Packet::Control(control)) => {
+                    match control.control_type {
+                        ControlTypes::Handshake(shake) => {
+                            self.wait_for_conclusion(from, now, shake, cm)
+                        }
+                        control_type => NotHandled(HandshakeExpected(control_type)),
+                    }
+                }
+                (_, Packet::Data(data)) => NotHandled(ControlExpected(data)),
+                (_, _) => NoAction,
             },
-            (ConclusionResponseWait(_, cm), Packet::Control(control)) => match control.control_type
-            {
-                ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, now, shake, cm),
-                control_type => NotHandled(HandshakeExpected(control_type)),
-            },
-            (_, Packet::Data(data)) => NotHandled(ControlExpected(data)),
-            (_, _) => NoAction,
+            Err(PacketParseError::Io(error)) => return Failure(error),
+            Err(e) => NotHandled(ConnectError::ParseFailed(e)),
         }
     }
 
@@ -223,7 +227,7 @@ mod test {
             }),
         });
 
-        let resp = c.handle_packet((0, first, test_remote()), Instant::now());
+        let resp = c.handle_packet(Ok((first, test_remote())), Instant::now());
         assert!(
             matches!(
                 resp,
@@ -256,7 +260,7 @@ mod test {
             }),
         });
 
-        let resp = c.handle_packet((0, rejection, test_remote()), Instant::now());
+        let resp = c.handle_packet(Ok((rejection, test_remote())), Instant::now());
         assert!(
             matches!(
                 resp,

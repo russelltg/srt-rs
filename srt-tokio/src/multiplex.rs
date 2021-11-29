@@ -41,11 +41,11 @@ impl<T: StreamAcceptor> MultiplexState<T> {
 
     async fn delegate_packet(
         &mut self,
-        packet: (usize, Packet, SocketAddr),
+        packet: (Packet, SocketAddr),
     ) -> Result<Option<SrtSocket>, io::Error> {
-        let from = packet.2;
+        let from = packet.1;
         // fast path--an already established connection
-        let dst_sockid = packet.1.dest_sockid();
+        let dst_sockid = packet.0.dest_sockid();
         if let Some(chan) = self.conns.get_mut(&dst_sockid) {
             if let Err(_send_err) = chan.send(Ok(packet)).await {
                 self.conns.remove(&dst_sockid);
@@ -60,7 +60,7 @@ impl<T: StreamAcceptor> MultiplexState<T> {
             .or_insert_with(|| Listen::new(init_settings.copy_randomize()));
 
         // already started connection?
-        let conn = match listen.handle_packet(packet, Instant::now(), &mut self.acceptor) {
+        let conn = match listen.handle_packet(Ok(packet), Instant::now(), &mut self.acceptor) {
             ConnectionResult::SendPacket(packet) => {
                 self.socket.send(packet).await?;
                 return Ok(None);
@@ -83,7 +83,8 @@ impl<T: StreamAcceptor> MultiplexState<T> {
                     self.socket.send(packet).await?;
                 }
                 c
-            }
+            },
+            ConnectionResult::Failure(error) => return Err(error),
         };
 
         let (s, socket) = self.socket.clone_channel(100);
