@@ -1,20 +1,28 @@
 // Packet structures
 // see https://tools.ietf.org/html/draft-gg-udt-03#page-5
 
-use std::fmt::{self, Debug, Formatter};
-
-use bytes::{Buf, BufMut};
-
 mod control;
 mod data;
 mod error;
+mod modular_num;
+mod msg_number;
+mod seq_number;
+mod socket_id;
+mod srt_version;
+mod time;
 
-pub use self::control::*;
-pub use self::data::*;
-pub use error::PacketParseError;
+pub use control::*;
+pub use data::*;
+pub use error::*;
+pub use msg_number::*;
+pub use seq_number::*;
+pub use socket_id::*;
+pub use srt_version::*;
+pub use time::*;
 
-use crate::protocol::TimeStamp;
-use crate::SocketId;
+use std::fmt::{self, Debug, Formatter};
+
+use bytes::{Buf, BufMut};
 
 /// Represents A UDT/SRT packet
 #[derive(Clone, PartialEq, Eq)]
@@ -25,6 +33,13 @@ pub enum Packet {
 }
 
 impl Packet {
+    const IPV4_HEADER_SIZE: u64 = 20;
+    const UDP_HEADER_SIZE: u64 = 8;
+    const SRT_HEADER_SIZE: u64 = 16;
+
+    pub const HEADER_SIZE: u64 =
+        Self::IPV4_HEADER_SIZE + Self::UDP_HEADER_SIZE + Self::SRT_HEADER_SIZE;
+
     pub fn timestamp(&self) -> TimeStamp {
         match *self {
             Packet::Data(DataPacket { timestamp, .. })

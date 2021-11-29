@@ -1,12 +1,13 @@
-use crate::{crypto::CryptoOptions, packet::RejectReason};
 use std::{
-    convert::TryFrom,
+    convert::{TryFrom, TryInto},
     error::Error,
     fmt::{self, Display},
     marker::PhantomData,
     net::SocketAddr,
     str::FromStr,
 };
+
+use crate::{packet::RejectReason, settings::encryption::KeySettings};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct AccessControlList(pub Vec<AccessControlEntry>);
@@ -189,27 +190,24 @@ impl Display for StandardAccessControlEntry {
 }
 
 pub struct AcceptParameters {
-    crypto_options: Option<CryptoOptions>,
+    key_settings: Option<KeySettings>,
 }
 
 impl AcceptParameters {
     pub fn new() -> AcceptParameters {
-        AcceptParameters {
-            crypto_options: None,
-        }
+        AcceptParameters { key_settings: None }
     }
 
-    pub fn set_crypto_options(&mut self, password: impl Into<String>, size: u8) -> &mut Self {
-        assert!(matches!(size, 16 | 24 | 32));
-        self.crypto_options = Some(CryptoOptions {
-            size,
-            passphrase: password.into(),
+    pub fn set_key_settings(&mut self, passphrase: impl Into<String>, size: u8) -> &mut Self {
+        self.key_settings = Some(KeySettings {
+            key_size: size.try_into().unwrap(),
+            passphrase: passphrase.into().try_into().unwrap(),
         });
         self
     }
 
-    pub(crate) fn take_crypto_options(&mut self) -> Option<CryptoOptions> {
-        self.crypto_options.take()
+    pub(crate) fn take_key_settings(&mut self) -> Option<KeySettings> {
+        self.key_settings.take()
     }
 }
 

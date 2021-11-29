@@ -1,12 +1,10 @@
-use bitflags::bitflags;
-use bytes::{Buf, BufMut, Bytes};
-
 use std::cmp::min;
 use std::{convert::TryFrom, fmt};
 
-use super::PacketParseError;
-use crate::protocol::TimeStamp;
-use crate::{MsgNumber, SeqNumber, SocketId};
+use bitflags::bitflags;
+use bytes::{Buf, BufMut, Bytes};
+
+use super::{MsgNumber, PacketParseError, SeqNumber, SocketId, TimeStamp};
 
 /// A UDT packet carrying data
 ///
@@ -59,6 +57,10 @@ pub struct DataPacket {
 
     /// The rest of the packet, the payload
     pub payload: Bytes,
+}
+
+impl DataPacket {
+    pub const HEADER_SIZE: u64 = super::Packet::HEADER_SIZE;
 }
 
 bitflags! {

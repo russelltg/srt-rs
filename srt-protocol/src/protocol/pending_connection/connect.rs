@@ -1,19 +1,20 @@
-use std::net::{IpAddr, SocketAddr};
-use std::time::Instant;
+use std::{
+    net::{IpAddr, SocketAddr},
+    time::Instant,
+};
+
+use ConnectError::*;
+use ConnectState::*;
+use ConnectionResult::*;
 
 use crate::{
-    packet::*,
-    protocol::{handshake::Handshake, TimeStamp},
-    Connection, SeqNumber, SocketId,
+    connection::Connection, packet::*, protocol::handshake::Handshake, settings::ConnInitSettings,
 };
 
 use super::{
     hsv5::{start_hsv5_initiation, StartedInitiator},
-    ConnInitSettings, ConnectError, ConnectionReject, ConnectionResult,
+    ConnectError, ConnectionReject, ConnectionResult,
 };
-use ConnectError::*;
-use ConnectState::*;
-use ConnectionResult::*;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
@@ -192,10 +193,9 @@ mod test {
 
     use rand::random;
 
-    use crate::pending_connection::ConnectionReject;
+    use crate::protocol::pending_connection::ConnectionReject;
 
     use super::*;
-    use crate::LiveBandwidthMode;
 
     const TEST_SOCKID: SocketId = SocketId(7655);
 
@@ -276,10 +276,12 @@ mod test {
             [127, 0, 0, 1].into(),
             ConnInitSettings {
                 local_sockid: TEST_SOCKID,
-                crypto: None,
+                key_settings: None,
+                key_refresh: Default::default(),
                 send_latency: Duration::from_millis(20),
                 recv_latency: Duration::from_millis(20),
-                bandwidth: LiveBandwidthMode::default(),
+                bandwidth: Default::default(),
+                statistics_interval: Duration::from_secs(1),
                 recv_buffer_size: 8192,
             },
             sid,

@@ -1,16 +1,20 @@
-use log::{error, warn};
-use rand::distributions::Bernoulli;
-use rand::prelude::*;
-use rand_distr::Normal;
-use srt_protocol::connection::{DuplexConnection, Input};
-use srt_protocol::protocol::handshake::Handshake;
-use srt_protocol::{Connection, ConnectionSettings, LiveBandwidthMode, Packet};
 use std::{
     cmp::max,
     collections::BinaryHeap,
     convert::TryFrom,
     net::SocketAddr,
     time::{Duration, Instant},
+};
+
+use log::{error, warn};
+use rand::{distributions::Bernoulli, prelude::*};
+use rand_distr::Normal;
+
+use srt_protocol::{
+    connection::{Connection, ConnectionSettings, DuplexConnection, Input},
+    packet::*,
+    protocol::handshake::Handshake,
+    settings::*,
 };
 
 #[derive(Eq, PartialEq)]
@@ -154,6 +158,7 @@ impl RandomLossSimulation {
         &mut self,
         start: Instant,
         latency: Duration,
+        recv_buffer_size: usize,
     ) -> (NetworkSimulator, DuplexConnection, DuplexConnection) {
         let sender = self.new_connection_settings(start, latency);
         let receiver = ConnectionSettings {
@@ -161,6 +166,7 @@ impl RandomLossSimulation {
             remote_sockid: sender.local_sockid,
             local_sockid: sender.remote_sockid,
             init_seq_num: sender.init_seq_num,
+            recv_buffer_size,
             ..sender.clone()
         };
 
@@ -197,10 +203,11 @@ impl RandomLossSimulation {
             max_flow_size: 8192,
             send_tsbpd_latency: latency,
             recv_tsbpd_latency: latency,
-            crypto_manager: None,
+            cipher: None,
             stream_id: None,
             bandwidth: LiveBandwidthMode::default(),
             recv_buffer_size: 8192,
+            statistics_interval: Duration::from_secs(1),
         }
     }
 }

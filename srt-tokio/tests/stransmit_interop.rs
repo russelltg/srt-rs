@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 use std::{
     env,
-    ffi::CStr,
+    ffi::{CStr, CString},
     intrinsics::transmute,
     io::ErrorKind,
     mem::size_of,
@@ -19,7 +19,6 @@ use futures::{future::try_join, join, stream, SinkExt, Stream, StreamExt};
 use libc::sockaddr;
 use libloading::{Library, Symbol};
 use log::{debug, info};
-
 use tokio::{net::UdpSocket, task::spawn_blocking, time};
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
@@ -154,6 +153,19 @@ async fn stransmit_client() -> Result<(), Error> {
 
     listener.await;
     stransmit.wait()?;
+
+    if time::Instant::now().elapsed() > Duration::MAX {
+        haivision_echo(
+            1,
+            0,
+            HaiSettings {
+                km_refreshrate: None,
+                km_preannounce: None,
+                passphrase: None,
+                pbkeylen: None,
+            },
+        );
+    }
 
     Ok(())
 }
@@ -319,6 +331,40 @@ async fn stransmit_decrypt() -> Result<(), Error> {
     Ok(())
 }
 
+#[tokio::test]
+async fn stransmit_encrypt_rekey() -> Result<(), Error> {
+    let _ = pretty_env_logger::try_init();
+
+    const PACKETS: u32 = 1_000;
+
+    let mut child = allow_not_found!(Command::new("srt-live-transmit")
+        .arg("udp://:2011")
+        .arg("srt://:2012?passphrase=password123&pbkeylen=16&kmrefreshrate=128&kmpreannounce=60")
+        .arg("-a:no")
+        .arg("-loglevel:debug")
+        .spawn());
+
+    let recvr_fut = async move {
+        let recv = SrtSocketBuilder::new_connect("127.0.0.1:2012")
+            .crypto(16, "password123")
+            .connect()
+            .await
+            .unwrap();
+
+        try_join(
+            receiver(PACKETS, recv.map(|f| f.unwrap().1)),
+            udp_sender(PACKETS, 2011),
+        )
+        .await
+        .unwrap();
+    };
+
+    recvr_fut.await;
+    child.wait().unwrap();
+
+    Ok(())
+}
+
 // reported by @ian-spoonradio
 #[tokio::test]
 #[cfg(not(target_os = "windows"))]
@@ -356,8 +402,12 @@ async fn test_c_client_interop() -> Result<(), Error> {
 
 #[tokio::test]
 #[cfg(not(target_os = "windows"))]
-#[cfg(not(target_os = "macos"))]
 async fn bidirectional_interop() -> Result<(), Error> {
+    #[cfg(target_os = "macos")]
+    if Instant::now().elapsed() < Duration::MAX {
+        return Ok(());
+    }
+
     let _ = pretty_env_logger::try_init();
 
     let srt_rs_side = async move {
@@ -384,7 +434,73 @@ async fn bidirectional_interop() -> Result<(), Error> {
         Ok(())
     };
 
-    let jh = spawn_blocking(move || haivision_echo(2812));
+    let jh = spawn_blocking(move || haivision_echo(2812, 10, HaiSettings::default()));
+
+    try_join(srt_rs_side, jh).await.unwrap();
+
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(not(target_os = "windows"))]
+async fn bidirectional_interop_encrypt_rekey() -> Result<(), Error> {
+    use tokio::time::sleep;
+
+    #[cfg(target_os = "macos")]
+    if Instant::now().elapsed() < Duration::MAX {
+        return Ok(());
+    }
+
+    let _ = pretty_env_logger::try_init();
+
+    let srt_rs_side = async move {
+        let sock = SrtSocketBuilder::new_listen()
+            .local_port(2813)
+            .crypto(16, "password123")
+            .km_pre_announcement_period(60)
+            .km_refresh_period(128)
+            .connect()
+            .await
+            .unwrap();
+
+        time::sleep(Duration::from_millis(500)).await;
+
+        let (mut s, mut r) = sock.split();
+
+        let s = async move {
+            for _ in 0..1024 {
+                debug!("Sending...");
+                s.send((Instant::now(), Bytes::from_static(b"1234")))
+                    .await
+                    .unwrap();
+                debug!("Sent");
+                sleep(Duration::from_millis(10)).await;
+            }
+        };
+        let r = async move {
+            for _ in 0..1024 {
+                let (_, buf) = r.next().await.unwrap().unwrap();
+                debug!("Recvd");
+                assert_eq!(&*buf, b"1234");
+            }
+        };
+        join!(s, r);
+
+        Ok(())
+    };
+
+    let jh = spawn_blocking(move || {
+        haivision_echo(
+            2813,
+            1024,
+            HaiSettings {
+                km_preannounce: Some(60),
+                km_refreshrate: Some(128),
+                passphrase: Some("password123".into()),
+                pbkeylen: Some(16),
+            },
+        )
+    });
 
     try_join(srt_rs_side, jh).await.unwrap();
 
@@ -394,6 +510,12 @@ async fn bidirectional_interop() -> Result<(), Error> {
 type HaiSocket = i32;
 
 const SRTO_SENDER: c_int = 21;
+const SRTO_KMREFRESHRATE: c_int = 51;
+const SRTO_KMPREANNOUNCE: c_int = 52;
+const SRTO_PASSPHRASE: c_int = 26;
+const SRTO_PBKEYLEN: c_int = 27;
+
+const LOG_DEBUG: c_int = 7;
 
 struct HaivisionSrt<'l> {
     create_socket: Symbol<'l, unsafe extern "C" fn() -> HaiSocket>,
@@ -405,6 +527,7 @@ struct HaivisionSrt<'l> {
     startup: Symbol<'l, unsafe extern "C" fn() -> c_int>,
     // cleanup: Symbol<'l, unsafe extern "C" fn() -> c_int>,
     getlasterror_str: Symbol<'l, unsafe extern "C" fn() -> *const c_char>,
+    setloglevel: Symbol<'l, unsafe extern "C" fn(c_int) -> ()>,
 }
 
 impl<'l> HaivisionSrt<'l> {
@@ -419,6 +542,7 @@ impl<'l> HaivisionSrt<'l> {
             startup: lib.get(b"srt_startup").unwrap(),
             // cleanup: lib.get(b"srt_cleanup").unwrap(),
             getlasterror_str: lib.get(b"srt_getlasterror_str").unwrap(),
+            setloglevel: lib.get(b"srt_setloglevel").unwrap(),
         }
     }
 }
@@ -480,23 +604,36 @@ fn open_libsrt() -> Option<Library> {
     }
 
     for name in &possible_names {
-        if let Ok(lib) = unsafe { Library::new(*name) } {
-            return Some(lib);
+        match unsafe { Library::new(*name) } {
+            Ok(lib) => return Some(lib),
+            Err(e) => println!("Failed to load from {}: {}", name, e),
         }
     }
     None
 }
 
+#[derive(Default)]
+struct HaiSettings {
+    km_refreshrate: Option<i32>,
+    km_preannounce: Option<i32>,
+    passphrase: Option<String>,
+    pbkeylen: Option<i32>,
+}
+
+lazy_static::lazy_static! {
+    static ref LIBSRT: Library = open_libsrt().unwrap();
+    static ref SRT: HaivisionSrt<'static> = unsafe {
+        let srt = HaivisionSrt::new(&*LIBSRT);
+        (srt.startup)();
+        (srt.setloglevel)(LOG_DEBUG);
+        srt
+    };
+}
+
 // this mimics test_c_client from the repository
 fn test_c_client(port: u16) {
     unsafe {
-        // load symbols
-        let lib = open_libsrt().unwrap();
-        let srt = HaivisionSrt::new(&lib);
-
-        (srt.startup)();
-
-        let ss = (srt.create_socket)();
+        let ss = (SRT.create_socket)();
         if ss == -1 {
             panic!("Failed to create socket");
         }
@@ -504,23 +641,23 @@ fn test_c_client(port: u16) {
         let sa = make_sockaddr(port);
 
         let yes: c_int = 1;
-        (srt.setsockflag)(
+        (SRT.setsockflag)(
             ss,
             SRTO_SENDER,
             &yes as *const i32 as *const (),
             size_of::<c_int>() as c_int,
         );
 
-        let st = (srt.connect)(ss, &sa, size_of::<sockaddr>() as c_int);
+        let st = (SRT.connect)(ss, &sa, size_of::<sockaddr>() as c_int);
         if st == -1 {
             panic!(
                 "Failed to connect {:?}",
-                CStr::from_ptr((srt.getlasterror_str)())
+                CStr::from_ptr((SRT.getlasterror_str)())
             );
         }
 
         for _ in 0..100 {
-            let st = (srt.sendmsg2)(
+            let st = (SRT.sendmsg2)(
                 ss,
                 TEST_C_CLIENT_MESSAGE.as_ptr(),
                 TEST_C_CLIENT_MESSAGE.len() as c_int,
@@ -535,47 +672,76 @@ fn test_c_client(port: u16) {
 
         thread::sleep(Duration::from_millis(100));
 
-        if (srt.close)(ss) == -1 {
+        if (SRT.close)(ss) == -1 {
             panic!();
         }
 
-        // (srt.cleanup)();
+        // (SRT.cleanup)();
     }
 }
 
-fn haivision_echo(port: u16) {
+fn haivision_echo(port: u16, packets: usize, settings: HaiSettings) {
     unsafe {
-        let lib = open_libsrt().unwrap();
-        let srt = HaivisionSrt::new(&lib);
-
-        (srt.startup)();
-
-        let ss = (srt.create_socket)();
+        let ss = (SRT.create_socket)();
         if ss == -1 {
             panic!("Failed to create socket");
         }
 
         let sa = make_sockaddr(port);
 
-        let st = (srt.connect)(ss, &sa, size_of::<sockaddr>() as c_int);
+        if let Some(kmrr) = settings.km_refreshrate {
+            (SRT.setsockflag)(
+                ss,
+                SRTO_KMREFRESHRATE,
+                &kmrr as *const i32 as *const (),
+                size_of::<c_int>() as c_int,
+            );
+        }
+        if let Some(kmpa) = settings.km_preannounce {
+            (SRT.setsockflag)(
+                ss,
+                SRTO_KMPREANNOUNCE,
+                &kmpa as *const i32 as *const (),
+                size_of::<c_int>() as c_int,
+            );
+        }
+        if let Some(passphrase) = settings.passphrase {
+            let cstr = CString::new(passphrase).unwrap();
+            (SRT.setsockflag)(
+                ss,
+                SRTO_PASSPHRASE,
+                cstr.as_ptr() as *const (),
+                cstr.as_bytes().len() as i32,
+            );
+        }
+        if let Some(pbkeylen) = settings.pbkeylen {
+            (SRT.setsockflag)(
+                ss,
+                SRTO_PBKEYLEN,
+                &pbkeylen as *const i32 as *const (),
+                size_of::<c_int>() as c_int,
+            );
+        }
+
+        let st = (SRT.connect)(ss, &sa, size_of::<sockaddr>() as c_int);
 
         if st == -1 {
             panic!(
                 "Failed to connect {:?}",
-                CStr::from_ptr((srt.getlasterror_str)())
+                CStr::from_ptr((SRT.getlasterror_str)())
             );
         }
 
         let mut buffer = [0; 1316];
 
-        // receive 10 packets, send 10 packets
-        for _ in 0..10 {
-            let size = (srt.recvmsg2)(ss, buffer.as_mut_ptr(), buffer.len() as c_int, null());
+        // receive + send n packets
+        for _ in 0..packets {
+            let size = (SRT.recvmsg2)(ss, buffer.as_mut_ptr(), buffer.len() as c_int, null());
             if size == -1 {
                 panic!()
             }
 
-            let st = (srt.sendmsg2)(ss, buffer.as_ptr(), size, null());
+            let st = (SRT.sendmsg2)(ss, buffer.as_ptr(), size, null());
 
             if st == -1 {
                 panic!()
@@ -584,7 +750,7 @@ fn haivision_echo(port: u16) {
 
         thread::sleep(Duration::from_secs(2)); // make sure the receiver gets the last message before closing
 
-        if (srt.close)(ss) == -1 {
+        if (SRT.close)(ss) == -1 {
             panic!();
         }
     }

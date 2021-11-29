@@ -1,25 +1,24 @@
 use std::{cmp::Ordering, net::SocketAddr, time::Instant};
 
-use super::{
-    cookie::gen_cookie,
-    hsv5::{gen_hsv5_response, start_hsv5_initiation, GenHsv5Result, StartedInitiator},
-    ConnInitSettings, ConnectError, ConnectionReject, ConnectionResult,
-};
-
 use log::debug;
-
-use crate::{
-    accesscontrol::AllowAllStreamAcceptor,
-    packet::{
-        ControlTypes, HandshakeControlInfo, HandshakeVsInfo, HsV5Info, ShakeType, SrtControlPacket,
-    },
-    protocol::{handshake::Handshake, TimeStamp},
-    Connection, ConnectionSettings, ControlPacket, Packet, SeqNumber, SocketId,
-};
 
 use ConnectError::*;
 use ConnectionResult::*;
+use RendezvousHsV5::*;
 use RendezvousState::*;
+
+use crate::{
+    connection::{Connection, ConnectionSettings},
+    packet::*,
+    protocol::handshake::Handshake,
+    settings::*,
+};
+
+use super::{
+    cookie::gen_cookie,
+    hsv5::{gen_hsv5_response, start_hsv5_initiation, GenHsv5Result, StartedInitiator},
+    ConnectError, ConnectionReject, ConnectionResult,
+};
 
 pub struct Rendezvous {
     init_settings: ConnInitSettings,
@@ -91,7 +90,6 @@ enum RendezvousHsV5 {
     Initiator,
     Responder,
 }
-use RendezvousHsV5::*;
 
 fn get_handshake(packet: &Packet) -> Result<&HandshakeControlInfo, ConnectError> {
     match packet {
@@ -192,7 +190,7 @@ impl Rendezvous {
     }
 
     fn set_connected(
-        &mut self,
+        &self,
         settings: ConnectionSettings,
         agreement: Option<HandshakeControlInfo>,
         to_send: Option<HandshakeControlInfo>,
@@ -224,7 +222,7 @@ impl Rendezvous {
     ) -> ConnectionResult {
         assert!(matches!(self.state, Waving));
 
-        // NOTE: the cookie comparsion behavior is not correctly documented. See haivision/srt#1267
+        // NOTE: the cookie comparison behavior is not correctly documented. See haivision/srt#1267
         let role = match self.cookie.wrapping_sub(info.syn_cookie).cmp(&0) {
             Ordering::Greater => Initiator,
             Ordering::Less => Responder,

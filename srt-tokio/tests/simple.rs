@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use anyhow::Error;
 use bytes::Bytes;
 use futures::prelude::*;
+use srt_protocol::statistics::SocketStatistics;
 use srt_tokio::SrtSocketBuilder;
 use tokio::time::sleep;
 
@@ -33,10 +34,14 @@ async fn test() {
             .connect()
             .await?;
 
+        assert_eq!(rx.statistics().next().await, Some(SocketStatistics::new()));
+
         assert_eq!(rx.try_next().await?.map(|(_i, b)| b), Some(b"1"[..].into()));
         assert_eq!(rx.try_next().await?.map(|(_i, b)| b), Some(b"2"[..].into()));
         assert_eq!(rx.try_next().await?.map(|(_i, b)| b), Some(b"3"[..].into()));
         assert_eq!(rx.try_next().await?, None);
+
+        assert_ne!(rx.statistics().next().await, Some(SocketStatistics::new()));
 
         Ok::<_, Error>(())
     };

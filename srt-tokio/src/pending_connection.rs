@@ -1,24 +1,23 @@
-use bytes::BytesMut;
-use futures::select;
-use log::{debug, warn};
-
 use std::{
     io::{self, Cursor, ErrorKind},
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
 };
 
-use srt_protocol::{
-    accesscontrol::AllowAllStreamAcceptor,
-    pending_connection::{
-        connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnInitSettings,
-        ConnectionResult,
-    },
-    Connection, Packet, SeqNumber,
-};
-
+use bytes::BytesMut;
 use futures::prelude::*;
+use futures::select;
+use log::{debug, warn};
 use tokio::{net::UdpSocket, time::interval};
+
+use srt_protocol::{
+    connection::Connection,
+    packet::*,
+    protocol::pending_connection::{
+        connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnectionResult,
+    },
+    settings::*,
+};
 
 pub async fn connect(
     sock: &UdpSocket,

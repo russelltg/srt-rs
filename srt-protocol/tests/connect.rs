@@ -6,18 +6,16 @@ use std::{
 
 use log::debug;
 use rand::{prelude::StdRng, Rng, SeedableRng};
-
 use rand_distr::{Bernoulli, Normal};
+
 use simulator::*;
 use srt_protocol::{
-    accesscontrol::AllowAllStreamAcceptor,
-    connection::Input,
-    packet::ControlTypes,
-    pending_connection::{
-        connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnInitSettings,
-        ConnectionResult,
+    connection::{Connection, Input},
+    packet::*,
+    protocol::pending_connection::{
+        connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnectionResult,
     },
-    Connection, ControlPacket, Packet, SeqNumber, SocketId,
+    settings::*,
 };
 
 pub mod simulator;
@@ -29,7 +27,7 @@ enum ConnectEntity {
     PendingL(Listen),
     PendingC(Connect, Instant),
     PendingR(Rendezvous, Instant),
-    Done(Connection),
+    Done(Option<Connection>),
 }
 
 struct Conn {
@@ -56,7 +54,7 @@ impl ConnectEntity {
             ),
             ConnectEntity::PendingC(c, _) => c.handle_packet((packet, remote_sa), now),
             ConnectEntity::PendingR(r, _) => r.handle_packet((packet, remote_sa), now),
-            ConnectEntity::Done(c) => {
+            ConnectEntity::Done(Some(c)) => {
                 if let Packet::Control(ControlPacket {
                     control_type: ControlTypes::Handshake(hs),
                     ..
@@ -76,15 +74,16 @@ impl ConnectEntity {
                     ConnectionResult::NoAction
                 }
             }
+            _ => unreachable!("ConnectEntity is drained"),
         };
         match res {
             ConnectionResult::Reject(_, _) => panic!("Reject?"),
             ConnectionResult::SendPacket(pack) => conn.send_lossy(sim, now, pack),
             ConnectionResult::Connected(Some(pack), c) => {
                 conn.send_lossy(sim, now, pack);
-                *self = ConnectEntity::Done(c);
+                *self = ConnectEntity::Done(Some(c));
             }
-            ConnectionResult::Connected(None, conn) => *self = ConnectEntity::Done(conn),
+            ConnectionResult::Connected(None, conn) => *self = ConnectEntity::Done(Some(conn)),
             ConnectionResult::NotHandled(_) | ConnectionResult::NoAction => {}
         }
     }
@@ -114,9 +113,9 @@ impl ConnectEntity {
                 }
                 ConnectionResult::Connected(Some(pack), c) => {
                     conn.send_lossy(sim, now, pack);
-                    *self = ConnectEntity::Done(c);
+                    *self = ConnectEntity::Done(Some(c));
                 }
-                ConnectionResult::Connected(None, conn) => *self = ConnectEntity::Done(conn),
+                ConnectionResult::Connected(None, conn) => *self = ConnectEntity::Done(Some(conn)),
                 ConnectionResult::NotHandled(_) | ConnectionResult::NoAction => {}
             }
         }
@@ -370,7 +369,7 @@ fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {
             .handle_tick(current_time, &mut conn.sim, &mut conn.conn);
 
         if let (ConnectEntity::Done(a), ConnectEntity::Done(b)) = (&mut conn.a, &mut conn.b) {
-            break (a.clone(), b.clone());
+            return (a.take().unwrap(), b.take().unwrap());
         }
 
         let next_time = min(sender_time, recvr_time);

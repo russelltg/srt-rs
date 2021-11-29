@@ -1,24 +1,20 @@
-use crate::packet::{DataEncryption, PacketLocation};
-use crate::protocol::{TimeBase, TimeStamp};
-use crate::{ConnectionSettings, DataPacket, MsgNumber, SeqNumber, SocketId};
 use bytes::Bytes;
-use std::time::Instant;
+
+use crate::{connection::ConnectionSettings, packet::*};
 
 #[derive(Debug)]
-pub struct Encapsulate {
+pub struct Encapsulation {
     remote_socket_id: SocketId,
     max_packet_size: usize,
-    time_base: TimeBase,
     next_message_number: MsgNumber,
-    pub next_sequence_number: SeqNumber,
+    next_sequence_number: SeqNumber,
 }
 
-impl Encapsulate {
+impl Encapsulation {
     pub fn new(settings: &ConnectionSettings) -> Self {
         Self {
             remote_socket_id: settings.remote_sockid,
             max_packet_size: settings.max_packet_size as usize,
-            time_base: TimeBase::new(settings.socket_start_time),
             next_sequence_number: settings.init_seq_num,
             next_message_number: MsgNumber::new_truncate(0),
         }
@@ -26,58 +22,94 @@ impl Encapsulate {
 
     /// In the case of a message longer than the packet size,
     /// It will be split into multiple packets
-    pub fn encapsulate<PacketFn: FnMut(DataPacket)>(
+    pub fn encapsulate(
         &mut self,
-        data: (Instant, Bytes),
-        mut handle_packet: PacketFn,
-    ) -> u64 {
-        let (time, mut payload) = data;
-        let mut location = PacketLocation::FIRST;
-        let mut packet_count = 0;
-        let message_number = self.next_message_number.increment();
-        loop {
-            if payload.len() > self.max_packet_size as usize {
-                let this_payload = payload.slice(0..self.max_packet_size as usize);
-                let packet = self.new_data_packet(time, message_number, this_payload, location);
-                handle_packet(packet);
-                payload = payload.slice(self.max_packet_size as usize..payload.len());
-                location = PacketLocation::empty();
-                packet_count += 1;
-            } else {
-                let packet = self.new_data_packet(
-                    time,
-                    message_number,
-                    payload,
-                    location | PacketLocation::LAST,
-                );
-                handle_packet(packet);
-                return packet_count + 1;
-            }
+        timestamp: TimeStamp,
+        data: Bytes,
+    ) -> impl Iterator<Item = DataPacket> + '_ {
+        MessageEncapsulationIterator {
+            timestamp,
+            message_number: self.next_message_number.increment(),
+            remaining: data,
+            packet_location: PacketLocation::FIRST,
+            remote_socket_id: self.remote_socket_id,
+            max_packet_size: self.max_packet_size,
+            next_sequence_number: &mut self.next_sequence_number,
         }
     }
+}
 
-    fn new_data_packet(
-        &mut self,
-        time: Instant,
-        message_num: MsgNumber,
-        payload: Bytes,
-        location: PacketLocation,
-    ) -> DataPacket {
-        DataPacket {
+struct MessageEncapsulationIterator<'a> {
+    next_sequence_number: &'a mut SeqNumber,
+    remote_socket_id: SocketId,
+    max_packet_size: usize,
+    remaining: Bytes,
+    packet_location: PacketLocation,
+    message_number: MsgNumber,
+    timestamp: TimeStamp,
+}
+
+impl<'a> Iterator for MessageEncapsulationIterator<'a> {
+    type Item = DataPacket;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.packet_location.contains(PacketLocation::LAST) {
+            return None;
+        }
+
+        let (payload, message_loc) = if self.remaining.len() > self.max_packet_size {
+            let payload = self.remaining.split_to(self.max_packet_size);
+            let packet_location = self.packet_location;
+            self.packet_location = PacketLocation::MIDDLE;
+            (payload, packet_location)
+        } else {
+            let payload = self.remaining.split_to(self.remaining.len());
+            self.packet_location |= PacketLocation::LAST;
+            (payload, self.packet_location)
+        };
+
+        Some(DataPacket {
             dest_sockid: self.remote_socket_id,
             in_order_delivery: false, // TODO: research this
-            message_loc: location,
             encryption: DataEncryption::None,
             retransmitted: false,
-            // if this marks the beginning of the next message, get a new message number, else don't
-            message_number: message_num,
+            message_number: self.message_number,
             seq_number: self.next_sequence_number.increment(),
-            timestamp: self.timestamp_from(time),
+            timestamp: self.timestamp,
+            message_loc,
             payload,
+        })
+    }
+}
+
+#[cfg(test)]
+mod encapsulation {
+    use super::*;
+
+    fn new_encapsulation() -> Encapsulation {
+        Encapsulation {
+            remote_socket_id: SocketId(2),
+            max_packet_size: 1024,
+            next_message_number: MsgNumber(1),
+            next_sequence_number: SeqNumber(0),
         }
     }
 
-    pub fn timestamp_from(&self, at: Instant) -> TimeStamp {
-        self.time_base.timestamp_from(at)
+    #[test]
+    fn empty_message() {
+        let data = Bytes::from_static(&[0u8; 0]);
+
+        let mut encapsulation = new_encapsulation();
+
+        assert_eq!(encapsulation.encapsulate(TimeStamp::MAX, data).count(), 1);
+    }
+
+    #[test]
+    fn large_message() {
+        let data = Bytes::from_static(&[0u8; 10240]);
+
+        let mut encapsulation = new_encapsulation();
+
+        assert_eq!(encapsulation.encapsulate(TimeStamp::MAX, data).count(), 10);
     }
 }
