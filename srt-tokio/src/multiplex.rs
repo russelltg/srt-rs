@@ -83,7 +83,7 @@ impl<T: StreamAcceptor> MultiplexState<T> {
                     self.socket.send(packet).await?;
                 }
                 c
-            },
+            }
             ConnectionResult::Failure(error) => return Err(error),
         };
 

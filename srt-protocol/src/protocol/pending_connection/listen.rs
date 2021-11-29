@@ -422,7 +422,7 @@ mod test {
         let mut c = test_conclusion();
         c.info = HandshakeVsInfo::V4(SocketType::Datagram);
 
-        let resp = l.handle_packet(Ok(( build_hs_pack(c), conn_addr())), Instant::now(), &mut a);
+        let resp = l.handle_packet(Ok((build_hs_pack(c), conn_addr())), Instant::now(), &mut a);
 
         assert!(
             matches!(
@@ -448,7 +448,7 @@ mod test {
         let mut c = test_conclusion();
         c.info = HandshakeVsInfo::V5(HsV5Info::default());
 
-        let resp = l.handle_packet(Ok(( build_hs_pack(c), conn_addr())), Instant::now(), &mut a);
+        let resp = l.handle_packet(Ok((build_hs_pack(c), conn_addr())), Instant::now(), &mut a);
 
         assert!(
             matches!(resp, NotHandled(ConnectError::ExpectedExtFlags)),

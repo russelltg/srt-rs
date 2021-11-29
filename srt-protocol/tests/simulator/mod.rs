@@ -119,10 +119,8 @@ impl NetworkSimulator {
                 Input::Packet(Ok((packet, self.receiver.addr()))),
             );
         } else if to == self.receiver.addr() {
-            self.receiver.schedule_input(
-                release_at,
-                Input::Packet(Ok((packet, self.sender.addr()))),
-            );
+            self.receiver
+                .schedule_input(release_at, Input::Packet(Ok((packet, self.sender.addr()))));
         } else {
             error!("Dropping {:?}", packet)
         }
