@@ -264,12 +264,11 @@ impl Rendezvous {
                                 Some(induction_time) => induction_time,
                                 None => {
                                     return ConnectionResult::NotHandled(
-                                        ConnectError::WaveahandExpected(info.clone()),
+                                        ConnectError::WavehandExpected(info.clone()),
                                     );
                                 }
                             },
                             now,
-                            &mut AllowAllStreamAcceptor::default(),
                         ) {
                             GenHsv5Result::Accept(h, c) => (h, c),
                             GenHsv5Result::NotHandled(e) => return NotHandled(e),
@@ -355,7 +354,6 @@ impl Rendezvous {
                     self.remote_public,
                     induction_time,
                     now,
-                    &mut AllowAllStreamAcceptor::default(),
                 ) {
                     GenHsv5Result::Accept(h, c) => (h, c),
                     GenHsv5Result::NotHandled(e) => return NotHandled(e),

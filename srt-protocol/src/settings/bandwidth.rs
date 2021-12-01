@@ -8,7 +8,7 @@ pub type Percent = u64;
 ///
 /// Note that Maximum Bandwidth, Input Rate, and Input Rate Estimate are bytes per second
 /// and Overhead is a percentage.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum LiveBandwidthMode {
     /// Set the maximum bandwidth explicitly.
     ///

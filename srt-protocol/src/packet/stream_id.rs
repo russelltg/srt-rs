@@ -1,8 +1,19 @@
-use std::fmt::{Debug, Display, Formatter};
-use std::{convert::TryFrom, error::Error, string::FromUtf8Error};
+use std::{
+    fmt::{Debug, Display, Formatter},
+    ops::Deref,
+    {convert::TryFrom, error::Error, string::FromUtf8Error},
+};
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct StreamId(String);
+
+impl Deref for StreamId {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum StreamIdError {

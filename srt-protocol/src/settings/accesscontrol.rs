@@ -206,7 +206,7 @@ impl AcceptParameters {
         self
     }
 
-    pub(crate) fn take_key_settings(&mut self) -> Option<KeySettings> {
+    pub fn take_key_settings(&mut self) -> Option<KeySettings> {
         self.key_settings.take()
     }
 }
