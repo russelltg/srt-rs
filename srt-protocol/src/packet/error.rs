@@ -29,6 +29,7 @@ impl fmt::Display for PacketParseError {
         <Self as fmt::Debug>::fmt(self, f)
     }
 }
+
 impl Error for PacketParseError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         if let PacketParseError::Io(e) = self {
@@ -36,12 +37,6 @@ impl Error for PacketParseError {
         } else {
             None
         }
-    }
-}
-
-impl From<PacketParseError> for io::Error {
-    fn from(s: PacketParseError) -> Self {
-        io::Error::new(io::ErrorKind::InvalidData, s)
     }
 }
 

@@ -3,6 +3,7 @@ pub use status::*;
 
 use std::{
     fmt::Debug,
+    io,
     net::SocketAddr,
     time::{Duration, Instant},
 };
@@ -90,10 +91,10 @@ pub enum Action<'a> {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum Input {
     Data(Option<(Instant, Bytes)>),
-    Packet(Option<(Packet, SocketAddr)>),
+    Packet(ReceivePacketResult),
     DataReleased,
     PacketSent,
     StatisticsUpdated,
@@ -264,11 +265,13 @@ impl DuplexConnection {
         }
     }
 
-    pub fn handle_packet_input(&mut self, now: Instant, packet: Option<(Packet, SocketAddr)>) {
+    pub fn handle_packet_input(&mut self, now: Instant, packet: ReceivePacketResult) {
         self.debug(now, "packet", &packet);
+        use PacketParseError::*;
         match packet {
-            Some(packet) => self.handle_packet(now, packet),
-            None => self.handle_socket_close(now),
+            Ok(packet) => self.handle_packet(now, packet),
+            Err(Io(error)) => self.handle_socket_close(now, error),
+            Err(e) => self.warn(now, "packet", &e),
         }
     }
 
@@ -277,8 +280,8 @@ impl DuplexConnection {
         self.status.on_data_stream_closed(now);
     }
 
-    fn handle_socket_close(&mut self, now: Instant) {
-        self.warn(now, "closed socket", &());
+    fn handle_socket_close(&mut self, now: Instant, error: io::Error) {
+        self.warn(now, "closed socket", &error);
         self.status.on_socket_closed(now);
     }
 
@@ -499,7 +502,7 @@ mod duplex_connection {
             )),
         });
         assert_eq!(
-            connection.handle_input(now, Input::Packet(Some((packet, remote_addr())))),
+            connection.handle_input(now, Input::Packet(Ok((packet, remote_addr())))),
             SendPacket((
                 Control(ControlPacket {
                     timestamp: TimeStamp::from_micros(2_000),
@@ -601,7 +604,7 @@ mod duplex_connection {
         assert_eq!(
             connection.handle_input(
                 now,
-                Input::Packet(Some((
+                Input::Packet(Ok((
                     Control(ControlPacket {
                         timestamp: TimeStamp::MIN + SND + TSBPD + TSBPD / 4,
                         dest_sockid: remote_sockid(),

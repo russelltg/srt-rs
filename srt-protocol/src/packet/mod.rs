@@ -9,6 +9,7 @@ mod msg_number;
 mod seq_number;
 mod socket_id;
 mod srt_version;
+mod stream_id;
 mod time;
 
 pub use control::*;
@@ -18,9 +19,13 @@ pub use msg_number::*;
 pub use seq_number::*;
 pub use socket_id::*;
 pub use srt_version::*;
+pub use stream_id::*;
 pub use time::*;
 
-use std::fmt::{self, Debug, Formatter};
+use std::{
+    fmt::{self, Debug, Formatter},
+    net::SocketAddr,
+};
 
 use bytes::{Buf, BufMut};
 
@@ -132,3 +137,5 @@ impl Debug for Packet {
         }
     }
 }
+
+pub type ReceivePacketResult = Result<(Packet, SocketAddr), PacketParseError>;

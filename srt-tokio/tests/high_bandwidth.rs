@@ -9,8 +9,7 @@ use futures::{stream, SinkExt, Stream, StreamExt};
 use log::info;
 use srt_protocol::settings::LiveBandwidthMode::*;
 
-use srt_tokio::statistics::SocketStatistics;
-use srt_tokio::SrtSocketBuilder;
+use srt_tokio::{SocketStatistics, SrtSocketBuilder};
 
 fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
     let message = Bytes::from(vec![5; 1024]);

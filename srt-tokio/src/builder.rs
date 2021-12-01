@@ -7,17 +7,14 @@ use std::{
     time::Duration,
 };
 
-use futures::{stream::unfold, Stream, StreamExt};
+use futures::Stream;
 use log::error;
 use tokio::net::UdpSocket;
 
 use srt_protocol::settings::*;
 
-use crate::{
-    multiplex,
-    pending_connection::{self, get_packet},
-    socket::create_bidrectional_srt,
-    SrtSocket,
+use super::{
+    multiplex, net::PacketSocket, pending_connection, socket::create_bidrectional_srt, SrtSocket,
 };
 
 /// Struct to build sockets.
@@ -252,9 +249,10 @@ impl SrtSocketBuilder {
 
     /// Connect with a custom socket. Not typically used, see [`connect`](SrtSocketBuilder::connect) instead.
     pub async fn connect_with_sock(self, socket: UdpSocket) -> Result<SrtSocket, io::Error> {
+        let mut socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
         let conn = match self.conn_type {
             ConnInitMethod::Listen => {
-                pending_connection::listen(&socket, self.init_settings).await?
+                pending_connection::listen(&mut socket, self.init_settings).await?
             }
             ConnInitMethod::Connect(addr, sid) => {
                 let local_addr = self
@@ -265,7 +263,7 @@ impl SrtSocketBuilder {
                     return Err(io::ErrorKind::InvalidInput.into());
                 }
                 let r = pending_connection::connect(
-                    &socket,
+                    &mut socket,
                     addr,
                     local_addr,
                     self.init_settings,
@@ -282,7 +280,7 @@ impl SrtSocketBuilder {
                     .unwrap_or_else(|| unspecified(remote_public.is_ipv4()));
                 let local_addr = SocketAddr::new(addr, self.local_port);
                 pending_connection::rendezvous(
-                    &socket,
+                    &mut socket,
                     local_addr,
                     remote_public,
                     self.init_settings,
@@ -292,14 +290,7 @@ impl SrtSocketBuilder {
             }
         };
 
-        let socket = Arc::new(socket);
-        let stream = unfold(socket.clone(), |sock| async {
-            let pa = get_packet(&sock).await.unwrap();
-            Some((pa, sock))
-        })
-        .boxed();
-
-        Ok(create_bidrectional_srt(socket, stream, conn))
+        Ok(create_bidrectional_srt(socket, conn))
     }
 
     /// Connects to the remote socket. Resolves when it has been connected successfully.

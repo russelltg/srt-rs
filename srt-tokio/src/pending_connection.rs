@@ -1,14 +1,13 @@
 use std::{
-    io::{self, Cursor, ErrorKind},
+    io,
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
 };
 
-use bytes::BytesMut;
 use futures::prelude::*;
 use futures::select;
 use log::{debug, warn};
-use tokio::{net::UdpSocket, time::interval};
+use tokio::time::interval;
 
 use srt_protocol::{
     connection::Connection,
@@ -19,8 +18,10 @@ use srt_protocol::{
     settings::*,
 };
 
+use super::net::PacketSocket;
+
 pub async fn connect(
-    sock: &UdpSocket,
+    socket: &mut PacketSocket,
     remote: SocketAddr,
     local_addr: IpAddr,
     init_settings: ConnInitSettings,
@@ -35,30 +36,23 @@ pub async fn connect(
         starting_seqno,
     );
     let mut tick_interval = interval(Duration::from_millis(100));
-
-    let mut ser_buffer = Vec::new();
-
     loop {
         let result = select! {
             now = tick_interval.tick().fuse() => connect.handle_tick(now.into()),
-            packet = get_packet(sock).fuse() => connect.handle_packet(packet?, Instant::now()),
+            packet = socket.receive().fuse() => connect.handle_packet(packet, Instant::now()),
         };
 
         debug!("{:?}:connect - {:?}", streamid, result);
         match result {
-            ConnectionResult::SendPacket((packet, sa)) => {
-                ser_buffer.clear();
-                packet.serialize(&mut ser_buffer);
-                sock.send_to(&ser_buffer, sa).await?;
+            ConnectionResult::SendPacket(packet) => {
+                let _ = socket.send(packet).await?;
             }
             ConnectionResult::NotHandled(e) => {
                 warn!("{:?}", e);
             }
             ConnectionResult::Reject(rp, rr) => {
-                if let Some((packet, sa)) = rp {
-                    ser_buffer.clear();
-                    packet.serialize(&mut ser_buffer);
-                    sock.send_to(&ser_buffer, sa).await?;
+                if let Some(packet) = rp {
+                    let _ = socket.send(packet).await?;
                 }
                 return Err(io::Error::new(
                     io::ErrorKind::ConnectionRefused,
@@ -66,58 +60,53 @@ pub async fn connect(
                 ));
             }
             ConnectionResult::Connected(pa, conn) => {
-                if let Some((packet, sa)) = pa {
-                    ser_buffer.clear();
-                    packet.serialize(&mut ser_buffer);
-                    sock.send_to(&ser_buffer, sa).await?;
+                if let Some(packet) = pa {
+                    let _ = socket.send(packet).await?;
                 }
                 return Ok(conn);
             }
             ConnectionResult::NoAction => {}
+            ConnectionResult::Failure(error) => return Err(error),
         }
     }
 }
 
 pub async fn listen(
-    sock: &UdpSocket,
+    sockt: &mut PacketSocket,
     init_settings: ConnInitSettings,
 ) -> Result<Connection, io::Error> {
     let streamid = init_settings.local_sockid;
     let mut a = AllowAllStreamAcceptor::default();
     let mut listen = Listen::new(init_settings);
-    let mut ser_buffer = Vec::new();
     loop {
-        let packet = get_packet(sock).await?;
+        let packet = sockt.receive().await;
         debug!("{:?}:listen  - {:?}", streamid, packet);
 
         let result = listen.handle_packet(packet, Instant::now(), &mut a);
         debug!("{:?}:listen  - {:?}", streamid, result);
 
         match result {
-            ConnectionResult::SendPacket((packet, sa)) => {
-                ser_buffer.clear();
-                packet.serialize(&mut ser_buffer);
-                sock.send_to(&ser_buffer, sa).await?;
+            ConnectionResult::SendPacket(packet) => {
+                sockt.send(packet).await?;
             }
             ConnectionResult::NotHandled(e) => {
                 warn!("{:?}", e);
             }
             ConnectionResult::Reject(_, _) => todo!(),
             ConnectionResult::Connected(pa, c) => {
-                if let Some((packet, sa)) = pa {
-                    ser_buffer.clear();
-                    packet.serialize(&mut ser_buffer);
-                    sock.send_to(&ser_buffer, sa).await?;
+                if let Some(packet) = pa {
+                    sockt.send(packet).await?;
                 }
                 return Ok(c);
             }
             ConnectionResult::NoAction => {}
+            ConnectionResult::Failure(error) => return Err(error),
         }
     }
 }
 
 pub async fn rendezvous(
-    sock: &UdpSocket,
+    socket: &mut PacketSocket,
     local_addr: SocketAddr,
     remote_public: SocketAddr,
     init_settings: ConnInitSettings,
@@ -125,56 +114,30 @@ pub async fn rendezvous(
 ) -> Result<Connection, io::Error> {
     let sockid = init_settings.local_sockid;
     let mut rendezvous = Rendezvous::new(local_addr, remote_public, init_settings, starting_seqno);
-
     let mut tick_interval = interval(Duration::from_millis(100));
-    let mut ser_buffer = Vec::new();
-
     loop {
         let result = select! {
             now = tick_interval.tick().fuse() => rendezvous.handle_tick(now.into()),
-            packet = get_packet(sock).fuse() => rendezvous.handle_packet(packet?, Instant::now()),
+            packet = socket.receive().fuse() => rendezvous.handle_packet(packet, Instant::now()),
         };
 
         debug!("{:?}:rendezvous - {:?}", sockid, result);
         match result {
-            ConnectionResult::SendPacket((packet, sa)) => {
-                ser_buffer.clear();
-                packet.serialize(&mut ser_buffer);
-                sock.send_to(&ser_buffer, sa).await?;
+            ConnectionResult::SendPacket(packet) => {
+                socket.send(packet).await?;
             }
             ConnectionResult::NotHandled(e) => {
                 warn!("rendezvous {:?} error: {}", sockid, e);
             }
             ConnectionResult::Reject(_, _) => todo!(),
             ConnectionResult::Connected(pa, c) => {
-                if let Some((packet, sa)) = pa {
-                    ser_buffer.clear();
-                    packet.serialize(&mut ser_buffer);
-                    sock.send_to(&ser_buffer, sa).await?;
+                if let Some(packet) = pa {
+                    socket.send(packet).await?;
                 }
                 return Ok(c);
             }
             ConnectionResult::NoAction => {}
-        }
-    }
-}
-
-pub async fn get_packet(sock: &UdpSocket) -> Result<(Packet, SocketAddr), io::Error> {
-    let mut deser_buffer = BytesMut::with_capacity(1024 * 1024);
-    loop {
-        sock.readable().await?;
-        deser_buffer.clear();
-
-        match sock.try_recv_buf_from(&mut deser_buffer) {
-            Ok((size, t)) => match Packet::parse(
-                &mut Cursor::new(&deser_buffer[0..size]),
-                sock.local_addr()?.is_ipv6(),
-            ) {
-                Ok(pack) => return Ok((pack, t)),
-                Err(e) => warn!("Failed to parse packet {}", e),
-            },
-            Err(e) if e.kind() == ErrorKind::WouldBlock => continue,
-            Err(e) => return Err(e),
+            ConnectionResult::Failure(error) => return Err(error),
         }
     }
 }

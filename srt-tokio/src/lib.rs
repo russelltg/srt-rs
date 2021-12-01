@@ -49,10 +49,11 @@
 
 mod builder;
 mod multiplex;
+mod net;
 mod pending_connection;
 mod socket;
-pub mod statistics;
+mod watch;
 
 pub use crate::builder::{ConnInitMethod, SrtSocketBuilder};
 pub use crate::multiplex::{multiplex, StreamerServer};
-pub use crate::socket::SrtSocket;
+pub use crate::socket::{SocketStatistics, SrtSocket};

@@ -204,13 +204,19 @@ impl Listen {
 
     pub fn handle_packet(
         &mut self,
-        (packet, from): (Packet, SocketAddr),
+        packet: ReceivePacketResult,
         now: Instant,
         acceptor: &mut impl StreamAcceptor,
     ) -> ConnectionResult {
         match packet {
-            Packet::Control(control) => self.handle_control_packets(control, from, now, acceptor),
-            Packet::Data(data) => NotHandled(ConnectError::ControlExpected(data)),
+            Ok((packet, from)) => match packet {
+                Packet::Control(control) => {
+                    self.handle_control_packets(control, from, now, acceptor)
+                }
+                Packet::Data(data) => NotHandled(ConnectError::ControlExpected(data)),
+            },
+            Err(PacketParseError::Io(error)) => Failure(error),
+            Err(e) => NotHandled(ConnectError::ParseFailed(e)),
         }
     }
 }
@@ -288,14 +294,14 @@ mod test {
         let (mut l, mut a) = test_listen();
 
         let resp = l.handle_packet(
-            (build_hs_pack(test_induction()), conn_addr()),
+            Ok((build_hs_pack(test_induction()), conn_addr())),
             Instant::now(),
             &mut a,
         );
         assert!(matches!(resp, SendPacket(_)));
 
         let resp = l.handle_packet(
-            (build_hs_pack(test_conclusion()), conn_addr()),
+            Ok((build_hs_pack(test_conclusion()), conn_addr())),
             Instant::now(),
             &mut a,
         );
@@ -340,7 +346,7 @@ mod test {
             payload: Bytes::from(&b"asdf"[..]),
         };
         assert!(matches!(
-            l.handle_packet((Packet::Data(dp.clone()), conn_addr()), Instant::now(), &mut a),
+            l.handle_packet(Ok(( Packet::Data(dp.clone()), conn_addr())), Instant::now(), &mut a),
             NotHandled(ConnectError::ControlExpected(d)) if d == dp
         ));
     }
@@ -351,14 +357,14 @@ mod test {
 
         let a2 = ControlTypes::Ack2(FullAckSeqNumber::new(random::<u32>() + 1).unwrap());
         assert!(matches!(
-            l.handle_packet((
+            l.handle_packet(Ok((
                 Packet::Control(ControlPacket {
                     timestamp: TimeStamp::from_micros(0),
                     dest_sockid: random(),
                     control_type: a2.clone()
                 }),
                 conn_addr()
-            ), Instant::now(), &mut a),
+            )), Instant::now(), &mut a),
             NotHandled(ConnectError::HandshakeExpected(pack)) if pack == a2
         ));
     }
@@ -371,10 +377,10 @@ mod test {
 
         let shake = test_conclusion();
         assert!(matches!(
-            l.handle_packet((
+            l.handle_packet(Ok((
                 build_hs_pack(shake.clone()),
                 conn_addr()
-            ), Instant::now(), &mut a),
+            )), Instant::now(), &mut a),
             NotHandled(ConnectError::InductionExpected(s)) if s == shake
         ));
     }
@@ -385,7 +391,7 @@ mod test {
 
         // send a rendezvous handshake after an induction
         let resp = l.handle_packet(
-            (build_hs_pack(test_induction()), conn_addr()),
+            Ok((build_hs_pack(test_induction()), conn_addr())),
             Instant::now(),
             &mut a,
         );
@@ -394,10 +400,10 @@ mod test {
         let mut shake = test_induction();
         shake.shake_type = ShakeType::Waveahand;
         assert!(matches!(
-            l.handle_packet((
+            l.handle_packet(Ok((
                 build_hs_pack(shake.clone()),
                 conn_addr()
-            ), Instant::now(), &mut a),
+            )), Instant::now(), &mut a),
             NotHandled(ConnectError::ConclusionExpected(nc)) if nc == shake
         ))
     }
@@ -407,7 +413,7 @@ mod test {
         let (mut l, mut a) = test_listen();
 
         let resp = l.handle_packet(
-            (build_hs_pack(test_induction()), conn_addr()),
+            Ok((build_hs_pack(test_induction()), conn_addr())),
             Instant::now(),
             &mut a,
         );
@@ -416,7 +422,7 @@ mod test {
         let mut c = test_conclusion();
         c.info = HandshakeVsInfo::V4(SocketType::Datagram);
 
-        let resp = l.handle_packet((build_hs_pack(c), conn_addr()), Instant::now(), &mut a);
+        let resp = l.handle_packet(Ok((build_hs_pack(c), conn_addr())), Instant::now(), &mut a);
 
         assert!(
             matches!(
@@ -433,7 +439,7 @@ mod test {
         let (mut l, mut a) = test_listen();
 
         let resp = l.handle_packet(
-            (build_hs_pack(test_induction()), conn_addr()),
+            Ok((build_hs_pack(test_induction()), conn_addr())),
             Instant::now(),
             &mut a,
         );
@@ -442,7 +448,7 @@ mod test {
         let mut c = test_conclusion();
         c.info = HandshakeVsInfo::V5(HsV5Info::default());
 
-        let resp = l.handle_packet((build_hs_pack(c), conn_addr()), Instant::now(), &mut a);
+        let resp = l.handle_packet(Ok((build_hs_pack(c), conn_addr())), Instant::now(), &mut a);
 
         assert!(
             matches!(resp, NotHandled(ConnectError::ExpectedExtFlags)),
@@ -466,14 +472,14 @@ mod test {
         let (mut l, _) = test_listen();
         let mut a = Rejector;
         let resp = l.handle_packet(
-            (build_hs_pack(test_induction()), conn_addr()),
+            Ok((build_hs_pack(test_induction()), conn_addr())),
             Instant::now(),
             &mut a,
         );
         assert!(matches!(resp, SendPacket(_)));
 
         let resp = l.handle_packet(
-            (build_hs_pack(test_conclusion()), conn_addr()),
+            Ok((build_hs_pack(test_conclusion()), conn_addr())),
             Instant::now(),
             &mut a,
         );

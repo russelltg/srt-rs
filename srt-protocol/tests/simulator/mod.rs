@@ -32,8 +32,15 @@ impl Ord for SentPacket {
     }
 }
 
-#[derive(Eq, PartialEq)]
 struct ScheduledInput(Instant, Input);
+
+impl PartialEq for ScheduledInput {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for ScheduledInput {}
 
 impl PartialOrd for ScheduledInput {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -116,13 +123,11 @@ impl NetworkSimulator {
         if to == self.sender.addr() {
             self.sender.schedule_input(
                 release_at,
-                Input::Packet(Some((packet, self.receiver.addr()))),
+                Input::Packet(Ok((packet, self.receiver.addr()))),
             );
         } else if to == self.receiver.addr() {
-            self.receiver.schedule_input(
-                release_at,
-                Input::Packet(Some((packet, self.sender.addr()))),
-            );
+            self.receiver
+                .schedule_input(release_at, Input::Packet(Ok((packet, self.sender.addr()))));
         } else {
             error!("Dropping {:?}", packet)
         }
