@@ -104,11 +104,12 @@ impl MultiplexListener {
     }
 
     fn handle_input_packet(&mut self, now: Instant, packet: ReceivePacketResult) -> Action {
+        use ReceivePacketError::*;
         match packet {
             Ok(packet) => self.handle_packet(now, packet),
-            Err(PacketParseError::Io(error)) => self.handle_packet_receive_error(now, error),
+            Err(Io(error)) => self.handle_packet_receive_error(now, error),
             // TODO: maybe record statistics and/or log errors?
-            Err(_) => Action::WaitForInput,
+            Err(Parse(_)) => Action::WaitForInput,
         }
     }
 

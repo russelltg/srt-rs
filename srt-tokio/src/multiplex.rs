@@ -33,6 +33,7 @@ struct MultiplexState<A: StreamAcceptor> {
 
 impl<T: StreamAcceptor> MultiplexState<T> {
     async fn next_conn(&mut self) -> Result<Option<SrtSocket>, io::Error> {
+        use ReceivePacketError::*;
         loop {
             match self.socket.receive().await {
                 Ok(packet) => {
@@ -40,8 +41,8 @@ impl<T: StreamAcceptor> MultiplexState<T> {
                         return Ok(Some(complete));
                     }
                 }
-                Err(PacketParseError::Io(e)) => return Err(e),
-                Err(e) => warn!("Packet parsing error: {}", e),
+                Err(Io(e)) => return Err(e),
+                Err(Parse(e)) => warn!("Packet parsing error: {}", e),
             }
         }
     }

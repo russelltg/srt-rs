@@ -475,6 +475,7 @@ impl Rendezvous {
     }
 
     pub fn handle_packet(&mut self, packet: ReceivePacketResult, now: Instant) -> ConnectionResult {
+        use ReceivePacketError::*;
         match packet {
             Ok((packet, from)) => {
                 if from != self.remote_public {
@@ -503,8 +504,8 @@ impl Rendezvous {
                     (_, Err(e)) => NotHandled(e),
                 }
             }
-            Err(PacketParseError::Io(error)) => Failure(error),
-            Err(e) => NotHandled(ConnectError::ParseFailed(e)),
+            Err(Io(error)) => Failure(error),
+            Err(Parse(e)) => NotHandled(ConnectError::ParseFailed(e)),
         }
     }
 

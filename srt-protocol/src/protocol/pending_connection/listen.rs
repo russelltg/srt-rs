@@ -53,13 +53,14 @@ impl Listen {
     }
 
     pub fn handle_packet(&mut self, now: Instant, packet: ReceivePacketResult) -> ConnectionResult {
+        use ReceivePacketError::*;
         match packet {
             Ok((packet, from)) => match packet {
                 Packet::Control(control) => self.handle_control_packets(now, from, control),
                 Packet::Data(data) => NotHandled(ConnectError::ControlExpected(data)),
             },
-            Err(PacketParseError::Io(error)) => Failure(error),
-            Err(e) => NotHandled(ConnectError::ParseFailed(e)),
+            Err(Io(error)) => Failure(error),
+            Err(Parse(e)) => NotHandled(ConnectError::ParseFailed(e)),
         }
     }
 

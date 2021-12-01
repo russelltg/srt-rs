@@ -10,7 +10,7 @@ use std::{error::Error, fmt, io, net::SocketAddr};
 use crate::{connection::Connection, packet::*, settings::KeySettings};
 
 #[non_exhaustive]
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum ConnectError {
     ControlExpected(DataPacket),

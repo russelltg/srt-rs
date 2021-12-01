@@ -267,11 +267,11 @@ impl DuplexConnection {
 
     pub fn handle_packet_input(&mut self, now: Instant, packet: ReceivePacketResult) {
         self.debug(now, "packet", &packet);
-        use PacketParseError::*;
+        use ReceivePacketError::*;
         match packet {
             Ok(packet) => self.handle_packet(now, packet),
             Err(Io(error)) => self.handle_socket_close(now, error),
-            Err(e) => self.warn(now, "packet", &e),
+            Err(Parse(e)) => self.warn(now, "packet", &e),
         }
     }
 
