@@ -32,8 +32,15 @@ impl Ord for SentPacket {
     }
 }
 
-#[derive(Eq, PartialEq)]
 struct ScheduledInput(Instant, Input);
+
+impl PartialEq for ScheduledInput {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for ScheduledInput {}
 
 impl PartialOrd for ScheduledInput {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {

@@ -91,7 +91,7 @@ pub enum Action<'a> {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum Input {
     Data(Option<(Instant, Bytes)>),
     Packet(ReceivePacketResult),

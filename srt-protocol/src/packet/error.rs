@@ -45,38 +45,3 @@ impl From<io::Error> for PacketParseError {
         PacketParseError::Io(s)
     }
 }
-
-// NOTE: can't derive Eq or PartialEq because io::Error does not implement either.
-impl Eq for PacketParseError {}
-
-impl PartialEq for PacketParseError {
-    fn eq(&self, other: &Self) -> bool {
-        use PacketParseError::*;
-        match (self, other) {
-            (BadSrtExtensionMessage, BadSrtExtensionMessage)
-            | (StreamEncapsulationNotSrt, StreamEncapsulationNotSrt)
-            | (ZeroAckSequenceNumber, ZeroAckSequenceNumber) => true,
-
-            (BadUdtVersion(s), BadUdtVersion(o)) | (BadConnectionType(s), BadConnectionType(o)) => {
-                s == o
-            }
-
-            (BadSocketType(s), BadSocketType(o))
-            | (BadControlType(s), BadControlType(o))
-            | (UnsupportedSrtExtensionType(s), UnsupportedSrtExtensionType(o))
-            | (BadKeySign(s), BadKeySign(o)) => s == o,
-
-            (BadCipherKind(s), BadCipherKind(o))
-            | (BadKeyPacketType(s), BadKeyPacketType(o))
-            | (BadAuth(s), BadAuth(o))
-            | (BadStreamEncapsulation(s), BadStreamEncapsulation(o))
-            | (BadDataEncryption(s), BadDataEncryption(o)) => s == o,
-
-            (StreamTypeNotUtf8(s), StreamTypeNotUtf8(o)) => s == o,
-            (BadFilter(s), BadFilter(o)) => s == o,
-
-            (Io(s), Io(o)) => s.kind() == o.kind() && s.raw_os_error() == o.raw_os_error(),
-            _ => false,
-        }
-    }
-}
