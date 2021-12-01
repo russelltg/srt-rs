@@ -167,7 +167,7 @@ impl RandomLossSimulation {
     ) -> (NetworkSimulator, DuplexConnection, DuplexConnection) {
         let sender = self.new_connection_settings(start, latency);
         let receiver = ConnectionSettings {
-            remote: (sender.remote.ip(), sender.remote.port() + 1).into(),
+            remote: (sender.remote.ip(), sender.remote.port().wrapping_add(1)).into(),
             remote_sockid: sender.local_sockid,
             local_sockid: sender.remote_sockid,
             init_seq_num: sender.init_seq_num,

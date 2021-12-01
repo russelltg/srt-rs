@@ -18,6 +18,7 @@ fn not_enough_latency() {
     do_not_enough_latency(14133229019647651772, 200);
     do_not_enough_latency(7252484344775749023, 1000);
     do_not_enough_latency(6785379667375872404, 1000);
+    do_not_enough_latency(12543789221422496569, 1000);
 
     for _ in 0..100 {
         do_not_enough_latency(rand::random(), 1000);
