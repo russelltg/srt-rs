@@ -35,7 +35,7 @@ pub struct ReceiverOptions {
     /// Buffering of data packets on the receiving side makes it possible to recover from packet losses
     /// using the ARQ (Automatic Repeat Request) technique, and to deal with varying RTT times (network
     /// jitter) in the network, providing a (close to) constant end-to-end latency of the transmission.
-    latency: Duration,
+    pub latency: Duration,
 
     /// SRTO_LOSSMAXTTL
     /// The value up to which the Reorder Tolerance may grow. The Reorder Tolerance is the number of
@@ -47,7 +47,7 @@ pub struct ReceiverOptions {
     /// When this is detected the Reorder Tolerance is set to the value of the interval between
     /// latest sequence and this packet's sequence, but not more than the value set by
     /// SRTO_LOSSMAXTTL. By default this value is set to 0, which means that this mechanism is off.
-    reorder_tolerance_max: usize,
+    pub reorder_tolerance_max: usize,
 
     /// SRTO_RCVBUF
     ///
@@ -60,7 +60,7 @@ pub struct ReceiverOptions {
     ///
     /// Maximum value: SRTO_FC number of buffers (receiver buffer must not be greater than the
     /// Flight Flag size).
-    buffer_size: usize,
+    pub buffer_size: usize,
 
     /// SRTO_NAKREPORT
     /// When set to true, every report for a detected loss will be repeated when the timeout for the
@@ -68,22 +68,22 @@ pub struct ReceiverOptions {
     /// recovered, or wasn't conditionally dropped (see SRTO_TLPKTDROP).
     ///
     /// The default is true for Live mode
-    nak_report: bool,
+    pub nak_report: bool,
 
+    // OptName	Since	Restrict	Type	Units	Default	Range	Dir	Entity
+    // SRTO_TLPKTDROP	1.0.6	pre	bool		*		RW	GSD
     ///SRTO_TLPKTDROP
-    /// OptName	Since	Restrict	Type	Units	Default	Range	Dir	Entity
-    /// SRTO_TLPKTDROP	1.0.6	pre	bool		*		RW	GSD
     /// Too-late Packet Drop. When enabled on receiver, it skips missing packets that have not been
     /// delivered in time and delivers the subsequent packets to the application when their
     /// time-to-play has come. It also sends a fake ACK to the sender. When enabled on sender and
     /// enabled on the receiving peer, sender drops the older packets that have no chance to be
     /// delivered in time. It is automatically enabled in sender if receiver supports it.
-    too_late_packet_drop: bool,
+    pub too_late_packet_drop: bool,
 
     // TODO: What is drift tracer?
     /// SRTO_DRIFTTRACER - Enable/disable drift tracer - unit: bool, default: true, range: t|f
     /// Enables or disables time drift tracer (receiver).
-    drift_tracer: bool,
+    pub drift_tracer: bool,
 }
 
 impl Default for ReceiverOptions {

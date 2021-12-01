@@ -5,7 +5,7 @@ pub struct SessionOptions {
     /// The maximum time in [ms] to wait until another packet is received from a peer since the last
     /// such packet reception. If this time is passed, the connection is considered broken on
     /// timeout.
-    peer_idle_timeout: Duration,
+    pub peer_idle_timeout: Duration,
 
     /// SRTO_MINVERSION
     /// The minimum SRT version that is required from the peer. A connection to a peer that does not satisfy the minimum version requirement will be rejected. See SRTO_VERSION for the version format.
@@ -23,7 +23,7 @@ pub struct SessionOptions {
     /// packet, including the UDP and SRT headers
     ///
     /// THe value of SRTO_MSS must not exceed SRTO_UDP_SNDBUF or SRTO_UDP_RCVBUF.
-    max_segment_size: usize,
+    pub max_segment_size: usize,
 
     // TODO: connections are always duplex, so why do we need more than one configured value?
     /// SRTO_LATENCY - default 120ms
@@ -34,7 +34,7 @@ pub struct SessionOptions {
     /// SRTO_SENDER), and SRTO_RCVLATENCY in the receiving direction. SRT version 1.3.0 and higher
     /// support bidirectional transmission, so that each side can be sender and receiver at the same
     /// time, and SRTO_SENDER became redundant.
-    latency: Duration,
+    pub latency: Duration,
 
-    statistics_interval: Duration,
+    pub statistics_interval: Duration,
 }

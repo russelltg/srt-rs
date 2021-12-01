@@ -1,9 +1,9 @@
 use std::{default::Default, time::Duration};
 
 pub struct SenderOptions {
+    // OptName	Since	Restrict	Type	Units	Default	Range	Dir	Entity
+    // SRTO_PEERLATENCY	1.3.0	pre	int32_t	ms	0	0..	RW	GSD
     /// SRTO_PEERLATENCY
-    /// OptName	Since	Restrict	Type	Units	Default	Range	Dir	Entity
-    /// SRTO_PEERLATENCY	1.3.0	pre	int32_t	ms	0	0..	RW	GSD
     /// The latency value (as described in SRTO_RCVLATENCY) provided by the sender side as a minimum
     /// value for the receiver.
     ///
@@ -14,11 +14,11 @@ pub struct SenderOptions {
     /// The SRTO_PEERLATENCY option in versions prior to 1.3.0 is only available as SRTO_LATENCY.
     ///
     /// See also SRTO_LATENCY.
-    peer_latency: Duration,
+    pub peer_latency: Duration,
 
+    // OptName	Since	Restrict	Type	Units	Default	Range	Dir	Entity
+    // SRTO_SNDDROPDELAY	1.3.2	post	int32_t	ms	*	-1..	W	GSD+
     /// SRTO_SNDDROPDELAY
-    /// OptName	Since	Restrict	Type	Units	Default	Range	Dir	Entity
-    /// SRTO_SNDDROPDELAY	1.3.2	post	int32_t	ms	*	-1..	W	GSD+
     /// Sets an extra delay before TLPKTDROP is triggered on the data sender. This delay is added to the default drop delay time interval value. Keep in mind that the longer the delay, the more probable it becomes that packets would be retransmitted uselessly because they will be dropped by the receiver anyway.
     ///
     /// TLPKTDROP discards packets reported as lost if it is already too late to send them (the receiver would discard them even if received). The delay before the TLPKTDROP mechanism is triggered consists of the SRT latency (SRTO_PEERLATENCY), plus SRTO_SNDDROPDELAY, plus 2 * interval between sending ACKs (where the default interval between sending ACKs is 10 milliseconds). The minimum delay is 1000 + 2 * interval between sending ACKs milliseconds.
@@ -26,17 +26,17 @@ pub struct SenderOptions {
     /// Special value -1: Do not drop packets on the sender at all (retransmit them always when requested).
     ///
     /// Default: 0 in Live mode, -1 in File mode.
-    drop_delay: Duration,
+    pub drop_delay: Duration,
 
     /// SRTO_SNDBUF
     /// Sender Buffer Size. See SRTO_RCVBUF for more information.
-    buffer_size: usize,
+    pub buffer_size: usize,
 
     // SRTO_OHEADBW - see LiveBandwidthMode
     // SRTO_MAXBW - see LiveBandwidthMode
     // SRTO_INPUTBW - see LiveBandwidthMode
     // SRTO_MININPUTBW - see LiveBandwidthMode
-    bandwidth_mode: LiveBandwidthMode,
+    pub bandwidth_mode: LiveBandwidthMode,
 
     /// SRTO_FC - Flow Control Window Size - unit: packets, default 25600, range: 32..
     /// Flow Control limits the maximum number of packets "in flight" - payload (data) packets that
@@ -65,7 +65,7 @@ pub struct SenderOptions {
     /// - 44 - size of headers (20 bytes IPv4 + 8 bytes of UDP + 16 bytes of SRT packet header).
     /// - To avoid blocking the sending of further packets in case of packet loss, the recommended flow control window is
     /// - FC = bps / 8 × (RTTsec + latency_sec) / (MSS - 44), where latency_sec is the receiver buffering delay (SRTO_RCVLATENCY) in seconds.
-    flow_control_window_size: usize,
+    pub flow_control_window_size: usize,
 
     /// SRTO_PAYLOADSIZE
     /// Sets the maximum declared size of a single call to sending function in Live mode. When set to 0,
@@ -74,7 +74,7 @@ pub struct SenderOptions {
     /// For Live mode: Default value is 1316, but can be increased up to 1456. Note that with the
     /// SRTO_PACKETFILTER option additional header space is usually required, which decreases the
     /// maximum possible value for SRTO_PAYLOADSIZE.
-    max_payload_size: usize,
+    pub max_payload_size: usize,
 
     /// SRTO_RETRANSMITALGO - prioritize this
     ///
@@ -101,7 +101,7 @@ pub struct SenderOptions {
     ///
     /// NOTE: The efficient retransmission algorithm can only be used when a receiver sends Periodic NAK
     /// reports. See SRTO_NAKREPORT.
-    intensive_retransmission: bool,
+    pub intensive_retransmission: bool,
 }
 
 impl Default for SenderOptions {

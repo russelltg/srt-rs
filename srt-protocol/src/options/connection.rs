@@ -1,7 +1,6 @@
-use std::{
-    time::Duration,
-    {convert::TryFrom, string::FromUtf8Error},
-};
+use std::time::Duration;
+
+pub use crate::packet::StreamId;
 
 pub struct ConnectionOptions {
     /// SRTO_STREAMID
@@ -20,30 +19,11 @@ pub struct ConnectionOptions {
     ///
     /// IMPORTANT: This option is not derived by the accepted socket from the listener socket, and
     /// setting it on a listener socket (see srt_listen function) doesn't influence anything.
-    stream_id: StreamId,
+    pub stream_id: StreamId,
 
     /// SRTO_CONNTIMEO - Connect timeout - unit: msec, default: 3000, range: 0..
     /// Connect timeout. This option applies to the caller and rendezvous connection modes.
     /// For the rendezvous mode (see SRTO_RENDEZVOUS) the effective connection timeout will be 10 times
     /// the value set with SRTO_CONNTIMEO.
-    connect_timeout: Duration,
-}
-
-pub struct StreamId(String);
-
-pub enum StreamIdError {
-    FromUtf8(FromUtf8Error),
-    Length(usize),
-}
-
-impl TryFrom<Vec<u8>> for StreamId {
-    type Error = StreamIdError;
-
-    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
-        if value.len() > 512 {
-            return Err(StreamIdError::Length(value.len()));
-        }
-        let stream_id = String::from_utf8(value).map_err(StreamIdError::FromUtf8)?;
-        Ok(StreamId(stream_id))
-    }
+    pub connect_timeout: Duration,
 }
