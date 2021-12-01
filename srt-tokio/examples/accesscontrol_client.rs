@@ -1,6 +1,6 @@
 use std::{env::args, io::Error, process::exit};
 
-use srt_protocol::settings::*;
+use srt_protocol::access::*;
 use tokio_stream::StreamExt;
 
 use srt_tokio::SrtSocketBuilder;
