@@ -1,9 +1,14 @@
+mod builder;
+mod state;
+
 use std::{
     io,
     pin::Pin,
     task::{Context, Poll},
     time::Instant,
 };
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use futures::{
@@ -18,10 +23,12 @@ use srt_protocol::{
     packet::*,
 };
 use tokio::{task::JoinHandle, time::sleep_until};
+use tokio::net::UdpSocket;
 
-use super::{net::*, watch};
+use super::{net::*, watch, options::BindOptions};
 
-use crate::builder::NewSrtSocket;
+use builder::NewSrtSocket;
+
 pub use srt_protocol::statistics::SocketStatistics;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
@@ -48,6 +55,50 @@ impl SrtSocket {
     #[allow(clippy::new_ret_no_self)]
     pub fn new() -> NewSrtSocket {
         NewSrtSocket::default()
+    }
+
+    pub async fn bind(options: impl Into<BindOptions>) -> Result<Self, io::Error> {
+        let options = options.into();
+        use BindOptions::*;
+        let socket_options = match &options {
+            Listen(options) => &options.socket,
+            Call(options) => &options.socket,
+            Rendezvous(options) => &options.socket,
+        };
+        let socket = UdpSocket::bind(socket_options.local_address()).await?;
+
+        Self::bind_with_socket(options, socket).await
+    }
+
+    pub async fn bind_with_socket(options: impl Into<BindOptions>, socket: UdpSocket) -> Result<Self, io::Error> {
+        let options = options.into();
+        let mut socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
+        use BindOptions::*;
+        let conn = match options {
+            Listen(options) =>
+                crate::pending_connection::listen(&mut socket, options.socket.clone().into()).await?,
+            Call(options) =>
+                crate::pending_connection::connect(
+                    &mut socket,
+                    options.remote,
+                    options.socket.connect.local_ip,
+                    options.socket.clone().into(),
+                    Some(options.stream_id.to_string()),
+                    rand::random(),
+                )
+                    .await?,
+            Rendezvous(options) => crate::pending_connection::rendezvous(
+                &mut socket,
+                SocketAddr::new(options.socket.connect.local_ip, options.socket.connect.local_port),
+                options.remote,
+                options.socket.clone().into(),
+                rand::random(),
+            )
+                .await?,
+        };
+
+        Ok(create_bidrectional_srt(socket, conn))
+
     }
 
     pub fn with<O>(options: O) -> NewSrtSocket

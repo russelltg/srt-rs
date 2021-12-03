@@ -11,7 +11,9 @@ mod session;
 mod socket;
 mod stream_id;
 mod validation;
+mod bind;
 
+pub use bind::*;
 pub use bandwidth::*;
 pub use caller::*;
 pub use connect::*;

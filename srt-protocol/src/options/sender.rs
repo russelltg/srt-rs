@@ -47,7 +47,7 @@ pub struct Sender {
     // SRTO_MAXBW - see LiveBandwidthMode
     // SRTO_INPUTBW - see LiveBandwidthMode
     // SRTO_MININPUTBW - see LiveBandwidthMode
-    pub bandwidth_mode: LiveBandwidthMode,
+    pub bandwidth: LiveBandwidthMode,
 
     /// SRTO_FC - Flow Control Window Size - unit: packets, default 25600, range: 32..
     /// Flow Control limits the maximum number of packets "in flight" - payload (data) packets that
@@ -124,7 +124,7 @@ impl Default for Sender {
             peer_latency: Duration::from_millis(120),
             drop_delay: Duration::ZERO,
             buffer_size: 46592,
-            bandwidth_mode: Default::default(),
+            bandwidth: Default::default(),
             flow_control_window_size: 25600,
             max_payload_size: 1316,
             intensive_retransmission: false,

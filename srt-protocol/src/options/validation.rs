@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-pub trait Validation: Sized {
+pub trait Validation : Sized {
     type Error;
 
     fn is_valid(&self) -> Result<(), Self::Error>;
@@ -34,6 +34,7 @@ impl<T: Validation> Valid<T> {
     pub fn into_value(self) -> T {
         self.0
     }
+
     pub fn set(self, set_fn: impl FnOnce(&mut T)) -> Result<Self, <T as Validation>::Error> {
         let mut inner = self.0;
         set_fn(&mut inner);

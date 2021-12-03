@@ -73,7 +73,7 @@ impl From<options::SocketOptions> for ConnInitSettings {
             .unwrap(),
             send_latency: options.sender.peer_latency,
             recv_latency: options.receiver.latency,
-            bandwidth: options.sender.bandwidth_mode,
+            bandwidth: options.sender.bandwidth,
             statistics_interval: options.session.statistics_interval,
             recv_buffer_size: options.receiver.buffer_size,
         }
