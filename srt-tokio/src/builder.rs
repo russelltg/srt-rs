@@ -340,7 +340,7 @@ impl SrtSocketBuilder {
 }
 
 #[derive(Default)]
-pub struct NewSrtSocket(SocketOptions);
+pub struct NewSrtSocket(SocketOptions, Option<UdpSocket>);
 
 impl NewSrtSocket {
     /// Sets the local address of the socket. This can be used to bind to just a specific network adapter instead of the default of all adapters.
@@ -365,6 +365,11 @@ impl NewSrtSocket {
         self
     }
 
+    pub fn socket(mut self, socket: UdpSocket) -> Self {
+        self.1 = Some(socket);
+        self
+    }
+
     pub fn with<O>(mut self, options: O) -> Self
     where
         SocketOptions: OptionsOf<O>,
@@ -380,7 +385,10 @@ impl NewSrtSocket {
         let options = ListenerOptions::new(self.0.connect.local_port, self.0)?;
         let connect = &options.socket.connect;
         let local = SocketAddr::new(connect.local_ip, connect.local_port);
-        let socket = UdpSocket::bind(local).await?;
+        let socket = match self.1 {
+            Some(socket) => socket,
+            None => UdpSocket::bind(local).await?,
+        };
         let mut socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
         let conn = pending_connection::listen(&mut socket, options.socket.clone().into()).await?;
 
@@ -395,7 +403,10 @@ impl NewSrtSocket {
         let options = CallerOptions::new(remote_address, stream_id.unwrap(), self.0)?;
         let connect = &options.socket.connect;
         let local = SocketAddr::new(connect.local_ip, connect.local_port);
-        let socket = UdpSocket::bind(local).await?;
+        let socket = match self.1 {
+            Some(socket) => socket,
+            None => UdpSocket::bind(local).await?,
+        };
         let mut socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
 
         let conn = pending_connection::connect(
@@ -418,7 +429,10 @@ impl NewSrtSocket {
         let options = RendezvousOptions::new(remote_address, self.0)?;
         let connect = &options.socket.connect;
         let local = SocketAddr::new(connect.local_ip, connect.local_port);
-        let socket = UdpSocket::bind(local).await?;
+        let socket = match self.1 {
+            Some(socket) => socket,
+            None => UdpSocket::bind(local).await?,
+        };
         let mut socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
 
         let conn = pending_connection::rendezvous(
