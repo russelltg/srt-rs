@@ -7,11 +7,11 @@ pub struct ListenerOptions {
 
 impl ListenerOptions {
     pub fn new(local_port: u16) -> Result<Valid<Self>, OptionsError> {
-        Self {
+        let mut options = Self {
             socket: Default::default(),
-        }
-        .try_validate()?
-        .set(|l| l.socket.connect.local_port = local_port)
+        };
+        options.socket.connect.local_port = local_port;
+        options.try_validate()
     }
 }
 

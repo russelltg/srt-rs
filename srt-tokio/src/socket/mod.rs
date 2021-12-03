@@ -78,10 +78,7 @@ impl SrtSocket {
         Self::bind_with_socket(options, socket).await
     }
 
-    pub async fn bind_with_socket(
-        options: BindOptions,
-        socket: UdpSocket,
-    ) -> Result<Self, io::Error> {
+    async fn bind_with_socket(options: BindOptions, socket: UdpSocket) -> Result<Self, io::Error> {
         let mut socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
         use BindOptions::*;
         let conn = match options {

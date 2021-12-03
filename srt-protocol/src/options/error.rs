@@ -4,6 +4,7 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
+use crate::options::StreamIdError;
 use thiserror::Error;
 
 // https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md#list-of-options
@@ -40,10 +41,13 @@ pub enum OptionsError {
 
     #[error("Invalid remote address")]
     InvalidRemoteAddress,
+
+    #[error("Invalid remote address")]
+    InvalidStreamId(StreamIdError),
 }
 
 impl From<OptionsError> for io::Error {
     fn from(error: OptionsError) -> Self {
-        io::Error::new(ErrorKind::InvalidInput, error)
+        Self::new(ErrorKind::InvalidInput, error)
     }
 }

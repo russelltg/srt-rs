@@ -78,9 +78,20 @@ impl NewSrtSocket {
         self
     }
 
+    pub fn with2<O1, O2>(mut self, options1: O1, options2: O2) -> Self
+    where
+        SocketOptions: OptionsOf<O1> + OptionsOf<O2>,
+        O1: Validation<Error = OptionsError>,
+        O2: Validation<Error = OptionsError>,
+    {
+        self.0.set_options(options1);
+        self.0.set_options(options2);
+        self
+    }
+
     pub async fn listen(self) -> Result<SrtSocket, io::Error> {
         let options = ListenerOptions::new(self.0.connect.local_port)?.with(self.0)?;
-        Self::bind(options, self.1).await
+        Self::bind(options.into(), self.1).await
     }
 
     pub async fn call(
@@ -88,9 +99,8 @@ impl NewSrtSocket {
         remote_address: impl ToSocketAddrs,
         stream_id: impl Into<String>,
     ) -> Result<SrtSocket, io::Error> {
-        let options =
-            CallerOptions::new(remote_address, stream_id.into().try_into()?)?.with(self.0)?;
-        Self::bind(options, self.1).await
+        let options = CallerOptions::new(remote_address, stream_id)?.with(self.0)?;
+        Self::bind(options.into(), self.1).await
     }
 
     pub async fn rendezvous(
@@ -98,16 +108,13 @@ impl NewSrtSocket {
         remote_address: impl ToSocketAddrs,
     ) -> Result<SrtSocket, io::Error> {
         let options = RendezvousOptions::new(remote_address)?.with(self.0)?;
-        Self::bind(options, self.1).await
+        Self::bind(options.into(), self.1).await
     }
 
-    async fn bind(
-        options: impl Into<BindOptions>,
-        socket: Option<UdpSocket>,
-    ) -> Result<SrtSocket, io::Error> {
+    async fn bind(options: BindOptions, socket: Option<UdpSocket>) -> Result<SrtSocket, io::Error> {
         match socket {
-            None => SrtSocket::bind(options.into()).await,
-            Some(socket) => SrtSocket::bind_with_socket(options.into(), socket).await,
+            None => SrtSocket::bind(options).await,
+            Some(socket) => SrtSocket::bind_with_socket(options, socket).await,
         }
     }
 }

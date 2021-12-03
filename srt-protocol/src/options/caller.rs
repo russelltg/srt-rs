@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::net::{SocketAddr, ToSocketAddrs};
 
 use super::*;
@@ -12,13 +13,17 @@ pub struct CallerOptions {
 impl CallerOptions {
     pub fn new(
         remote: impl ToSocketAddrs,
-        stream_id: StreamId,
+        stream_id: impl Into<String>,
     ) -> Result<Valid<Self>, OptionsError> {
         let remote = remote
             .to_socket_addrs()
             .map_err(|_| OptionsError::InvalidRemoteAddress)?
             .next()
             .ok_or(OptionsError::InvalidRemoteAddress)?;
+        let stream_id = stream_id
+            .into()
+            .try_into()
+            .map_err(OptionsError::InvalidStreamId)?;
         Self {
             remote,
             stream_id,
