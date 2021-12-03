@@ -150,7 +150,7 @@ impl Validation for Encryption {
         let period = self.km_refresh.period;
         let pre_announcement_period = self.km_refresh.pre_announcement_period;
 
-        if period == 0 || pre_announcement_period < period.saturating_sub(1) / 2 {
+        if period == 0 || pre_announcement_period > period.saturating_sub(1) / 2 {
             Err(OptionsError::KeyMaterialRefresh(
                 period,
                 pre_announcement_period,

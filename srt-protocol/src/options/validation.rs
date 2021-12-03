@@ -201,12 +201,17 @@ mod test {
             Self(Default::default())
         }
 
-        pub fn with<F>(mut self, options: F) -> Result<Self, <TestParent as Validation>::Error>
+        pub fn with2<F1, F2>(
+            mut self,
+            options1: F1,
+            options2: F2,
+        ) -> Result<Self, <TestParent as Validation>::Error>
         where
-            TestParent: OptionsOf<F>,
-            F: Validation<Error = <TestParent as Validation>::Error>,
+            TestParent: OptionsOf<F1> + OptionsOf<F2>,
+            F1: Validation<Error = <TestParent as Validation>::Error>,
+            F2: Validation<Error = <TestParent as Validation>::Error>,
         {
-            self.0 = self.0.with(options)?;
+            self.0 = self.0.with2(options1, options2)?;
             Ok(self)
         }
 
@@ -244,19 +249,17 @@ mod test {
             Err(TestError::TestParent(TestParent {
                 child: Test { field: 1234 },
                 child2: Test2 { field: 40 },
-                child3: Test3 { field: 30 }
+                child3: Test3 { field: 40 }
             }))
         );
 
         let parent = TestBuilder::new()
-            .with(Test { field: 0 })
-            .unwrap()
-            .with(Test2 { field: 0 })
+            .with2(Test { field: 100 }, Test2 { field: 100 })
             .unwrap()
             .build();
-        assert_eq!(
+        assert_ne!(
             parent.child.field, test.field,
-            "{} != {}",
+            "{} == {}",
             parent.child.field, test.field
         );
     }
