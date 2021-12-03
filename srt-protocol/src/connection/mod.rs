@@ -11,6 +11,7 @@ use std::{
 use bytes::Bytes;
 
 use crate::{
+    options::LiveBandwidthMode,
     packet::*,
     protocol::{
         handshake::Handshake,
@@ -19,7 +20,7 @@ use crate::{
         sender::{Sender, SenderContext},
         time::Timers,
     },
-    settings::{CipherSettings, LiveBandwidthMode},
+    settings::CipherSettings,
     statistics::SocketStatistics,
 };
 

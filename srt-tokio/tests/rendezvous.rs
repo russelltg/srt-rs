@@ -2,20 +2,20 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures::{join, prelude::*};
-use srt_tokio::SrtSocketBuilder;
+use srt_tokio::SrtSocket;
 use tokio::time::sleep;
 
 #[tokio::test]
 async fn rendezvous() {
     let _ = pretty_env_logger::try_init();
 
-    let a = SrtSocketBuilder::new_rendezvous("127.0.0.1:5000")
+    let a = SrtSocket::new()
         .local_port(5001)
-        .connect();
+        .rendezvous("127.0.0.1:5000");
 
-    let b = SrtSocketBuilder::new_rendezvous("127.0.0.1:5001")
+    let b = SrtSocket::new()
         .local_port(5000)
-        .connect();
+        .rendezvous("127.0.0.1:5001");
 
     join!(
         async move {

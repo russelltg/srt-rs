@@ -14,12 +14,14 @@ use futures::{
 use log::{error, trace};
 use srt_protocol::{
     connection::{Action, Connection, ConnectionSettings, DuplexConnection, Input},
+    options::{OptionsError, OptionsOf, SocketOptions, Validation},
     packet::*,
 };
 use tokio::{task::JoinHandle, time::sleep_until};
 
 use super::{net::*, watch};
 
+use crate::builder::NewSrtSocket;
 pub use srt_protocol::statistics::SocketStatistics;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
@@ -43,7 +45,20 @@ pub struct SrtSocket {
 }
 
 impl SrtSocket {
-    pub(crate) fn new(
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new() -> NewSrtSocket {
+        NewSrtSocket::default()
+    }
+
+    pub fn with<O>(options: O) -> NewSrtSocket
+    where
+        SocketOptions: OptionsOf<O>,
+        O: Validation<Error = OptionsError>,
+    {
+        NewSrtSocket::default().with(options)
+    }
+
+    pub(crate) fn create(
         settings: ConnectionSettings,
         input_data_sender: mpsc::Sender<(Instant, Bytes)>,
         output_data_receiver: mpsc::Receiver<(Instant, Bytes)>,
@@ -110,7 +125,7 @@ pub fn create_bidrectional_srt(socket: PacketSocket, conn: Connection) -> SrtSoc
         statistics_sender,
     );
 
-    SrtSocket::new(
+    SrtSocket::create(
         settings,
         input_data_sender,
         output_data_receiver,

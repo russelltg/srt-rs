@@ -211,7 +211,7 @@ impl StartedInitiator {
             recv_tsbpd_latency: Duration::max(self.settings.recv_latency, hs.send_latency),
             cipher: self.cipher,
             stream_id: self.streamid,
-            bandwidth: LiveBandwidthMode::default(),
+            bandwidth: Default::default(),
             recv_buffer_size: self.settings.recv_buffer_size,
             statistics_interval: self.settings.statistics_interval,
         })

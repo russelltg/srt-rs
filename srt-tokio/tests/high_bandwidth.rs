@@ -7,7 +7,6 @@ use anyhow::Error;
 use bytes::Bytes;
 use futures::{stream, SinkExt, Stream, StreamExt};
 use log::info;
-use srt_protocol::settings::LiveBandwidthMode::*;
 
 use srt_tokio::{SocketStatistics, SrtSocketBuilder};
 
@@ -28,6 +27,8 @@ enum Select {
 
 #[tokio::test]
 async fn high_bandwidth() -> Result<(), Error> {
+    use srt_protocol::options::LiveBandwidthMode::Estimated;
+
     let _ = pretty_env_logger::try_init();
 
     let sender_fut = async {

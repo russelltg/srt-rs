@@ -18,7 +18,7 @@ use srt_protocol::{
     settings::*,
 };
 
-use super::net::PacketSocket;
+use crate::net::PacketSocket;
 
 pub async fn connect(
     socket: &mut PacketSocket,

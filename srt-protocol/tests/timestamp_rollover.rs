@@ -12,7 +12,6 @@ use srt_protocol::{
     connection::{Connection, ConnectionSettings, DuplexConnection, Input},
     packet::*,
     protocol::handshake::Handshake,
-    settings::*,
 };
 
 #[test]
@@ -42,7 +41,7 @@ fn timestamp_rollover() {
         recv_tsbpd_latency: Duration::from_millis(20),
         cipher: None,
         stream_id: None,
-        bandwidth: LiveBandwidthMode::default(),
+        bandwidth: Default::default(),
         recv_buffer_size: 8192,
         statistics_interval: Duration::from_secs(1),
     };
@@ -61,7 +60,7 @@ fn timestamp_rollover() {
         recv_tsbpd_latency: Duration::from_millis(20),
         cipher: None,
         stream_id: None,
-        bandwidth: LiveBandwidthMode::default(),
+        bandwidth: Default::default(),
         recv_buffer_size: 8192,
         statistics_interval: Duration::from_secs(1),
     };

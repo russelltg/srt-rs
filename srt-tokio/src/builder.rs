@@ -9,6 +9,7 @@ use std::{
 
 use futures::Stream;
 use log::error;
+use srt_protocol::options::*;
 use tokio::net::UdpSocket;
 
 use srt_protocol::settings::*;
@@ -335,5 +336,100 @@ impl SrtSocketBuilder {
             }
             _ => panic!("Cannot bind multiplexed with any connection mode other than listen"),
         }
+    }
+}
+
+#[derive(Default)]
+pub struct NewSrtSocket(SocketOptions);
+
+impl NewSrtSocket {
+    /// Sets the local address of the socket. This can be used to bind to just a specific network adapter instead of the default of all adapters.
+    pub fn local_ip(mut self, ip: IpAddr) -> Self {
+        self.0.connect.local_ip = ip;
+
+        self
+    }
+
+    /// Sets the port to bind to. In general, to be used for [`Listen`] and [`Rendezvous`], but generally not [`Call`].
+    pub fn local_port(mut self, port: u16) -> Self {
+        self.0.connect.local_port = port;
+        self
+    }
+
+    /// Set the latency of the connection. The more latency, the more time SRT has to recover lost packets.
+    /// This sets both the send and receive latency
+    pub fn latency(mut self, latency: Duration) -> Self {
+        self.0.sender.peer_latency = latency;
+        self.0.receiver.latency = latency;
+
+        self
+    }
+
+    pub fn with<O>(mut self, options: O) -> Self
+    where
+        SocketOptions: OptionsOf<O>,
+        O: Validation<Error = OptionsError>,
+    {
+        self.0.set_options(options);
+        self
+    }
+}
+
+impl NewSrtSocket {
+    pub async fn listen(self) -> Result<SrtSocket, io::Error> {
+        let options = ListenerOptions::new(self.0.connect.local_port, self.0)?;
+        let connect = &options.socket.connect;
+        let local = SocketAddr::new(connect.local_ip, connect.local_port);
+        let socket = UdpSocket::bind(local).await?;
+        let mut socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
+        let conn = pending_connection::listen(&mut socket, options.socket.clone().into()).await?;
+
+        Ok(create_bidrectional_srt(socket, conn))
+    }
+
+    pub async fn call(
+        self,
+        remote_address: impl ToSocketAddrs,
+        stream_id: Option<StreamId>,
+    ) -> Result<SrtSocket, io::Error> {
+        let options = CallerOptions::new(remote_address, stream_id.unwrap(), self.0)?;
+        let connect = &options.socket.connect;
+        let local = SocketAddr::new(connect.local_ip, connect.local_port);
+        let socket = UdpSocket::bind(local).await?;
+        let mut socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
+
+        let conn = pending_connection::connect(
+            &mut socket,
+            options.remote,
+            options.socket.connect.local_ip,
+            options.socket.clone().into(),
+            Some(options.stream_id.to_string()),
+            rand::random(),
+        )
+        .await?;
+
+        Ok(create_bidrectional_srt(socket, conn))
+    }
+
+    pub async fn rendezvous(
+        self,
+        remote_address: impl ToSocketAddrs,
+    ) -> Result<SrtSocket, io::Error> {
+        let options = RendezvousOptions::new(remote_address, self.0)?;
+        let connect = &options.socket.connect;
+        let local = SocketAddr::new(connect.local_ip, connect.local_port);
+        let socket = UdpSocket::bind(local).await?;
+        let mut socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
+
+        let conn = pending_connection::rendezvous(
+            &mut socket,
+            local,
+            options.remote,
+            options.socket.clone().into(),
+            rand::random(),
+        )
+        .await?;
+
+        Ok(create_bidrectional_srt(socket, conn))
     }
 }

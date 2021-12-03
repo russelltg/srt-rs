@@ -14,7 +14,6 @@ use srt_protocol::{
     connection::{Connection, ConnectionSettings, DuplexConnection, Input},
     packet::*,
     protocol::handshake::Handshake,
-    settings::*,
 };
 
 #[derive(Eq, PartialEq)]
@@ -210,7 +209,7 @@ impl RandomLossSimulation {
             recv_tsbpd_latency: latency,
             cipher: None,
             stream_id: None,
-            bandwidth: LiveBandwidthMode::default(),
+            bandwidth: Default::default(),
             recv_buffer_size: 8192,
             statistics_interval: Duration::from_secs(1),
         }

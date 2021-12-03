@@ -449,8 +449,6 @@ impl<'a> Iterator for SenderAlgorithmIterator<'a> {
 mod test {
     use super::*;
 
-    use crate::settings::*;
-
     use std::time::{Duration, Instant};
 
     use bytes::Bytes;
@@ -472,7 +470,7 @@ mod test {
             recv_tsbpd_latency: TSBPD,
             cipher: None,
             stream_id: None,
-            bandwidth: LiveBandwidthMode::default(),
+            bandwidth: Default::default(),
             recv_buffer_size: 8196,
             statistics_interval: Duration::from_secs(10),
         }

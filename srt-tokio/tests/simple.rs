@@ -4,7 +4,7 @@ use anyhow::Error;
 use bytes::Bytes;
 use futures::prelude::*;
 use srt_protocol::statistics::SocketStatistics;
-use srt_tokio::SrtSocketBuilder;
+use srt_tokio::{SrtSocket, SrtSocketBuilder};
 use tokio::time::sleep;
 
 #[tokio::test]
@@ -12,10 +12,7 @@ async fn test() {
     let _ = pretty_env_logger::try_init();
 
     let sender_fut = async {
-        let mut tx = SrtSocketBuilder::new_listen()
-            .local_port(5223)
-            .connect()
-            .await?;
+        let mut tx = SrtSocket::new().local_port(5223).listen().await?;
 
         let iter = ["1", "2", "3"];
 

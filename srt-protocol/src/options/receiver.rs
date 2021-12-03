@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-pub struct ReceiverOptions {
+use super::*;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Receiver {
     /// SRTO_RCVLATENCY
     ///
     /// The latency value in the receiving direction of the socket. This value is only significant when
@@ -70,8 +73,6 @@ pub struct ReceiverOptions {
     /// The default is true for Live mode
     pub nak_report: bool,
 
-    // OptName	Since	Restrict	Type	Units	Default	Range	Dir	Entity
-    // SRTO_TLPKTDROP	1.0.6	pre	bool		*		RW	GSD
     ///SRTO_TLPKTDROP
     /// Too-late Packet Drop. When enabled on receiver, it skips missing packets that have not been
     /// delivered in time and delivers the subsequent packets to the application when their
@@ -86,15 +87,28 @@ pub struct ReceiverOptions {
     pub drift_tracer: bool,
 }
 
-impl Default for ReceiverOptions {
+impl Default for Receiver {
     fn default() -> Self {
         Self {
             latency: Duration::from_millis(120),
             reorder_tolerance_max: 0,
-            buffer_size: 46592,
-            too_late_packet_drop: true,
+            buffer_size: 8192 * 1500,
             nak_report: true,
+            too_late_packet_drop: true,
             drift_tracer: false,
+        }
+    }
+}
+
+impl Validation for Receiver {
+    type Error = OptionsError;
+
+    fn is_valid(&self) -> Result<(), Self::Error> {
+        use OptionsError::*;
+        if self.buffer_size < 46592 {
+            Err(ReceiveBufferMin(self.buffer_size))
+        } else {
+            Ok(())
         }
     }
 }

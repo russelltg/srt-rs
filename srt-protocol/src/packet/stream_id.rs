@@ -1,10 +1,10 @@
 use std::fmt::{Debug, Display, Formatter};
 use std::{convert::TryFrom, error::Error, string::FromUtf8Error};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct StreamId(String);
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum StreamIdError {
     FromUtf8(FromUtf8Error),
     Length(usize),
@@ -35,5 +35,22 @@ impl TryFrom<Vec<u8>> for StreamId {
         }
         let stream_id = String::from_utf8(value).map_err(StreamIdError::FromUtf8)?;
         Ok(StreamId(stream_id))
+    }
+}
+
+impl TryFrom<String> for StreamId {
+    type Error = StreamIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.as_bytes().len() > 512 {
+            return Err(StreamIdError::Length(value.as_bytes().len()));
+        }
+        Ok(StreamId(value))
+    }
+}
+
+impl ToString for StreamId {
+    fn to_string(&self) -> String {
+        self.0.clone()
     }
 }
