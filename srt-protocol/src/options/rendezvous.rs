@@ -9,16 +9,17 @@ pub struct RendezvousOptions {
 }
 
 impl RendezvousOptions {
-    pub fn new(
-        remote: impl ToSocketAddrs,
-        socket: SocketOptions,
-    ) -> Result<Valid<Self>, OptionsError> {
+    pub fn new(remote: impl ToSocketAddrs) -> Result<Valid<Self>, OptionsError> {
         let remote = remote
             .to_socket_addrs()
             .map_err(|_| OptionsError::InvalidRemoteAddress)?
             .next()
             .ok_or(OptionsError::InvalidRemoteAddress)?;
-        Self { remote, socket }.try_validate()
+        Self {
+            remote,
+            socket: Default::default(),
+        }
+        .try_validate()
     }
 }
 

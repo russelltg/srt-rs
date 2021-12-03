@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{connection::ConnectionSettings, packet::*, settings::*};
+use crate::{connection::ConnectionSettings, options::*, packet::*, settings::*};
 
 use super::{ConnectError, ConnectionReject};
 

@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures::{stream, SinkExt, Stream, StreamExt};
 use log::info;
 
-use srt_tokio::{SocketStatistics, SrtSocketBuilder};
+use srt_tokio::{options, SocketStatistics, SrtSocket};
 
 fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
     let message = Bytes::from(vec![5; 1024]);
@@ -32,10 +32,10 @@ async fn high_bandwidth() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     let sender_fut = async {
-        let mut sock = SrtSocketBuilder::new_connect("127.0.0.1:6654")
+        let mut sock = SrtSocket::new()
             .latency(Duration::from_millis(150))
             .bandwidth(Estimated { overhead: 20 })
-            .connect()
+            .call("127.0.0.1:6654", "")
             .await?;
 
         const RATE_MBPS: u64 = 50;
@@ -51,12 +51,18 @@ async fn high_bandwidth() -> Result<(), Error> {
     };
 
     let recv_fut = async {
-        let mut sock = SrtSocketBuilder::new_listen()
-            .local_port(6654)
+        let mut sock = SrtSocket::new()
+            .with(options::Session {
+                statistics_interval: Duration::from_secs(2),
+                ..Default::default()
+            })
+            .with(options::Receiver {
+                buffer_size: 8192 * 10,
+                ..Default::default()
+            })
             .latency(Duration::from_millis(150))
-            .statistics_interval(Duration::from_secs(2))
-            .recv_buffer_size(8192 * 10)
-            .connect()
+            .local_port(6654)
+            .listen()
             .await?
             .fuse();
 

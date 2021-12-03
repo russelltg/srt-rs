@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-pub trait Validation : Sized {
+pub trait Validation: Sized {
     type Error;
 
     fn is_valid(&self) -> Result<(), Self::Error>;

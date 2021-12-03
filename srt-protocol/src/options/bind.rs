@@ -3,7 +3,7 @@ use super::*;
 pub enum BindOptions {
     Listen(Valid<ListenerOptions>),
     Call(Valid<CallerOptions>),
-    Rendezvous(Valid<RendezvousOptions>)
+    Rendezvous(Valid<RendezvousOptions>),
 }
 
 impl From<Valid<ListenerOptions>> for BindOptions {

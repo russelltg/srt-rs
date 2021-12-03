@@ -1,5 +1,5 @@
-use std::net::SocketAddr;
 use super::*;
+use std::net::SocketAddr;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SocketOptions {

@@ -1,4 +1,9 @@
-use std::{io, net::{IpAddr, ToSocketAddrs}, time::Duration};
+use std::convert::TryInto;
+use std::{
+    io,
+    net::{IpAddr, ToSocketAddrs},
+    time::Duration,
+};
 
 use tokio::net::UdpSocket;
 
@@ -32,6 +37,16 @@ impl NewSrtSocket {
         self
     }
 
+    /// Set the encryption parameters.
+    ///
+    /// # Panics:
+    /// * size is not 0, 16, 24, or 32.
+    pub fn encryption(mut self, key_size: u8, passphrase: impl Into<String>) -> Self {
+        self.0.encryption.key_size = key_size.try_into().unwrap();
+        self.0.encryption.passphrase = Some(passphrase.into().try_into().unwrap());
+
+        self
+    }
     /// the minimum latency to receive at
     pub fn receive_latency(mut self, latency: Duration) -> Self {
         self.0.receiver.latency = latency;
@@ -55,25 +70,26 @@ impl NewSrtSocket {
     }
 
     pub fn with<O>(mut self, options: O) -> Self
-        where
-            SocketOptions: OptionsOf<O>,
-            O: Validation<Error = OptionsError>,
+    where
+        SocketOptions: OptionsOf<O>,
+        O: Validation<Error = OptionsError>,
     {
         self.0.set_options(options);
         self
     }
 
     pub async fn listen(self) -> Result<SrtSocket, io::Error> {
-        let options = ListenerOptions::new(self.0.connect.local_port, self.0)?;
+        let options = ListenerOptions::new(self.0.connect.local_port)?.with(self.0)?;
         Self::bind(options, self.1).await
     }
 
     pub async fn call(
         self,
         remote_address: impl ToSocketAddrs,
-        stream_id: Option<StreamId>,
+        stream_id: impl Into<String>,
     ) -> Result<SrtSocket, io::Error> {
-        let options = CallerOptions::new(remote_address, stream_id.unwrap(), self.0)?;
+        let options =
+            CallerOptions::new(remote_address, stream_id.into().try_into()?)?.with(self.0)?;
         Self::bind(options, self.1).await
     }
 
@@ -81,14 +97,17 @@ impl NewSrtSocket {
         self,
         remote_address: impl ToSocketAddrs,
     ) -> Result<SrtSocket, io::Error> {
-        let options = RendezvousOptions::new(remote_address, self.0)?;
+        let options = RendezvousOptions::new(remote_address)?.with(self.0)?;
         Self::bind(options, self.1).await
     }
 
-    async fn bind(options: impl Into<BindOptions>, socket: Option<UdpSocket>) -> Result<SrtSocket, io::Error> {
+    async fn bind(
+        options: impl Into<BindOptions>,
+        socket: Option<UdpSocket>,
+    ) -> Result<SrtSocket, io::Error> {
         match socket {
-            None => SrtSocket::bind(options).await,
-            Some(socket) => SrtSocket::bind_with_socket(options, socket).await,
+            None => SrtSocket::bind(options.into()).await,
+            Some(socket) => SrtSocket::bind_with_socket(options.into(), socket).await,
         }
     }
 }

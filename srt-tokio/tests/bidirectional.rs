@@ -1,4 +1,4 @@
-use srt_tokio::SrtSocketBuilder;
+use srt_tokio::{options::*, SrtSocket};
 
 use bytes::Bytes;
 use futures::{future, stream, SinkExt, StreamExt, TryStreamExt};
@@ -11,8 +11,12 @@ async fn bidirectional() {
 
     const ITERS: u32 = 1_000;
 
-    let a = SrtSocketBuilder::new_connect("127.0.0.1:5000").connect();
-    let b = SrtSocketBuilder::new_listen().local_port(5000).connect();
+    let a = SrtSocket::bind(
+        CallerOptions::new("127.0.0.1:5000", "".into())
+            .unwrap()
+            .into(),
+    );
+    let b = SrtSocket::bind(ListenerOptions::new(5000).unwrap().into());
 
     let mut join_handles = vec![];
     for fut in vec![a, b] {

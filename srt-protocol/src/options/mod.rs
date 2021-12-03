@@ -1,4 +1,5 @@
 mod bandwidth;
+mod bind;
 mod caller;
 mod connect;
 mod encryption;
@@ -9,12 +10,12 @@ mod rendezvous;
 mod sender;
 mod session;
 mod socket;
+mod srt_version;
 mod stream_id;
 mod validation;
-mod bind;
 
-pub use bind::*;
 pub use bandwidth::*;
+pub use bind::*;
 pub use caller::*;
 pub use connect::*;
 pub use encryption::*;
@@ -25,6 +26,7 @@ pub use rendezvous::*;
 pub use sender::*;
 pub use session::*;
 pub use socket::*;
+pub use srt_version::*;
 pub use stream_id::*;
 pub use validation::*;
 

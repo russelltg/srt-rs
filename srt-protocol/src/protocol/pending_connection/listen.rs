@@ -231,6 +231,8 @@ mod test {
     use bytes::Bytes;
     use rand::random;
 
+    use crate::options::*;
+
     use super::*;
 
     fn conn_addr() -> SocketAddr {

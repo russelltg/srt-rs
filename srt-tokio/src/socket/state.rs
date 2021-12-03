@@ -1,13 +1,16 @@
 use std::time::Instant;
 
 use bytes::Bytes;
-use futures::{prelude::*, channel::mpsc, select};
+use futures::{channel::mpsc, prelude::*, select};
 use log::{error, trace};
+use srt_protocol::{
+    connection::{Action, DuplexConnection, Input},
+    packet::TimeSpan,
+};
 use tokio::task::JoinHandle;
 use tokio::time::sleep_until;
-use srt_protocol::{packet::TimeSpan, connection::{DuplexConnection, Input, Action}};
 
-use crate::{SocketStatistics, net::PacketSocket, watch, SrtSocket};
+use crate::{net::PacketSocket, watch, SocketStatistics, SrtSocket};
 
 pub struct SrtSocketState {
     socket: PacketSocket,
@@ -18,7 +21,10 @@ pub struct SrtSocketState {
 }
 
 impl SrtSocketState {
-    pub fn spawn_socket(socket: PacketSocket, connection: DuplexConnection) -> (JoinHandle<()>, SrtSocket) {
+    pub fn spawn_socket(
+        socket: PacketSocket,
+        connection: DuplexConnection,
+    ) -> (JoinHandle<()>, SrtSocket) {
         let (output_data_sender, output_data_receiver) = mpsc::channel(128);
         let (input_data_sender, input_data_receiver) = mpsc::channel(128);
         let (statistics_sender, statistics_receiver) = watch::channel();
@@ -32,17 +38,14 @@ impl SrtSocketState {
             input_data_receiver,
         };
 
-        let handle = tokio::spawn(async move {
-            state.run_loop().await
-        });
+        let handle = tokio::spawn(async move { state.run_loop().await });
 
-        let socket =
-            SrtSocket {
-                settings,
-                output_data_receiver,
-                input_data_sender,
-                statistics_receiver,
-            };
+        let socket = SrtSocket {
+            settings,
+            output_data_receiver,
+            input_data_sender,
+            statistics_receiver,
+        };
 
         (handle, socket)
     }
@@ -59,8 +62,7 @@ impl SrtSocketState {
         }
     }
 
-    async fn run_handler_loop(self)
-    {
+    async fn run_handler_loop(self) {
         let local_sockid = self.connection.settings().local_sockid;
         let mut socket = self.socket;
         let mut input_data = self.input_data_receiver.fuse();
@@ -91,10 +93,10 @@ impl SrtSocketState {
             let timeout_fut = async {
                 let now = Instant::now();
                 trace!(
-                "{:?} scheduling wakeup at {:?}",
-                local_sockid,
-                TimeSpan::from_interval(timeout, now),
-            );
+                    "{:?} scheduling wakeup at {:?}",
+                    local_sockid,
+                    TimeSpan::from_interval(timeout, now),
+                );
                 sleep_until(timeout.into()).await
             };
 
@@ -153,13 +155,13 @@ impl SrtSocketState {
                 Action::WaitForData(wait) => {
                     let timeout = now + wait;
                     select! {
-                    _ = sleep_until(timeout.into()).fuse() => Input::Timer,
-                    packet = socket.receive().fuse() =>
-                        Input::Packet(packet),
-                    res = input_data.next() => {
-                        Input::Data(res)
+                        _ = sleep_until(timeout.into()).fuse() => Input::Timer,
+                        packet = socket.receive().fuse() =>
+                            Input::Packet(packet),
+                        res = input_data.next() => {
+                            Input::Data(res)
+                        }
                     }
-                }
                 }
             }
         }

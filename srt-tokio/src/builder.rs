@@ -14,7 +14,8 @@ use tokio::net::UdpSocket;
 use srt_protocol::settings::*;
 
 use super::{
-    multiplex, net::PacketSocket, pending_connection, socket::create_bidrectional_srt, SrtSocket, options::LiveBandwidthMode,
+    multiplex, net::PacketSocket, options::LiveBandwidthMode, pending_connection,
+    socket::create_bidrectional_srt, SrtSocket,
 };
 
 /// Struct to build sockets.

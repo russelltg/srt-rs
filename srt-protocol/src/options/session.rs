@@ -2,8 +2,6 @@ use std::time::Duration;
 
 use super::*;
 
-pub use crate::packet::SrtVersion;
-
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Session {
     /// SRTO_PEERIDLETIMEO

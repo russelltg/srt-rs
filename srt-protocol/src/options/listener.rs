@@ -1,5 +1,3 @@
-pub use crate::packet::StreamId;
-
 use super::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -8,10 +6,12 @@ pub struct ListenerOptions {
 }
 
 impl ListenerOptions {
-    pub fn new(local_port: u16, socket: SocketOptions) -> Result<Valid<Self>, OptionsError> {
-        Self { socket }
-            .try_validate()?
-            .set(|l| l.socket.connect.local_port = local_port)
+    pub fn new(local_port: u16) -> Result<Valid<Self>, OptionsError> {
+        Self {
+            socket: Default::default(),
+        }
+        .try_validate()?
+        .set(|l| l.socket.connect.local_port = local_port)
     }
 }
 

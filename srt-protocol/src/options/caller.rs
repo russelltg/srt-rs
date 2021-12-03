@@ -13,7 +13,6 @@ impl CallerOptions {
     pub fn new(
         remote: impl ToSocketAddrs,
         stream_id: StreamId,
-        socket: SocketOptions,
     ) -> Result<Valid<Self>, OptionsError> {
         let remote = remote
             .to_socket_addrs()
@@ -23,7 +22,7 @@ impl CallerOptions {
         Self {
             remote,
             stream_id,
-            socket,
+            socket: Default::default(),
         }
         .try_validate()
     }

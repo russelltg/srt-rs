@@ -8,8 +8,6 @@ mod modular_num;
 mod msg_number;
 mod seq_number;
 mod socket_id;
-mod srt_version;
-mod stream_id;
 mod time;
 
 pub use control::*;
@@ -18,8 +16,6 @@ pub use error::*;
 pub use msg_number::*;
 pub use seq_number::*;
 pub use socket_id::*;
-pub use srt_version::*;
-pub use stream_id::*;
 pub use time::*;
 
 use std::{

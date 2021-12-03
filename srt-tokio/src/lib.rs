@@ -53,8 +53,11 @@ mod net;
 mod pending_connection;
 mod socket;
 mod watch;
-mod options;
 
-pub use crate::builder::{ConnInitMethod, SrtSocketBuilder};
-pub use crate::multiplex::{multiplex, StreamerServer};
-pub use crate::socket::{SocketStatistics, SrtSocket};
+pub mod options;
+
+pub use crate::{
+    builder::{ConnInitMethod, SrtSocketBuilder},
+    multiplex::{multiplex, StreamerServer},
+    socket::{SocketStatistics, SrtSocket},
+};

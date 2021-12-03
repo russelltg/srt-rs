@@ -1,14 +1,14 @@
 mod builder;
 mod state;
 
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::{
     io,
     pin::Pin,
     task::{Context, Poll},
     time::Instant,
 };
-use std::net::SocketAddr;
-use std::sync::Arc;
 
 use bytes::Bytes;
 use futures::{
@@ -22,10 +22,10 @@ use srt_protocol::{
     options::{OptionsError, OptionsOf, SocketOptions, Validation},
     packet::*,
 };
-use tokio::{task::JoinHandle, time::sleep_until};
 use tokio::net::UdpSocket;
+use tokio::{task::JoinHandle, time::sleep_until};
 
-use super::{net::*, watch, options::BindOptions};
+use super::{net::*, options::BindOptions, watch};
 
 use builder::NewSrtSocket;
 use state::SrtSocketState;
@@ -58,8 +58,15 @@ impl SrtSocket {
         NewSrtSocket::default()
     }
 
-    pub async fn bind(options: impl Into<BindOptions>) -> Result<Self, io::Error> {
-        let options = options.into();
+    pub fn with<O>(options: O) -> NewSrtSocket
+    where
+        SocketOptions: OptionsOf<O>,
+        O: Validation<Error = OptionsError>,
+    {
+        Self::new().with(options)
+    }
+
+    pub async fn bind(options: BindOptions) -> Result<Self, io::Error> {
         use BindOptions::*;
         let socket_options = match &options {
             Listen(options) => &options.socket,
@@ -71,14 +78,18 @@ impl SrtSocket {
         Self::bind_with_socket(options, socket).await
     }
 
-    pub async fn bind_with_socket(options: impl Into<BindOptions>, socket: UdpSocket) -> Result<Self, io::Error> {
-        let options = options.into();
+    pub async fn bind_with_socket(
+        options: BindOptions,
+        socket: UdpSocket,
+    ) -> Result<Self, io::Error> {
         let mut socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
         use BindOptions::*;
         let conn = match options {
-            Listen(options) =>
-                crate::pending_connection::listen(&mut socket, options.socket.clone().into()).await?,
-            Call(options) =>
+            Listen(options) => {
+                crate::pending_connection::listen(&mut socket, options.socket.clone().into())
+                    .await?
+            }
+            Call(options) => {
                 crate::pending_connection::connect(
                     &mut socket,
                     options.remote,
@@ -87,29 +98,26 @@ impl SrtSocket {
                     Some(options.stream_id.to_string()),
                     rand::random(),
                 )
-                    .await?,
-            Rendezvous(options) => crate::pending_connection::rendezvous(
-                &mut socket,
-                SocketAddr::new(options.socket.connect.local_ip, options.socket.connect.local_port),
-                options.remote,
-                options.socket.clone().into(),
-                rand::random(),
-            )
-                .await?,
+                .await?
+            }
+            Rendezvous(options) => {
+                crate::pending_connection::rendezvous(
+                    &mut socket,
+                    SocketAddr::new(
+                        options.socket.connect.local_ip,
+                        options.socket.connect.local_port,
+                    ),
+                    options.remote,
+                    options.socket.clone().into(),
+                    rand::random(),
+                )
+                .await?
+            }
         };
 
         let (_, socket) = SrtSocketState::spawn_socket(socket, DuplexConnection::new(conn));
 
         Ok(socket)
-
-    }
-
-    pub fn with<O>(options: O) -> NewSrtSocket
-    where
-        SocketOptions: OptionsOf<O>,
-        O: Validation<Error = OptionsError>,
-    {
-        NewSrtSocket::default().with(options)
     }
 
     pub(crate) fn create(
@@ -120,9 +128,9 @@ impl SrtSocket {
     ) -> SrtSocket {
         SrtSocket {
             settings,
-            output_data_receiver: output_data_receiver,
-            input_data_sender: input_data_sender,
-            statistics_receiver: statistics_receiver,
+            output_data_receiver,
+            input_data_sender,
+            statistics_receiver,
         }
     }
 
@@ -327,8 +335,10 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
     type Error = io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(ready!(Pin::new(&mut self.input_data_sender).poll_ready(cx))
-            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?))
+        Poll::Ready(Ok(ready!(
+            Pin::new(&mut self.input_data_sender).poll_ready(cx)
+        )
+        .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?))
     }
     fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Self::Error> {
         self.input_data_sender

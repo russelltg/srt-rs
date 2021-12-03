@@ -1,18 +1,14 @@
 use bytes::Bytes;
 use futures::stream;
 use futures::{SinkExt, StreamExt};
-use tokio::time::sleep;
-
-use srt_tokio::SrtSocketBuilder;
+use srt_tokio::SrtSocket;
 use std::io::Error;
 use std::time::{Duration, Instant};
+use tokio::time::sleep;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let mut srt_socket = SrtSocketBuilder::new_listen()
-        .local_port(3333)
-        .connect()
-        .await?;
+    let mut srt_socket = SrtSocket::new().local_port(3333).listen().await?;
 
     let mut stream = stream::unfold(0, |count| async move {
         print!("\rSent {:?} packets", count);
