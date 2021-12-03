@@ -28,6 +28,7 @@ use tokio::net::UdpSocket;
 use super::{net::*, watch, options::BindOptions};
 
 use builder::NewSrtSocket;
+use state::SrtSocketState;
 
 pub use srt_protocol::statistics::SocketStatistics;
 
@@ -41,12 +42,12 @@ pub use srt_protocol::statistics::SocketStatistics;
 #[derive(Debug)]
 pub struct SrtSocket {
     // receiver datastructures
-    output_data: mpsc::Receiver<(Instant, Bytes)>,
+    output_data_receiver: mpsc::Receiver<(Instant, Bytes)>,
 
     // sender datastructures
-    input_data: mpsc::Sender<(Instant, Bytes)>,
+    input_data_sender: mpsc::Sender<(Instant, Bytes)>,
 
-    statistics: watch::Receiver<SocketStatistics>,
+    statistics_receiver: watch::Receiver<SocketStatistics>,
 
     settings: ConnectionSettings,
 }
@@ -97,7 +98,9 @@ impl SrtSocket {
                 .await?,
         };
 
-        Ok(create_bidrectional_srt(socket, conn))
+        let (_, socket) = SrtSocketState::spawn_socket(socket, DuplexConnection::new(conn));
+
+        Ok(socket)
 
     }
 
@@ -117,9 +120,9 @@ impl SrtSocket {
     ) -> SrtSocket {
         SrtSocket {
             settings,
-            output_data: output_data_receiver,
-            input_data: input_data_sender,
-            statistics: statistics_receiver,
+            output_data_receiver: output_data_receiver,
+            input_data_sender: input_data_sender,
+            statistics_receiver: statistics_receiver,
         }
     }
 
@@ -308,7 +311,7 @@ impl SrtSocket {
     }
 
     pub fn statistics(&mut self) -> &mut (impl Stream<Item = SocketStatistics> + Clone) {
-        &mut self.statistics
+        &mut self.statistics_receiver
     }
 }
 
@@ -316,7 +319,7 @@ impl Stream for SrtSocket {
     type Item = Result<(Instant, Bytes), io::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        Poll::Ready(ready!(Pin::new(&mut self.output_data).poll_next(cx)).map(Ok))
+        Poll::Ready(ready!(Pin::new(&mut self.output_data_receiver).poll_next(cx)).map(Ok))
     }
 }
 
@@ -324,21 +327,21 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
     type Error = io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(ready!(Pin::new(&mut self.input_data).poll_ready(cx))
+        Poll::Ready(Ok(ready!(Pin::new(&mut self.input_data_sender).poll_ready(cx))
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?))
     }
     fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Self::Error> {
-        self.input_data
+        self.input_data_sender
             .start_send(item)
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.input_data)
+        Pin::new(&mut self.input_data_sender)
             .poll_flush(cx)
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
     }
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.input_data)
+        Pin::new(&mut self.input_data_sender)
             .poll_close(cx)
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
     }

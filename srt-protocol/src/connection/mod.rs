@@ -146,6 +146,10 @@ impl DuplexConnection {
         self.status.is_open()
     }
 
+    pub fn settings(&self) -> &ConnectionSettings {
+        &self.settings
+    }
+
     pub fn update_statistics(&mut self, now: Instant) {
         self.stats.elapsed_time = now - self.settings.socket_start_time;
     }
