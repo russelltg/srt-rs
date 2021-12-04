@@ -14,6 +14,52 @@ use super::SrtSocket;
 #[derive(Default)]
 pub struct NewSrtSocket(SocketOptions, Option<UdpSocket>);
 
+/// Struct to build sockets.
+///
+/// This is the typical way to create instances of [`SrtSocket`], which implements both `Sink + Stream`, as they can be both receivers and senders.
+///
+/// You need to decided on a [`ConnInitMethod`] in order to create a [`SrtSocketBuilder`]. See [that documentation](ConnInitMethod) for more details.
+///
+/// # Examples:
+/// Simple:
+/// ```
+/// # use srt_tokio::SrtSocket;
+/// # use std::io;
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), io::Error> {
+/// let (a, b) = futures::try_join!(
+///     SrtSocket::new().local_ip("127.0.0.1".parse().unwrap()).local_port(3333).listen(),
+///     SrtSocket::new().call("127.0.0.1:3333", ""),
+/// )?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// Rendezvous example:
+///
+/// ```
+/// # use srt_tokio::SrtSocket;
+/// # use std::{io, time::Duration};
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), io::Error> {
+/// let (a, b) = futures::try_join!(
+///     SrtSocket::new().local_port(5555).rendezvous("127.0.0.1:4444"),
+///     SrtSocket::new()
+///         .set(|options| {
+///             options.connect.timeout = Duration::from_secs(2);
+///             options.connect.local_port = 4444;
+///             options.receiver.buffer_size = 1200000;
+///             options.sender.max_payload_size = 1200;
+///             options.session.peer_idle_timeout = Duration::from_secs(5);
+///         })
+///         .rendezvous("127.0.0.1:5555"),
+/// )?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Panics:
+/// * There is no tokio runtime
 impl NewSrtSocket {
     /// Sets the local address of the socket. This can be used to bind to just a specific network adapter instead of the default of all adapters.
     pub fn local_ip(mut self, ip: IpAddr) -> Self {
@@ -86,6 +132,11 @@ impl NewSrtSocket {
     {
         self.0.set_options(options1);
         self.0.set_options(options2);
+        self
+    }
+
+    pub fn set(mut self, set_fn: impl FnOnce(&mut SocketOptions)) -> Self {
+        set_fn(&mut self.0);
         self
     }
 

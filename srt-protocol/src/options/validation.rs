@@ -231,6 +231,8 @@ mod test {
             child3: Test3 { field: 30 },
         }
         .try_validate()
+        .unwrap()
+        .set(|p| p.child3.field = 120)
         .unwrap();
 
         let parent = parent.with2(test.clone(), test2.clone()).unwrap();
