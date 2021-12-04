@@ -25,11 +25,11 @@ impl From<Valid<RendezvousOptions>> for BindOptions {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]
-    fn test() {
+    fn into() {
         let caller = CallerOptions::new("127.0.0.1:42", "stream ID").unwrap()
             .with(Connect::default()).unwrap()
             .with(Session::default()).unwrap()

@@ -138,9 +138,27 @@ impl Validation for Sender {
     fn is_valid(&self) -> Result<(), Self::Error> {
         use OptionsError::*;
         if self.flow_control_window_size < 32 {
-            Err(ReceiveBufferMin(self.buffer_size))
+            Err(FlowControlWindowMin(self.flow_control_window_size))
         } else {
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use OptionsError::*;
+
+    #[test]
+    fn validation() {
+        let result = Sender {
+            flow_control_window_size: 31,
+            ..
+            Default::default()
+        };
+
+        assert_eq!(result.try_validate(), Err(FlowControlWindowMin(31)));
     }
 }

@@ -112,3 +112,21 @@ impl Validation for Receiver {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use OptionsError::*;
+
+    #[test]
+    fn validation() {
+        let result = Receiver {
+            buffer_size: 46591,
+            ..
+            Default::default()
+        };
+
+        assert_eq!(result.try_validate(), Err(ReceiveBufferMin(46591)));
+    }
+}

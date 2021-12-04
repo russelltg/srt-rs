@@ -36,13 +36,13 @@ pub enum OptionsError {
     #[error("A specific local port is required to listen for incoming callers.")]
     LocalPortRequiredToListen,
 
-    #[error("Mismatched remote address and local address family. remote: {0} local {0}")]
+    #[error("Mismatched remote address and local address family. remote: {0} local {1}")]
     MismatchedAddressFamilies(SocketAddr, IpAddr),
 
     #[error("Invalid remote address")]
     InvalidRemoteAddress,
 
-    #[error("Invalid remote address")]
+    #[error("{0}")]
     InvalidStreamId(StreamIdError),
 }
 
