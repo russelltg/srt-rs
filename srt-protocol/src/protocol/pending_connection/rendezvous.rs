@@ -264,12 +264,11 @@ impl Rendezvous {
                                 Some(induction_time) => induction_time,
                                 None => {
                                     return ConnectionResult::NotHandled(
-                                        ConnectError::WaveahandExpected(info.clone()),
+                                        ConnectError::WavehandExpected(info.clone()),
                                     );
                                 }
                             },
                             now,
-                            &mut AllowAllStreamAcceptor::default(),
                         ) {
                             GenHsv5Result::Accept(h, c) => (h, c),
                             GenHsv5Result::NotHandled(e) => return NotHandled(e),
@@ -355,7 +354,6 @@ impl Rendezvous {
                     self.remote_public,
                     induction_time,
                     now,
-                    &mut AllowAllStreamAcceptor::default(),
                 ) {
                     GenHsv5Result::Accept(h, c) => (h, c),
                     GenHsv5Result::NotHandled(e) => return NotHandled(e),
@@ -477,6 +475,7 @@ impl Rendezvous {
     }
 
     pub fn handle_packet(&mut self, packet: ReceivePacketResult, now: Instant) -> ConnectionResult {
+        use ReceivePacketError::*;
         match packet {
             Ok((packet, from)) => {
                 if from != self.remote_public {
@@ -505,8 +504,8 @@ impl Rendezvous {
                     (_, Err(e)) => NotHandled(e),
                 }
             }
-            Err(PacketParseError::Io(error)) => Failure(error),
-            Err(e) => NotHandled(ConnectError::ParseFailed(e)),
+            Err(Io(error)) => Failure(error),
+            Err(Parse(e)) => NotHandled(ConnectError::ParseFailed(e)),
         }
     }
 

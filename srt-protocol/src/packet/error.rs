@@ -1,6 +1,6 @@
-use std::{error::Error, fmt, io, str::Utf8Error};
+use std::{error::Error, fmt, str::Utf8Error};
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum PacketParseError {
     NotEnoughData,
@@ -21,7 +21,6 @@ pub enum PacketParseError {
     StreamTypeNotUtf8(Utf8Error),
     ZeroAckSequenceNumber,
     BadFilter(String),
-    Io(io::Error),
 }
 
 impl fmt::Display for PacketParseError {
@@ -30,18 +29,4 @@ impl fmt::Display for PacketParseError {
     }
 }
 
-impl Error for PacketParseError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        if let PacketParseError::Io(e) = self {
-            Some(e)
-        } else {
-            None
-        }
-    }
-}
-
-impl From<io::Error> for PacketParseError {
-    fn from(s: io::Error) -> PacketParseError {
-        PacketParseError::Io(s)
-    }
-}
+impl Error for PacketParseError {}

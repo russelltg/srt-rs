@@ -3,13 +3,22 @@ use std::{
     error::Error,
     fmt::{Debug, Display, Formatter},
     io::{self, ErrorKind},
+    ops::Deref,
     string::FromUtf8Error,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct StreamId(String);
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+impl Deref for StreamId {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
 pub enum StreamIdError {
     FromUtf8(FromUtf8Error),
     Length(usize),

@@ -43,14 +43,15 @@ pub async fn connect(
         };
 
         debug!("{:?}:connect - {:?}", streamid, result);
+        use ConnectionResult::*;
         match result {
-            ConnectionResult::SendPacket(packet) => {
+            SendPacket(packet) => {
                 let _ = socket.send(packet).await?;
             }
-            ConnectionResult::NotHandled(e) => {
+            NotHandled(e) => {
                 warn!("{:?}", e);
             }
-            ConnectionResult::Reject(rp, rr) => {
+            Reject(rp, rr) => {
                 if let Some(packet) = rp {
                     let _ = socket.send(packet).await?;
                 }
@@ -59,14 +60,15 @@ pub async fn connect(
                     Box::new(rr),
                 ));
             }
-            ConnectionResult::Connected(pa, conn) => {
+            Connected(pa, conn) => {
                 if let Some(packet) = pa {
                     let _ = socket.send(packet).await?;
                 }
                 return Ok(conn);
             }
-            ConnectionResult::NoAction => {}
-            ConnectionResult::Failure(error) => return Err(error),
+            NoAction => {}
+            RequestAccess(_) => {}
+            Failure(error) => return Err(error),
         }
     }
 }
@@ -76,31 +78,32 @@ pub async fn listen(
     init_settings: ConnInitSettings,
 ) -> Result<Connection, io::Error> {
     let streamid = init_settings.local_sockid;
-    let mut a = AllowAllStreamAcceptor::default();
-    let mut listen = Listen::new(init_settings);
+    let mut listen = Listen::new(init_settings, false);
     loop {
         let packet = sockt.receive().await;
         debug!("{:?}:listen  - {:?}", streamid, packet);
 
-        let result = listen.handle_packet(packet, Instant::now(), &mut a);
+        let result = listen.handle_packet(Instant::now(), packet);
         debug!("{:?}:listen  - {:?}", streamid, result);
 
+        use ConnectionResult::*;
         match result {
-            ConnectionResult::SendPacket(packet) => {
+            SendPacket(packet) => {
                 sockt.send(packet).await?;
             }
-            ConnectionResult::NotHandled(e) => {
+            NotHandled(e) => {
                 warn!("{:?}", e);
             }
-            ConnectionResult::Reject(_, _) => todo!(),
-            ConnectionResult::Connected(pa, c) => {
+            Reject(_, _) => todo!(),
+            Connected(pa, c) => {
                 if let Some(packet) = pa {
                     sockt.send(packet).await?;
                 }
                 return Ok(c);
             }
-            ConnectionResult::NoAction => {}
-            ConnectionResult::Failure(error) => return Err(error),
+            NoAction => {}
+            RequestAccess(_) => {}
+            Failure(error) => return Err(error),
         }
     }
 }
@@ -122,22 +125,24 @@ pub async fn rendezvous(
         };
 
         debug!("{:?}:rendezvous - {:?}", sockid, result);
+        use ConnectionResult::*;
         match result {
-            ConnectionResult::SendPacket(packet) => {
+            SendPacket(packet) => {
                 socket.send(packet).await?;
             }
-            ConnectionResult::NotHandled(e) => {
+            NotHandled(e) => {
                 warn!("rendezvous {:?} error: {}", sockid, e);
             }
-            ConnectionResult::Reject(_, _) => todo!(),
-            ConnectionResult::Connected(pa, c) => {
+            Reject(_, _) => todo!(),
+            Connected(pa, c) => {
                 if let Some(packet) = pa {
                     socket.send(packet).await?;
                 }
                 return Ok(c);
             }
-            ConnectionResult::NoAction => {}
-            ConnectionResult::Failure(error) => return Err(error),
+            NoAction => {}
+            RequestAccess(_) => {}
+            Failure(error) => return Err(error),
         }
     }
 }

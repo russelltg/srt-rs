@@ -48,6 +48,7 @@
 //!
 
 mod builder;
+mod listener;
 mod multiplex;
 mod net;
 mod pending_connection;
@@ -58,6 +59,7 @@ pub mod options;
 
 pub use crate::{
     builder::{ConnInitMethod, SrtSocketBuilder},
+    listener::{ConnectionRequest, ListenerStatistics, SrtListener},
     multiplex::{multiplex, StreamerServer},
     socket::{SocketStatistics, SrtSocket},
 };

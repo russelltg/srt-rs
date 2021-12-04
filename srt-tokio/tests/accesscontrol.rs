@@ -4,7 +4,7 @@ use bytes::Bytes;
 use futures::{channel::oneshot, future::join_all, stream, FutureExt, SinkExt, StreamExt};
 use log::info;
 
-use srt_protocol::{packet::*, settings::*};
+use srt_protocol::{access::*, packet::*, settings::*};
 
 use srt_tokio::SrtSocketBuilder;
 

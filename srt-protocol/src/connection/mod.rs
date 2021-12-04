@@ -24,13 +24,13 @@ use crate::{
     statistics::SocketStatistics,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Connection {
     pub settings: ConnectionSettings,
     pub handshake: Handshake,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct ConnectionSettings {
     /// The remote socket to send & receive to
     pub remote: SocketAddr,
@@ -272,11 +272,11 @@ impl DuplexConnection {
 
     pub fn handle_packet_input(&mut self, now: Instant, packet: ReceivePacketResult) {
         self.debug(now, "packet", &packet);
-        use PacketParseError::*;
+        use ReceivePacketError::*;
         match packet {
             Ok(packet) => self.handle_packet(now, packet),
             Err(Io(error)) => self.handle_socket_close(now, error),
-            Err(e) => self.warn(now, "packet", &e),
+            Err(Parse(e)) => self.warn(now, "packet", &e),
         }
     }
 

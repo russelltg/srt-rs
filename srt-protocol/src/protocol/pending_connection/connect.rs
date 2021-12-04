@@ -156,6 +156,7 @@ impl Connect {
     }
 
     pub fn handle_packet(&mut self, packet: ReceivePacketResult, now: Instant) -> ConnectionResult {
+        use ReceivePacketError::*;
         match packet {
             Ok((packet, from)) => match (self.state.clone(), packet) {
                 (InductionResponseWait(_), Packet::Control(control)) => {
@@ -177,8 +178,8 @@ impl Connect {
                 (_, Packet::Data(data)) => NotHandled(ControlExpected(data)),
                 (_, _) => NoAction,
             },
-            Err(PacketParseError::Io(error)) => Failure(error),
-            Err(e) => NotHandled(ConnectError::ParseFailed(e)),
+            Err(Io(error)) => Failure(error),
+            Err(Parse(e)) => NotHandled(ConnectError::ParseFailed(e)),
         }
     }
 
