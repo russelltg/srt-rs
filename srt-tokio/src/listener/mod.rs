@@ -1,7 +1,5 @@
-mod request;
+mod session;
 mod state;
-
-pub use request::ConnectionRequest;
 
 use std::io;
 
@@ -9,11 +7,10 @@ use futures::{channel::mpsc, prelude::*};
 use srt_protocol::settings::ConnInitSettings;
 use tokio::{net::ToSocketAddrs, task::JoinHandle};
 
-use crate::watch;
+use super::{net::PacketSocket, watch};
 
-use super::net::PacketSocket;
-
-pub use srt_protocol::listener::ListenerStatistics;
+pub use session::ConnectionRequest;
+pub use srt_protocol::statistics::ListenerStatistics;
 
 pub struct SrtListener {
     settings: ConnInitSettings,

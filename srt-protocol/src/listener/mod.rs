@@ -1,76 +1,27 @@
+mod input;
+mod session;
+
 use std::{collections::HashMap, io::Error, net::SocketAddr, time::Duration, time::Instant};
 
-use crate::{
-    connection::Connection,
-    packet::*,
-    protocol::{
-        pending_connection::{listen::Listen, ConnectionResult},
-        time::Timer,
-    },
-    settings::ConnInitSettings,
-};
+use crate::{packet::*, protocol::time::Timer, settings::ConnInitSettings};
+
+use session::*;
 
 pub use crate::protocol::pending_connection::{AccessControlRequest, AccessControlResponse};
+pub use input::*;
 
 #[derive(Clone, Debug)]
 pub struct ListenerSettings {}
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct SessionId(pub SocketAddr, pub SocketId);
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ListenerStatistics {
     rx_errors: u64,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum Input {
-    Packet(ReceivePacketResult),
-    AccessResponse(Option<(SessionId, AccessControlResponse)>),
-    Timer,
-
-    PacketSent(usize),
-
-    ConnectionClosed(SessionId),
-    AccessRequested(SessionId),
-    ConnectionRejected(SessionId),
-    ConnectionOpened(SessionId),
-    ConnectionDropped(SessionId),
-    PacketDelegated(SessionId),
-    StatisticsUpdated,
-
-    Failure(ActionError),
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum Action<'a> {
-    SendPacket((Packet, SocketAddr)),
-    RequestAccess(SessionId, AccessControlRequest),
-    RejectConnection(SessionId, Option<(Packet, SocketAddr)>),
-    OpenConnection(SessionId, Box<(Option<(Packet, SocketAddr)>, Connection)>),
-    DelegatePacket(SessionId, (Packet, SocketAddr)),
-    DropConnection(SessionId),
-    UpdateStatistics(&'a ListenerStatistics),
-    WaitForInput,
-    Close,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum ActionError {
-    SendPacketFailed,
-    ReceivePacketFailed,
-    SendStatistics,
-    RequestAccessFailed(SessionId),
-    PendingConnectionMissing(SessionId),
-    ActiveConnectionMissing(SessionId),
-    OpenConnectionFailed(SessionId),
-    DelegatePacketFailed(SessionId),
-}
-
 #[derive(Debug)]
 pub struct MultiplexListener {
     settings: ConnInitSettings,
-    sessions: HashMap<SessionId, Option<Listen>>,
+    sessions: HashMap<SessionId, SessionState>,
     stats: ListenerStatistics,
     stats_timer: Timer,
 }
@@ -90,16 +41,8 @@ impl MultiplexListener {
             Input::Packet(packet) => self.handle_input_packet(now, packet),
             Input::AccessResponse(response) => self.handle_input_access_response(now, response),
             Input::Timer => self.handle_timer(now),
-            _ => Action::WaitForInput,
-            // TODO: are these even useful? maybe for statistics (e.g. PacketSent(usize)
-            // Input::ConnectionClosed(_) => {}
-            // Input::PacketSent(_) => {}
-            // Input::AccessRequested(_) => {}
-            // Input::ConnectionOpened(_) => {}
-            // Input::ConnectionDropped(_) => {}
-            // Input::PacketDelegated(_) => {}
-            // Input::StatisticsUpdated => {}
-            // Input::Failure(_) => {}
+            Input::Success(result_of) => self.handle_success(now, result_of),
+            Input::Failure(result_of) => self.handle_failure(now, result_of),
         }
     }
 
@@ -128,31 +71,15 @@ impl MultiplexListener {
 
     fn handle_packet(&mut self, now: Instant, packet: (Packet, SocketAddr)) -> Action {
         let session_id = SessionId(packet.1, packet.0.dest_sockid());
-        let sessions = &mut self.sessions;
-        let session = match sessions.get_mut(&session_id) {
+        let session = match self.sessions.get_mut(&session_id) {
+            Some(session) => session,
             None => {
-                let _ = self.sessions.insert(
-                    session_id.clone(),
-                    Some(Listen::new(self.settings.clone(), true)),
-                );
+                let session = SessionState::new_oending(self.settings.clone());
+                self.sessions.insert(session_id, session);
                 self.sessions.get_mut(&session_id).unwrap()
             }
-            Some(s) => s,
         };
-
-        let action = match session {
-            Some(listen) => {
-                let result = listen.handle_packet(now, Ok(packet));
-                Self::action_from_listen_result(session_id, result)
-            }
-            None => Action::DelegatePacket(session_id, packet),
-        };
-
-        if matches!(action, Action::RejectConnection(_, _)) {
-            *session = None;
-        }
-
-        action
+        session.handle_packet(now, session_id, packet)
     }
 
     fn handle_packet_receive_error(&mut self, _now: Instant, _error: Error) -> Action {
@@ -167,55 +94,46 @@ impl MultiplexListener {
         response: AccessControlResponse,
     ) -> Action {
         match self.sessions.get_mut(&session_id) {
-            Some(listen) => {
-                match listen.take() {
-                    Some(mut listen) => {
-                        let result = listen.handle_access_control_response(now, response);
-                        Self::action_from_listen_result(session_id, result)
-                    }
-                    // TODO: log error, panic? this shouldn't happen
-                    None => Action::WaitForInput,
-                }
-            }
+            Some(session) => session.handle_access_control_response(now, session_id, response),
             None => Action::DropConnection(session_id),
         }
     }
 
-    fn handle_close(&mut self) -> Action {
-        self.sessions.clear();
-        Action::Close
-    }
-
-    fn action_from_listen_result<'a>(
-        session_id: SessionId,
-        result: ConnectionResult,
-    ) -> Action<'a> {
-        use ConnectionResult::*;
-        match result {
-            // TODO: do something with the error?
-            NotHandled(_) => Action::WaitForInput,
-            // TODO: do something with the rejection reason?
-            Reject(p, _) => Action::RejectConnection(session_id, p),
-            SendPacket(p) => Action::SendPacket(p),
-            Connected(p, c) => Action::OpenConnection(session_id, Box::new((p, c))),
-            NoAction => Action::WaitForInput,
-            RequestAccess(r) => Action::RequestAccess(session_id, r),
-            // TODO: is this even a realistic failure mode since we handle I/O errors earlier up
-            //  the call stack? if so, do something with the error?
-            Failure(_) => Action::DropConnection(session_id),
-        }
-    }
-
-    fn handle_timer(&self, _now: Instant) -> Action {
-        // TODO: we need to scan all the pending sessions and push the clock forward
+    fn handle_timer(&mut self, _now: Instant) -> Action {
+        // TODO: create an action that returns an action with an Iterator that ticks time forward
+        //  for all the sessions, yielding the results to the I/O loop
         Action::WaitForInput
+    }
+
+    fn handle_success(&mut self, _now: Instant, result_of: ResultOf) -> Action {
+        use ResultOf::*;
+        match result_of {
+            SendPacket(_) => {}
+            RequestAccess(_) => {}
+            RejectConnection(session_id) => {
+                self.sessions.remove(&session_id);
+            }
+            OpenConnection(_) => {}
+            DelegatePacket(_) => {}
+            DropConnection(session_id) => {
+                self.sessions.remove(&session_id);
+            }
+            UpdateStatistics => {}
+        }
+        Action::WaitForInput
+    }
+
+    fn handle_failure(&self, _now: Instant, _result_of: ResultOf) -> Action {
+        todo!()
+    }
+
+    fn handle_close(&mut self) -> Action {
+        Action::Close
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
     use std::{
         net::{IpAddr, Ipv4Addr},
         time::Duration,
@@ -224,6 +142,8 @@ mod test {
     use rand::random;
 
     use crate::options::SrtVersion;
+
+    use super::*;
 
     fn conn_addr() -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8765)
@@ -311,7 +231,10 @@ mod test {
             action
         );
 
-        let action = listener.handle_input(Instant::now(), Input::ConnectionOpened(session_id()));
+        use crate::listener::ResultOf::*;
+
+        let action =
+            listener.handle_input(Instant::now(), Input::Success(OpenConnection(session_id())));
         assert!(matches!(action, Action::WaitForInput), "{:?}", action);
 
         let packet = build_hs_pack(test_conclusion());
@@ -322,5 +245,59 @@ mod test {
             "{:?}",
             action
         );
+    }
+
+    #[test]
+    fn reject() {
+        let settings = ConnInitSettings::default();
+        let mut listener = MultiplexListener::new(Instant::now(), settings);
+
+        let packet = build_hs_pack(test_induction());
+        let action =
+            listener.handle_input(Instant::now(), Input::Packet(Ok((packet, conn_addr()))));
+        assert!(matches!(action, Action::SendPacket(_)), "{:?}", action);
+
+        let packet = build_hs_pack(test_conclusion());
+        let action =
+            listener.handle_input(Instant::now(), Input::Packet(Ok((packet, conn_addr()))));
+        assert!(
+            matches!(action, Action::RequestAccess(_, _)),
+            "{:?}",
+            action
+        );
+
+        let action = listener.handle_input(
+            Instant::now(),
+            Input::AccessResponse(Some((
+                session_id(),
+                AccessControlResponse::Rejected(RejectReason::User(100)),
+            ))),
+        );
+        assert!(
+            matches!(
+                action,
+                Action::RejectConnection(_, Some((Packet::Control(_), _)))
+            ),
+            "{:?}",
+            action
+        );
+
+        let packet = build_hs_pack(test_conclusion());
+        let action =
+            listener.handle_input(Instant::now(), Input::Packet(Ok((packet, conn_addr()))));
+        assert!(
+            matches!(
+                action,
+                Action::RejectConnection(_, Some((Packet::Control(_), _)))
+            ),
+            "{:?}",
+            action
+        );
+
+        let action = listener.handle_input(
+            Instant::now(),
+            Input::Success(ResultOf::RejectConnection(session_id())),
+        );
+        assert_eq!(action, Action::WaitForInput);
     }
 }

@@ -1,26 +1,17 @@
 use std::{
     collections::HashMap,
+    net::SocketAddr,
     time::{Duration, Instant},
 };
 
-use bytes::Bytes;
-use futures::{
-    channel::{mpsc, oneshot},
-    prelude::*,
-    select, SinkExt,
-};
+use futures::{channel::mpsc, prelude::*, select, SinkExt};
 use log::debug;
-use srt_protocol::settings::ConnInitSettings;
-use srt_protocol::{
-    connection::{Connection, ConnectionSettings},
-    listener::*,
-    packet::*,
-};
-use tokio::{task::JoinHandle, time::sleep_until};
+use srt_protocol::{connection::Connection, listener::*, packet::*, settings::ConnInitSettings};
+use tokio::time::sleep_until;
 
-use crate::{net::PacketSocket, watch, SocketStatistics, SrtSocket};
+use crate::{net::PacketSocket, watch};
 
-use super::ConnectionRequest;
+use super::session::*;
 
 pub struct SrtListenerState {
     listener: MultiplexListener,
@@ -29,10 +20,11 @@ pub struct SrtListenerState {
     response_sender: mpsc::Sender<(SessionId, AccessControlResponse)>,
     response_receiver: mpsc::Receiver<(SessionId, AccessControlResponse)>,
     statistics_sender: watch::Sender<ListenerStatistics>,
-    pending_connections: HashMap<SessionId, PendingApproval>,
-    active_connections: HashMap<SessionId, ActiveConnection>,
+    pending_connections: HashMap<SessionId, PendingConnection>,
+    open_connections: HashMap<SessionId, OpenConnection>,
 }
 
+// TODO: allow configuring using options module
 impl SrtListenerState {
     pub fn new(
         socket: PacketSocket,
@@ -49,93 +41,39 @@ impl SrtListenerState {
             response_sender,
             response_receiver,
             statistics_sender,
-            pending_connections: HashMap::new(),
-            active_connections: HashMap::new(),
+            pending_connections: Default::default(),
+            open_connections: Default::default(),
         }
     }
 
     pub async fn run_loop(mut self) {
-        let mut input = Input::Timer;
         use Action::*;
+        let mut input = Input::Timer;
         loop {
             let now = Instant::now();
             let timeout = now + Duration::from_millis(100);
             debug!("{:?}", input);
             let action = self.listener.handle_input(now, input);
             debug!("{:?}", action);
+            let next = NextInputContext::for_action(&action);
             input = match action {
-                SendPacket(packet) => match self.socket.send(packet).await {
-                    Ok(size) => Input::PacketSent(size),
-                    Err(_) => Input::Failure(ActionError::SendPacketFailed),
-                },
-                UpdateStatistics(statistics) => {
-                    match self.statistics_sender.send(statistics.clone()) {
-                        Ok(()) => Input::StatisticsUpdated,
-                        Err(_) => Input::Failure(ActionError::SendStatistics),
-                    }
-                }
+                SendPacket(packet) => next.input_from(self.socket.send(packet).await),
                 RequestAccess(session_id, request) => {
-                    assert!(!self.pending_connections.contains_key(&session_id));
-
-                    let result = PendingApproval::new_request(
-                        &mut self.request_sender,
-                        session_id.clone(),
-                        request,
-                        self.response_sender.clone(),
-                    )
-                    .await;
-
-                    match result {
-                        Ok(pending) => {
-                            let _ = self.pending_connections.insert(session_id.clone(), pending);
-                            Input::AccessRequested(session_id)
-                        }
-                        Err(_) => Input::Failure(ActionError::RequestAccessFailed(session_id)),
-                    }
+                    next.input_from(self.request_access(session_id, request).await)
                 }
                 RejectConnection(session_id, packet) => {
-                    let _ = self.pending_connections.remove(&session_id);
-                    match packet {
-                        Some(packet) => match self.socket.send(packet).await {
-                            Ok(size) => Input::PacketSent(size),
-                            Err(_) => Input::Failure(ActionError::SendPacketFailed),
-                        },
-                        None => Input::ConnectionRejected(session_id),
-                    }
+                    next.input_from(self.reject_connection(session_id, packet).await)
                 }
                 OpenConnection(session_id, connection) => {
-                    assert!(!self.active_connections.contains_key(&session_id));
-                    let (packet, c) = *connection;
-                    match self.pending_connections.remove(&session_id) {
-                        Some(pending) => match pending.open_connection(&self.socket, c) {
-                            Ok(active) => {
-                                self.active_connections.insert(session_id.clone(), active);
-                                match packet {
-                                    Some(packet) => match self.socket.send(packet).await {
-                                        Ok(size) => Input::PacketSent(size),
-                                        Err(_) => Input::Failure(ActionError::SendPacketFailed),
-                                    },
-                                    None => Input::ConnectionOpened(session_id),
-                                }
-                            }
-                            Err(_) => Input::Failure(ActionError::OpenConnectionFailed(session_id)),
-                        },
-                        None => Input::Failure(ActionError::PendingConnectionMissing(session_id)),
-                    }
+                    next.input_from(self.open_connection(session_id, connection).await)
                 }
                 DelegatePacket(session_id, packet) => {
-                    match self.active_connections.get_mut(&session_id) {
-                        Some(connection) => match connection.packet_sender.send(Ok(packet)).await {
-                            Ok(()) => Input::PacketDelegated(session_id),
-                            Err(_) => Input::Failure(ActionError::DelegatePacketFailed(session_id)),
-                        },
-                        None => Input::Failure(ActionError::ActiveConnectionMissing(session_id)),
-                    }
+                    next.input_from(self.delegate_packet(session_id, packet).await)
                 }
-                DropConnection(session_id) => match self.active_connections.remove(&session_id) {
-                    Some(_) => Input::ConnectionDropped(session_id),
-                    None => Input::Failure(ActionError::ActiveConnectionMissing(session_id)),
-                },
+                DropConnection(session_id) => next.input_from(self.drop_connection(session_id)),
+                UpdateStatistics(statistics) => {
+                    next.input_from(self.statistics_sender.send(statistics.clone()))
+                }
                 WaitForInput => select! {
                     packet = self.socket.receive().fuse() => Input::Packet(packet),
                     response = self.response_receiver.next() => Input::AccessResponse(response),
@@ -145,75 +83,62 @@ impl SrtListenerState {
             }
         }
     }
-}
 
-struct PendingApproval {
-    settings_sender: oneshot::Sender<ConnectionSettings>,
-    input_data_receiver: mpsc::Receiver<(Instant, Bytes)>,
-    output_data_sender: mpsc::Sender<(Instant, Bytes)>,
-    statistics_sender: watch::Sender<SocketStatistics>,
-}
-
-struct ActiveConnection {
-    _handle: JoinHandle<()>,
-    packet_sender: mpsc::Sender<ReceivePacketResult>,
-}
-
-impl PendingApproval {
-    async fn new_request(
-        request_sender: &mut mpsc::Sender<ConnectionRequest>,
+    async fn request_access(
+        &mut self,
         session_id: SessionId,
         request: AccessControlRequest,
-        response_sender: mpsc::Sender<(SessionId, AccessControlResponse)>,
-    ) -> Result<PendingApproval, mpsc::SendError> {
-        let (settings_sender, settings_receiver) = oneshot::channel();
-        let (output_data_sender, output_data_receiver) = mpsc::channel(128);
-        let (input_data_sender, input_data_receiver) = mpsc::channel(128);
-        let (statistics_sender, statistics_receiver) = watch::channel();
-
-        let state = PendingApproval {
-            settings_sender,
-            output_data_sender,
-            input_data_receiver,
-            statistics_sender,
-        };
-
-        let settings = settings_receiver;
-        let input_data = input_data_sender;
-        let output_data = output_data_receiver;
-        let statistics = statistics_receiver;
-        let request = ConnectionRequest::new(
-            session_id,
-            response_sender,
-            request,
-            settings,
-            input_data,
-            output_data,
-            statistics,
-        );
-
-        let _ = request_sender.send(request).await?;
-
-        Ok(state)
+    ) -> Result<(), ()> {
+        assert!(!self.pending_connections.contains_key(&session_id));
+        let request_sender = &mut self.request_sender;
+        let response_sender = self.response_sender.clone();
+        let (pending, request) =
+            PendingConnection::start_approval(session_id, request, response_sender);
+        let _ = request_sender.send(request).await.ok().ok_or(())?;
+        let _ = self.pending_connections.insert(session_id, pending);
+        Ok(())
     }
 
-    fn open_connection(
-        self,
-        socket: &PacketSocket,
-        connection: Connection,
-    ) -> Result<ActiveConnection, ConnectionSettings> {
-        let (packet_sender, socket) = socket.clone_channel(100);
-        let (handle, settings) = SrtSocket::spawn(
-            connection,
-            socket,
-            self.input_data_receiver,
-            self.output_data_sender,
-            self.statistics_sender,
-        );
-        let _ = self.settings_sender.send(settings)?;
-        Ok(ActiveConnection {
-            _handle: handle,
-            packet_sender,
-        })
+    async fn reject_connection(
+        &mut self,
+        session_id: SessionId,
+        packet: Option<(Packet, SocketAddr)>,
+    ) -> Result<usize, ()> {
+        assert!(!self.pending_connections.contains_key(&session_id));
+        let _ = self.pending_connections.remove(&session_id);
+        let packet = packet.ok_or(())?;
+        self.socket.send(packet).await.ok().ok_or(())
+    }
+
+    async fn open_connection(
+        &mut self,
+        session_id: SessionId,
+        connection: Box<(Option<(Packet, SocketAddr)>, Connection)>,
+    ) -> Result<usize, ()> {
+        assert!(!self.open_connections.contains_key(&session_id));
+        let (packet, connection) = *connection;
+        let pending = self.pending_connections.remove(&session_id).ok_or(())?;
+        let active = pending.transition_to_open(&self.socket, connection)?;
+        let _ = self.open_connections.insert(session_id, active);
+        match packet {
+            Some(packet) => self.socket.send(packet).await.ok().ok_or(()),
+            None => Ok(0),
+        }
+    }
+
+    async fn delegate_packet(
+        &mut self,
+        session_id: SessionId,
+        packet: (Packet, SocketAddr),
+    ) -> Result<(), ()> {
+        let conn = self.open_connections.get_mut(&session_id).ok_or(())?;
+        conn.send(packet).await
+    }
+
+    fn drop_connection(&mut self, session_id: SessionId) -> Result<(), ()> {
+        match self.open_connections.remove(&session_id) {
+            Some(_) => Ok(()),
+            None => Err(()),
+        }
     }
 }
