@@ -155,8 +155,7 @@ mod tests {
     fn validation() {
         let result = Sender {
             flow_control_window_size: 31,
-            ..
-            Default::default()
+            ..Default::default()
         };
 
         assert_eq!(result.try_validate(), Err(FlowControlWindowMin(31)));

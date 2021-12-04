@@ -30,26 +30,45 @@ mod tests {
 
     #[test]
     fn into() {
-        let caller = CallerOptions::new("127.0.0.1:42", "stream ID").unwrap()
-            .with(Connect::default()).unwrap()
-            .with(Session::default()).unwrap()
-            .with(Encryption::default()).unwrap()
-            .with( Sender::default()).unwrap()
-            .with(Receiver::default()).unwrap();
+        let caller = CallerOptions::new("127.0.0.1:42", "stream ID")
+            .unwrap()
+            .with(Connect::default())
+            .unwrap()
+            .with(Session::default())
+            .unwrap()
+            .with(Encryption::default())
+            .unwrap()
+            .with(Sender::default())
+            .unwrap()
+            .with(Receiver::default())
+            .unwrap();
 
-        let listener = ListenerOptions::new(42).unwrap()
-            .with( Connect::default()).unwrap()
-            .with(Session::default()).unwrap()
-            .with3(Encryption::default(), Sender::default(), Receiver::default()).unwrap();
+        let listener = ListenerOptions::new(42)
+            .unwrap()
+            .with(Connect::default())
+            .unwrap()
+            .with(Session::default())
+            .unwrap()
+            .with3(
+                Encryption::default(),
+                Sender::default(),
+                Receiver::default(),
+            )
+            .unwrap();
 
-        let rendezvous = RendezvousOptions::new("127.0.0.1:42").unwrap()
-            .with(Connect::default()).unwrap()
-            .with(Session::default()).unwrap()
-            .with(Encryption::default()).unwrap()
-            .with2( Sender::default(), Receiver::default()).unwrap();
+        let rendezvous = RendezvousOptions::new("127.0.0.1:42")
+            .unwrap()
+            .with(Connect::default())
+            .unwrap()
+            .with(Session::default())
+            .unwrap()
+            .with(Encryption::default())
+            .unwrap()
+            .with2(Sender::default(), Receiver::default())
+            .unwrap();
 
-        let _ : BindOptions = caller.into();
-        let _ : BindOptions = listener.into();
-        let _ : BindOptions = rendezvous.into();
+        let _: BindOptions = caller.into();
+        let _: BindOptions = listener.into();
+        let _: BindOptions = rendezvous.into();
     }
 }

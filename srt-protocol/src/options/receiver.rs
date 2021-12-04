@@ -123,8 +123,7 @@ mod tests {
     fn validation() {
         let result = Receiver {
             buffer_size: 46591,
-            ..
-            Default::default()
+            ..Default::default()
         };
 
         assert_eq!(result.try_validate(), Err(ReceiveBufferMin(46591)));
