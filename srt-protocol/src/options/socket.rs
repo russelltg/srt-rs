@@ -101,7 +101,7 @@ mod test {
                 ..Default::default()
             })?
             .with(Encryption {
-                key_size: KeySize::Bytes24,
+                key_size: KeySize::AES192,
                 passphrase: "this is a passphrase".try_into().ok(),
                 ..Default::default()
             })?
@@ -124,7 +124,7 @@ mod test {
                 ..Default::default()
             },
             encryption: Encryption {
-                key_size: KeySize::Bytes24,
+                key_size: KeySize::AES192,
                 passphrase: "this is a passphrase".try_into().ok(),
                 ..Default::default()
             },

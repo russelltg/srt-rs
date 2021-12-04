@@ -199,7 +199,7 @@ mod test {
 
     fn key_settings() -> KeySettings {
         KeySettings {
-            key_size: KeySize::Bytes16,
+            key_size: KeySize::AES128,
             passphrase: "password123".into(),
         }
     }
@@ -244,7 +244,7 @@ mod test {
     #[test]
     fn bad_password() {
         let key_settings = &KeySettings {
-            key_size: KeySize::Bytes16,
+            key_size: KeySize::AES128,
             passphrase: "badpassword".into(),
         };
         let key_material = KeyingMaterialMessage {

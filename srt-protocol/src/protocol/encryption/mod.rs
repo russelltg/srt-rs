@@ -189,7 +189,7 @@ mod tests {
 
     fn key_settings() -> KeySettings {
         KeySettings {
-            key_size: KeySize::Bytes24,
+            key_size: KeySize::AES192,
             passphrase: "1234567890".into(),
         }
     }

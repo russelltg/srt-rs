@@ -17,10 +17,10 @@ pub struct Encryption {
     ///
     /// Possible values:
     ///
-    ///     0  = PBKEYLEN (default value)
-    ///     16 = AES-128 (effective value)
-    ///     24 = AES-192
-    ///     32 = AES-256
+    ///  0  = PBKEYLEN (default value)
+    ///  16 = AES-128 (effective value)
+    ///  24 = AES-192
+    ///  32 = AES-256
     ///
     /// The use is slightly different in 1.2.0 (HSv4), and since 1.3.0 (HSv5):
     ///
@@ -203,18 +203,30 @@ impl Debug for Passphrase {
 // https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md#srto_pbkeylen
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum KeySize {
-    Bytes16,
-    Bytes24,
-    Bytes32,
+    Unspecified,
+    AES128,
+    AES192,
+    AES256,
 }
 
 impl KeySize {
+    pub fn as_raw(self) -> u8 {
+        use KeySize::*;
+        match self {
+            Unspecified => 0,
+            AES128 => 16,
+            AES192 => 24,
+            AES256 => 32,
+        }
+    }
+
     pub fn as_usize(self) -> usize {
         use KeySize::*;
         match self {
-            Bytes16 => 16,
-            Bytes24 => 24,
-            Bytes32 => 32,
+            Unspecified => 16,
+            AES128 => 16,
+            AES192 => 24,
+            AES256 => 32,
         }
     }
 }
@@ -225,9 +237,10 @@ impl TryFrom<u8> for KeySize {
     fn try_from(value: u8) -> Result<Self, OptionsError> {
         use KeySize::*;
         match value {
-            16 => Ok(Bytes16),
-            24 => Ok(Bytes24),
-            32 => Ok(Bytes32),
+            0 => Ok(Unspecified),
+            16 => Ok(AES128),
+            24 => Ok(AES192),
+            32 => Ok(AES256),
             value => Err(OptionsError::InvalidKeySize(value)),
         }
     }
@@ -235,7 +248,7 @@ impl TryFrom<u8> for KeySize {
 
 impl Default for KeySize {
     fn default() -> Self {
-        KeySize::Bytes16
+        KeySize::Unspecified
     }
 }
 

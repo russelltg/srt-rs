@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures::{stream, SinkExt, Stream, StreamExt};
 use log::info;
 
-use srt_tokio::{options, SocketStatistics, SrtSocket};
+use srt_tokio::{SocketStatistics, SrtSocket, options::*};
 
 fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
     let message = Bytes::from(vec![5; 1024]);
@@ -27,8 +27,7 @@ enum Select {
 
 #[tokio::test]
 async fn high_bandwidth() -> Result<(), Error> {
-    use srt_protocol::options::LiveBandwidthMode::Estimated;
-
+    use srt_protocol::options::LiveBandwidthMode::*;
     let _ = pretty_env_logger::try_init();
 
     let sender_fut = async {
@@ -52,14 +51,15 @@ async fn high_bandwidth() -> Result<(), Error> {
 
     let recv_fut = async {
         let mut sock = SrtSocket::new()
-            .with(options::Session {
-                statistics_interval: Duration::from_secs(2),
-                ..Default::default()
-            })
-            .with(options::Receiver {
-                buffer_size: 8192 * 10,
-                ..Default::default()
-            })
+            .with2(
+        Receiver{
+                   buffer_size: 8192 * 10,
+                   ..Default::default()
+               },
+        Session {
+                    statistics_interval: Duration::from_secs(2),
+                    ..Default::default()
+                })
             .latency(Duration::from_millis(150))
             .local_port(6654)
             .listen()

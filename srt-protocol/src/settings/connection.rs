@@ -59,11 +59,7 @@ impl From<options::SocketOptions> for ConnInitSettings {
                 .passphrase
                 .as_ref()
                 .map(|passphrase| KeySettings {
-                    key_size: match options.encryption.key_size {
-                        options::KeySize::Bytes16 => KeySize::Bytes16,
-                        options::KeySize::Bytes24 => KeySize::Bytes24,
-                        options::KeySize::Bytes32 => KeySize::Bytes32,
-                    },
+                    key_size: options.encryption.key_size,
                     passphrase: passphrase.to_string().try_into().unwrap(),
                 }),
             key_refresh: KeyMaterialRefreshSettings::new(
