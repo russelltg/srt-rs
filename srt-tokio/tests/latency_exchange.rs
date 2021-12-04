@@ -14,7 +14,7 @@ async fn test_latency_exchange(
     let connecter = SrtSocket::new()
         .send_latency(connecter_send_latency)
         .receive_latency(connecter_recv_latency)
-        .call("127.0.0.1:4000", "");
+        .call("127.0.0.1:4000", None);
 
     let listener = SrtSocket::new()
         .local_port(4000)

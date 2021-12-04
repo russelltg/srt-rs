@@ -29,7 +29,7 @@ pub struct NewSrtSocket(SocketOptions, Option<UdpSocket>);
 /// # async fn main() -> Result<(), io::Error> {
 /// let (a, b) = futures::try_join!(
 ///     SrtSocket::new().local_ip("127.0.0.1".parse().unwrap()).local_port(3333).listen(),
-///     SrtSocket::new().call("127.0.0.1:3333", ""),
+///     SrtSocket::new().call("127.0.0.1:3333", Some("stream ID")),
 /// )?;
 /// # Ok(())
 /// # }
@@ -148,7 +148,7 @@ impl NewSrtSocket {
     pub async fn call(
         self,
         remote_address: impl ToSocketAddrs,
-        stream_id: impl Into<String>,
+        stream_id: Option<&str>,
     ) -> Result<SrtSocket, io::Error> {
         let options = CallerOptions::new(remote_address, stream_id)?.with(self.0)?;
         Self::bind(options.into(), self.1).await

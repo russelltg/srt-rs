@@ -6,24 +6,29 @@ use super::*;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallerOptions {
     pub remote: SocketAddr,
-    pub stream_id: StreamId,
+    pub stream_id: Option<StreamId>,
     pub socket: SocketOptions,
 }
 
 impl CallerOptions {
     pub fn new(
         remote: impl ToSocketAddrs,
-        stream_id: impl Into<String>,
+        stream_id: Option<&str>,
     ) -> Result<Valid<Self>, OptionsError> {
         let remote = remote
             .to_socket_addrs()
             .map_err(|_| OptionsError::InvalidRemoteAddress)?
             .next()
             .ok_or(OptionsError::InvalidRemoteAddress)?;
-        let stream_id = stream_id
-            .into()
-            .try_into()
-            .map_err(OptionsError::InvalidStreamId)?;
+        let stream_id = match stream_id {
+            Some(s) => Some(
+                s.to_string()
+                    .try_into()
+                    .map_err(OptionsError::InvalidStreamId)?,
+            ),
+            None => None,
+        };
+
         Self {
             remote,
             stream_id,

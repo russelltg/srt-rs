@@ -11,7 +11,7 @@ async fn receiver_timeout() {
     let _ = pretty_env_logger::try_init();
 
     let a = SrtSocket::new().local_port(1876).listen();
-    let b = SrtSocket::new().call("127.0.0.1:1876", "");
+    let b = SrtSocket::new().call("127.0.0.1:1876", None);
 
     const ITERS: usize = 30;
 

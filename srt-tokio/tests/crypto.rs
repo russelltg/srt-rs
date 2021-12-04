@@ -16,7 +16,7 @@ async fn test_crypto(size: u8) {
 
     let recvr = SrtSocket::new()
         .encryption(size, "password123")
-        .call("127.0.0.1:2000", "");
+        .call("127.0.0.1:2000", None);
 
     let t = spawn(async move {
         let mut sender = sender.await.unwrap();

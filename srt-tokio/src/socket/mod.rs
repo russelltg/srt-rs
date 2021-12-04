@@ -92,7 +92,7 @@ impl SrtSocket {
                     options.remote,
                     options.socket.connect.local_ip,
                     options.socket.clone().into(),
-                    Some(options.stream_id.to_string()),
+                    options.stream_id.as_ref().map(|s| s.to_string()),
                     rand::random(),
                 )
                 .await?

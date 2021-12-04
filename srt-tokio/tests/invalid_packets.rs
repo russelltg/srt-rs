@@ -15,7 +15,7 @@ async fn invalid_packets() {
     let sender = async {
         let mut sender = SrtSocket::new()
             .local_port(8877)
-            .call("127.0.0.1:8876", "")
+            .call("127.0.0.1:8876", None)
             .await
             .unwrap();
 

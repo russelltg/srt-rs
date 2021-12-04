@@ -30,7 +30,7 @@ mod tests {
 
     #[test]
     fn into() {
-        let caller = CallerOptions::new("127.0.0.1:42", "stream ID")
+        let caller = CallerOptions::new("127.0.0.1:42", Some("stream ID"))
             .unwrap()
             .with(Connect::default())
             .unwrap()

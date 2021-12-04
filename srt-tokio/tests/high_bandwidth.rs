@@ -34,7 +34,7 @@ async fn high_bandwidth() -> Result<(), Error> {
         let mut sock = SrtSocket::new()
             .latency(Duration::from_millis(150))
             .bandwidth(Estimated { overhead: 20 })
-            .call("127.0.0.1:6654", "")
+            .call("127.0.0.1:6654", None)
             .await?;
 
         const RATE_MBPS: u64 = 50;

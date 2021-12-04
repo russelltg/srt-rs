@@ -15,7 +15,7 @@ async fn message_splitting() -> Result<()> {
 
     let sender = SrtSocket::new()
         .latency(Duration::from_secs(2))
-        .call("127.0.0.1:11124", "");
+        .call("127.0.0.1:11124", None);
 
     let recvr = SrtSocket::new()
         .latency(Duration::from_secs(2))

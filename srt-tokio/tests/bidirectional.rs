@@ -11,7 +11,7 @@ async fn bidirectional() {
 
     const ITERS: u32 = 1_000;
 
-    let a = SrtSocket::bind(CallerOptions::new("127.0.0.1:5000", "").unwrap().into());
+    let a = SrtSocket::bind(CallerOptions::new("127.0.0.1:5000", None).unwrap().into());
     let b = SrtSocket::bind(ListenerOptions::new(5000).unwrap().into());
 
     let mut join_handles = vec![];
