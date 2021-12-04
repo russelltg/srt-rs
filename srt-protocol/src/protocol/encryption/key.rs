@@ -124,7 +124,7 @@ impl EncryptionKey {
             KeySize::AES128 => Bytes16(new_key()),
             KeySize::AES192 => Bytes24(new_key()),
             KeySize::AES256 => Bytes32(new_key()),
-            KeySize::Unspecified => Bytes16(new_key())
+            KeySize::Unspecified => Bytes16(new_key()),
         }
     }
 
