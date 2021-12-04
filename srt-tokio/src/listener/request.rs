@@ -5,29 +5,9 @@ use futures::{
     channel::{mpsc, oneshot},
     SinkExt,
 };
-use srt_protocol::settings::KeySettings;
-use srt_protocol::{connection::ConnectionSettings, listener::*, packet::*};
+use srt_protocol::{connection::ConnectionSettings, listener::*, packet::*, settings::KeySettings};
 
 use crate::{watch, SocketStatistics, SrtSocket};
-
-pub fn new_connection_request(
-    session_id: SessionId,
-    response_sender: mpsc::Sender<(SessionId, AccessControlResponse)>,
-    request: AccessControlRequest,
-    settings: oneshot::Receiver<ConnectionSettings>,
-    input_data: mpsc::Sender<(Instant, Bytes)>,
-    output_data: mpsc::Receiver<(Instant, Bytes)>,
-    statistics: watch::Receiver<SocketStatistics>,
-) -> ConnectionRequest {
-    ConnectionRequest {
-        response_sender: ResponseSender(session_id, response_sender),
-        request,
-        settings,
-        output_data,
-        input_data,
-        statistics,
-    }
-}
 
 #[derive(Debug)]
 pub struct ConnectionRequest {
@@ -40,6 +20,25 @@ pub struct ConnectionRequest {
 }
 
 impl ConnectionRequest {
+    pub(crate) fn new(
+        session_id: SessionId,
+        response_sender: mpsc::Sender<(SessionId, AccessControlResponse)>,
+        request: AccessControlRequest,
+        settings: oneshot::Receiver<ConnectionSettings>,
+        input_data: mpsc::Sender<(Instant, Bytes)>,
+        output_data: mpsc::Receiver<(Instant, Bytes)>,
+        statistics: watch::Receiver<SocketStatistics>,
+    ) -> Self {
+        Self {
+            response_sender: ResponseSender(session_id, response_sender),
+            request,
+            settings,
+            output_data,
+            input_data,
+            statistics,
+        }
+    }
+
     pub fn local_socket_id(&self) -> SocketId {
         self.request.local_socket_id
     }

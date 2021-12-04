@@ -20,8 +20,6 @@ use tokio::{task::JoinHandle, time::sleep_until};
 
 use crate::{net::PacketSocket, watch, SocketStatistics, SrtSocket};
 
-use super::request::new_connection_request;
-
 use super::ConnectionRequest;
 
 pub struct SrtListenerState {
@@ -180,14 +178,18 @@ impl PendingApproval {
             statistics_sender,
         };
 
-        let request = new_connection_request(
+        let settings = settings_receiver;
+        let input_data = input_data_sender;
+        let output_data = output_data_receiver;
+        let statistics = statistics_receiver;
+        let request = ConnectionRequest::new(
             session_id,
             response_sender,
             request,
-            settings_receiver,
-            input_data_sender,
-            output_data_receiver,
-            statistics_receiver,
+            settings,
+            input_data,
+            output_data,
+            statistics,
         );
 
         let _ = request_sender.send(request).await?;
