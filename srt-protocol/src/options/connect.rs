@@ -1,13 +1,13 @@
-use std::net::{IpAddr, Ipv4Addr};
-use std::time::Duration;
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    time::Duration,
+};
 
 use super::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Connect {
-    pub local_ip: IpAddr,
-
-    pub local_port: u16,
+    pub local: SocketAddr,
 
     /// Connect timeout. This option applies to the caller and rendezvous connection modes.
     /// For the rendezvous mode (see SRTO_RENDEZVOUS) the effective connection timeout will be 10 times
@@ -21,8 +21,7 @@ impl Connect {}
 impl Default for Connect {
     fn default() -> Self {
         Self {
-            local_ip: Ipv4Addr::UNSPECIFIED.into(),
-            local_port: 0,
+            local: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0),
             timeout: Duration::from_secs(3),
         }
     }

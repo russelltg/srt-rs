@@ -1,5 +1,4 @@
 use super::*;
-use std::net::SocketAddr;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SocketOptions {
@@ -13,10 +12,6 @@ pub struct SocketOptions {
 impl SocketOptions {
     pub fn new() -> Valid<Self> {
         Self::default().try_validate().unwrap()
-    }
-
-    pub fn local_address(&self) -> SocketAddr {
-        SocketAddr::new(self.connect.local_ip, self.connect.local_port)
     }
 }
 

@@ -1,11 +1,7 @@
-use std::convert::TryInto;
-use std::{
-    io,
-    net::{IpAddr, ToSocketAddrs},
-    time::Duration,
-};
+use std::net::SocketAddr;
+use std::{convert::TryInto, io, net::IpAddr, time::Duration};
 
-use tokio::net::UdpSocket;
+use tokio::net::{lookup_host, ToSocketAddrs, UdpSocket};
 
 use crate::options::*;
 
@@ -28,7 +24,7 @@ pub struct NewSrtSocket(SocketOptions, Option<UdpSocket>);
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), io::Error> {
 /// let (a, b) = futures::try_join!(
-///     SrtSocket::new().local_ip("127.0.0.1".parse().unwrap()).local_port(3333).listen(),
+///     SrtSocket::new().listen(":3333"),
 ///     SrtSocket::new().call("127.0.0.1:3333", Some("stream ID")),
 /// )?;
 /// # Ok(())
@@ -47,11 +43,11 @@ pub struct NewSrtSocket(SocketOptions, Option<UdpSocket>);
 ///     SrtSocket::new()
 ///         .set(|options| {
 ///             options.connect.timeout = Duration::from_secs(2);
-///             options.connect.local_port = 4444;
 ///             options.receiver.buffer_size = 1200000;
 ///             options.sender.max_payload_size = 1200;
 ///             options.session.peer_idle_timeout = Duration::from_secs(5);
 ///         })
+///         .local_port(4444)
 ///         .rendezvous("127.0.0.1:5555"),
 /// )?;
 /// # Ok(())
@@ -63,14 +59,25 @@ pub struct NewSrtSocket(SocketOptions, Option<UdpSocket>);
 impl NewSrtSocket {
     /// Sets the local address of the socket. This can be used to bind to just a specific network adapter instead of the default of all adapters.
     pub fn local_ip(mut self, ip: IpAddr) -> Self {
-        self.0.connect.local_ip = ip;
-
+        let local = self.0.connect.local;
+        self.0.connect.local = SocketAddr::new(ip, local.port());
         self
     }
 
     /// Sets the port to bind to. In general, to be used for [`Listen`] and [`Rendezvous`], but generally not [`Call`].
     pub fn local_port(mut self, port: u16) -> Self {
-        self.0.connect.local_port = port;
+        let local = self.0.connect.local;
+        self.0.connect.local = SocketAddr::new(local.ip(), port);
+        self
+    }
+
+    /// Sets the local address (ip:port) to bind to. In general, to be used for [`Listen`] and [`Rendezvous`], but generally not [`Call`].
+    pub fn local(mut self, address: impl TryInto<SocketAddress>) -> Self {
+        let address = address
+            .try_into()
+            .map_err(|_| OptionsError::InvalidLocalAddress)
+            .unwrap();
+        self.0.connect.local = address.into();
         self
     }
 
@@ -124,24 +131,13 @@ impl NewSrtSocket {
         self
     }
 
-    pub fn with2<O1, O2>(mut self, options1: O1, options2: O2) -> Self
-    where
-        SocketOptions: OptionsOf<O1> + OptionsOf<O2>,
-        O1: Validation<Error = OptionsError>,
-        O2: Validation<Error = OptionsError>,
-    {
-        self.0.set_options(options1);
-        self.0.set_options(options2);
-        self
-    }
-
     pub fn set(mut self, set_fn: impl FnOnce(&mut SocketOptions)) -> Self {
         set_fn(&mut self.0);
         self
     }
 
-    pub async fn listen(self) -> Result<SrtSocket, io::Error> {
-        let options = ListenerOptions::new(self.0.connect.local_port)?.with(self.0)?;
+    pub async fn listen(self, local: impl TryInto<SocketAddress>) -> Result<SrtSocket, io::Error> {
+        let options = ListenerOptions::with(local, self.0)?;
         Self::bind(options.into(), self.1).await
     }
 
@@ -150,7 +146,11 @@ impl NewSrtSocket {
         remote_address: impl ToSocketAddrs,
         stream_id: Option<&str>,
     ) -> Result<SrtSocket, io::Error> {
-        let options = CallerOptions::new(remote_address, stream_id)?.with(self.0)?;
+        let address = lookup_host(remote_address)
+            .await?
+            .next()
+            .ok_or(OptionsError::InvalidRemoteAddress)?;
+        let options = CallerOptions::with(address, stream_id, self.0)?;
         Self::bind(options.into(), self.1).await
     }
 
@@ -158,7 +158,11 @@ impl NewSrtSocket {
         self,
         remote_address: impl ToSocketAddrs,
     ) -> Result<SrtSocket, io::Error> {
-        let options = RendezvousOptions::new(remote_address)?.with(self.0)?;
+        let address = lookup_host(remote_address)
+            .await?
+            .next()
+            .ok_or(OptionsError::InvalidRemoteAddress)?;
+        let options = RendezvousOptions::with(address, self.0)?;
         Self::bind(options.into(), self.1).await
     }
 

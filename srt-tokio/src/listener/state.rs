@@ -24,15 +24,15 @@ pub struct SrtListenerState {
     open_connections: HashMap<SessionId, OpenConnection>,
 }
 
-// TODO: allow configuring using options module
 impl SrtListenerState {
     pub fn new(
         socket: PacketSocket,
+        local_address: SocketAddr,
+        settings: ConnInitSettings,
         request_sender: mpsc::Sender<ConnectionRequest>,
         statistics_sender: watch::Sender<ListenerStatistics>,
     ) -> Self {
-        let settings = ConnInitSettings::default();
-        let listener = MultiplexListener::new(Instant::now(), settings);
+        let listener = MultiplexListener::new(Instant::now(), local_address, settings);
         let (response_sender, response_receiver) = mpsc::channel(100);
         Self {
             listener,

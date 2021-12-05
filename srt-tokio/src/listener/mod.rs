@@ -1,14 +1,16 @@
+mod builder;
 mod session;
 mod state;
 
-use std::io;
+use std::{io, sync::Arc};
 
 use futures::{channel::mpsc, prelude::*};
 use srt_protocol::settings::ConnInitSettings;
-use tokio::{net::ToSocketAddrs, task::JoinHandle};
+use tokio::{net::UdpSocket, task::JoinHandle};
 
-use super::{net::PacketSocket, watch};
+use super::{net::PacketSocket, options::*, watch};
 
+pub use builder::NewSrtListener;
 pub use session::ConnectionRequest;
 pub use srt_protocol::statistics::ListenerStatistics;
 
@@ -20,14 +22,34 @@ pub struct SrtListener {
 }
 
 impl SrtListener {
-    pub async fn bind<A: ToSocketAddrs>(address: A) -> Result<Self, io::Error> {
-        use state::SrtListenerState;
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new() -> NewSrtListener {
+        NewSrtListener::default()
+    }
 
-        let settings = ConnInitSettings::default();
+    pub async fn bind(options: Valid<ListenerOptions>) -> Result<Self, io::Error> {
+        let socket = UdpSocket::bind(options.socket.connect.local).await?;
+        Self::bind_with_socket(options, socket).await
+    }
+
+    pub async fn bind_with_socket(
+        options: Valid<ListenerOptions>,
+        socket: UdpSocket,
+    ) -> Result<Self, io::Error> {
+        use state::SrtListenerState;
+        let socket_options = options.into_value().socket;
+        let local_address = socket.local_addr()?;
+        let socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
+        let settings = ConnInitSettings::from(socket_options);
         let (request_sender, request_receiver) = mpsc::channel(100);
         let (statistics_sender, statistics_receiver) = watch::channel();
-        let socket = PacketSocket::bind(address, 1024 * 1024).await?;
-        let state = SrtListenerState::new(socket, request_sender, statistics_sender);
+        let state = SrtListenerState::new(
+            socket,
+            local_address,
+            settings.clone(),
+            request_sender,
+            statistics_sender,
+        );
         let task = tokio::spawn(async move {
             state.run_loop().await;
         });
@@ -84,7 +106,7 @@ mod test {
         let (finished_send, finished_recv) = oneshot::channel();
 
         let listener = tokio::spawn(async {
-            let mut server = SrtListener::bind("127.0.0.1:2000").await.unwrap();
+            let mut server = SrtListener::new().bind("127.0.0.1:2000").await.unwrap();
             let mut statistics = server.statistics().clone().fuse();
 
             let mut incoming = server.incoming().fuse();

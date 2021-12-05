@@ -1,3 +1,4 @@
+mod address;
 mod bandwidth;
 mod bind;
 mod caller;
@@ -14,6 +15,7 @@ mod srt_version;
 mod stream_id;
 mod validation;
 
+pub use address::*;
 pub use bandwidth::*;
 pub use bind::*;
 pub use caller::*;

@@ -18,9 +18,8 @@ async fn single_packet_tsbpd() {
         .call("127.0.0.1:3000", None);
 
     let recvr = SrtSocket::new()
-        .local_port(3000)
         .latency(Duration::from_secs(2))
-        .listen();
+        .listen(":3000");
 
     // init the connection
     let (mut recvr, mut sender) = futures::try_join!(sender, recvr).unwrap();

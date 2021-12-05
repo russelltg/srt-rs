@@ -1,11 +1,10 @@
 mod builder;
 mod state;
 
-use std::net::SocketAddr;
-use std::sync::Arc;
 use std::{
     io,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Instant,
 };
@@ -22,8 +21,7 @@ use srt_protocol::{
     options::{OptionsError, OptionsOf, SocketOptions, Validation},
     packet::*,
 };
-use tokio::net::UdpSocket;
-use tokio::{task::JoinHandle, time::sleep_until};
+use tokio::{net::UdpSocket, task::JoinHandle, time::sleep_until};
 
 use super::{net::*, options::BindOptions, watch};
 
@@ -73,7 +71,7 @@ impl SrtSocket {
             Call(options) => &options.socket,
             Rendezvous(options) => &options.socket,
         };
-        let socket = UdpSocket::bind(socket_options.local_address()).await?;
+        let socket = UdpSocket::bind(socket_options.connect.local).await?;
 
         Self::bind_with_socket(options, socket).await
     }
@@ -90,7 +88,7 @@ impl SrtSocket {
                 crate::pending_connection::connect(
                     &mut socket,
                     options.remote,
-                    options.socket.connect.local_ip,
+                    options.socket.connect.local.ip(),
                     options.socket.clone().into(),
                     options.stream_id.as_ref().map(|s| s.to_string()),
                     rand::random(),
@@ -100,10 +98,7 @@ impl SrtSocket {
             Rendezvous(options) => {
                 crate::pending_connection::rendezvous(
                     &mut socket,
-                    SocketAddr::new(
-                        options.socket.connect.local_ip,
-                        options.socket.connect.local_port,
-                    ),
+                    options.socket.connect.local,
                     options.remote,
                     options.socket.clone().into(),
                     rand::random(),

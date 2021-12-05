@@ -1,7 +1,8 @@
 mod input;
 mod session;
+mod statistics;
 
-use std::{collections::HashMap, io::Error, net::SocketAddr, time::Duration, time::Instant};
+use std::{collections::HashMap, fmt::Debug, net::SocketAddr, time::Duration, time::Instant};
 
 use crate::{packet::*, protocol::time::Timer, settings::ConnInitSettings};
 
@@ -9,17 +10,15 @@ use session::*;
 
 pub use crate::protocol::pending_connection::{AccessControlRequest, AccessControlResponse};
 pub use input::*;
+pub use statistics::*;
 
 #[derive(Clone, Debug)]
 pub struct ListenerSettings {}
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ListenerStatistics {
-    rx_errors: u64,
-}
-
 #[derive(Debug)]
 pub struct MultiplexListener {
+    start_time: Instant,
+    local_address: SocketAddr,
     settings: ConnInitSettings,
     sessions: HashMap<SessionId, SessionState>,
     stats: ListenerStatistics,
@@ -27,8 +26,10 @@ pub struct MultiplexListener {
 }
 
 impl MultiplexListener {
-    pub fn new(now: Instant, settings: ConnInitSettings) -> Self {
+    pub fn new(now: Instant, local_address: SocketAddr, settings: ConnInitSettings) -> Self {
         Self {
+            start_time: now,
+            local_address,
             settings,
             sessions: Default::default(),
             stats: Default::default(),
@@ -36,31 +37,47 @@ impl MultiplexListener {
         }
     }
 
-    pub fn handle_input(&mut self, now: Instant, input: Input) -> Action {
-        match input {
+    pub fn handle_input<'s, 'a>(&'s mut self, now: Instant, input: Input) -> Action<'a>
+    where
+        'a: 's,
+    {
+        self.debug(now, "input", &input);
+
+        let action = match input {
             Input::Packet(packet) => self.handle_input_packet(now, packet),
             Input::AccessResponse(response) => self.handle_input_access_response(now, response),
             Input::Timer => self.handle_timer(now),
             Input::Success(result_of) => self.handle_success(now, result_of),
             Input::Failure(result_of) => self.handle_failure(now, result_of),
-        }
+        };
+
+        self.debug(now, "action", &action);
+
+        action
     }
 
-    fn handle_input_packet(&mut self, now: Instant, packet: ReceivePacketResult) -> Action {
-        use ReceivePacketError::*;
+    fn handle_input_packet<'s, 'a>(
+        &'s mut self,
+        now: Instant,
+        packet: ReceivePacketResult,
+    ) -> Action<'a>
+    where
+        'a: 's,
+    {
         match packet {
             Ok(packet) => self.handle_packet(now, packet),
-            Err(Io(error)) => self.handle_packet_receive_error(now, error),
-            // TODO: maybe record statistics and/or log errors?
-            Err(Parse(_)) => Action::WaitForInput,
+            Err(error) => self.handle_packet_receive_error(now, error),
         }
     }
 
-    fn handle_input_access_response(
-        &mut self,
+    fn handle_input_access_response<'s, 'a>(
+        &'s mut self,
         now: Instant,
         response: Option<(SessionId, AccessControlResponse)>,
-    ) -> Action {
+    ) -> Action<'a>
+    where
+        'a: 's,
+    {
         match response {
             Some((session_id, response)) => {
                 self.handle_access_control_response(now, session_id, response)
@@ -69,7 +86,12 @@ impl MultiplexListener {
         }
     }
 
-    fn handle_packet(&mut self, now: Instant, packet: (Packet, SocketAddr)) -> Action {
+    fn handle_packet<'s, 'a>(&'s mut self, now: Instant, packet: (Packet, SocketAddr)) -> Action<'a>
+    where
+        'a: 's,
+    {
+        self.stats.rx_packets += 1;
+        //self.stats.rx_bytes += packet
         let session_id = SessionId(packet.1, packet.0.dest_sockid());
         let session = match self.sessions.get_mut(&session_id) {
             Some(session) => session,
@@ -82,40 +104,73 @@ impl MultiplexListener {
         session.handle_packet(now, session_id, packet)
     }
 
-    fn handle_packet_receive_error(&mut self, _now: Instant, _error: Error) -> Action {
-        self.stats.rx_errors += 1;
+    fn handle_packet_receive_error<'s, 'a>(
+        &'s mut self,
+        now: Instant,
+        error: ReceivePacketError,
+    ) -> Action<'a>
+    where
+        'a: 's,
+    {
+        self.warn(now, "packet", &error);
+
+        use ReceivePacketError::*;
+        match error {
+            Parse(_) => self.stats.rx_parse_errors += 1,
+            Io(_) => self.stats.rx_io_errors += 1,
+        }
+
         Action::WaitForInput
     }
 
-    fn handle_access_control_response(
-        &mut self,
+    fn handle_access_control_response<'s, 'a>(
+        &'s mut self,
         now: Instant,
         session_id: SessionId,
         response: AccessControlResponse,
-    ) -> Action {
+    ) -> Action<'a>
+    where
+        'a: 's,
+    {
         match self.sessions.get_mut(&session_id) {
             Some(session) => session.handle_access_control_response(now, session_id, response),
             None => Action::DropConnection(session_id),
         }
     }
 
-    fn handle_timer(&mut self, _now: Instant) -> Action {
+    fn handle_timer<'s, 'a>(&'s mut self, _now: Instant) -> Action<'a>
+    where
+        'a: 's,
+    {
         // TODO: create an action that returns an action with an Iterator that ticks time forward
         //  for all the sessions, yielding the results to the I/O loop
         Action::WaitForInput
     }
 
-    fn handle_success(&mut self, _now: Instant, result_of: ResultOf) -> Action {
+    fn handle_success<'s, 'a>(&'s mut self, _now: Instant, result_of: ResultOf) -> Action<'a>
+    where
+        'a: 's,
+    {
         use ResultOf::*;
         match result_of {
-            SendPacket(_) => {}
-            RequestAccess(_) => {}
+            SendPacket(_) => {
+                self.stats.tx_packets += 1;
+            }
+            RequestAccess(_) => {
+                self.stats.cx_inbound += 1;
+            }
             RejectConnection(session_id) => {
+                self.stats.cx_rejected += 1;
                 self.sessions.remove(&session_id);
             }
-            OpenConnection(_) => {}
-            DelegatePacket(_) => {}
+            OpenConnection(_) => {
+                self.stats.cx_opened += 1;
+            }
+            DelegatePacket(_) => {
+                self.stats.delegated_packets += 1;
+            }
             DropConnection(session_id) => {
+                self.stats.cx_dropped += 1;
                 self.sessions.remove(&session_id);
             }
             UpdateStatistics => {}
@@ -123,12 +178,42 @@ impl MultiplexListener {
         Action::WaitForInput
     }
 
-    fn handle_failure(&self, _now: Instant, _result_of: ResultOf) -> Action {
-        todo!()
+    fn handle_failure<'s, 'a>(&'s self, now: Instant, result_of: ResultOf) -> Action<'a>
+    where
+        'a: 's,
+    {
+        self.warn(now, "failure", &result_of);
+
+        // TODO: stats? anything else?
+
+        Action::WaitForInput
     }
 
-    fn handle_close(&mut self) -> Action {
+    fn handle_close<'s, 'a>(&'s mut self) -> Action<'a>
+    where
+        'a: 's,
+    {
         Action::Close
+    }
+
+    fn debug(&self, now: Instant, tag: &str, debug: &impl Debug) {
+        log::debug!(
+            "{:?}|listen:{}|{} - {:?}",
+            TimeSpan::from_interval(self.start_time, now),
+            self.local_address.port(),
+            tag,
+            debug
+        );
+    }
+
+    fn warn(&self, now: Instant, tag: &str, debug: &impl Debug) {
+        log::warn!(
+            "{:?}|listen:{}|{} - {:?}",
+            TimeSpan::from_interval(self.start_time, now),
+            self.local_address.port(),
+            tag,
+            debug
+        );
     }
 }
 
@@ -205,7 +290,8 @@ mod test {
     #[test]
     fn connect() {
         let settings = ConnInitSettings::default();
-        let mut listener = MultiplexListener::new(Instant::now(), settings);
+        let local = "0.0.0.0:2000".parse().unwrap();
+        let mut listener = MultiplexListener::new(Instant::now(), local, settings);
 
         let packet = build_hs_pack(test_induction());
         let action =
@@ -250,7 +336,8 @@ mod test {
     #[test]
     fn reject() {
         let settings = ConnInitSettings::default();
-        let mut listener = MultiplexListener::new(Instant::now(), settings);
+        let local = "127.0.0.1:2000".parse().unwrap();
+        let mut listener = MultiplexListener::new(Instant::now(), local, settings);
 
         let packet = build_hs_pack(test_induction());
         let action =

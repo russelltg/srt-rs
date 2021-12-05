@@ -51,19 +51,13 @@ async fn high_bandwidth() -> Result<(), Error> {
 
     let recv_fut = async {
         let mut sock = SrtSocket::new()
-            .with2(
-                Receiver {
-                    buffer_size: 8192 * 10,
-                    ..Default::default()
-                },
-                Session {
-                    statistics_interval: Duration::from_secs(2),
-                    ..Default::default()
-                },
-            )
+            .with(Receiver {
+                buffer_size: 8192 * 10,
+                ..Default::default()
+            })
+            .set(|options| options.session.statistics_interval = Duration::from_secs(2))
             .latency(Duration::from_millis(150))
-            .local_port(6654)
-            .listen()
+            .listen(":6654")
             .await?
             .fuse();
 

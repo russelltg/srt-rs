@@ -43,7 +43,7 @@ mod tests {
             .with(Receiver::default())
             .unwrap();
 
-        let listener = ListenerOptions::new(42)
+        let listener = ListenerOptions::new(":42")
             .unwrap()
             .with(Connect::default())
             .unwrap()

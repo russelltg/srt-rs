@@ -1,5 +1,5 @@
 use std::convert::TryInto;
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
 
 use super::*;
 
@@ -12,14 +12,23 @@ pub struct CallerOptions {
 
 impl CallerOptions {
     pub fn new(
-        remote: impl ToSocketAddrs,
+        remote: impl TryInto<SocketAddress>,
         stream_id: Option<&str>,
     ) -> Result<Valid<Self>, OptionsError> {
+        let socket = Default::default();
+
+        Self::with(remote, stream_id, socket)
+    }
+
+    pub fn with(
+        remote: impl TryInto<SocketAddress>,
+        stream_id: Option<&str>,
+        socket: SocketOptions,
+    ) -> Result<Valid<CallerOptions>, OptionsError> {
         let remote = remote
-            .to_socket_addrs()
+            .try_into()
             .map_err(|_| OptionsError::InvalidRemoteAddress)?
-            .next()
-            .ok_or(OptionsError::InvalidRemoteAddress)?;
+            .into();
         let stream_id = match stream_id {
             Some(s) => Some(
                 s.to_string()
@@ -32,7 +41,7 @@ impl CallerOptions {
         Self {
             remote,
             stream_id,
-            socket: Default::default(),
+            socket,
         }
         .try_validate()
     }
@@ -42,11 +51,11 @@ impl Validation for CallerOptions {
     type Error = OptionsError;
 
     fn is_valid(&self) -> Result<(), Self::Error> {
-        let local_ip = self.socket.connect.local_ip;
-        if self.remote.ip().is_ipv4() != local_ip.is_ipv4() {
+        let local = &self.socket.connect.local;
+        if self.remote.ip().is_ipv4() != local.ip().is_ipv4() {
             return Err(OptionsError::MismatchedAddressFamilies(
-                self.remote,
-                local_ip,
+                self.remote.ip(),
+                local.ip(),
             ));
         }
         self.socket.is_valid()?;

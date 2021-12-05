@@ -17,10 +17,9 @@ async fn test_latency_exchange(
         .call("127.0.0.1:4000", None);
 
     let listener = SrtSocket::new()
-        .local_port(4000)
         .send_latency(listener_send_latency)
         .receive_latency(listener_recv_latency)
-        .listen();
+        .listen(":4000");
 
     let ((l2c1, c2l1), (l2c2, c2l2)) = futures::join!(
         async move {

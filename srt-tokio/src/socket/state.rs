@@ -7,8 +7,7 @@ use srt_protocol::{
     connection::{Action, DuplexConnection, Input},
     packet::TimeSpan,
 };
-use tokio::task::JoinHandle;
-use tokio::time::sleep_until;
+use tokio::{task::JoinHandle, time::sleep_until};
 
 use crate::{net::PacketSocket, watch, SocketStatistics, SrtSocket};
 

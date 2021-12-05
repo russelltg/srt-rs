@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 use super::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -6,11 +8,20 @@ pub struct ListenerOptions {
 }
 
 impl ListenerOptions {
-    pub fn new(local_port: u16) -> Result<Valid<Self>, OptionsError> {
-        let mut options = Self {
-            socket: Default::default(),
-        };
-        options.socket.connect.local_port = local_port;
+    pub fn new(local: impl TryInto<SocketAddress>) -> Result<Valid<Self>, OptionsError> {
+        Self::with(local, Default::default())
+    }
+
+    pub fn with(
+        local: impl TryInto<SocketAddress>,
+        socket: SocketOptions,
+    ) -> Result<Valid<ListenerOptions>, OptionsError> {
+        let local = local
+            .try_into()
+            .map_err(|_| OptionsError::InvalidLocalAddress)?;
+
+        let mut options = Self { socket };
+        options.socket.connect.local = local.into();
         options.try_validate()
     }
 }
@@ -20,7 +31,7 @@ impl Validation for ListenerOptions {
 
     fn is_valid(&self) -> Result<(), Self::Error> {
         self.socket.is_valid()?;
-        if self.socket.connect.local_port == 0 {
+        if self.socket.connect.local.port() == 0 {
             Err(OptionsError::LocalPortRequiredToListen)
         } else {
             self.is_valid_composite()

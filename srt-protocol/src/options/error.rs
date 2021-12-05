@@ -1,8 +1,4 @@
-use std::io::ErrorKind;
-use std::{
-    io,
-    net::{IpAddr, SocketAddr},
-};
+use std::{io, io::ErrorKind, net::IpAddr};
 
 use crate::options::StreamIdError;
 use thiserror::Error;
@@ -37,10 +33,13 @@ pub enum OptionsError {
     LocalPortRequiredToListen,
 
     #[error("Mismatched remote address and local address family. remote: {0} local {1}")]
-    MismatchedAddressFamilies(SocketAddr, IpAddr),
+    MismatchedAddressFamilies(IpAddr, IpAddr),
 
     #[error("Invalid remote address")]
     InvalidRemoteAddress,
+
+    #[error("Invalid local address")]
+    InvalidLocalAddress,
 
     #[error("{0}")]
     InvalidStreamId(StreamIdError),

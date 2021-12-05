@@ -1,4 +1,4 @@
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::{convert::TryInto, net::SocketAddr};
 
 use super::*;
 
@@ -9,17 +9,20 @@ pub struct RendezvousOptions {
 }
 
 impl RendezvousOptions {
-    pub fn new(remote: impl ToSocketAddrs) -> Result<Valid<Self>, OptionsError> {
+    pub fn new(remote: impl TryInto<SocketAddress>) -> Result<Valid<Self>, OptionsError> {
         let remote = remote
-            .to_socket_addrs()
-            .map_err(|_| OptionsError::InvalidRemoteAddress)?
-            .next()
-            .ok_or(OptionsError::InvalidRemoteAddress)?;
-        Self {
-            remote,
-            socket: Default::default(),
-        }
-        .try_validate()
+            .try_into()
+            .map_err(|_| OptionsError::InvalidRemoteAddress)?;
+        let socket = Default::default();
+
+        Self::with(remote.into(), socket)
+    }
+
+    pub fn with(
+        remote: SocketAddr,
+        socket: SocketOptions,
+    ) -> Result<Valid<RendezvousOptions>, OptionsError> {
+        Self { remote, socket }.try_validate()
     }
 }
 
@@ -27,11 +30,11 @@ impl Validation for RendezvousOptions {
     type Error = OptionsError;
 
     fn is_valid(&self) -> Result<(), Self::Error> {
-        let local_ip = self.socket.connect.local_ip;
-        if self.remote.ip().is_ipv4() != local_ip.is_ipv4() {
+        let local = &self.socket.connect.local;
+        if self.remote.ip().is_ipv4() != local.ip().is_ipv4() {
             return Err(OptionsError::MismatchedAddressFamilies(
-                self.remote,
-                local_ip,
+                self.remote.ip(),
+                local.ip(),
             ));
         }
         self.socket.is_valid()?;
