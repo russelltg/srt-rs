@@ -14,8 +14,6 @@ pub struct NewSrtSocket(SocketOptions, Option<UdpSocket>);
 ///
 /// This is the typical way to create instances of [`SrtSocket`], which implements both `Sink + Stream`, as they can be both receivers and senders.
 ///
-/// You need to decided on a [`ConnInitMethod`] in order to create a [`SrtSocketBuilder`]. See [that documentation](ConnInitMethod) for more details.
-///
 /// # Examples:
 /// Simple:
 /// ```

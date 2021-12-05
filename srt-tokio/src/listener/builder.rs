@@ -9,11 +9,9 @@ use super::SrtListener;
 #[derive(Default)]
 pub struct NewSrtListener(SocketOptions, Option<UdpSocket>);
 
-/// Struct to build sockets.
+/// Struct to build a multiplexed listener.
 ///
-/// This is the typical way to create instances of [`SrtSocket`], which implements both `Sink + Stream`, as they can be both receivers and senders.
-///
-/// You need to decided on a [`ConnInitMethod`] in order to create a [`SrtSocketBuilder`]. See [that documentation](ConnInitMethod) for more details.
+/// This is the typical way to create instances of [`SrtListener`].
 ///
 /// # Examples:
 /// Simple:
