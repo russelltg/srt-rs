@@ -82,7 +82,7 @@ impl Drop for SrtListener {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use std::time::Instant;
 
     use anyhow::Result;
@@ -90,10 +90,10 @@ mod test {
     use futures::{channel::oneshot, future::join_all, prelude::*};
     use log::{debug, info};
 
-    use crate::{ConnectionRequest, ListenerStatistics, SrtListener, SrtSocketBuilder};
+    use crate::{ConnectionRequest, ListenerStatistics, SrtListener, SrtSocket};
 
     #[tokio::test]
-    async fn srt_listener() -> Result<()> {
+    async fn accept_reject() -> Result<()> {
         #[derive(Debug)]
         enum Select {
             Connection(Option<ConnectionRequest>),
@@ -106,7 +106,7 @@ mod test {
         let (finished_send, finished_recv) = oneshot::channel();
 
         let listener = tokio::spawn(async {
-            let mut server = SrtListener::new().bind("127.0.0.1:2000").await.unwrap();
+            let mut server = SrtListener::new().bind("127.0.0.1:4001").await.unwrap();
             let mut statistics = server.statistics().clone().fuse();
 
             let mut incoming = server.incoming().fuse();
@@ -117,20 +117,22 @@ mod test {
                     stats = statistics.next() => Select::Statistics(stats),
                     _ = fused_finish => Select::Finished,
                 );
-
                 match selection {
                     Select::Connection(Some(request)) => {
-                        let mut sender = request.accept(None).await.unwrap();
-
-                        let mut stream = stream::iter(
-                            Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter(),
-                        );
-
-                        tokio::spawn(async move {
-                            sender.send_all(&mut stream).await.unwrap();
-                            sender.close().await.unwrap();
-                            info!("Sender finished");
-                        });
+                        let stream_id = request.stream_id().unwrap();
+                        if stream_id.eq(&"reject".into()) {
+                            let _ = request.reject(42).await.unwrap();
+                        } else {
+                            let mut sender = request.accept(None).await.unwrap();
+                            let mut stream = stream::iter(
+                                Some(Ok((Instant::now(), Bytes::from("hello")))).into_iter(),
+                            );
+                            tokio::spawn(async move {
+                                sender.send_all(&mut stream).await.unwrap();
+                                sender.close().await.unwrap();
+                                info!("Sent");
+                            });
+                        }
                     }
                     Select::Statistics(Some(stats)) => debug!("{:?}", stats),
                     _ => {
@@ -142,20 +144,110 @@ mod test {
 
         // connect 10 clients to it
         let mut join_handles = vec![];
-        for _ in 0..3 {
+        for i in 0..10 {
             join_handles.push(tokio::spawn(async move {
-                let mut recvr = SrtSocketBuilder::new_connect("127.0.0.1:2000")
-                    .connect()
-                    .await
-                    .unwrap();
-                info!("Created connection");
+                info!("Calling: {}", i);
+                let address = "127.0.0.1:4001";
+                if i % 2 > 0 {
+                    let result = SrtSocket::new().call(address, Some("reject")).await;
+                    assert!(result.is_err());
+                    debug!("Rejected: {}", i);
+                } else {
+                    let stream_id = format!("{}", i).to_string();
+                    let mut receiver = SrtSocket::new().call(address, Some(&stream_id)).await.unwrap();
+                    info!("Accepted: {}", i);
+                    let first = receiver.next().await;
+                    assert_eq!(first.unwrap().unwrap().1, "hello");
+                    let second = receiver.next().await;
+                    assert!(second.is_none());
+                    info!("Received: {}", i);
+                }
+            }));
+        }
 
-                let first = recvr.next().await;
-                assert_eq!(first.unwrap().unwrap().1, "asdf");
-                let second = recvr.next().await;
-                assert!(second.is_none());
+        // close the multiplex server when all is done
+        join_all(join_handles).await;
+        info!("all finished");
+        finished_send.send(()).unwrap();
+        listener.await?;
+        Ok(())
+    }
 
-                info!("Connection done");
+
+    #[tokio::test]
+    async fn accept_reject_encryption() -> Result<()> {
+        #[derive(Debug)]
+        enum Select {
+            Connection(Option<ConnectionRequest>),
+            Statistics(Option<ListenerStatistics>),
+            Finished,
+        }
+
+        let _ = pretty_env_logger::try_init();
+
+        let (finished_send, finished_recv) = oneshot::channel();
+
+        let listener = tokio::spawn(async {
+            let mut server = SrtListener::new()
+                .encryption(0, "super secret passcode")
+                .bind("127.0.0.1:4002").await.unwrap();
+            let mut statistics = server.statistics().clone().fuse();
+
+            let mut incoming = server.incoming().fuse();
+            let mut fused_finish = finished_recv.fuse();
+            loop {
+                let selection = futures::select!(
+                    request = incoming.next() => Select::Connection(request),
+                    stats = statistics.next() => Select::Statistics(stats),
+                    _ = fused_finish => Select::Finished,
+                );
+                match selection {
+                    Select::Connection(Some(request)) => {
+                        let stream_id = request.stream_id().expect("stream_id");
+                        if stream_id.eq(&"reject".into()) {
+                            let _ = request.reject(42).await.expect("reject");
+                        } else {
+                            let mut sender = request.accept(None).await.expect("accept");
+                            let mut stream = stream::iter(
+                                Some(Ok((Instant::now(), Bytes::from("hello")))).into_iter(),
+                            );
+                            tokio::spawn(async move {
+                                sender.send_all(&mut stream).await.expect("send_all");
+                                sender.close().await.expect("close");
+                                info!("Sent");
+                            });
+                        }
+                    }
+                    Select::Statistics(Some(stats)) => debug!("{:?}", stats),
+                    _ => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        // connect 10 clients to it
+        let mut join_handles = vec![];
+        for i in 0..10 {
+            join_handles.push(tokio::spawn(async move {
+                info!("Calling: {}", i);
+                let address = "127.0.0.1:4002";
+                if i % 2 == 0 {
+                    let result = SrtSocket::new().call(address, Some("reject")).await;
+                    assert!(result.is_err());
+                    info!("Rejected: {}", i);
+                } else {
+                    let stream_id = format!("{}", i).to_string();
+                    let mut receiver = SrtSocket::new()
+                        .encryption(0, "super secret passcode")
+                        .call(address, Some(&stream_id)).await.expect("call");
+                    info!("Accepted: {}", i);
+                    let first = receiver.next().await;
+                    assert_eq!(first.expect("next error").expect("next no data").1, "hello");
+                    let second = receiver.next().await;
+                    assert!(second.is_none());
+                    info!("Received: {}", i);
+                }
             }));
         }
 

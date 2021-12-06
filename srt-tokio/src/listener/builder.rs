@@ -98,3 +98,34 @@ impl NewSrtListener {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+    use tokio::net::UdpSocket;
+    use srt_protocol::options::{Encryption, KeySize, LiveBandwidthMode};
+    use srt_protocol::options::KeyMaterialRefresh;
+    use crate::SrtListener;
+
+    #[tokio::test]
+    async fn bind() {
+        // just a test to exercise all the builder methods to ensure they don't explode
+        let socket = UdpSocket::bind("0.0.0.0:9999").await.unwrap();
+        let _ = SrtListener::new().with(Encryption{
+                key_size: KeySize::AES256,
+                km_refresh: KeyMaterialRefresh{
+                    period: 1000,
+                    pre_announcement_period: 400
+                },
+                .. Default::default()
+            })
+            .set(|options| options.receiver.buffer_size = 1_000_000)
+            .receive_latency(Duration::from_secs(2))
+            .send_latency(Duration::from_secs(4))
+            .latency(Duration::from_secs(1))
+            .encryption(0, "super secret passcode")
+            .bandwidth(LiveBandwidthMode::Set(1_000_000))
+            .socket(socket)
+            .bind(":9999").await.unwrap();
+    }
+}

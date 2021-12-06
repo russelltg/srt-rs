@@ -2,6 +2,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     time::Instant,
 };
+use std::io::ErrorKind;
 
 use ConnectError::*;
 use ConnectState::*;
@@ -179,6 +180,7 @@ impl Connect {
                 (_, _) => NoAction,
             },
             Err(Io(error)) => Failure(error),
+            Err(Parse(PacketParseError::BadConnectionType(c))) => Failure(std::io::Error::new(ErrorKind::ConnectionReset, Parse(PacketParseError::BadConnectionType(c)))),
             Err(Parse(e)) => NotHandled(ConnectError::ParseFailed(e)),
         }
     }

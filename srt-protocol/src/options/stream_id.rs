@@ -1,5 +1,5 @@
 use std::{
-    convert::{TryFrom, TryInto},
+    convert::TryFrom,
     error::Error,
     fmt::{Debug, Display, Formatter},
     io::{self, ErrorKind},
@@ -71,7 +71,7 @@ impl TryFrom<String> for StreamId {
 
 impl From<&'static str> for StreamId {
     fn from(value: &'static str) -> Self {
-        value.try_into().unwrap()
+        Self::try_from(value.to_string()).unwrap()
     }
 }
 

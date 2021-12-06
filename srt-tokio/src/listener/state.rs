@@ -5,7 +5,6 @@ use std::{
 };
 
 use futures::{channel::mpsc, prelude::*, select, SinkExt};
-use log::debug;
 use srt_protocol::{connection::Connection, listener::*, packet::*, settings::ConnInitSettings};
 use tokio::time::sleep_until;
 
@@ -52,9 +51,7 @@ impl SrtListenerState {
         loop {
             let now = Instant::now();
             let timeout = now + Duration::from_millis(100);
-            debug!("{:?}", input);
             let action = self.listener.handle_input(now, input);
-            debug!("{:?}", action);
             let next = NextInputContext::for_action(&action);
             input = match action {
                 SendPacket(packet) => next.input_from(self.socket.send(packet).await),
@@ -89,7 +86,6 @@ impl SrtListenerState {
         session_id: SessionId,
         request: AccessControlRequest,
     ) -> Result<(), ()> {
-        assert!(!self.pending_connections.contains_key(&session_id));
         let request_sender = &mut self.request_sender;
         let response_sender = self.response_sender.clone();
         let (pending, request) =
@@ -104,10 +100,12 @@ impl SrtListenerState {
         session_id: SessionId,
         packet: Option<(Packet, SocketAddr)>,
     ) -> Result<usize, ()> {
-        assert!(!self.pending_connections.contains_key(&session_id));
         let _ = self.pending_connections.remove(&session_id);
-        let packet = packet.ok_or(())?;
-        self.socket.send(packet).await.ok().ok_or(())
+        if let Some(packet) = packet {
+            self.socket.send(packet).await.ok().ok_or(())
+        } else {
+            Ok(0)
+        }
     }
 
     async fn open_connection(
@@ -115,7 +113,6 @@ impl SrtListenerState {
         session_id: SessionId,
         connection: Box<(Option<(Packet, SocketAddr)>, Connection)>,
     ) -> Result<usize, ()> {
-        assert!(!self.open_connections.contains_key(&session_id));
         let (packet, connection) = *connection;
         let pending = self.pending_connections.remove(&session_id).ok_or(())?;
         let active = pending.transition_to_open(&self.socket, connection)?;
