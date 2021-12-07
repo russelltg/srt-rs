@@ -22,8 +22,7 @@ pub struct SrtListener {
 }
 
 impl SrtListener {
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new() -> NewSrtListener {
+    pub fn builder() -> NewSrtListener {
         NewSrtListener::default()
     }
 
@@ -106,7 +105,7 @@ mod tests {
         let (finished_send, finished_recv) = oneshot::channel();
 
         let listener = tokio::spawn(async {
-            let mut server = SrtListener::new().bind("127.0.0.1:4001").await.unwrap();
+            let mut server = SrtListener::builder().bind("127.0.0.1:4001").await.unwrap();
             let mut statistics = server.statistics().clone().fuse();
 
             let mut incoming = server.incoming().fuse();
@@ -188,7 +187,7 @@ mod tests {
         let (finished_send, finished_recv) = oneshot::channel();
 
         let listener = tokio::spawn(async {
-            let mut server = SrtListener::new()
+            let mut server = SrtListener::builder()
                 .encryption(0, "super secret passcode")
                 .bind("127.0.0.1:4002").await.unwrap();
             let mut statistics = server.statistics().clone().fuse();

@@ -20,7 +20,7 @@ pub struct NewSrtListener(SocketOptions, Option<UdpSocket>);
 /// # use std::{io, time::Duration};
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), io::Error> {
-///     let listener = SrtListener::new()
+///     let listener = SrtListener::builder()
 ///         .set(|options| {
 ///             options.connect.timeout = Duration::from_secs(2);
 ///             options.receiver.buffer_size = 1200000;
@@ -111,7 +111,7 @@ mod tests {
     async fn bind() {
         // just a test to exercise all the builder methods to ensure they don't explode
         let socket = UdpSocket::bind("0.0.0.0:9999").await.unwrap();
-        let _ = SrtListener::new().with(Encryption{
+        let _ = SrtListener::builder().with(Encryption{
                 key_size: KeySize::AES256,
                 km_refresh: KeyMaterialRefresh{
                     period: 1000,
