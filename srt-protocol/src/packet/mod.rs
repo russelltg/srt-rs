@@ -155,7 +155,11 @@ impl From<PacketParseError> for ReceivePacketError {
 
 impl fmt::Display for ReceivePacketError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        <Self as fmt::Debug>::fmt(self, f)
+        use ReceivePacketError::*;
+        match self {
+            Parse(e) => <PacketParseError as fmt::Display>::fmt(e, f),
+            Io(e) => <io::Error as fmt::Display>::fmt(e, f),
+        }
     }
 }
 
