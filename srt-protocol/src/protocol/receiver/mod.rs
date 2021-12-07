@@ -69,7 +69,7 @@ impl Receiver {
                 settings.socket_start_time,
                 settings.recv_tsbpd_latency,
                 settings.init_seq_num,
-                settings.recv_buffer_size,
+                settings.recv_buffer_size / settings.max_packet_size,
             ),
             decryption: Decryption::new(settings.cipher),
         }
