@@ -161,11 +161,7 @@ impl fmt::Display for ReceivePacketError {
 
 impl std::error::Error for ReceivePacketError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        if let ReceivePacketError::Io(e) = self {
-            Some(e)
-        } else {
-            None
-        }
+        Some(self)
     }
 }
 
