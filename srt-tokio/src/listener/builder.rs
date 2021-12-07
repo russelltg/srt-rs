@@ -23,7 +23,7 @@ pub struct SrtListenerBuilder(SocketOptions, Option<UdpSocket>);
 ///     let listener = SrtListener::builder()
 ///         .set(|options| {
 ///             options.connect.timeout = Duration::from_secs(2);
-///             options.receiver.buffer_size = 1200000;
+///             options.receiver.buffer_size = 12000;
 ///             options.sender.max_payload_size = 1200;
 ///             options.session.peer_idle_timeout = Duration::from_secs(5);
 ///         }).bind("127.0.0.1:4444").await?;
