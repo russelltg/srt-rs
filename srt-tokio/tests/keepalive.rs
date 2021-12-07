@@ -13,7 +13,10 @@ async fn keepalive() {
     let _ = pretty_env_logger::try_init();
 
     let s = async {
-        let mut s = SrtSocket::new().call("127.0.0.1:4444", None).await.unwrap();
+        let mut s = SrtSocket::builder()
+            .call("127.0.0.1:4444", None)
+            .await
+            .unwrap();
 
         sleep(Duration::from_secs(10)).await;
 
@@ -24,7 +27,7 @@ async fn keepalive() {
         s.close().await.unwrap();
     };
     let r = async {
-        let mut r = SrtSocket::new().listen(":4444").await.unwrap();
+        let mut r = SrtSocket::builder().listen(":4444").await.unwrap();
         let res = r.try_next().await.unwrap().unwrap();
         assert_eq!(res.1, Bytes::from(&b"1234"[..]));
         let res = r.try_next().await.unwrap();

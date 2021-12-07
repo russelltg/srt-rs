@@ -10,7 +10,7 @@ use tokio::{net::UdpSocket, task::JoinHandle};
 
 use super::{net::PacketSocket, options::*, watch};
 
-pub use builder::NewSrtListener;
+pub use builder::SrtListenerBuilder;
 pub use session::ConnectionRequest;
 pub use srt_protocol::statistics::ListenerStatistics;
 
@@ -22,8 +22,8 @@ pub struct SrtListener {
 }
 
 impl SrtListener {
-    pub fn builder() -> NewSrtListener {
-        NewSrtListener::default()
+    pub fn builder() -> SrtListenerBuilder {
+        SrtListenerBuilder::default()
     }
 
     pub async fn bind(options: Valid<ListenerOptions>) -> Result<Self, io::Error> {
@@ -148,12 +148,15 @@ mod tests {
                 info!("Calling: {}", i);
                 let address = "127.0.0.1:4001";
                 if i % 2 > 0 {
-                    let result = SrtSocket::new().call(address, Some("reject")).await;
+                    let result = SrtSocket::builder().call(address, Some("reject")).await;
                     assert!(result.is_err());
                     debug!("Rejected: {}", i);
                 } else {
                     let stream_id = format!("{}", i).to_string();
-                    let mut receiver = SrtSocket::new().call(address, Some(&stream_id)).await.unwrap();
+                    let mut receiver = SrtSocket::builder()
+                        .call(address, Some(&stream_id))
+                        .await
+                        .unwrap();
                     info!("Accepted: {}", i);
                     let first = receiver.next().await;
                     assert_eq!(first.unwrap().unwrap().1, "hello");
@@ -172,7 +175,6 @@ mod tests {
         Ok(())
     }
 
-
     #[tokio::test]
     async fn accept_reject_encryption() -> Result<()> {
         #[derive(Debug)]
@@ -189,7 +191,9 @@ mod tests {
         let listener = tokio::spawn(async {
             let mut server = SrtListener::builder()
                 .encryption(0, "super secret passcode")
-                .bind("127.0.0.1:4002").await.unwrap();
+                .bind("127.0.0.1:4002")
+                .await
+                .unwrap();
             let mut statistics = server.statistics().clone().fuse();
 
             let mut incoming = server.incoming().fuse();
@@ -232,14 +236,16 @@ mod tests {
                 info!("Calling: {}", i);
                 let address = "127.0.0.1:4002";
                 if i % 2 == 0 {
-                    let result = SrtSocket::new().call(address, Some("reject")).await;
+                    let result = SrtSocket::builder().call(address, Some("reject")).await;
                     assert!(result.is_err());
                     info!("Rejected: {}", i);
                 } else {
                     let stream_id = format!("{}", i).to_string();
-                    let mut receiver = SrtSocket::new()
+                    let mut receiver = SrtSocket::builder()
                         .encryption(0, "super secret passcode")
-                        .call(address, Some(&stream_id)).await.expect("call");
+                        .call(address, Some(&stream_id))
+                        .await
+                        .expect("call");
                     info!("Accepted: {}", i);
                     let first = receiver.next().await;
                     assert_eq!(first.expect("next error").expect("next no data").1, "hello");

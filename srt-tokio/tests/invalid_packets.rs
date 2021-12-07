@@ -13,7 +13,7 @@ async fn invalid_packets() {
     let _ = pretty_env_logger::try_init();
 
     let sender = async {
-        let mut sender = SrtSocket::new()
+        let mut sender = SrtSocket::builder()
             .local_port(8877)
             .call("127.0.0.1:8876", None)
             .await
@@ -28,7 +28,7 @@ async fn invalid_packets() {
         sender.close().await.unwrap();
     };
     let recvr = async {
-        let mut recvr = SrtSocket::new().listen(":8876").await.unwrap();
+        let mut recvr = SrtSocket::builder().listen(":8876").await.unwrap();
 
         info!("Receiver initialised");
 

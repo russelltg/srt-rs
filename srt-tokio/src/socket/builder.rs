@@ -8,7 +8,7 @@ use crate::options::*;
 use super::SrtSocket;
 
 #[derive(Default)]
-pub struct NewSrtSocket(SocketOptions, Option<UdpSocket>);
+pub struct SrtSocketBuilder(SocketOptions, Option<UdpSocket>);
 
 /// Struct to build sockets.
 ///
@@ -54,7 +54,7 @@ pub struct NewSrtSocket(SocketOptions, Option<UdpSocket>);
 ///
 /// # Panics:
 /// * There is no tokio runtime
-impl NewSrtSocket {
+impl SrtSocketBuilder {
     /// Sets the local address of the socket. This can be used to bind to just a specific network adapter instead of the default of all adapters.
     pub fn local_ip(mut self, ip: IpAddr) -> Self {
         let local = self.0.connect.local;

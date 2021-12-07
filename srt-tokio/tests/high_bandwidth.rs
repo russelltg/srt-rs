@@ -31,7 +31,7 @@ async fn high_bandwidth() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     let sender_fut = async {
-        let mut sock = SrtSocket::new()
+        let mut sock = SrtSocket::builder()
             .latency(Duration::from_millis(150))
             .bandwidth(Estimated { overhead: 20 })
             .call("127.0.0.1:6654", None)
@@ -50,7 +50,7 @@ async fn high_bandwidth() -> Result<(), Error> {
     };
 
     let recv_fut = async {
-        let mut sock = SrtSocket::new()
+        let mut sock = SrtSocket::builder()
             .with(Receiver {
                 buffer_size: 8192 * 10,
                 ..Default::default()

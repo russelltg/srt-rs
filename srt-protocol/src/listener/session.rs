@@ -15,7 +15,7 @@ pub enum SessionState {
 }
 
 impl SessionState {
-    pub fn new_oending(settings: ConnInitSettings) -> Self {
+    pub fn new_pending(settings: ConnInitSettings) -> Self {
         SessionState::Pending(Listen::new(settings, true))
     }
 

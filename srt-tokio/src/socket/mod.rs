@@ -25,7 +25,7 @@ use tokio::{net::UdpSocket, task::JoinHandle, time::sleep_until};
 
 use super::{net::*, options::BindOptions, watch};
 
-use builder::NewSrtSocket;
+use builder::SrtSocketBuilder;
 use state::SrtSocketState;
 
 pub use srt_protocol::statistics::SocketStatistics;
@@ -51,17 +51,16 @@ pub struct SrtSocket {
 }
 
 impl SrtSocket {
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new() -> NewSrtSocket {
-        NewSrtSocket::default()
+    pub fn builder() -> SrtSocketBuilder {
+        SrtSocketBuilder::default()
     }
 
-    pub fn with<O>(options: O) -> NewSrtSocket
+    pub fn with<O>(options: O) -> SrtSocketBuilder
     where
         SocketOptions: OptionsOf<O>,
         O: Validation<Error = OptionsError>,
     {
-        Self::new().with(options)
+        Self::builder().with(options)
     }
 
     pub async fn bind(options: BindOptions) -> Result<Self, io::Error> {

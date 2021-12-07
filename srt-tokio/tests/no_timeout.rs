@@ -10,8 +10,8 @@ use futures::prelude::*;
 async fn receiver_timeout() {
     let _ = pretty_env_logger::try_init();
 
-    let a = SrtSocket::new().listen(":1876");
-    let b = SrtSocket::new().call("127.0.0.1:1876", None);
+    let a = SrtSocket::builder().listen(":1876");
+    let b = SrtSocket::builder().call("127.0.0.1:1876", None);
 
     const ITERS: usize = 30;
 

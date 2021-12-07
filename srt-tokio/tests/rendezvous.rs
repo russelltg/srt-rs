@@ -9,11 +9,11 @@ use tokio::time::sleep;
 async fn rendezvous() {
     let _ = pretty_env_logger::try_init();
 
-    let a = SrtSocket::new()
+    let a = SrtSocket::builder()
         .local_port(5001)
         .rendezvous("127.0.0.1:5000");
 
-    let b = SrtSocket::new()
+    let b = SrtSocket::builder()
         .local_port(5000)
         .rendezvous("127.0.0.1:5001");
 

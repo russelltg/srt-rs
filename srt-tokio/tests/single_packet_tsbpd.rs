@@ -13,11 +13,11 @@ use srt_tokio::SrtSocket;
 async fn single_packet_tsbpd() {
     let _ = pretty_env_logger::try_init();
 
-    let sender = SrtSocket::new()
+    let sender = SrtSocket::builder()
         .latency(Duration::from_secs(5))
         .call("127.0.0.1:3000", None);
 
-    let recvr = SrtSocket::new()
+    let recvr = SrtSocket::builder()
         .latency(Duration::from_secs(2))
         .listen(":3000");
 

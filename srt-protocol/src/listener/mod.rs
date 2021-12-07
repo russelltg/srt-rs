@@ -93,15 +93,11 @@ impl MultiplexListener {
         self.stats.rx_packets += 1;
         //self.stats.rx_bytes += packet
         let session_id = SessionId(packet.1, packet.0.dest_sockid());
-        let session = match self.sessions.get_mut(&session_id) {
-            Some(session) => session,
-            None => {
-                let session = SessionState::new_oending(self.settings.clone());
-                self.sessions.insert(session_id, session);
-                self.sessions.get_mut(&session_id).unwrap()
-            }
-        };
-        session.handle_packet(now, session_id, packet)
+        let settings = &self.settings;
+        self.sessions
+            .entry(session_id)
+            .or_insert_with(|| SessionState::new_pending(settings.clone()))
+            .handle_packet(now, session_id, packet)
     }
 
     fn handle_packet_receive_error<'s, 'a>(

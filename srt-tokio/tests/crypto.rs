@@ -9,11 +9,11 @@ use log::info;
 use tokio::{spawn, time::sleep};
 
 async fn test_crypto(size: u8) {
-    let sender = SrtSocket::new()
+    let sender = SrtSocket::builder()
         .encryption(size, "password123")
         .listen(":2000");
 
-    let recvr = SrtSocket::new()
+    let recvr = SrtSocket::builder()
         .encryption(size, "password123")
         .call("127.0.0.1:2000", None);
 

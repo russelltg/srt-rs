@@ -13,11 +13,11 @@ const PACKET_SIZE: usize = 15 * 1500;
 async fn message_splitting() -> Result<()> {
     let _ = pretty_env_logger::try_init();
 
-    let sender = SrtSocket::new()
+    let sender = SrtSocket::builder()
         .latency(Duration::from_secs(2))
         .call("127.0.0.1:11124", None);
 
-    let recvr = SrtSocket::new()
+    let recvr = SrtSocket::builder()
         .latency(Duration::from_secs(2))
         .listen(":11124");
 

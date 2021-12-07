@@ -7,7 +7,7 @@ use crate::options::*;
 use super::SrtListener;
 
 #[derive(Default)]
-pub struct NewSrtListener(SocketOptions, Option<UdpSocket>);
+pub struct SrtListenerBuilder(SocketOptions, Option<UdpSocket>);
 
 /// Struct to build a multiplexed listener.
 ///
@@ -33,7 +33,7 @@ pub struct NewSrtListener(SocketOptions, Option<UdpSocket>);
 ///
 /// # Panics:
 /// * There is no tokio runtime
-impl NewSrtListener {
+impl SrtListenerBuilder {
     /// Set the latency of the connection. The more latency, the more time SRT has to recover lost packets.
     /// This sets both the send and receive latency
     pub fn latency(mut self, latency: Duration) -> Self {
@@ -101,23 +101,20 @@ impl NewSrtListener {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-    use tokio::net::UdpSocket;
-    use srt_protocol::options::{Encryption, KeySize, LiveBandwidthMode};
-    use srt_protocol::options::KeyMaterialRefresh;
-    use crate::SrtListener;
+    use super::*;
 
     #[tokio::test]
     async fn bind() {
         // just a test to exercise all the builder methods to ensure they don't explode
         let socket = UdpSocket::bind("0.0.0.0:9999").await.unwrap();
-        let _ = SrtListener::builder().with(Encryption{
+        let _ = SrtListener::builder()
+            .with(Encryption {
                 key_size: KeySize::AES256,
-                km_refresh: KeyMaterialRefresh{
+                km_refresh: KeyMaterialRefresh {
                     period: 1000,
-                    pre_announcement_period: 400
+                    pre_announcement_period: 400,
                 },
-                .. Default::default()
+                ..Default::default()
             })
             .set(|options| options.receiver.buffer_size = 1_000_000)
             .receive_latency(Duration::from_secs(2))
@@ -126,6 +123,8 @@ mod tests {
             .encryption(0, "super secret passcode")
             .bandwidth(LiveBandwidthMode::Set(1_000_000))
             .socket(socket)
-            .bind(":9999").await.unwrap();
+            .bind(":9999")
+            .await
+            .unwrap();
     }
 }

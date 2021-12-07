@@ -12,7 +12,7 @@ async fn test() {
     let _ = pretty_env_logger::try_init();
 
     let sender_fut = async {
-        let mut tx = SrtSocket::new().listen(":5223").await?;
+        let mut tx = SrtSocket::builder().listen(":5223").await?;
 
         let iter = ["1", "2", "3"];
 
