@@ -79,6 +79,7 @@ impl NewSrtSocket {
         self
     }
 
+    // SRTO_LATENCY
     /// Set the latency of the connection. The more latency, the more time SRT has to recover lost packets.
     /// This sets both the send and receive latency
     pub fn latency(mut self, latency: Duration) -> Self {

@@ -32,14 +32,6 @@ pub fn gen_hsv5_response(
         }
     };
 
-    let mut acceptor = AllowAllStreamAcceptor::default();
-    let mut accept_params = match acceptor.accept(incoming.sid.as_deref(), from) {
-        Ok(ap) => ap,
-        Err(rr) => return GenHsv5Result::Reject(ConnectionReject::Rejecting(rr)),
-    };
-
-    let key_settings = accept_params.take_key_settings();
-
     gen_access_control_response(
         now,
         settings,
@@ -47,7 +39,7 @@ pub fn gen_hsv5_response(
         induction_time,
         with_hsv5.clone(),
         incoming.clone(),
-        key_settings,
+        None,
     )
 }
 

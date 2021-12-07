@@ -15,6 +15,14 @@ pub struct Connect {
     ///
     /// Default is 3 seconds.
     pub timeout: Duration,
+
+    /// SRTO_MINVERSION
+    /// The minimum SRT version that is required from the peer. A connection to a peer that does not
+    /// satisfy the minimum version requirement will be rejected. See SRTO_VERSION for the version
+    /// format.
+    ///
+    /// The default value is 0x010000 (SRT v1.0.0).
+    pub min_version: SrtVersion,
 }
 
 impl Connect {}
@@ -23,6 +31,7 @@ impl Default for Connect {
         Self {
             local: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0),
             timeout: Duration::from_secs(3),
+            min_version: SrtVersion::new(1, 0, 0),
         }
     }
 }
