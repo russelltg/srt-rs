@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::options::{ByteCount, DataRate, LiveBandwidthMode, PacketCount, PacketRate};
+use crate::options::{ByteCount, DataRate, LiveBandwidthMode, PacketCount, PacketRate, Percent};
 
 #[derive(Debug, Default)]
 pub struct RateEstimate {
@@ -132,10 +132,10 @@ impl SenderCongestionControl {
     fn calculate_max_data_rate(&self, actual_data_rate: DataRate) -> DataRate {
         use LiveBandwidthMode::*;
         match self.bandwidth_mode {
-            Input { rate, overhead } => rate * (overhead + 100),
+            Input { rate, overhead } => rate * (overhead + Percent(100)),
             Set(max) => max,
             Unlimited => Self::GIGABIT.into(),
-            Estimated { overhead, .. } => actual_data_rate * (overhead + 100),
+            Estimated { overhead, .. } => actual_data_rate * (overhead + Percent(100)),
         }
     }
 

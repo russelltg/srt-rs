@@ -122,9 +122,10 @@ impl Mul<Duration> for DataRate {
 
     fn mul(self, rhs: Duration) -> Self::Output {
         let bytes_nearest_second = self.0 * rhs.as_secs() as u64;
-        let bytes_scaled_for_nanos = (self.0 as usize).saturating_mul(rhs.subsec_nanos() as usize);
-        let bytes_remaining_nanos = (bytes_scaled_for_nanos / 1_000_000_000) as u64;
-        ByteCount(bytes_nearest_second + bytes_remaining_nanos)
+        let bytes_scaled_for_micros =
+            (self.0 as usize).saturating_mul(rhs.subsec_micros() as usize);
+        let bytes_remaining_micros = (bytes_scaled_for_micros / 1_000_000) as u64;
+        ByteCount(bytes_nearest_second + bytes_remaining_micros)
     }
 }
 
@@ -177,10 +178,10 @@ impl Mul<Duration> for PacketRate {
 
     fn mul(self, rhs: Duration) -> Self::Output {
         let packets_nearest_second = self.0 * rhs.as_secs() as u64;
-        let packets_scaled_for_nanos =
-            (self.0 as usize).saturating_mul(rhs.subsec_nanos() as usize);
-        let packets_remaining_nanos = (packets_scaled_for_nanos / 1_000_000_000) as u64;
-        PacketCount(packets_nearest_second + packets_remaining_nanos)
+        let packets_scaled_for_micros =
+            (self.0 as usize).saturating_mul(rhs.subsec_micros() as usize);
+        let packets_remaining_micros = (packets_scaled_for_micros / 1_000_000) as u64;
+        PacketCount(packets_nearest_second + packets_remaining_micros)
     }
 }
 
@@ -223,19 +224,11 @@ impl Deref for Percent {
     }
 }
 
-impl Add<u64> for Percent {
-    type Output = Percent;
-
-    fn add(self, rhs: u64) -> Self::Output {
-        Percent(self.0 + rhs)
-    }
-}
-
-impl Add<Percent> for u64 {
+impl Add<Percent> for Percent {
     type Output = Percent;
 
     fn add(self, rhs: Percent) -> Self::Output {
-        rhs + self
+        Percent(self.0 + rhs.0)
     }
 }
 
