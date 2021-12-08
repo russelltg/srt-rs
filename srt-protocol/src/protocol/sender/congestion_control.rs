@@ -241,11 +241,11 @@ mod sender_congestion_control {
 
         // initialize statistics
         assert_eq!(
-            control.on_input(start.into(), PacketCount(0), ByteCount(0)),
+            control.on_input(start, PacketCount(0), ByteCount(0)),
             None
         );
         assert_eq!(
-            control.on_input(start.into(), PacketCount(1), ByteCount(mean_packet_size)),
+            control.on_input(start, PacketCount(1), ByteCount(mean_packet_size)),
             None
         );
         let snd_period = control.on_input(start + micros(100_000), PacketCount(0), ByteCount(0));
