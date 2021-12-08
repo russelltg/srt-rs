@@ -15,7 +15,7 @@ pub enum OptionsError {
     InvalidKeySize(u8),
 
     #[error("MMS out of range: {0}. The maximum size of a UDP packet is 1500 bytes.")]
-    MaxSegmentSizeOutOfRange(ByteCount),
+    MaxSegmentSizeOutOfRange(PacketSize),
 
     #[error("{0}")]
     ReceiveBufferMin(ByteCount),
@@ -23,7 +23,7 @@ pub enum OptionsError {
     #[error("{buffer}, {max_segment}, {flow_control_window}")]
     ReceiveBufferTooLarge {
         buffer: ByteCount,
-        max_segment: ByteCount,
+        max_segment: PacketSize,
         flow_control_window: PacketCount,
     },
 

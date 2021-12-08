@@ -64,7 +64,7 @@ pub struct Receiver {
 
 impl Receiver {
     pub fn new(settings: ConnectionSettings) -> Self {
-        Receiver {
+        Self {
             arq: AutomaticRepeatRequestAlgorithm::new(
                 settings.socket_start_time,
                 settings.recv_tsbpd_latency,

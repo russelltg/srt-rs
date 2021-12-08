@@ -27,6 +27,12 @@ impl Deref for ByteCount {
     }
 }
 
+impl Display for ByteCount {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} bytes", self.0)
+    }
+}
+
 impl Mul<u64> for ByteCount {
     type Output = ByteCount;
 
@@ -43,9 +49,48 @@ impl Mul<ByteCount> for u64 {
     }
 }
 
-impl Display for ByteCount {
+impl Div<PacketSize> for ByteCount {
+    type Output = PacketCount;
+
+    fn div(self, rhs: PacketSize) -> Self::Output {
+        PacketCount(self.0 / rhs.0)
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PacketSize(pub u64);
+
+impl From<PacketSize> for u64 {
+    fn from(value: PacketSize) -> Self {
+        value.0
+    }
+}
+
+impl From<PacketSize> for usize {
+    fn from(value: PacketSize) -> Self {
+        value.0 as usize
+    }
+}
+
+impl Deref for PacketSize {
+    type Target = u64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Mul<u64> for PacketSize {
+    type Output = PacketSize;
+
+    fn mul(self, rhs: u64) -> Self::Output {
+        PacketSize(self.0 * rhs)
+    }
+}
+
+impl Display for PacketSize {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(&self.0, f)
+        write!(f, "{} bytes", self.0)
     }
 }
 
@@ -72,7 +117,13 @@ impl Deref for PacketCount {
     }
 }
 
-impl Mul<PacketCount> for ByteCount {
+impl Display for PacketCount {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} packets", self.0)
+    }
+}
+
+impl Mul<PacketCount> for PacketSize {
     type Output = ByteCount;
 
     fn mul(self, rhs: PacketCount) -> Self::Output {
@@ -80,17 +131,33 @@ impl Mul<PacketCount> for ByteCount {
     }
 }
 
-impl Mul<ByteCount> for PacketCount {
+impl Mul<PacketSize> for PacketCount {
     type Output = ByteCount;
 
-    fn mul(self, rhs: ByteCount) -> Self::Output {
+    fn mul(self, rhs: PacketSize) -> Self::Output {
         rhs * self
     }
 }
 
-impl Display for PacketCount {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(&self.0, f)
+impl Mul<PacketCount> for u64 {
+    type Output = PacketCount;
+
+    fn mul(self, rhs: PacketCount) -> Self::Output {
+        PacketCount(self * rhs.0)
+    }
+}
+
+impl Mul<u64> for PacketCount {
+    type Output = PacketCount;
+
+    fn mul(self, rhs: u64) -> Self::Output {
+        rhs * self
+    }
+}
+
+impl PacketCount {
+    pub fn for_time_window(window: Duration, packet_spacing: Duration) -> PacketCount {
+        PacketCount((window.as_micros() / packet_spacing.as_micros()) as u64)
     }
 }
 
@@ -117,6 +184,12 @@ impl Deref for DataRate {
     }
 }
 
+impl Display for DataRate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} b/s", self.0)
+    }
+}
+
 impl Mul<Duration> for DataRate {
     type Output = ByteCount;
 
@@ -138,15 +211,19 @@ impl Mul<DataRate> for Duration {
 }
 
 impl DataRate {
-    pub fn period_for(self, rhs: ByteCount) -> Option<Duration> {
+    pub fn period_for(self, packet_size: PacketSize) -> Option<Duration> {
         // multiply size to adjust data rate to microseconds (i.e. x 1,000,000)
-        if rhs.0 > 0 {
-            let period = rhs.0 * 1_000_000 / self.0;
+        if packet_size.0 > 0 {
+            let period = packet_size.0 * 1_000_000 / self.0;
             if period > 0 {
                 return Some(Duration::from_micros(period as u64));
             }
         }
         None
+    }
+
+    pub fn as_mbps_f64(&self) -> f64 {
+        self.0 as f64 / 1_000_000 as f64
     }
 }
 
@@ -173,6 +250,12 @@ impl Deref for PacketRate {
     }
 }
 
+impl Display for PacketRate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} p/s", self.0)
+    }
+}
+
 impl Mul<Duration> for PacketRate {
     type Output = PacketCount;
 
@@ -194,10 +277,69 @@ impl Mul<PacketRate> for Duration {
 }
 
 impl Div<PacketRate> for DataRate {
-    type Output = ByteCount;
+    type Output = PacketSize;
 
     fn div(self, rhs: PacketRate) -> Self::Output {
-        ByteCount(self.0 / rhs.0)
+        PacketSize(self.0 / rhs.0)
+    }
+}
+
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PacketPeriod(pub Duration);
+
+impl From<Duration> for PacketPeriod {
+    fn from(value: Duration) -> Self {
+        Self(value)
+    }
+}
+
+impl From<PacketPeriod> for Duration {
+    fn from(value: PacketPeriod) -> Self {
+        value.0
+    }
+}
+
+impl Deref for PacketPeriod {
+    type Target = Duration;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Display for PacketPeriod {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} s/p", self.0.as_secs_f64())
+    }
+}
+
+impl Mul<PacketCount> for PacketPeriod {
+    type Output = Duration;
+
+    fn mul(self, rhs: PacketCount) -> Self::Output {
+        self.0 * rhs.0 as u32
+    }
+}
+
+impl Mul<PacketPeriod> for PacketCount {
+    type Output = Duration;
+
+    fn mul(self, rhs: PacketPeriod) -> Self::Output {
+        rhs * self
+    }
+}
+
+impl PacketPeriod {
+    pub fn try_from(data_rate: DataRate, packet_size: PacketSize) -> Option<Duration> {
+        // multiply size to adjust data rate to microseconds (i.e. x 1,000,000)
+        if packet_size.0 > 0 {
+            let period = packet_size.0 * 1_000_000 / data_rate.0;
+            if period > 0 {
+                return Some(Duration::from_micros(period as u64));
+            }
+        }
+        None
     }
 }
 
@@ -221,6 +363,12 @@ impl Deref for Percent {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl Display for Percent {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}%", self.0)
     }
 }
 
@@ -253,11 +401,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn data_rate_period_for_bytes() {
+    fn data_rate_period_for_packet_size() {
         let data_rate = DataRate(1_000_000);
-        let byte_count = ByteCount(1_000);
+        let packet_size = PacketSize(1_000);
 
-        let period = data_rate.period_for(byte_count);
+        let period = data_rate.period_for(packet_size);
 
         assert_eq!(period, Some(Duration::from_millis(1)))
     }

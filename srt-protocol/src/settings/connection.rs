@@ -52,8 +52,6 @@ impl ConnInitSettings {
 
 impl From<options::SocketOptions> for ConnInitSettings {
     fn from(options: options::SocketOptions) -> Self {
-        let receiver_buffer_size: u64 = options.receiver.buffer_size.into();
-        let max_segment_size: u64 = options.session.max_segment_size.into();
         Self {
             local_sockid: random(),
             key_settings: options
@@ -73,7 +71,7 @@ impl From<options::SocketOptions> for ConnInitSettings {
             recv_latency: options.receiver.latency,
             bandwidth: options.sender.bandwidth,
             statistics_interval: options.session.statistics_interval,
-            recv_buffer_size: options::PacketCount(receiver_buffer_size / max_segment_size),
+            recv_buffer_size: options.receiver.buffer_size / options.session.max_segment_size,
         }
     }
 }

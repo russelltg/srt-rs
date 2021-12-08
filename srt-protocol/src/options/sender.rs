@@ -88,7 +88,7 @@ pub struct Sender {
     /// For Live mode: Default value is 1316, but can be increased up to 1456. Note that with the
     /// SRTO_PACKETFILTER option additional header space is usually required, which decreases the
     /// maximum possible value for SRTO_PAYLOADSIZE.
-    pub max_payload_size: ByteCount,
+    pub max_payload_size: PacketSize,
 
     /// SRTO_RETRANSMITALGO - prioritize this
     ///
@@ -126,7 +126,7 @@ impl Default for Sender {
             buffer_size: ByteCount(46592),
             bandwidth: Default::default(),
             flow_control_window_size: PacketCount(25600),
-            max_payload_size: ByteCount(1316),
+            max_payload_size: PacketSize(1316),
             intensive_retransmission: false,
         }
     }
