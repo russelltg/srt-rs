@@ -3,10 +3,11 @@ use std::net::SocketAddr;
 use crate::{
     connection::Connection,
     packet::{Packet, ReceivePacketResult, SocketId},
-    protocol::pending_connection::ConnectionResult,
 };
 
 use super::*;
+
+pub use crate::protocol::pending_connection::{AccessControlRequest, AccessControlResponse};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SessionId(pub SocketAddr, pub SocketId);
@@ -31,25 +32,6 @@ pub enum Action<'a> {
     UpdateStatistics(&'a ListenerStatistics),
     WaitForInput,
     Close,
-}
-
-impl From<(SessionId, ConnectionResult)> for Action<'_> {
-    fn from((session_id, result): (SessionId, ConnectionResult)) -> Self {
-        use ConnectionResult::*;
-        match result {
-            // TODO: do something with the error?
-            NotHandled(_) => Action::WaitForInput,
-            // TODO: do something with the rejection reason?
-            Reject(p, _) => Action::RejectConnection(session_id, p),
-            SendPacket(p) => Action::SendPacket(p),
-            Connected(p, c) => Action::OpenConnection(session_id, Box::new((p, c))),
-            NoAction => Action::WaitForInput,
-            RequestAccess(r) => Action::RequestAccess(session_id, r),
-            // TODO: is this even a realistic failure mode since we handle I/O errors earlier up
-            //  the call stack? if so, do something with the error?
-            Failure(_) => Action::DropConnection(session_id),
-        }
-    }
 }
 
 #[derive(Debug, Eq, PartialEq)]

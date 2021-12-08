@@ -1,7 +1,10 @@
 use std::{net::SocketAddr, time::Instant};
 
 use crate::{
-    packet::Packet, protocol::pending_connection::listen::Listen, settings::ConnInitSettings,
+    connection::Connection,
+    packet::Packet,
+    protocol::pending_connection::{listen::Listen, ConnectionResult},
+    settings::ConnInitSettings,
 };
 
 use super::*;
@@ -19,50 +22,46 @@ impl SessionState {
         SessionState::Pending(Listen::new(settings, true))
     }
 
-    pub fn handle_packet<'s, 'a>(
-        &'s mut self,
+    pub fn handle_packet(
+        &mut self,
         now: Instant,
         session_id: SessionId,
         packet: (Packet, SocketAddr),
-    ) -> Action<'a>
-    where
-        'a: 's,
-    {
+    ) -> Action {
         use SessionState::*;
-        let action = match self {
-            Pending(listen) => (session_id, listen.handle_packet(now, Ok(packet))).into(),
+        match self {
+            Pending(listen) => {
+                let result = listen.handle_packet(now, Ok(packet));
+                self.handle_connection_result(session_id, result)
+            }
             Rejecting(reject) => Action::RejectConnection(session_id, reject.clone()),
-            // highest utilization path, no state transition needed, fast exit
-            Open => return Action::DelegatePacket(session_id, packet),
+            Open => Action::DelegatePacket(session_id, packet),
             Dropping => Action::DropConnection(session_id),
-        };
-        self.transition_state_for(action)
+        }
     }
 
-    pub fn handle_access_control_response<'s, 'a>(
-        &'s mut self,
+    pub fn handle_access_control_response(
+        &mut self,
         now: Instant,
         session_id: SessionId,
         response: AccessControlResponse,
-    ) -> Action<'a>
-    where
-        'a: 's,
-    {
+    ) -> Action {
         use SessionState::*;
-        let action = match self {
-            Pending(listen) => (
-                session_id,
-                listen.handle_access_control_response(now, response),
-            )
-                .into(),
-            Rejecting(reject) => Action::RejectConnection(session_id, reject.clone()),
-            Open => Action::WaitForInput,
+        match self {
+            Pending(listen) => {
+                let result = listen.handle_access_control_response(now, response);
+                self.handle_connection_result(session_id, result)
+            }
+            Rejecting(reject) => {
+                let reject = reject.clone();
+                self.reject(session_id, reject)
+            }
+            Open => unreachable!("this should no happen"),
             Dropping => Action::DropConnection(session_id),
-        };
-        self.transition_state_for(action)
+        }
     }
 
-    // pub fn handle_timer<'s, 'a>(&'s mut self, now: Instant, session_id: SessionId) -> Action<'a>
+    // pub fn handle_timer(&mut self, now: Instant, session_id: SessionId) -> Action
     // where
     //     'a: 's,
     // {
@@ -75,15 +74,50 @@ impl SessionState {
     //     }
     // }
 
-    fn transition_state_for<'a>(&mut self, action: Action<'a>) -> Action<'a> {
-        match &action {
-            Action::RejectConnection(_, rejection) => {
-                *self = SessionState::Rejecting(rejection.clone())
-            }
-            Action::OpenConnection(_, _) => *self = SessionState::Open,
-            Action::DropConnection(_) => *self = SessionState::Dropping,
-            _ => {}
-        };
-        action
+    fn handle_connection_result(
+        &mut self,
+        session_id: SessionId,
+        result: ConnectionResult,
+    ) -> Action {
+        use ConnectionResult::*;
+        match result {
+            // TODO: do something with the error?
+            NotHandled(_) => Action::WaitForInput,
+            // TODO: do something with the rejection reason?
+            Reject(p, _) => self.reject(session_id, p),
+            SendPacket(p) => Action::SendPacket(p),
+            Connected(p, c) => self.open(session_id, p, c),
+            NoAction => Action::WaitForInput,
+            RequestAccess(r) => Action::RequestAccess(session_id, r),
+            // TODO: is this even a realistic failure mode since we handle I/O errors earlier up
+            //  the call stack? if so, do something with the error?
+            Failure(_) => self.drop(session_id),
+        }
+    }
+
+    fn reject(&mut self, session_id: SessionId, packet: Option<(Packet, SocketAddr)>) -> Action {
+        if !matches!(self, SessionState::Rejecting(_)) {
+            *self = SessionState::Rejecting(packet.clone());
+        }
+        Action::RejectConnection(session_id, packet)
+    }
+
+    fn drop(&mut self, session_id: SessionId) -> Action {
+        if !matches!(self, SessionState::Dropping) {
+            *self = SessionState::Dropping;
+        }
+        Action::DropConnection(session_id)
+    }
+
+    fn open(
+        &mut self,
+        session_id: SessionId,
+        packet: Option<(Packet, SocketAddr)>,
+        connection: Connection,
+    ) -> Action {
+        if !matches!(self, SessionState::Open) {
+            *self = SessionState::Open;
+        }
+        Action::OpenConnection(session_id, Box::new((packet, connection)))
     }
 }

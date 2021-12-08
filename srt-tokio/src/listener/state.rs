@@ -13,6 +13,7 @@ use crate::{net::PacketSocket, watch};
 use super::session::*;
 
 pub struct SrtListenerState {
+    local_address: SocketAddr,
     listener: MultiplexListener,
     socket: PacketSocket,
     request_sender: mpsc::Sender<ConnectionRequest>,
@@ -34,6 +35,7 @@ impl SrtListenerState {
         let listener = MultiplexListener::new(Instant::now(), local_address, settings);
         let (response_sender, response_receiver) = mpsc::channel(100);
         Self {
+            local_address,
             listener,
             socket,
             request_sender,
@@ -48,11 +50,29 @@ impl SrtListenerState {
     pub async fn run_loop(mut self) {
         use Action::*;
         let mut input = Input::Timer;
+        let start = Instant::now();
+        let elapsed = |now: Instant| TimeSpan::from_interval(start, now);
         loop {
             let now = Instant::now();
             let timeout = now + Duration::from_millis(100);
+
+            log::debug!(
+                "{:?}|listener:{}|input - {:?}",
+                elapsed(now),
+                self.local_address,
+                input
+            );
+
             let action = self.listener.handle_input(now, input);
             let next = NextInputContext::for_action(&action);
+
+            log::debug!(
+                "{:?}|listener:{}|action - {:?}",
+                elapsed(now),
+                self.local_address,
+                action
+            );
+
             input = match action {
                 SendPacket(packet) => next.input_from(self.socket.send(packet).await),
                 RequestAccess(session_id, request) => {

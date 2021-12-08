@@ -8,7 +8,6 @@ use crate::{packet::*, protocol::time::Timer, settings::ConnInitSettings};
 
 use session::*;
 
-pub use crate::protocol::pending_connection::{AccessControlRequest, AccessControlResponse};
 pub use input::*;
 pub use statistics::*;
 
@@ -37,47 +36,28 @@ impl MultiplexListener {
         }
     }
 
-    pub fn handle_input<'s, 'a>(&'s mut self, now: Instant, input: Input) -> Action<'a>
-    where
-        'a: 's,
-    {
-        self.debug(now, "input", &input);
-
-        let action = match input {
+    pub fn handle_input(&mut self, now: Instant, input: Input) -> Action {
+        match input {
             Input::Packet(packet) => self.handle_input_packet(now, packet),
             Input::AccessResponse(response) => self.handle_input_access_response(now, response),
             Input::Timer => self.handle_timer(now),
             Input::Success(result_of) => self.handle_success(now, result_of),
             Input::Failure(result_of) => self.handle_failure(now, result_of),
-        };
-
-        self.debug(now, "action", &action);
-
-        action
+        }
     }
 
-    fn handle_input_packet<'s, 'a>(
-        &'s mut self,
-        now: Instant,
-        packet: ReceivePacketResult,
-    ) -> Action<'a>
-    where
-        'a: 's,
-    {
+    fn handle_input_packet(&mut self, now: Instant, packet: ReceivePacketResult) -> Action {
         match packet {
             Ok(packet) => self.handle_packet(now, packet),
             Err(error) => self.handle_packet_receive_error(now, error),
         }
     }
 
-    fn handle_input_access_response<'s, 'a>(
-        &'s mut self,
+    fn handle_input_access_response(
+        &mut self,
         now: Instant,
         response: Option<(SessionId, AccessControlResponse)>,
-    ) -> Action<'a>
-    where
-        'a: 's,
-    {
+    ) -> Action {
         match response {
             Some((session_id, response)) => {
                 self.handle_access_control_response(now, session_id, response)
@@ -86,10 +66,7 @@ impl MultiplexListener {
         }
     }
 
-    fn handle_packet<'s, 'a>(&'s mut self, now: Instant, packet: (Packet, SocketAddr)) -> Action<'a>
-    where
-        'a: 's,
-    {
+    fn handle_packet(&mut self, now: Instant, packet: (Packet, SocketAddr)) -> Action {
         self.stats.rx_packets += 1;
         //self.stats.rx_bytes += packet
         let session_id = SessionId(packet.1, packet.0.dest_sockid());
@@ -100,14 +77,7 @@ impl MultiplexListener {
             .handle_packet(now, session_id, packet)
     }
 
-    fn handle_packet_receive_error<'s, 'a>(
-        &'s mut self,
-        now: Instant,
-        error: ReceivePacketError,
-    ) -> Action<'a>
-    where
-        'a: 's,
-    {
+    fn handle_packet_receive_error(&mut self, now: Instant, error: ReceivePacketError) -> Action {
         self.warn(now, "packet", &error);
 
         use ReceivePacketError::*;
@@ -119,34 +89,29 @@ impl MultiplexListener {
         Action::WaitForInput
     }
 
-    fn handle_access_control_response<'s, 'a>(
-        &'s mut self,
+    fn handle_access_control_response(
+        &mut self,
         now: Instant,
         session_id: SessionId,
         response: AccessControlResponse,
-    ) -> Action<'a>
-    where
-        'a: 's,
-    {
+    ) -> Action {
         match self.sessions.get_mut(&session_id) {
             Some(session) => session.handle_access_control_response(now, session_id, response),
             None => Action::DropConnection(session_id),
         }
     }
 
-    fn handle_timer<'s, 'a>(&'s mut self, _now: Instant) -> Action<'a>
-    where
-        'a: 's,
-    {
-        // TODO: create an action that returns an action with an Iterator that ticks time forward
-        //  for all the sessions, yielding the results to the I/O loop
-        Action::WaitForInput
+    fn handle_timer(&mut self, now: Instant) -> Action {
+        if self.stats_timer.check_expired(now).is_some() {
+            Action::UpdateStatistics(&self.stats)
+        } else {
+            // TODO: create an action that returns an action with an Iterator that ticks time forward
+            //  for all the sessions, yielding the results to the I/O loop
+            Action::WaitForInput
+        }
     }
 
-    fn handle_success<'s, 'a>(&'s mut self, _now: Instant, result_of: ResultOf) -> Action<'a>
-    where
-        'a: 's,
-    {
+    fn handle_success(&mut self, _now: Instant, result_of: ResultOf) -> Action {
         use ResultOf::*;
         match result_of {
             SendPacket(_) => {
@@ -174,10 +139,7 @@ impl MultiplexListener {
         Action::WaitForInput
     }
 
-    fn handle_failure<'s, 'a>(&'s self, now: Instant, result_of: ResultOf) -> Action<'a>
-    where
-        'a: 's,
-    {
+    fn handle_failure(&self, now: Instant, result_of: ResultOf) -> Action {
         self.warn(now, "failure", &result_of);
 
         // TODO: stats? anything else?
@@ -185,21 +147,8 @@ impl MultiplexListener {
         Action::WaitForInput
     }
 
-    fn handle_close<'s, 'a>(&'s mut self) -> Action<'a>
-    where
-        'a: 's,
-    {
+    fn handle_close(&mut self) -> Action {
         Action::Close
-    }
-
-    fn debug(&self, now: Instant, tag: &str, debug: &impl Debug) {
-        log::debug!(
-            "{:?}|listen:{}|{} - {:?}",
-            TimeSpan::from_interval(self.start_time, now),
-            self.local_address.port(),
-            tag,
-            debug
-        );
     }
 
     fn warn(&self, now: Instant, tag: &str, debug: &impl Debug) {

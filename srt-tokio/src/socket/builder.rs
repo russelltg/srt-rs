@@ -22,8 +22,8 @@ pub struct SrtSocketBuilder(SocketOptions, Option<UdpSocket>);
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), io::Error> {
 /// let (a, b) = futures::try_join!(
-///     SrtSocket::new().listen(":3333"),
-///     SrtSocket::new().call("127.0.0.1:3333", Some("stream ID")),
+///     SrtSocket::builder().listen(":3333"),
+///     SrtSocket::builder().call("127.0.0.1:3333", Some("stream ID")),
 /// )?;
 /// # Ok(())
 /// # }
@@ -37,8 +37,8 @@ pub struct SrtSocketBuilder(SocketOptions, Option<UdpSocket>);
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), io::Error> {
 /// let (a, b) = futures::try_join!(
-///     SrtSocket::new().local_port(5555).rendezvous("127.0.0.1:4444"),
-///     SrtSocket::new()
+///     SrtSocket::builder().local_port(5555).rendezvous("127.0.0.1:4444"),
+///     SrtSocket::builder()
 ///         .set(|options| {
 ///             options.connect.timeout = Duration::from_secs(2);
 ///             options.receiver.buffer_size = 1200000;
