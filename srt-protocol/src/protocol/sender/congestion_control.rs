@@ -240,10 +240,7 @@ mod sender_congestion_control {
         let mut control = SenderCongestionControl::new(data_rate);
 
         // initialize statistics
-        assert_eq!(
-            control.on_input(start, PacketCount(0), ByteCount(0)),
-            None
-        );
+        assert_eq!(control.on_input(start, PacketCount(0), ByteCount(0)), None);
         assert_eq!(
             control.on_input(start, PacketCount(1), ByteCount(mean_packet_size)),
             None
