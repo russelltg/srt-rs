@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::options::{ByteCount, DataRate, LiveBandwidthMode, PacketCount, PacketRate, Percent};
+use crate::options::{ByteCount, DataRate, LiveBandwidthMode, PacketCount, PacketPeriod, PacketRate, Percent};
 
 #[derive(Debug, Default)]
 pub struct RateEstimate {
@@ -86,7 +86,7 @@ pub struct SenderCongestionControl {
 
 // https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-5.1.2
 impl SenderCongestionControl {
-    const GIGABIT: u64 = 1_000_000_000 / 8;
+    const GIGABIT: DataRate = DataRate(1_000_000_000 / 8);
 
     pub fn new(bandwidth_mode: LiveBandwidthMode) -> Self {
         Self {
@@ -120,7 +120,7 @@ impl SenderCongestionControl {
                 let data_rate = estimate.bytes.mean;
                 let packet_rate = estimate.packets.mean;
 
-                Some(self.calculate_snd_period(packet_rate.into(), data_rate.into()))
+                Some(self.calculate_snd_period(PacketRate(packet_rate), DataRate(data_rate)))
             }
         };
 
@@ -134,7 +134,7 @@ impl SenderCongestionControl {
         match self.bandwidth_mode {
             Input { rate, overhead } => rate * (overhead + Percent(100)),
             Set(max) => max,
-            Unlimited => Self::GIGABIT.into(),
+            Unlimited => Self::GIGABIT,
             Estimated { overhead, .. } => actual_data_rate * (overhead + Percent(100)),
         }
     }
@@ -142,8 +142,8 @@ impl SenderCongestionControl {
     // from https://github.com/Haivision/srt/blob/580d8992c20ba4ff48d58b29fddf5fd5e7037f9d/srtcore/congctl.cpp#L166-L166
     fn calculate_snd_period(&self, packet_rate: PacketRate, data_rate: DataRate) -> Duration {
         let max_data_rate = self.calculate_max_data_rate(data_rate);
-        if packet_rate > 0.into() && max_data_rate > 0.into() {
-            if let Some(period) = max_data_rate.period_for(data_rate / packet_rate) {
+        if packet_rate > PacketRate(0) && max_data_rate > DataRate(0) {
+            if let Some(period) = PacketPeriod::try_from(max_data_rate, data_rate / packet_rate) {
                 return period;
             }
         }
@@ -179,8 +179,8 @@ mod sender_congestion_control {
         let fixed_rate = 1_000_000;
         let fixed_overhead = 100;
         let data_rate = LiveBandwidthMode::Input {
-            rate: fixed_rate.into(),
-            overhead: fixed_overhead.into(),
+            rate: DataRate(fixed_rate),
+            overhead: Percent(fixed_overhead),
         };
         let expected_data_rate = (fixed_overhead + 100) * fixed_rate / 100;
         let mean_packet_size = 100_000;
@@ -205,7 +205,7 @@ mod sender_congestion_control {
     #[test]
     fn data_rate_max() {
         let max_data_rate = 10_000_000;
-        let data_rate = LiveBandwidthMode::Set(max_data_rate.into());
+        let data_rate = LiveBandwidthMode::Set(DataRate(max_data_rate));
         let expected_data_rate = max_data_rate;
         let mean_packet_size = 100_000;
 
@@ -230,7 +230,7 @@ mod sender_congestion_control {
     fn data_rate_auto() {
         let auto_overhead = 5;
         let data_rate = LiveBandwidthMode::Estimated {
-            overhead: auto_overhead.into(),
+            overhead: Percent(auto_overhead),
         };
         let expected_data_rate = ((100 + auto_overhead) * 10 * 100_000) / 100;
         let mean_packet_size = 100_000;
