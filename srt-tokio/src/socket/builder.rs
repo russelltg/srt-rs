@@ -42,7 +42,7 @@ pub struct SrtSocketBuilder(SocketOptions, Option<UdpSocket>);
 ///         .set(|options| {
 ///             options.connect.timeout = Duration::from_secs(2);
 ///             options.receiver.buffer_size = ByteCount(120000);
-///             options.sender.max_payload_size = ByteCount(1200);
+///             options.sender.max_payload_size = PacketSize(1200);
 ///             options.session.peer_idle_timeout = Duration::from_secs(5);
 ///         })
 ///         .local_port(4444)

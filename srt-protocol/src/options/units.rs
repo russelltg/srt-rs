@@ -223,7 +223,7 @@ impl DataRate {
     }
 
     pub fn as_mbps_f64(&self) -> f64 {
-        self.0 as f64 / 1_000_000 as f64
+        self.0 as f64 / 1_000_000_f64
     }
 }
 
@@ -283,7 +283,6 @@ impl Div<PacketRate> for DataRate {
         PacketSize(self.0 / rhs.0)
     }
 }
-
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct PacketPeriod(pub Duration);

@@ -16,16 +16,15 @@ pub struct SrtListenerBuilder(SocketOptions, Option<UdpSocket>);
 /// # Examples:
 /// Simple:
 /// ```
-/// # use srt_tokio::SrtListener;
+/// # use srt_tokio::{SrtListener, options::*};
 /// # use std::{io, time::Duration};
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), io::Error> {
-///     use srt_tokio::options::{ByteCount, PacketCount};
 /// let listener = SrtListener::builder()
 ///         .set(|options| {
 ///             options.connect.timeout = Duration::from_secs(2);
 ///             options.receiver.buffer_size = ByteCount(120000);
-///             options.sender.max_payload_size = ByteCount(1200);
+///             options.sender.max_payload_size = PacketSize(1200);
 ///             options.session.peer_idle_timeout = Duration::from_secs(5);
 ///         }).bind("127.0.0.1:4444").await?;
 /// # Ok(())
