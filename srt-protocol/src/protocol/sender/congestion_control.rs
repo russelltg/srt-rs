@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::options::{DataRate, LiveBandwidthMode};
+use crate::options::{ByteCount, DataRate, LiveBandwidthMode, PacketCount, PacketRate};
 
 #[derive(Debug, Default)]
 pub struct RateEstimate {
@@ -62,10 +62,10 @@ pub struct InputRateEstimation {
 }
 
 impl InputRateEstimation {
-    fn add(&mut self, (packets, bytes): (u64, u64)) {
+    fn add(&mut self, (packets, bytes): (PacketCount, ByteCount)) {
         self.messages.increment(1);
-        self.packets.increment(packets);
-        self.bytes.increment(bytes);
+        self.packets.increment(packets.into());
+        self.bytes.increment(bytes.into());
     }
 
     pub fn calculate(&mut self, elapsed: Duration) -> InputRateEstimate {
@@ -86,7 +86,7 @@ pub struct SenderCongestionControl {
 
 // https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-5.1.2
 impl SenderCongestionControl {
-    const GIGABIT: DataRate = 1_000_000_000 / 8;
+    const GIGABIT: u64 = 1_000_000_000 / 8;
 
     pub fn new(bandwidth_mode: LiveBandwidthMode) -> Self {
         Self {
@@ -96,7 +96,12 @@ impl SenderCongestionControl {
         }
     }
 
-    pub fn on_input(&mut self, now: Instant, packets: u64, bytes: u64) -> Option<Duration> {
+    pub fn on_input(
+        &mut self,
+        now: Instant,
+        packets: PacketCount,
+        bytes: ByteCount,
+    ) -> Option<Duration> {
         const PERIOD: Duration = Duration::from_millis(100);
         let result = match self.next.as_mut() {
             None => {
@@ -115,7 +120,7 @@ impl SenderCongestionControl {
                 let data_rate = estimate.bytes.mean;
                 let packet_rate = estimate.packets.mean;
 
-                Some(self.calculate_snd_period(packet_rate, data_rate))
+                Some(self.calculate_snd_period(packet_rate.into(), data_rate.into()))
             }
         };
 
@@ -127,22 +132,19 @@ impl SenderCongestionControl {
     fn calculate_max_data_rate(&self, actual_data_rate: DataRate) -> DataRate {
         use LiveBandwidthMode::*;
         match self.bandwidth_mode {
-            Input { rate, overhead } => rate * (100 + overhead) / 100,
+            Input { rate, overhead } => rate * (overhead + 100),
             Set(max) => max,
-            Unlimited => Self::GIGABIT,
-            Estimated { overhead, .. } => actual_data_rate * (100 + overhead) / 100,
+            Unlimited => Self::GIGABIT.into(),
+            Estimated { overhead, .. } => actual_data_rate * (overhead + 100),
         }
     }
 
     // from https://github.com/Haivision/srt/blob/580d8992c20ba4ff48d58b29fddf5fd5e7037f9d/srtcore/congctl.cpp#L166-L166
-    fn calculate_snd_period(&self, packet_rate: u64, data_rate: u64) -> Duration {
+    fn calculate_snd_period(&self, packet_rate: PacketRate, data_rate: DataRate) -> Duration {
         let max_data_rate = self.calculate_max_data_rate(data_rate);
-        if packet_rate > 0 && max_data_rate > 0 {
-            // multiply packet size to adjust data rate to microseconds (i.e. x 1,000,000)
-            // (data_rate / packet_rate) * 1_000_000 / max_data_rate
-            let period = data_rate * 1_000_000 / packet_rate / max_data_rate;
-            if period > 0 {
-                return Duration::from_micros(period);
+        if packet_rate > 0.into() && max_data_rate > 0.into() {
+            if let Some(period) = max_data_rate.period_for(data_rate / packet_rate) {
+                return period;
             }
         }
         Duration::from_micros(1)
@@ -162,12 +164,12 @@ mod sender_congestion_control {
         let mut control = SenderCongestionControl::new(data_rate);
 
         // initialize statistics
-        control.on_input(start, 0, 0);
+        control.on_input(start, PacketCount(0), ByteCount(0));
 
         for n in 1..100 {
-            control.on_input(start + ms(n), 2, 2_000);
+            control.on_input(start + ms(n), PacketCount(2), ByteCount(2_000));
         }
-        let snd_period = control.on_input(start + ms(1001), 0, 0);
+        let snd_period = control.on_input(start + ms(1001), PacketCount(0), ByteCount(0));
 
         assert_eq!(snd_period, Some(Duration::from_micros(8)));
     }
@@ -177,8 +179,8 @@ mod sender_congestion_control {
         let fixed_rate = 1_000_000;
         let fixed_overhead = 100;
         let data_rate = LiveBandwidthMode::Input {
-            rate: fixed_rate,
-            overhead: fixed_overhead,
+            rate: fixed_rate.into(),
+            overhead: fixed_overhead.into(),
         };
         let expected_data_rate = (fixed_overhead + 100) * fixed_rate / 100;
         let mean_packet_size = 100_000;
@@ -188,9 +190,12 @@ mod sender_congestion_control {
         let mut control = SenderCongestionControl::new(data_rate);
 
         // initialize statistics
-        assert_eq!(control.on_input(start, 0, 0), None);
-        assert_eq!(control.on_input(start, 1, mean_packet_size), None);
-        let snd_period = control.on_input(start + micros(100_000), 0, 0);
+        assert_eq!(control.on_input(start, PacketCount(0), ByteCount(0)), None);
+        assert_eq!(
+            control.on_input(start, PacketCount(1), ByteCount(mean_packet_size)),
+            None
+        );
+        let snd_period = control.on_input(start + micros(100_000), PacketCount(0), ByteCount(0));
 
         let expected_snd_period = mean_packet_size * 10 * 100_000 / expected_data_rate;
 
@@ -200,7 +205,7 @@ mod sender_congestion_control {
     #[test]
     fn data_rate_max() {
         let max_data_rate = 10_000_000;
-        let data_rate = LiveBandwidthMode::Set(max_data_rate);
+        let data_rate = LiveBandwidthMode::Set(max_data_rate.into());
         let expected_data_rate = max_data_rate;
         let mean_packet_size = 100_000;
 
@@ -209,9 +214,12 @@ mod sender_congestion_control {
         let mut control = SenderCongestionControl::new(data_rate);
 
         // initialize statistics
-        assert_eq!(control.on_input(start, 0, 0), None);
-        assert_eq!(control.on_input(start, 1, mean_packet_size), None);
-        let snd_period = control.on_input(start + micros(100_000), 0, 0);
+        assert_eq!(control.on_input(start, PacketCount(0), ByteCount(0)), None);
+        assert_eq!(
+            control.on_input(start, PacketCount(1), ByteCount(mean_packet_size)),
+            None
+        );
+        let snd_period = control.on_input(start + micros(100_000), PacketCount(0), ByteCount(0));
 
         let expected_snd_period = (mean_packet_size * 10 * 100_000) / expected_data_rate as u64;
 
@@ -222,7 +230,7 @@ mod sender_congestion_control {
     fn data_rate_auto() {
         let auto_overhead = 5;
         let data_rate = LiveBandwidthMode::Estimated {
-            overhead: auto_overhead,
+            overhead: auto_overhead.into(),
         };
         let expected_data_rate = ((100 + auto_overhead) * 10 * 100_000) / 100;
         let mean_packet_size = 100_000;
@@ -232,9 +240,15 @@ mod sender_congestion_control {
         let mut control = SenderCongestionControl::new(data_rate);
 
         // initialize statistics
-        assert_eq!(control.on_input(start, 0, 0), None);
-        assert_eq!(control.on_input(start, 1, mean_packet_size), None);
-        let snd_period = control.on_input(start + micros(100_000), 0, 0);
+        assert_eq!(
+            control.on_input(start.into(), PacketCount(0), ByteCount(0)),
+            None
+        );
+        assert_eq!(
+            control.on_input(start.into(), PacketCount(1), ByteCount(mean_packet_size)),
+            None
+        );
+        let snd_period = control.on_input(start + micros(100_000), PacketCount(0), ByteCount(0));
 
         let expected_snd_period = mean_packet_size * 10 * 100_000 / expected_data_rate;
 

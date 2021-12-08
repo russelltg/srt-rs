@@ -9,7 +9,7 @@ use std::{
 use bytes::{Bytes, BytesMut};
 use take_until::TakeUntilExt;
 
-use crate::packet::*;
+use crate::{options::PacketCount, packet::*};
 
 use super::{
     time::{ClockAdjustment, SynchronizedRemoteClock},
@@ -182,7 +182,7 @@ pub struct ReceiveBuffer {
 
     remote_clock: SynchronizedRemoteClock,
     buffer: VecDeque<BufferPacket>,
-    max_buffer_size: usize,
+    max_buffer_size: PacketCount,
 }
 
 impl ReceiveBuffer {
@@ -190,14 +190,14 @@ impl ReceiveBuffer {
         socket_start_time: Instant,
         tsbpd_latency: Duration,
         init_seq_num: SeqNumber,
-        max_buffer_size: usize,
+        max_buffer_size: PacketCount,
     ) -> Self {
         Self {
             tsbpd_latency,
             lrsn: init_seq_num,
             seqno0: init_seq_num,
             remote_clock: SynchronizedRemoteClock::new(socket_start_time),
-            buffer: VecDeque::with_capacity(max_buffer_size),
+            buffer: VecDeque::with_capacity(max_buffer_size.into()),
             max_buffer_size,
         }
     }
@@ -224,7 +224,7 @@ impl ReceiveBuffer {
 
     /// Buffer available, in packets
     pub fn buffer_available(&self) -> usize {
-        self.max_buffer_size - self.buffer.len()
+        usize::from(self.max_buffer_size) - self.buffer.len()
     }
 
     // next expected packet (1 + last received packet)
@@ -532,7 +532,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(3);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
 
         assert_eq!(buf.next_ack_dsn(), init_seq_num);
         assert_eq!(buf.next_message_release_time(), None);
@@ -545,7 +545,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
 
         assert_eq!(
             buf.push_packet(
@@ -572,7 +572,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
 
         assert_eq!(
             buf.push_packet(
@@ -621,7 +621,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
 
         assert_eq!(
             buf.push_packet(
@@ -666,7 +666,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
 
         assert_eq!(
             buf.push_packet(
@@ -712,7 +712,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
         assert_eq!(
             buf.push_packet(
                 start,
@@ -736,7 +736,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
         assert_eq!(
             buf.push_packet(
                 start,
@@ -800,7 +800,7 @@ mod receive_buffer {
         let init_seq_num = SeqNumber(5);
         let mean_rtt = TimeSpan::from_micros(10_000);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
 
         assert_eq!(buf.prepare_loss_list(start, mean_rtt), None);
 
@@ -869,7 +869,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
 
         let now = start;
         let _ = buf.push_packet(
@@ -948,7 +948,7 @@ mod receive_buffer {
         let init_seq_num = SeqNumber(5);
         let mean_rtt = TimeSpan::from_micros(10_000);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
 
         let now = start;
         assert_eq!(
@@ -981,7 +981,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 10);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(10));
 
         assert_eq!(buf.buffer_available(), 10);
 
@@ -1092,7 +1092,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, 8192);
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
 
         let now = start;
         assert_eq!(

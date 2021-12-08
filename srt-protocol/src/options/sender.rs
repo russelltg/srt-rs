@@ -41,7 +41,7 @@ pub struct Sender {
 
     /// SRTO_SNDBUF
     /// Sender Buffer Size. See SRTO_RCVBUF for more information.
-    pub buffer_size: usize,
+    pub buffer_size: ByteCount,
 
     // SRTO_OHEADBW - see LiveBandwidthMode
     // SRTO_MAXBW - see LiveBandwidthMode
@@ -79,7 +79,7 @@ pub struct Sender {
     ///     flow control window is
     /// - FC = bps / 8 × (RTTsec + latency_sec) / (MSS - 44), where latency_sec is the receiver
     ///     buffering delay (SRTO_RCVLATENCY) in seconds.
-    pub flow_control_window_size: usize,
+    pub flow_control_window_size: PacketCount,
 
     /// SRTO_PAYLOADSIZE
     /// Sets the maximum declared size of a single call to sending function in Live mode. When set
@@ -88,7 +88,7 @@ pub struct Sender {
     /// For Live mode: Default value is 1316, but can be increased up to 1456. Note that with the
     /// SRTO_PACKETFILTER option additional header space is usually required, which decreases the
     /// maximum possible value for SRTO_PAYLOADSIZE.
-    pub max_payload_size: usize,
+    pub max_payload_size: ByteCount,
 
     /// SRTO_RETRANSMITALGO - prioritize this
     ///
@@ -123,10 +123,10 @@ impl Default for Sender {
         Self {
             peer_latency: Duration::from_millis(120),
             drop_delay: Duration::ZERO,
-            buffer_size: 46592,
+            buffer_size: ByteCount(46592),
             bandwidth: Default::default(),
-            flow_control_window_size: 25600,
-            max_payload_size: 1316,
+            flow_control_window_size: PacketCount(25600),
+            max_payload_size: ByteCount(1316),
             intensive_retransmission: false,
         }
     }
@@ -137,7 +137,7 @@ impl Validation for Sender {
 
     fn is_valid(&self) -> Result<(), Self::Error> {
         use OptionsError::*;
-        if self.flow_control_window_size < 32 {
+        if self.flow_control_window_size < PacketCount(32) {
             Err(FlowControlWindowMin(self.flow_control_window_size))
         } else {
             Ok(())
@@ -154,10 +154,13 @@ mod tests {
     #[test]
     fn validation() {
         let result = Sender {
-            flow_control_window_size: 31,
+            flow_control_window_size: PacketCount(31),
             ..Default::default()
         };
 
-        assert_eq!(result.try_validate(), Err(FlowControlWindowMin(31)));
+        assert_eq!(
+            result.try_validate(),
+            Err(FlowControlWindowMin(PacketCount(31)))
+        );
     }
 }

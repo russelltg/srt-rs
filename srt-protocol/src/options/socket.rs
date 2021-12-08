@@ -101,11 +101,11 @@ mod test {
                 ..Default::default()
             })?
             .with(Sender {
-                buffer_size: 1000000,
+                buffer_size: ByteCount(1000000),
                 ..Default::default()
             })?
             .with(Receiver {
-                buffer_size: 1000000,
+                buffer_size: ByteCount(1000000),
                 ..Default::default()
             })?;
 
@@ -124,11 +124,11 @@ mod test {
                 ..Default::default()
             },
             sender: Sender {
-                buffer_size: 1000000,
+                buffer_size: ByteCount(1000000),
                 ..Default::default()
             },
             receiver: Receiver {
-                buffer_size: 1000000,
+                buffer_size: ByteCount(1000000),
                 ..Default::default()
             },
         }

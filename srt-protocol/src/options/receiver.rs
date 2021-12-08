@@ -50,7 +50,7 @@ pub struct Receiver {
     /// When this is detected the Reorder Tolerance is set to the value of the interval between
     /// latest sequence and this packet's sequence, but not more than the value set by
     /// SRTO_LOSSMAXTTL. By default this value is set to 0, which means that this mechanism is off.
-    pub reorder_tolerance_max: usize,
+    pub reorder_tolerance_max: PacketCount,
 
     /// SRTO_RCVBUF
     ///
@@ -63,7 +63,7 @@ pub struct Receiver {
     ///
     /// Maximum value: SRTO_FC number of buffers (receiver buffer must not be greater than the
     /// Flight Flag size).
-    pub buffer_size: usize,
+    pub buffer_size: ByteCount,
 
     /// SRTO_NAKREPORT
     /// When set to true, every report for a detected loss will be repeated when the timeout for the
@@ -91,8 +91,8 @@ impl Default for Receiver {
     fn default() -> Self {
         Self {
             latency: Duration::from_millis(120),
-            reorder_tolerance_max: 0,
-            buffer_size: 8192 * 1500,
+            reorder_tolerance_max: PacketCount(0),
+            buffer_size: ByteCount(8192 * 1500),
             nak_report: true,
             too_late_packet_drop: true,
             drift_tracer: false,
@@ -105,7 +105,7 @@ impl Validation for Receiver {
 
     fn is_valid(&self) -> Result<(), Self::Error> {
         use OptionsError::*;
-        if self.buffer_size < 46592 {
+        if self.buffer_size < ByteCount(46592) {
             Err(ReceiveBufferMin(self.buffer_size))
         } else {
             Ok(())
@@ -122,10 +122,13 @@ mod tests {
     #[test]
     fn validation() {
         let result = Receiver {
-            buffer_size: 46591,
+            buffer_size: ByteCount(46591),
             ..Default::default()
         };
 
-        assert_eq!(result.try_validate(), Err(ReceiveBufferMin(46591)));
+        assert_eq!(
+            result.try_validate(),
+            Err(ReceiveBufferMin(ByteCount(46591)))
+        );
     }
 }

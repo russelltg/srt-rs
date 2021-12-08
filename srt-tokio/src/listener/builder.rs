@@ -20,11 +20,12 @@ pub struct SrtListenerBuilder(SocketOptions, Option<UdpSocket>);
 /// # use std::{io, time::Duration};
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), io::Error> {
-///     let listener = SrtListener::builder()
+///     use srt_tokio::options::{ByteCount, PacketCount};
+/// let listener = SrtListener::builder()
 ///         .set(|options| {
 ///             options.connect.timeout = Duration::from_secs(2);
-///             options.receiver.buffer_size = 120000;
-///             options.sender.max_payload_size = 1200;
+///             options.receiver.buffer_size = ByteCount(120000);
+///             options.sender.max_payload_size = ByteCount(1200);
 ///             options.session.peer_idle_timeout = Duration::from_secs(5);
 ///         }).bind("127.0.0.1:4444").await?;
 /// # Ok(())
@@ -111,17 +112,17 @@ mod tests {
             .with(Encryption {
                 key_size: KeySize::AES256,
                 km_refresh: KeyMaterialRefresh {
-                    period: 1000,
-                    pre_announcement_period: 400,
+                    period: PacketCount(1000),
+                    pre_announcement_period: PacketCount(400),
                 },
                 ..Default::default()
             })
-            .set(|options| options.receiver.buffer_size = 1_000_000)
+            .set(|options| options.receiver.buffer_size = ByteCount(1_000_000))
             .receive_latency(Duration::from_secs(2))
             .send_latency(Duration::from_secs(4))
             .latency(Duration::from_secs(1))
             .encryption(0, "super secret passcode")
-            .bandwidth(LiveBandwidthMode::Set(1_000_000))
+            .bandwidth(LiveBandwidthMode::Set(DataRate(1_000_000)))
             .socket(socket)
             .bind(":9999")
             .await

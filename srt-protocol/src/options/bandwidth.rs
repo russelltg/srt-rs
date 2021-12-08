@@ -1,6 +1,5 @@
 // rate in bytes per second
-pub type DataRate = u64;
-pub type Percent = u64;
+use super::*;
 
 /// https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-5.1.1
 ///

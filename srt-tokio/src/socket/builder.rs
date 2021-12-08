@@ -17,7 +17,7 @@ pub struct SrtSocketBuilder(SocketOptions, Option<UdpSocket>);
 /// # Examples:
 /// Simple:
 /// ```
-/// # use srt_tokio::SrtSocket;
+/// # use srt_tokio::{SrtSocket, options::*};
 /// # use std::io;
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), io::Error> {
@@ -32,8 +32,8 @@ pub struct SrtSocketBuilder(SocketOptions, Option<UdpSocket>);
 /// Rendezvous example:
 ///
 /// ```
-/// # use srt_tokio::SrtSocket;
-/// # use std::{io, time::Duration};
+/// # use srt_tokio::{SrtSocket, options::*};
+/// # use std::{io, time::Duration};///
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), io::Error> {
 /// let (a, b) = futures::try_join!(
@@ -41,8 +41,8 @@ pub struct SrtSocketBuilder(SocketOptions, Option<UdpSocket>);
 ///     SrtSocket::builder()
 ///         .set(|options| {
 ///             options.connect.timeout = Duration::from_secs(2);
-///             options.receiver.buffer_size = 1200000;
-///             options.sender.max_payload_size = 1200;
+///             options.receiver.buffer_size = ByteCount(120000);
+///             options.sender.max_payload_size = ByteCount(1200);
 ///             options.session.peer_idle_timeout = Duration::from_secs(5);
 ///         })
 ///         .local_port(4444)

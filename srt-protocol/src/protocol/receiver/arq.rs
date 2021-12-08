@@ -8,6 +8,7 @@ use arraydeque::{behavior::Wrapping, ArrayDeque};
 use bytes::Bytes;
 
 use crate::{
+    options::PacketCount,
     packet::*,
     protocol::{
         receiver::{
@@ -174,7 +175,7 @@ impl AutomaticRepeatRequestAlgorithm {
         socket_start_time: Instant,
         tsbpd_latency: Duration,
         init_seq_num: SeqNumber,
-        buffer_size_packets: usize,
+        buffer_size_packets: PacketCount,
     ) -> Self {
         Self {
             link_capacity_estimate: LinkCapacityEstimate::new(),
@@ -340,8 +341,12 @@ mod automatic_repeat_request_algorithm {
     fn handle_data_packet_with_loss() {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
-        let mut arq =
-            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(2), init_seq_num, 8192);
+        let mut arq = AutomaticRepeatRequestAlgorithm::new(
+            start,
+            Duration::from_secs(2),
+            init_seq_num,
+            PacketCount(8192),
+        );
 
         assert_eq!(arq.on_full_ack_event(start), None);
         assert_eq!(arq.on_nak_event(start), None);
@@ -393,8 +398,12 @@ mod automatic_repeat_request_algorithm {
     fn ack_event() {
         let start = Instant::now();
         let init_seq_num = SeqNumber(1);
-        let mut arq =
-            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(2), init_seq_num, 8192);
+        let mut arq = AutomaticRepeatRequestAlgorithm::new(
+            start,
+            Duration::from_secs(2),
+            init_seq_num,
+            PacketCount(8192),
+        );
 
         assert_eq!(
             arq.handle_data_packet(
@@ -458,8 +467,12 @@ mod automatic_repeat_request_algorithm {
     fn ack2_packet() {
         let start = Instant::now();
         let init_seq_num = SeqNumber(1);
-        let mut arq =
-            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(2), init_seq_num, 8192);
+        let mut arq = AutomaticRepeatRequestAlgorithm::new(
+            start,
+            Duration::from_secs(2),
+            init_seq_num,
+            PacketCount(8192),
+        );
 
         let _ = arq.handle_data_packet(
             start,
@@ -496,8 +509,12 @@ mod automatic_repeat_request_algorithm {
     fn is_flushed() {
         let start = Instant::now();
         let init_seq_num = SeqNumber(1);
-        let mut arq =
-            AutomaticRepeatRequestAlgorithm::new(start, Duration::from_secs(1), init_seq_num, 8192);
+        let mut arq = AutomaticRepeatRequestAlgorithm::new(
+            start,
+            Duration::from_secs(1),
+            init_seq_num,
+            PacketCount(8192),
+        );
 
         let _ = arq.handle_data_packet(
             start,
@@ -544,8 +561,12 @@ mod automatic_repeat_request_algorithm {
         let start = Instant::now();
         let tsbpd_latency = Duration::from_secs(2);
         let init_seq_num = SeqNumber(5);
-        let mut arq =
-            AutomaticRepeatRequestAlgorithm::new(start, tsbpd_latency, init_seq_num, 8192);
+        let mut arq = AutomaticRepeatRequestAlgorithm::new(
+            start,
+            tsbpd_latency,
+            init_seq_num,
+            PacketCount(8192),
+        );
 
         let now = start;
         let _ = arq.handle_data_packet(

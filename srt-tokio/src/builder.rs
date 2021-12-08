@@ -9,9 +9,8 @@ use std::{
 
 use futures::Stream;
 use log::error;
+use srt_protocol::{options::*, settings::*};
 use tokio::net::UdpSocket;
-
-use srt_protocol::settings::*;
 
 use super::{
     multiplex, net::PacketSocket, options::LiveBandwidthMode, pending_connection,
@@ -199,7 +198,7 @@ impl SrtSocketBuilder {
     }
 
     /// Set the receicve maximum buffer size, in packets
-    pub fn recv_buffer_size(mut self, buffer_size: usize) -> Self {
+    pub fn recv_buffer_size(mut self, buffer_size: PacketCount) -> Self {
         self.init_settings.recv_buffer_size = buffer_size;
         self
     }

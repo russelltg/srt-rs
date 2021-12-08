@@ -23,7 +23,7 @@ pub struct Session {
     /// of the IP packet, including the UDP and SRT headers
     ///
     /// THe value of SRTO_MSS must not exceed SRTO_UDP_SNDBUF or SRTO_UDP_RCVBUF.
-    pub max_segment_size: usize,
+    pub max_segment_size: ByteCount,
 
     pub statistics_interval: Duration,
 }
@@ -32,7 +32,7 @@ impl Default for Session {
     fn default() -> Self {
         Self {
             peer_idle_timeout: Duration::from_secs(5),
-            max_segment_size: 1500,
+            max_segment_size: ByteCount(1500),
             statistics_interval: Duration::from_secs(1),
         }
     }
@@ -43,7 +43,7 @@ impl Validation for Session {
 
     fn is_valid(&self) -> Result<(), Self::Error> {
         use OptionsError::*;
-        if self.max_segment_size > 1500 {
+        if self.max_segment_size > ByteCount(1500) {
             Err(MaxSegmentSizeOutOfRange(self.max_segment_size))
         } else {
             Ok(())

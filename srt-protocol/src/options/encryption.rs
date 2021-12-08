@@ -97,7 +97,7 @@ pub struct KeyMaterialRefresh {
     /// packets that have to be retransmitted.
     ///
     /// Default value: 0 - corresponds to 16777216 packets (2^24 or 0x1000000).
-    pub period: usize,
+    pub period: PacketCount,
 
     /// SRTO_KMPREANNOUNCE
     /// KM Pre-Announcement Period specifies when a new key is announced
@@ -131,14 +131,14 @@ pub struct KeyMaterialRefresh {
     /// The value of SRTO_KMPREANNOUNCE must not exceed (SRTO_KMREFRESHRATE - 1) / 2`.
     ///
     /// Default value: 2^12
-    pub pre_announcement_period: usize,
+    pub pre_announcement_period: PacketCount,
 }
 
 impl Default for KeyMaterialRefresh {
     fn default() -> Self {
         Self {
-            pre_announcement_period: 1 << 12, // 2^12,
-            period: 1 << 24,                  // 2^25
+            period: PacketCount(1u64 << 24),                  // 2^25
+            pre_announcement_period: PacketCount(1u64 << 12), // 2^12,
         }
     }
 }
@@ -147,13 +147,13 @@ impl Validation for Encryption {
     type Error = OptionsError;
 
     fn is_valid(&self) -> Result<(), Self::Error> {
-        let period = self.km_refresh.period;
-        let pre_announcement_period = self.km_refresh.pre_announcement_period;
+        let period: u64 = self.km_refresh.period.into();
+        let pre_announcement_period: u64 = self.km_refresh.pre_announcement_period.into();
 
         if period == 0 || pre_announcement_period > period.saturating_sub(1) / 2 {
             Err(OptionsError::KeyMaterialRefresh(
-                period,
-                pre_announcement_period,
+                PacketCount(period),
+                PacketCount(pre_announcement_period),
             ))
         } else {
             Ok(())

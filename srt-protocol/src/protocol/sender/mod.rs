@@ -8,6 +8,7 @@ use bytes::Bytes;
 
 use crate::{
     connection::{ConnectionSettings, ConnectionStatus},
+    options::*,
     packet::*,
     protocol::{
         encryption::Encryption,
@@ -96,7 +97,10 @@ impl<'a> SenderContext<'a> {
             }
         }
 
-        let snd_period = self.sender.congestion_control.on_input(now, packets, bytes);
+        let snd_period =
+            self.sender
+                .congestion_control
+                .on_input(now, PacketCount(packets), ByteCount(bytes));
         if let Some(snd_period) = snd_period {
             self.timers.update_snd_period(snd_period)
         }

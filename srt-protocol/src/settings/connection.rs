@@ -17,7 +17,7 @@ pub struct ConnInitSettings {
     pub statistics_interval: Duration,
 
     /// Receive buffer size in packets
-    pub recv_buffer_size: usize,
+    pub recv_buffer_size: options::PacketCount,
 }
 
 impl Default for ConnInitSettings {
@@ -29,7 +29,7 @@ impl Default for ConnInitSettings {
             recv_latency: Duration::from_micros(50),
             local_sockid: random(),
             bandwidth: Default::default(),
-            recv_buffer_size: 8192,
+            recv_buffer_size: options::PacketCount(8192),
             statistics_interval: Duration::from_secs(1),
         }
     }
@@ -44,7 +44,7 @@ impl ConnInitSettings {
             recv_latency: self.recv_latency,
             local_sockid: random(),
             bandwidth: Default::default(),
-            recv_buffer_size: 8192,
+            recv_buffer_size: options::PacketCount(8192),
             statistics_interval: self.statistics_interval,
         }
     }
@@ -52,6 +52,8 @@ impl ConnInitSettings {
 
 impl From<options::SocketOptions> for ConnInitSettings {
     fn from(options: options::SocketOptions) -> Self {
+        let receiver_buffer_size: u64 = options.receiver.buffer_size.into();
+        let max_segment_size: u64 = options.session.max_segment_size.into();
         Self {
             local_sockid: random(),
             key_settings: options
@@ -63,15 +65,15 @@ impl From<options::SocketOptions> for ConnInitSettings {
                     passphrase: passphrase.to_string().try_into().unwrap(),
                 }),
             key_refresh: KeyMaterialRefreshSettings::new(
-                options.encryption.km_refresh.period,
-                options.encryption.km_refresh.pre_announcement_period,
+                options.encryption.km_refresh.period.into(),
+                options.encryption.km_refresh.pre_announcement_period.into(),
             )
             .unwrap(),
             send_latency: options.sender.peer_latency,
             recv_latency: options.receiver.latency,
             bandwidth: options.sender.bandwidth,
             statistics_interval: options.session.statistics_interval,
-            recv_buffer_size: options.receiver.buffer_size,
+            recv_buffer_size: options::PacketCount(receiver_buffer_size / max_segment_size),
         }
     }
 }

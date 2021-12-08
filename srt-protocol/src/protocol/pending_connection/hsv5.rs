@@ -121,8 +121,8 @@ pub fn gen_access_control_response(
             socket_start_time: now - (now - induction_time) / 2, // initiate happened 0.5RTT ago
             rtt: now - induction_time,
             init_seq_num: with_hsv5.init_seq_num,
-            max_packet_size: 1500, // todo: parameters!
-            max_flow_size: 8192,
+            max_packet_size: ByteCount(1500), // todo: parameters!
+            max_flow_size: PacketCount(8192),
             send_tsbpd_latency: Duration::max(settings.send_latency, hs.recv_latency),
             recv_tsbpd_latency: Duration::max(settings.recv_latency, hs.send_latency),
             recv_buffer_size: settings.recv_buffer_size,
@@ -219,8 +219,8 @@ impl StartedInitiator {
             socket_start_time: self.initiate_time,
             rtt: now - self.initiate_time,
             init_seq_num: response.init_seq_num,
-            max_packet_size: 1500, // todo: parameters!
-            max_flow_size: 8192,
+            max_packet_size: ByteCount(1500), // todo: parameters!
+            max_flow_size: PacketCount(8192),
             send_tsbpd_latency: Duration::max(self.settings.send_latency, hs.recv_latency),
             recv_tsbpd_latency: Duration::max(self.settings.recv_latency, hs.send_latency),
             cipher: self.cipher,

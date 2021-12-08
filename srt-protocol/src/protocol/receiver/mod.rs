@@ -69,7 +69,7 @@ impl Receiver {
                 settings.socket_start_time,
                 settings.recv_tsbpd_latency,
                 settings.init_seq_num,
-                settings.recv_buffer_size / settings.max_packet_size,
+                settings.recv_buffer_size,
             ),
             decryption: Decryption::new(settings.cipher),
         }
@@ -160,7 +160,6 @@ impl<'a> ReceiverContext<'a> {
                     BufferFull { .. } | PacketTooEarly { .. } | PacketTooLate { .. } => {
                         self.stats.rx_dropped_data += 1;
                         self.stats.rx_dropped_bytes += bytes;
-                        log::warn!("QoS warning--dropping data in the receive buffer");
                     }
                     DecryptionError(_) => {
                         self.stats.rx_decrypt_errors += 1;

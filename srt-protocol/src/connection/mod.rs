@@ -11,7 +11,7 @@ use std::{
 use bytes::Bytes;
 
 use crate::{
-    options::LiveBandwidthMode,
+    options::*,
     packet::*,
     protocol::{
         handshake::Handshake,
@@ -52,17 +52,17 @@ pub struct ConnectionSettings {
     pub init_seq_num: SeqNumber,
 
     /// The maximum packet size
-    pub max_packet_size: usize,
+    pub max_packet_size: ByteCount,
 
     /// The maxiumum flow size
-    pub max_flow_size: u32,
+    pub max_flow_size: PacketCount,
 
     /// The TSBPD of the connection--the max of each side's repspective latencies
     pub send_tsbpd_latency: Duration,
     pub recv_tsbpd_latency: Duration,
 
     /// Size of the receive buffer, in packets
-    pub recv_buffer_size: usize,
+    pub recv_buffer_size: PacketCount,
     pub cipher: Option<CipherSettings>,
     pub stream_id: Option<String>,
     pub bandwidth: LiveBandwidthMode,
@@ -447,11 +447,11 @@ mod duplex_connection {
                 socket_start_time: now,
                 rtt: Duration::default(),
                 init_seq_num: SeqNumber::new_truncate(0),
-                max_packet_size: 1316,
-                max_flow_size: 8192,
+                max_packet_size: ByteCount(1316),
+                max_flow_size: PacketCount(8192),
                 send_tsbpd_latency: TSBPD,
                 recv_tsbpd_latency: TSBPD,
-                recv_buffer_size: 1024 * 1316,
+                recv_buffer_size: PacketCount(1024),
                 cipher: None,
                 stream_id: None,
                 bandwidth: LiveBandwidthMode::Unlimited,

@@ -8,13 +8,12 @@ use std::{
 };
 
 use log::{info, trace};
-use rand::distributions::Bernoulli;
-use rand::{prelude::StdRng, SeedableRng};
-use srt_protocol::connection::Input;
+use rand::{distributions::Bernoulli, prelude::StdRng, SeedableRng};
+use rand_distr::Normal;
+use srt_protocol::{connection::Input, options::PacketCount};
 
 pub mod simulator;
 
-use rand_distr::Normal;
 use simulator::*;
 
 #[test]
@@ -58,7 +57,7 @@ fn do_lossy_test(seed: u64, count: usize) {
         drop_dist: Bernoulli::new(DROP_RATE).unwrap(),
     };
     let (mut network, mut sender, mut receiver) =
-        simulation.build(start, Duration::from_secs(1), 8192);
+        simulation.build(start, Duration::from_secs(1), PacketCount(8192));
     input_data_simulation(start, count, PACKET_SPACING, &mut network.sender);
 
     let mut now = start;
@@ -168,7 +167,8 @@ fn do_high_bandwidth_deterministic(seed: u64, count: usize) {
 
     let latency = Duration::from_secs(1);
     // double to be safe
-    let recv_buffer_size = 2 * (1. / packet_spacing.as_secs_f64() * latency.as_secs_f64()) as usize;
+    let recv_buffer_size =
+        2 * (1. / packet_spacing.as_secs_f64() * latency.as_secs_f64()) as u64 * packet_size as u64;
 
     let mut simulation = RandomLossSimulation {
         rng: StdRng::seed_from_u64(seed),
@@ -176,7 +176,7 @@ fn do_high_bandwidth_deterministic(seed: u64, count: usize) {
         drop_dist: Bernoulli::new(drop_rate).unwrap(),
     };
     let (mut network, mut sender, mut receiver) =
-        simulation.build(start, latency, recv_buffer_size);
+        simulation.build(start, latency, PacketCount(recv_buffer_size));
     input_data_simulation(start, count, packet_spacing, &mut network.sender);
 
     let mut now = start;

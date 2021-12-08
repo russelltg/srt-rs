@@ -33,7 +33,9 @@ async fn high_bandwidth() -> Result<(), Error> {
     let sender_fut = async {
         let mut sock = SrtSocket::builder()
             .latency(Duration::from_millis(150))
-            .bandwidth(Estimated { overhead: 20 })
+            .bandwidth(Estimated {
+                overhead: Percent(20),
+            })
             .call("127.0.0.1:6654", None)
             .await?;
 
@@ -52,7 +54,7 @@ async fn high_bandwidth() -> Result<(), Error> {
     let recv_fut = async {
         let mut sock = SrtSocket::builder()
             .with(Receiver {
-                buffer_size: 8192 * 10,
+                buffer_size: ByteCount(8192 * 10),
                 ..Default::default()
             })
             .set(|options| options.session.statistics_interval = Duration::from_secs(2))

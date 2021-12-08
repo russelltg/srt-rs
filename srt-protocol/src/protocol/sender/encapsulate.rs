@@ -1,11 +1,12 @@
 use bytes::Bytes;
 
+use crate::options::ByteCount;
 use crate::{connection::ConnectionSettings, packet::*};
 
 #[derive(Debug)]
 pub struct Encapsulation {
     remote_socket_id: SocketId,
-    max_packet_size: usize,
+    max_packet_size: ByteCount,
     next_message_number: MsgNumber,
     next_sequence_number: SeqNumber,
 }
@@ -14,7 +15,7 @@ impl Encapsulation {
     pub fn new(settings: &ConnectionSettings) -> Self {
         Self {
             remote_socket_id: settings.remote_sockid,
-            max_packet_size: settings.max_packet_size as usize,
+            max_packet_size: settings.max_packet_size,
             next_sequence_number: settings.init_seq_num,
             next_message_number: MsgNumber::new_truncate(0),
         }
@@ -42,7 +43,7 @@ impl Encapsulation {
 struct MessageEncapsulationIterator<'a> {
     next_sequence_number: &'a mut SeqNumber,
     remote_socket_id: SocketId,
-    max_packet_size: usize,
+    max_packet_size: ByteCount,
     remaining: Bytes,
     packet_location: PacketLocation,
     message_number: MsgNumber,
@@ -57,8 +58,8 @@ impl<'a> Iterator for MessageEncapsulationIterator<'a> {
             return None;
         }
 
-        let (payload, message_loc) = if self.remaining.len() > self.max_packet_size {
-            let payload = self.remaining.split_to(self.max_packet_size);
+        let (payload, message_loc) = if self.remaining.len() > self.max_packet_size.into() {
+            let payload = self.remaining.split_to(self.max_packet_size.into());
             let packet_location = self.packet_location;
             self.packet_location = PacketLocation::MIDDLE;
             (payload, packet_location)
@@ -89,7 +90,7 @@ mod encapsulation {
     fn new_encapsulation() -> Encapsulation {
         Encapsulation {
             remote_socket_id: SocketId(2),
-            max_packet_size: 1024,
+            max_packet_size: ByteCount(1024),
             next_message_number: MsgNumber(1),
             next_sequence_number: SeqNumber(0),
         }

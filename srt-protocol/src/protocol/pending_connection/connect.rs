@@ -205,6 +205,7 @@ impl Connect {
 mod test {
     use std::time::Duration;
 
+    use crate::options::PacketCount;
     use rand::random;
 
     use crate::protocol::pending_connection::ConnectionReject;
@@ -296,7 +297,7 @@ mod test {
                 recv_latency: Duration::from_millis(20),
                 bandwidth: Default::default(),
                 statistics_interval: Duration::from_secs(1),
-                recv_buffer_size: 8192,
+                recv_buffer_size: PacketCount(8192),
             },
             sid,
             random(),
