@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
-use crate::options::{ByteCount, DataRate, LiveBandwidthMode, PacketCount, PacketPeriod, PacketRate, Percent};
+use crate::options::{
+    ByteCount, DataRate, LiveBandwidthMode, PacketCount, PacketPeriod, PacketRate, Percent,
+};
 
 #[derive(Debug, Default)]
 pub struct RateEstimate {

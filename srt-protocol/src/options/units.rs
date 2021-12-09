@@ -5,8 +5,8 @@ use std::{
 
 use derive_more::*;
 
-#[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt="{} byte(s)", "_0")]
+#[derive(Debug, Deref, Display, Into, Mul, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[display(fmt = "{} byte(s)", "_0")]
 pub struct ByteCount(pub u64);
 
 impl From<ByteCount> for usize {
@@ -24,11 +24,11 @@ impl Div<PacketSize> for ByteCount {
 }
 
 #[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt="{} byte(s)", "_0")]
+#[display(fmt = "{} byte(s)", "_0")]
 pub struct PacketSize(pub u64);
 
-#[derive(Debug, Deref, Display, Into, Mul, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt="{} packet(s)", "_0")]
+#[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[display(fmt = "{} packet(s)", "_0")]
 pub struct PacketCount(pub u64);
 
 impl From<PacketCount> for usize {
@@ -59,9 +59,8 @@ impl PacketCount {
     }
 }
 
-
 #[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt="{} bytes/s", "_0")]
+#[display(fmt = "{} bytes/s", "_0")]
 pub struct DataRate(pub u64);
 
 impl Mul<Duration> for DataRate {
@@ -84,8 +83,14 @@ impl Mul<DataRate> for Duration {
     }
 }
 
+impl DataRate {
+    pub fn as_mbps_f64(&self) -> f64 {
+        self.0 as f64 / 1_000_000.
+    }
+}
+
 #[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt="{} packets/s", "_0")]
+#[display(fmt = "{} packets/s", "_0")]
 pub struct PacketRate(pub u64);
 
 impl Mul<Duration> for PacketRate {
@@ -117,7 +122,7 @@ impl Div<PacketRate> for DataRate {
 }
 
 #[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt="{} s/p", "_0.as_secs_f64()")]
+#[display(fmt = "{} s/p", "_0.as_secs_f64()")]
 pub struct PacketPeriod(pub Duration);
 
 impl Mul<PacketCount> for PacketPeriod {
@@ -150,7 +155,7 @@ impl PacketPeriod {
 }
 
 #[derive(Debug, Deref, Display, Into, Add, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt="{}%", "_0")]
+#[display(fmt = "{}%", "_0")]
 pub struct Percent(pub u64);
 
 impl Mul<DataRate> for Percent {

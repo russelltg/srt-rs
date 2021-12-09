@@ -166,20 +166,17 @@ fn do_high_bandwidth_deterministic(seed: u64, count: usize) {
     let packet_spacing = PacketPeriod::try_from(bandwidth, packet_size).unwrap(); // s/packet
 
     let latency = Duration::from_secs(1);
-    let latency_packet_count = PacketCount::for_time_window(latency, packet_spacing);
+    let latency_packet_count: PacketCount = PacketCount::for_time_window(latency, packet_spacing);
     // double to be safe
-    let recv_buffer_size = 2 * latency_packet_count * packet_size;
+    let recv_buffer_size = (latency_packet_count * packet_size) * 2;
 
     let mut simulation = RandomLossSimulation {
         rng: StdRng::seed_from_u64(seed),
         delay_dist: Normal::new(delay_mean.as_secs_f64(), delay_stdev.as_secs_f64()).unwrap(),
         drop_dist: Bernoulli::new(drop_rate).unwrap(),
     };
-    let (mut network, mut sender, mut receiver) = simulation.build(
-        start,
-        latency,
-        PacketCount(recv_buffer_size.0 / packet_size.0),
-    );
+    let (mut network, mut sender, mut receiver) =
+        simulation.build(start, latency, recv_buffer_size / packet_size);
     input_data_simulation(start, count, packet_spacing, &mut network.sender);
 
     let mut now = start;
