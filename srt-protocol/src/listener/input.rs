@@ -13,6 +13,7 @@ pub use crate::protocol::pending_connection::{AccessControlRequest, AccessContro
 pub struct SessionId(pub SocketAddr, pub SocketId);
 
 #[derive(Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Input {
     Packet(ReceivePacketResult),
     AccessResponse(Option<(SessionId, AccessControlResponse)>),

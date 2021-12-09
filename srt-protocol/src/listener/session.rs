@@ -10,6 +10,7 @@ use crate::{
 use super::*;
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum SessionState {
     Pending(Listen),
     Rejecting(Option<(Packet, SocketAddr)>),
