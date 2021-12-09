@@ -6,7 +6,7 @@ use std::{
 use derive_more::*;
 
 #[derive(Debug, Deref, Display, Into, Mul, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt = "{} byte(s)", "_0")]
+#[display(fmt = "{} bytes", "_0")]
 pub struct ByteCount(pub u64);
 
 impl From<ByteCount> for usize {
@@ -24,11 +24,11 @@ impl Div<PacketSize> for ByteCount {
 }
 
 #[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt = "{} byte(s)", "_0")]
+#[display(fmt = "{} bytes", "_0")]
 pub struct PacketSize(pub u64);
 
 #[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt = "{} packet(s)", "_0")]
+#[display(fmt = "{} packets", "_0")]
 pub struct PacketCount(pub u64);
 
 impl From<PacketCount> for usize {
@@ -210,9 +210,9 @@ mod tests {
 
     #[test]
     fn display() {
-        assert_eq!(format!("{}", ByteCount(100)), "100 byte(s)");
-        assert_eq!(format!("{}", PacketSize(100)), "100 byte(s)");
-        assert_eq!(format!("{}", PacketCount(100)), "100 packet(s)");
+        assert_eq!(format!("{}", ByteCount(100)), "100 bytes");
+        assert_eq!(format!("{}", PacketSize(100)), "100 bytes");
+        assert_eq!(format!("{}", PacketCount(100)), "100 packets");
         assert_eq!(format!("{}", DataRate(100)), "100 bytes/s");
         assert_eq!(format!("{}", PacketRate(100)), "100 packets/s");
         assert_eq!(format!("{}", Percent(100)), "100%");
