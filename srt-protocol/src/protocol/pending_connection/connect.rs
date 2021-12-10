@@ -207,10 +207,7 @@ mod test {
 
     use rand::random;
 
-    use crate::{
-        options,
-        protocol::pending_connection::ConnectionReject
-    };
+    use crate::{options, protocol::pending_connection::ConnectionReject};
 
     use super::*;
 

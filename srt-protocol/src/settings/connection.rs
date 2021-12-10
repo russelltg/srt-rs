@@ -43,7 +43,7 @@ impl ConnInitSettings {
     pub fn copy_randomize(&self) -> ConnInitSettings {
         ConnInitSettings {
             local_sockid: random(),
-            .. self.clone()
+            ..self.clone()
         }
     }
 }
