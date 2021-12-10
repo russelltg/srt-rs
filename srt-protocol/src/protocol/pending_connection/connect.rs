@@ -205,10 +205,12 @@ impl Connect {
 mod test {
     use std::time::Duration;
 
-    use crate::options::PacketCount;
     use rand::random;
 
-    use crate::protocol::pending_connection::ConnectionReject;
+    use crate::{
+        options,
+        protocol::pending_connection::ConnectionReject
+    };
 
     use super::*;
 
@@ -297,7 +299,9 @@ mod test {
                 recv_latency: Duration::from_millis(20),
                 bandwidth: Default::default(),
                 statistics_interval: Duration::from_secs(1),
-                recv_buffer_size: PacketCount(8192),
+                recv_buffer_size: options::PacketCount(8192),
+                max_packet_size: options::PacketSize(1500),
+                max_flow_size: options::PacketCount(8192),
             },
             sid,
             random(),

@@ -59,8 +59,8 @@ impl Rendezvous {
                 timestamp: TimeStamp::from_micros(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: starting_seqnum,
-                    max_packet_size: 1500, // TODO: take as a parameter
-                    max_flow_size: 8192,   // TODO: take as a parameter
+                    max_packet_size: init_settings.max_packet_size.0 as u32,
+                    max_flow_size: init_settings.max_flow_size.0 as u32,
                     socket_id: init_settings.local_sockid,
                     shake_type: ShakeType::Waveahand,
                     peer_addr: local_addr.ip(),
