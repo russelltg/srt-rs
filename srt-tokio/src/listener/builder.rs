@@ -123,7 +123,7 @@ mod tests {
             .encryption(0, "super secret passcode")
             .bandwidth(LiveBandwidthMode::Set(DataRate(1_000_000)))
             .socket(socket)
-            .bind(":9999")
+            .bind(9999)
             .await
             .unwrap();
     }

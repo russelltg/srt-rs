@@ -4,9 +4,7 @@ use bytes::Bytes;
 use futures::{stream, SinkExt, StreamExt};
 use log::info;
 
-use srt_protocol::{access::*, packet::*, settings::*};
-
-use srt_tokio::SrtSocketBuilder;
+use srt_tokio::{access::*, options::*, ConnInitMethod, SrtSocket, SrtSocketBuilder};
 
 struct AccessController;
 
@@ -46,7 +44,7 @@ impl StreamAcceptor for AccessController {
 async fn main() -> io::Result<()> {
     let _ = pretty_env_logger::try_init();
 
-    let mut server = SrtSocketBuilder::new_listen()
+    let mut server = SrtSocketBuilder::new(ConnInitMethod::Listen)
         .local_port(3333)
         .build_multiplexed_with_acceptor(AccessController)
         .await

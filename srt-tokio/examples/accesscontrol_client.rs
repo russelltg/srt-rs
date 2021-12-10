@@ -1,9 +1,7 @@
 use std::{env::args, io::Error, process::exit};
 
-use srt_protocol::access::*;
+use srt_tokio::{access::*, SrtSocket};
 use tokio_stream::StreamExt;
-
-use srt_tokio::SrtSocketBuilder;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -12,18 +10,17 @@ async fn main() -> Result<(), Error> {
         exit(1);
     }
 
-    let mut srt_socket = SrtSocketBuilder::new_connect_with_streamid(
-        "127.0.0.1:3333",
-        format!(
-            "{}",
-            AccessControlList(vec![StandardAccessControlEntry::UserName(
-                args().nth(1).unwrap()
-            )
-            .into(),])
-        ),
-    )
-    .connect()
-    .await?;
+    let stream_id = format!(
+        "{}",
+        AccessControlList(vec![StandardAccessControlEntry::UserName(
+            args().nth(1).unwrap()
+        )
+        .into(),])
+    );
+
+    let mut srt_socket = SrtSocket::builder()
+        .call("127.0.0.1:3333", Some(stream_id.as_str()))
+        .await?;
 
     while let Some((_instant, bytes)) = srt_socket.try_next().await? {
         println!("{}", std::str::from_utf8(&bytes[..]).unwrap());

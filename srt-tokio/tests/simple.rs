@@ -3,8 +3,7 @@ use std::time::{Duration, Instant};
 use anyhow::Error;
 use bytes::Bytes;
 use futures::prelude::*;
-use srt_protocol::statistics::SocketStatistics;
-use srt_tokio::{SrtSocket, SrtSocketBuilder};
+use srt_tokio::{SocketStatistics, SrtSocket};
 use tokio::time::sleep;
 
 #[tokio::test]
@@ -27,9 +26,7 @@ async fn test() {
     };
 
     let receiver_fut = async {
-        let mut rx = SrtSocketBuilder::new_connect("127.0.0.1:5223")
-            .connect()
-            .await?;
+        let mut rx = SrtSocket::builder().call("127.0.0.1:5223", None).await?;
 
         assert_eq!(rx.statistics().next().await, Some(SocketStatistics::new()));
 
