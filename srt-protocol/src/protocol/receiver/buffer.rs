@@ -1139,4 +1139,70 @@ mod receive_buffer {
 
         assert_eq!(buf.next_ack_dsn(), init_seq_num + 4);
     }
+
+    #[test]
+    fn rx_acknowledged_time() {
+        let tsbpd = Duration::from_secs(2);
+        let start = Instant::now();
+        let init_seq_num = SeqNumber(5);
+
+        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(10));
+
+        let add_packet = |i, buf: &mut ReceiveBuffer| {
+            buf.push_packet(
+                start + Duration::from_micros(u64::from(i) * 10),
+                DataPacket {
+                    seq_number: init_seq_num + i,
+                    timestamp: TimeStamp::from_micros(i * 10),
+                    ..basic_pack()
+                },
+            )
+            .unwrap();
+        };
+
+        assert_eq!(buf.rx_acknowledged_time(), Duration::from_secs(0));
+
+        add_packet(0, &mut buf);
+        assert_eq!(buf.rx_acknowledged_time(), Duration::from_secs(0));
+
+        // in order, increases rx_acknowledged_time
+        add_packet(1, &mut buf);
+        assert_eq!(buf.rx_acknowledged_time(), Duration::from_micros(10));
+
+        // out of order, no change
+        add_packet(3, &mut buf);
+        assert_eq!(buf.rx_acknowledged_time(), Duration::from_micros(10));
+
+        // got missing paket, goes up
+        add_packet(2, &mut buf);
+        assert_eq!(buf.rx_acknowledged_time(), Duration::from_micros(30));
+
+        // pop packets
+        buf.pop_next_message(start + tsbpd + Duration::from_micros(10))
+            .unwrap()
+            .unwrap();
+        assert_eq!(buf.rx_acknowledged_time(), Duration::from_micros(20));
+
+        buf.pop_next_message(start + tsbpd + Duration::from_micros(20))
+            .unwrap()
+            .unwrap();
+        assert_eq!(buf.rx_acknowledged_time(), Duration::from_micros(10));
+
+        buf.pop_next_message(start + tsbpd + Duration::from_micros(30))
+            .unwrap()
+            .unwrap();
+        assert_eq!(buf.rx_acknowledged_time(), Duration::from_micros(0));
+
+        buf.pop_next_message(start + tsbpd + Duration::from_micros(40))
+            .unwrap()
+            .unwrap();
+        assert_eq!(buf.rx_acknowledged_time(), Duration::from_micros(0));
+
+        assert_eq!(
+            buf.pop_next_message(start + tsbpd + Duration::from_micros(40))
+                .unwrap(),
+            None
+        );
+        assert_eq!(buf.rx_acknowledged_time(), Duration::from_micros(0));
+    }
 }
