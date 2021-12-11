@@ -14,7 +14,7 @@ pub struct SendBuffer {
     flow_window_size: Option<usize>,
     buffer: VecDeque<SendBufferEntry>,
     buffer_len_bytes: usize, // Invariant: buffer_len_bytes = sum of wire sizes of buffer
-    next_send: Option<SeqNumber>,
+    next_send: SeqNumber,
     next_full_ack: FullAckSeqNumber,
     // 1) Sender's Loss List: The sender's loss list is used to store the
     //    sequence numbers of the lost packets fed back by the receiver
@@ -57,7 +57,7 @@ impl SendBuffer {
         Self {
             buffer: VecDeque::new(),
             buffer_len_bytes: 0,
-            next_send: None,
+            next_send: settings.init_seq_num,
             next_full_ack: FullAckSeqNumber::INITIAL,
             lost_list: BTreeSet::new(),
             flow_window_size: None,
@@ -85,7 +85,7 @@ impl SendBuffer {
     }
 
     pub fn has_packets_to_send(&self) -> bool {
-        self.front_packet().is_some() || !self.lost_list.is_empty()
+        self.get(self.next_send).is_some() || !self.lost_list.is_empty()
     }
 
     pub fn duration(&self) -> Duration {
@@ -114,7 +114,7 @@ impl SendBuffer {
     ) -> Result<AckAction, AckError> {
         use AckError::*;
         let first = self.front_packet().ok_or(SendBufferEmpty)?;
-        let next = self.next_send.ok_or(SendBufferEmpty)?;
+        let next = self.next_send;
         if ack_number < first || ack_number > next {
             return Err(InvalidAck {
                 ack_number,
@@ -184,13 +184,14 @@ impl SendBuffer {
     }
 
     fn send_next_packet(&mut self, now: Instant, rto_timeout: Duration) -> Option<DataPacket> {
-        let packet = self.front_packet()?;
-        self.next_send = Some(packet + 1);
-        Some(self.send_packet(now, rto_timeout, packet))
+        let seq = self.next_send;
+        let packet_to_send = self.send_packet(now, rto_timeout, seq)?;
+        self.next_send += 1; // increment after send_packet, which can return None
+        Some(packet_to_send)
     }
 
     fn send_next_16n_packet(&mut self, now: Instant, rto_timeout: Duration) -> Option<DataPacket> {
-        if self.front_packet()? % 16 == 0 {
+        if self.next_send % 16 == 0 {
             self.send_next_packet(now, rto_timeout)
         } else {
             None
@@ -199,7 +200,10 @@ impl SendBuffer {
 
     fn send_next_lost_packet(&mut self, now: Instant, rto_timeout: Duration) -> Option<DataPacket> {
         let seq = self.pop_lost_list()?;
-        Some(self.send_packet(now, rto_timeout, seq))
+        Some(
+            self.send_packet(now, rto_timeout, seq)
+                .expect("Packet in loss list was not in buffer!"),
+        )
     }
 
     fn send_next_timed_out_packet(
@@ -235,7 +239,10 @@ impl SendBuffer {
 
             // if we get here, this timer is valid, check if it's timed out then exit
             if now > rto.timeout {
-                return Some(self.send_packet(now, rto_timeout, rto.seq));
+                return Some(
+                    self.send_packet(now, rto_timeout, rto.seq)
+                        .expect("Packet in RTO was not in buffer!"),
+                );
             } else {
                 break;
             }
@@ -268,17 +275,14 @@ impl SendBuffer {
         let count = last - first + 1;
         let _ = self.buffer.drain(0..count as usize).count();
 
-        self.next_send = self
-            .next_send
-            .filter(|next| *next > last)
-            .or(Some(last + 1));
-
+        self.next_send = max(self.next_send, last + 1);
         Some(first..last + 1)
     }
 
     fn flush_on_close(&mut self, should_drain: bool) -> Option<DataPacket> {
         if should_drain && self.buffer.len() == 1 {
-            self.next_send = None;
+            // self.next_send = None; TODO: i'm not sure what functionality this was supposed to expose
+
             let p = self.buffer.pop_front().map(|p| p.packet);
             // This needs to be saturating because of the hack in Self::push_data, can be regular subtract otherwise
             self.buffer_len_bytes = self
@@ -329,10 +333,10 @@ impl SendBuffer {
         now: Instant,
         rto_timeout: Duration,
         seq_num: SeqNumber,
-    ) -> DataPacket {
+    ) -> Option<DataPacket> {
         let front = self.front_packet().unwrap();
         let idx = seq_num - front;
-        let entry = &mut self.buffer[idx as usize];
+        let entry = self.buffer.get_mut(idx as usize)?;
         entry.transmit_count += 1;
 
         // clone packet first, then update retransmitted flag
@@ -347,7 +351,7 @@ impl SendBuffer {
             transmit_count: entry.transmit_count,
         });
 
-        packet
+        Some(packet)
     }
 
     fn get(&self, seq: SeqNumber) -> Option<&SendBufferEntry> {
@@ -411,11 +415,10 @@ where
         let front = self.buffer.front_packet();
         let next_send = self.buffer.next_send;
         self.loss_list.next().map(|next| match (front, next_send) {
-            (_, Some(next_send)) if next >= next_send => (Ignored, next),
-            (_, None) => (Dropped, next),
+            (_, next_send) if next >= next_send => (Ignored, next),
             (Some(front), _) if next < front => (Dropped, next),
             (None, _) => (Dropped, next),
-            (Some(_), Some(_)) => {
+            (Some(_), _) => {
                 self.buffer.lost_list.insert(next);
                 (Added, next)
             }
