@@ -334,8 +334,7 @@ impl SendBuffer {
         rto_timeout: Duration,
         seq_num: SeqNumber,
     ) -> Option<DataPacket> {
-        let front = self.front_packet().unwrap();
-        let idx = seq_num - front;
+        let idx = seq_num - self.front_packet()?;
         let entry = self.buffer.get_mut(idx as usize)?;
         entry.transmit_count += 1;
 
