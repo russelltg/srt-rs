@@ -2,7 +2,7 @@ use std::{convert::TryInto, time::Duration};
 
 use crate::packet::TimeSpan;
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub struct Rtt {
     mean: TimeSpan,
     variance: TimeSpan,
@@ -18,8 +18,8 @@ impl Default for Rtt {
 }
 
 impl Rtt {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(mean: TimeSpan, variance: TimeSpan) -> Self {
+        Self { mean, variance }
     }
 
     pub fn update(&mut self, rtt: TimeSpan) {

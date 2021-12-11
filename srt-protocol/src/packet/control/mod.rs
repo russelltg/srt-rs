@@ -18,6 +18,8 @@ use bitflags::bitflags;
 use bytes::{Buf, BufMut};
 use log::warn;
 
+use crate::protocol::time::Rtt;
+
 use super::*;
 
 use loss_compression::{compress_loss_list, decompress_loss_list};
@@ -173,10 +175,8 @@ pub struct HandshakeControlInfo {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct AckStatistics {
-    /// Round trip time
-    pub rtt: TimeSpan,
-    /// RTT variance
-    pub rtt_variance: TimeSpan,
+    /// Round trip time+variance
+    pub rtt: Rtt,
     /// available buffer, in packets
     pub buffer_available: u32,
     /// receive rate, in packets/sec
@@ -690,7 +690,7 @@ impl ControlTypes {
                     Acknowledgement::Lite(ack_number)
                 } else {
                     // short/full
-                    let rtt = TimeSpan::from_micros(buf.get_i32());
+                    let rtt_mean = TimeSpan::from_micros(buf.get_i32());
                     let rtt_variance = TimeSpan::from_micros(buf.get_i32());
                     let buffer_available = buf.get_u32();
 
@@ -702,8 +702,7 @@ impl ControlTypes {
                         (buf.remaining() >= size_of::<u32>()).then(|| buf.get_u32());
 
                     let stats = AckStatistics {
-                        rtt,
-                        rtt_variance,
+                        rtt: Rtt::new(rtt_mean, rtt_variance),
                         buffer_available,
                         packet_receive_rate,
                         estimated_link_capacity,
@@ -1008,8 +1007,8 @@ impl Acknowledgement {
     pub fn serialize(&self, into: &mut impl BufMut) {
         into.put_u32(self.ack_number().as_raw());
         if let Some(stats) = self.statistics() {
-            into.put_i32(stats.rtt.as_micros());
-            into.put_i32(stats.rtt_variance.as_micros());
+            into.put_i32(stats.rtt.mean().as_micros());
+            into.put_i32(stats.rtt.variance().as_micros());
             into.put_u32(stats.buffer_available);
 
             // Make sure fields are always in the right order
@@ -1421,8 +1420,7 @@ mod test {
             control_type: ControlTypes::Ack(Acknowledgement::Full(
                 SeqNumber::new_truncate(282_049_186),
                 AckStatistics {
-                    rtt: TimeSpan::from_micros(10_002),
-                    rtt_variance: TimeSpan::from_micros(1000),
+                    rtt: Rtt::new(TimeSpan::from_micros(10_002), TimeSpan::from_micros(1000)),
                     buffer_available: 1314,
                     packet_receive_rate: Some(0),
                     estimated_link_capacity: Some(0),

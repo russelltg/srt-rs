@@ -187,7 +187,7 @@ impl AutomaticRepeatRequestAlgorithm {
                 buffer_size_packets,
             ),
             ack_history_window: AckHistoryWindow::new(tsbpd_latency, init_seq_num),
-            rtt: Rtt::new(),
+            rtt: Rtt::default(),
         }
     }
 
@@ -231,8 +231,7 @@ impl AutomaticRepeatRequestAlgorithm {
         let arrival_speed = self.arrival_speed.calculate();
 
         let statistics = AckStatistics {
-            rtt: self.rtt.mean(),
-            rtt_variance: self.rtt.variance(),
+            rtt: self.rtt,
             buffer_available: self.receive_buffer.buffer_available() as u32,
             packet_receive_rate: arrival_speed.map(|(packets, _)| packets),
             estimated_link_capacity: arrival_speed.map(|(_, bytes)| bytes),
@@ -440,8 +439,7 @@ mod automatic_repeat_request_algorithm {
             Some(Acknowledgement::Full(
                 init_seq_num + 2,
                 AckStatistics {
-                    rtt: Rtt::new().mean(),
-                    rtt_variance: Rtt::new().variance(),
+                    rtt: Rtt::default(),
                     buffer_available: 8190,
                     packet_receive_rate: None,
                     estimated_link_capacity: None,
@@ -500,12 +498,12 @@ mod automatic_repeat_request_algorithm {
                 ..basic_pack()
             },
         );
-        assert_eq!(arq.rtt.mean(), Rtt::new().mean());
+        assert_eq!(arq.rtt.mean(), Rtt::default().mean());
         assert!(!arq.is_flushed());
 
         let rtt =
             arq.handle_ack2_packet(start + Duration::from_millis(1), FullAckSeqNumber::INITIAL);
-        assert_ne!(rtt.map(|r| r.mean()), Some(Rtt::new().mean()));
+        assert_ne!(rtt.map(|r| r.mean()), Some(Rtt::default().mean()));
         assert!(!arq.is_flushed());
     }
 
@@ -534,8 +532,7 @@ mod automatic_repeat_request_algorithm {
             Some(Acknowledgement::Full(
                 init_seq_num + 1,
                 AckStatistics {
-                    rtt: Rtt::new().mean(),
-                    rtt_variance: Rtt::new().variance(),
+                    rtt: Rtt::default(),
                     buffer_available: 8191,
                     packet_receive_rate: None,
                     estimated_link_capacity: None,

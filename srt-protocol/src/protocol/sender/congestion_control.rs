@@ -1,7 +1,10 @@
 use std::time::{Duration, Instant};
 
-use crate::options::{
-    ByteCount, DataRate, LiveBandwidthMode, PacketCount, PacketPeriod, PacketRate, Percent,
+use crate::{
+    options::{
+        ByteCount, DataRate, LiveBandwidthMode, PacketCount, PacketPeriod, PacketRate, Percent,
+    },
+    protocol::time::{Rtt, Timers},
 };
 
 #[derive(Debug, Default)]
@@ -84,6 +87,11 @@ pub struct SenderCongestionControl {
     next: Option<Instant>,
     estimation: InputRateEstimation,
     bandwidth_mode: LiveBandwidthMode,
+
+    // https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-5.1.2
+    // Number of consequitive retransmites
+    rexmit_count: u32,
+    latest_rtt: Rtt,
 }
 
 // https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-5.1.2
@@ -95,6 +103,8 @@ impl SenderCongestionControl {
             next: None,
             estimation: InputRateEstimation::default(),
             bandwidth_mode,
+            rexmit_count: 0,
+            latest_rtt: Rtt::default(),
         }
     }
 
@@ -131,8 +141,12 @@ impl SenderCongestionControl {
         result
     }
 
+    pub fn on_ack(&mut self) {
+        self.rexmit_count = 0;
+    }
+
     pub fn on_rto(&mut self) {
-        todo!();
+        self.rexmit_count += 1;
     }
 
     fn calculate_max_data_rate(&self, actual_data_rate: DataRate) -> DataRate {
@@ -157,7 +171,20 @@ impl SenderCongestionControl {
     }
 
     pub fn calculate_rto_timeout(&self) -> Duration {
-        todo!()
+        // RTT + 4 * RTTVar + 2 * SYN
+        let rto_constant = self.latest_rtt.mean_as_duration()
+            + 4 * self.latest_rtt.variance_as_duration()
+            + 2 * Timers::SYN;
+        if self.rexmit_count == 0 {
+            rto_constant
+        } else {
+            // RTO = RexmitCount * (RTT + 4 * RTTVar + 2 * SYN) + SYN
+            self.rexmit_count * rto_constant + Timers::SYN
+        }
+    }
+
+    pub fn update_rtt(&mut self, rtt: Rtt) {
+        self.latest_rtt = rtt;
     }
 }
 

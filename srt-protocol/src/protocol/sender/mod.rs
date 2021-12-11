@@ -53,10 +53,6 @@ impl Sender {
         self.send_buffer.has_packets_to_send()
     }
 
-    pub fn calculate_rto_timeout(&self) -> std::time::Duration {
-        self.congestion_control.calculate_rto_timeout()
-    }
-
     pub fn tx_buffered_time(&self) -> Duration {
         self.send_buffer.duration()
     }
@@ -131,6 +127,8 @@ impl<'a> SenderContext<'a> {
             self.stats.rx_light_ack += 1;
         }
 
+        self.sender.congestion_control.on_ack();
+
         match self
             .sender
             .send_buffer
@@ -142,8 +140,8 @@ impl<'a> SenderContext<'a> {
                 send_ack2,
             }) => {
                 // TODO: add received and recovered to connection statistics
-                if let Some(_stats) = ack.statistics() {
-                    // TODO: add these to connection statistics
+                if let Some(stats) = ack.statistics() {
+                    self.sender.congestion_control.update_rtt(stats.rtt);
                 }
                 if let Some(full_ack) = send_ack2 {
                     self.output.send_control(now, ControlTypes::Ack2(full_ack))
@@ -208,7 +206,7 @@ impl<'a> SenderContext<'a> {
 
     pub fn on_snd_event(&mut self, now: Instant, elapsed_periods: u32) {
         use SenderAction::*;
-        let rto_timeout = self.sender.calculate_rto_timeout();
+        let rto_timeout = self.sender.congestion_control.calculate_rto_timeout();
         let ts_now = self.sender.time_base.timestamp_from(now);
         let actions = self.sender.send_buffer.next_snd_actions(
             ts_now,

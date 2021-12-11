@@ -433,6 +433,8 @@ mod duplex_connection {
     use ControlTypes::*;
     use Packet::*;
 
+    use crate::protocol::time::Rtt;
+
     use super::*;
 
     const MILLIS: Duration = Duration::from_millis(1);
@@ -509,8 +511,7 @@ mod duplex_connection {
             control_type: Ack(Acknowledgement::Full(
                 SeqNumber(1),
                 AckStatistics {
-                    rtt: TimeSpan::ZERO,
-                    rtt_variance: TimeSpan::ZERO,
+                    rtt: Rtt::new(TimeSpan::ZERO, TimeSpan::ZERO),
                     buffer_available: 10000,
                     packet_receive_rate: None,
                     estimated_link_capacity: None,

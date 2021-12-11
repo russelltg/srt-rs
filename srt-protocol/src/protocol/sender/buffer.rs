@@ -73,11 +73,11 @@ impl SendBuffer {
         // if self.buffer.is_empty() {
         //     self.buffer.push_back(packet.clone());
         // }
+        self.buffer_len_bytes += packet.wire_size();
         self.buffer.push_back(SendBufferEntry {
             packet,
             transmit_count: 0,
         });
-        self.buffer_len_bytes += packet.wire_size();
     }
 
     pub fn is_flushed(&self) -> bool {
