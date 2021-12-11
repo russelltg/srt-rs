@@ -313,6 +313,10 @@ impl AutomaticRepeatRequestAlgorithm {
     ) -> Result<Option<(Instant, Bytes)>, MessageError> {
         self.receive_buffer.pop_next_message(now)
     }
+
+    pub fn rx_acknowledged_time(&self) -> Duration {
+        self.receive_buffer.rx_acknowledged_time()
+    }
 }
 
 #[cfg(test)]

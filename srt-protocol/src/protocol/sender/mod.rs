@@ -2,7 +2,10 @@ mod buffer;
 mod congestion_control;
 mod encapsulate;
 
-use std::time::Instant;
+use std::{
+    convert::TryFrom,
+    time::{Duration, Instant},
+};
 
 use bytes::Bytes;
 
@@ -52,6 +55,18 @@ impl Sender {
 
     pub fn calculate_rto_timeout(&self) -> std::time::Duration {
         self.congestion_control.calculate_rto_timeout()
+    }
+
+    pub fn tx_buffered_time(&self) -> Duration {
+        self.send_buffer.duration()
+    }
+
+    pub fn tx_buffered_packets(&self) -> u64 {
+        u64::try_from(self.send_buffer.len()).unwrap()
+    }
+
+    pub fn tx_buffered_bytes(&self) -> u64 {
+        u64::try_from(self.send_buffer.len_bytes()).unwrap()
     }
 }
 
@@ -112,6 +127,10 @@ impl<'a> SenderContext<'a> {
 
     pub fn handle_ack_packet(&mut self, now: Instant, ack: Acknowledgement) {
         self.stats.rx_ack += 1;
+        if matches!(ack, Acknowledgement::Lite(_)) {
+            self.stats.rx_light_ack += 1;
+        }
+
         match self
             .sender
             .send_buffer
@@ -127,7 +146,6 @@ impl<'a> SenderContext<'a> {
                     // TODO: add these to connection statistics
                 }
                 if let Some(full_ack) = send_ack2 {
-                    self.stats.tx_ack2 += 1;
                     self.output.send_control(now, ControlTypes::Ack2(full_ack))
                 }
             }
@@ -147,14 +165,11 @@ impl<'a> SenderContext<'a> {
             // TODO: figure out better statistics
             use Loss::*;
             match loss {
-                Ignored => {
-                    self.stats.rx_loss_data += 1;
-                }
-                Added => {
-                    self.stats.rx_loss_data += 1;
+                Ignored | Added => {
+                    self.stats.tx_loss_data += 1;
                 }
                 Dropped => {
-                    self.stats.rx_dropped_data += 1;
+                    self.stats.tx_dropped_data += 1;
 
                     // On a Live stream, where each packet is a message, just one NAK with
                     // a compressed packet loss interval of significant size (e.g. [1,
@@ -205,12 +220,15 @@ impl<'a> SenderContext<'a> {
         for action in actions {
             match action {
                 Send(d) => {
+                    self.stats.tx_unique_data += 1;
                     self.output.send_data(now, d);
                 }
                 RetransmitNak(d) => {
+                    self.stats.tx_retransmit_data += 1;
                     self.output.send_data(now, d);
                 }
                 RetransmitRto(d) => {
+                    self.stats.tx_retransmit_data += 1;
                     self.sender.congestion_control.on_rto();
                     self.output.send_data(now, d);
                 }
