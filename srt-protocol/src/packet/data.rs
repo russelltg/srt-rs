@@ -137,6 +137,11 @@ impl DataPacket {
         into.put_u32(self.dest_sockid.0);
         into.put(&self.payload[..]);
     }
+
+    pub fn wire_size(&self) -> usize {
+        // 20 bytes IPv4 + 8 bytes of UDP + 16 bytes SRT header.
+        20 + 8 + 16 + self.payload.len()
+    }
 }
 
 impl TryFrom<u8> for DataEncryption {
