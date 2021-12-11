@@ -1,8 +1,8 @@
 use std::{
-    cmp::max,
-    collections::{BTreeSet, VecDeque},
+    cmp::{max, Ord, Ordering},
+    collections::{BTreeSet, BinaryHeap, VecDeque},
     ops::Range,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::{connection::ConnectionSettings, packet::*};
@@ -19,6 +19,26 @@ pub struct SendBuffer {
     //    through NAK packets or inserted in a timeout event. The numbers
     //    are stored in increasing order.
     lost_list: BTreeSet<SeqNumber>,
+    timeouts: BinaryHeap<RtoTimeoutEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RtoTimeoutEntry {
+    timeout: Instant,
+    seq: SeqNumber,
+    rto_counter: usize,
+}
+
+impl Ord for RtoTimeoutEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.timeout.cmp(&other.timeout).reverse() // reverse for min-heap
+    }
+}
+
+impl PartialOrd for RtoTimeoutEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl SendBuffer {
@@ -33,6 +53,7 @@ impl SendBuffer {
                 settings.send_tsbpd_latency + settings.send_tsbpd_latency / 4, // 125% of TSBPD
                 Duration::from_secs(1),
             ),
+            timeouts: BinaryHeap::new(),
         }
     }
 
