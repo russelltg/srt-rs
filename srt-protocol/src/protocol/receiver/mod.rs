@@ -64,7 +64,7 @@ pub struct Receiver {
 
 impl Receiver {
     pub fn new(settings: ConnectionSettings) -> Self {
-        Receiver {
+        Self {
             arq: AutomaticRepeatRequestAlgorithm::new(
                 settings.socket_start_time,
                 settings.recv_tsbpd_latency,
@@ -160,7 +160,6 @@ impl<'a> ReceiverContext<'a> {
                     BufferFull { .. } | PacketTooEarly { .. } | PacketTooLate { .. } => {
                         self.stats.rx_dropped_data += 1;
                         self.stats.rx_dropped_bytes += bytes;
-                        log::warn!("QoS warning--dropping data in the receive buffer");
                     }
                     DecryptionError(_) => {
                         self.stats.rx_decrypt_errors += 1;

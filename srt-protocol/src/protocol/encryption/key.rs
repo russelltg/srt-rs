@@ -121,9 +121,10 @@ impl EncryptionKey {
             key
         }
         match size {
-            KeySize::Bytes16 => Bytes16(new_key()),
-            KeySize::Bytes24 => Bytes24(new_key()),
-            KeySize::Bytes32 => Bytes32(new_key()),
+            KeySize::AES128 => Bytes16(new_key()),
+            KeySize::AES192 => Bytes24(new_key()),
+            KeySize::AES256 => Bytes32(new_key()),
+            KeySize::Unspecified => Bytes16(new_key()),
         }
     }
 
@@ -204,9 +205,10 @@ impl KeyEncryptionKey {
 
         use EncryptionKey::*;
         let key = match key_size {
-            KeySize::Bytes16 => Bytes16(new_key(passphrase, salt)),
-            KeySize::Bytes24 => Bytes24(new_key(passphrase, salt)),
-            KeySize::Bytes32 => Bytes32(new_key(passphrase, salt)),
+            KeySize::AES128 => Bytes16(new_key(passphrase, salt)),
+            KeySize::AES192 => Bytes24(new_key(passphrase, salt)),
+            KeySize::AES256 => Bytes32(new_key(passphrase, salt)),
+            KeySize::Unspecified => Bytes16(new_key(passphrase, salt)),
         };
 
         KeyEncryptionKey(key)
@@ -302,7 +304,7 @@ mod test {
     fn kek_generate() {
         // this is an example taken from the reference impl
         let key_settings = KeySettings {
-            key_size: KeySize::Bytes16,
+            key_size: KeySize::AES128,
             passphrase: "password123".into(),
         };
         let expected_kek = &hex::decode(b"08F2758F41E4244D00057C9CEBEB95FC").unwrap()[..];

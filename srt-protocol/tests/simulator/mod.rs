@@ -12,9 +12,9 @@ use rand_distr::Normal;
 
 use srt_protocol::{
     connection::{Connection, ConnectionSettings, DuplexConnection, Input},
+    options::*,
     packet::*,
     protocol::handshake::Handshake,
-    settings::*,
 };
 
 #[derive(Eq, PartialEq)]
@@ -163,7 +163,7 @@ impl RandomLossSimulation {
         &mut self,
         start: Instant,
         latency: Duration,
-        recv_buffer_size: usize,
+        recv_buffer_size: PacketCount,
     ) -> (NetworkSimulator, DuplexConnection, DuplexConnection) {
         let sender = self.new_connection_settings(start, latency);
         let receiver = ConnectionSettings {
@@ -204,14 +204,14 @@ impl RandomLossSimulation {
             socket_start_time: start,
             rtt: Duration::default(),
             init_seq_num: self.rng.gen(),
-            max_packet_size: 1316,
-            max_flow_size: 8192,
+            max_packet_size: ByteCount(1316),
+            max_flow_size: PacketCount(8192),
             send_tsbpd_latency: latency,
             recv_tsbpd_latency: latency,
             cipher: None,
             stream_id: None,
-            bandwidth: LiveBandwidthMode::default(),
-            recv_buffer_size: 8192,
+            bandwidth: Default::default(),
+            recv_buffer_size: PacketCount(8192),
             statistics_interval: Duration::from_secs(1),
         }
     }

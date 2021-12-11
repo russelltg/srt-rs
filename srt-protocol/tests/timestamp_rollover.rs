@@ -8,11 +8,11 @@ use std::{
 
 use log::trace;
 
+use srt_protocol::options::{ByteCount, PacketCount};
 use srt_protocol::{
     connection::{Connection, ConnectionSettings, DuplexConnection, Input},
     packet::*,
     protocol::handshake::Handshake,
-    settings::*,
 };
 
 #[test]
@@ -36,14 +36,14 @@ fn timestamp_rollover() {
         socket_start_time: start,
         rtt: Duration::default(),
         init_seq_num: init_seqnum,
-        max_packet_size: 1316,
-        max_flow_size: 8192,
+        max_packet_size: ByteCount(1316),
+        max_flow_size: PacketCount(8192),
         send_tsbpd_latency: Duration::from_millis(20),
         recv_tsbpd_latency: Duration::from_millis(20),
         cipher: None,
         stream_id: None,
-        bandwidth: LiveBandwidthMode::default(),
-        recv_buffer_size: 8192,
+        bandwidth: Default::default(),
+        recv_buffer_size: PacketCount(8192),
         statistics_interval: Duration::from_secs(1),
     };
 
@@ -54,15 +54,15 @@ fn timestamp_rollover() {
         socket_start_time: start,
         rtt: Duration::default(),
         init_seq_num: init_seqnum,
-        max_packet_size: 1316,
-        max_flow_size: 8192,
+        max_packet_size: ByteCount(1316),
+        max_flow_size: PacketCount(8192),
 
         send_tsbpd_latency: Duration::from_millis(20),
         recv_tsbpd_latency: Duration::from_millis(20),
         cipher: None,
         stream_id: None,
-        bandwidth: LiveBandwidthMode::default(),
-        recv_buffer_size: 8192,
+        bandwidth: Default::default(),
+        recv_buffer_size: PacketCount(8192),
         statistics_interval: Duration::from_secs(1),
     };
 

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use srt_tokio::SrtSocketBuilder;
+use srt_tokio::SrtSocket;
 
 use bytes::Bytes;
 use futures::{SinkExt, TryStreamExt};
@@ -9,14 +9,13 @@ use log::info;
 use tokio::{spawn, time::sleep};
 
 async fn test_crypto(size: u8) {
-    let sender = SrtSocketBuilder::new_listen()
-        .crypto(size, "password123")
-        .local_port(2000)
-        .connect();
+    let sender = SrtSocket::builder()
+        .encryption(size, "password123")
+        .listen(":2000");
 
-    let recvr = SrtSocketBuilder::new_connect("127.0.0.1:2000")
-        .crypto(size, "password123")
-        .connect();
+    let recvr = SrtSocket::builder()
+        .encryption(size, "password123")
+        .call("127.0.0.1:2000", None);
 
     let t = spawn(async move {
         let mut sender = sender.await.unwrap();

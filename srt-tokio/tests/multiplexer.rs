@@ -1,13 +1,10 @@
 use std::time::Instant;
 
-use srt_tokio::SrtSocketBuilder;
+use srt_tokio::{SrtListener, SrtSocket};
 
 use anyhow::Result;
 use bytes::Bytes;
-use futures::channel::oneshot;
-use futures::future::join_all;
-use futures::stream;
-use futures::{FutureExt, SinkExt, StreamExt};
+use futures::{channel::oneshot, future::join_all, stream, FutureExt, SinkExt, StreamExt};
 use log::info;
 
 #[tokio::test]
@@ -17,17 +14,14 @@ async fn multiplexer() -> Result<()> {
     let (finished_send, finished_recv) = oneshot::channel();
 
     let listener = tokio::spawn(async {
-        let mut server = SrtSocketBuilder::new_listen()
-            .local_port(2000)
-            .build_multiplexed()
-            .await
-            .unwrap()
-            .boxed();
+        let mut server = SrtListener::builder().bind(2000).await.unwrap();
 
+        let incoming = server.incoming();
         let mut fused_finish = finished_recv.fuse();
-        while let Some(Ok(mut sender)) =
-            futures::select!(res = server.next().fuse() => res, _ = fused_finish => None)
+        while let Some(request) =
+            futures::select!(res = incoming.next().fuse() => res, _ = fused_finish => None)
         {
+            let mut sender = request.accept(None).await.unwrap();
             let mut stream =
                 stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());
 
@@ -43,8 +37,8 @@ async fn multiplexer() -> Result<()> {
     let mut join_handles = vec![];
     for _ in 0..3 {
         join_handles.push(tokio::spawn(async move {
-            let mut recvr = SrtSocketBuilder::new_connect("127.0.0.1:2000")
-                .connect()
+            let mut recvr = SrtSocket::builder()
+                .call("127.0.0.1:2000", None)
                 .await
                 .unwrap();
             info!("Created connection");

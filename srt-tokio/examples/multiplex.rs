@@ -1,25 +1,26 @@
+use std::{
+    io::Error,
+    time::{Duration, Instant},
+};
+
 use bytes::Bytes;
-use futures::stream;
-use futures::{SinkExt, StreamExt};
+use futures::{stream, SinkExt, StreamExt};
 use tokio::time::sleep;
 
-use srt_tokio::SrtSocketBuilder;
-use std::io::Error;
-use std::time::{Duration, Instant};
+use srt_tokio::SrtListener;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let port = 3333;
-    let binding = SrtSocketBuilder::new_listen()
-        .local_port(port)
-        .build_multiplexed()
-        .await?;
+    let binding = SrtListener::builder().bind(port).await?;
 
     tokio::pin!(binding);
 
     println!("SRT Multiplex Server is listening on port: {}", port);
 
-    while let Some(Ok(mut srt_socket)) = binding.next().await {
+    let incoming = binding.incoming();
+    while let Some(request) = incoming.next().await {
+        let mut srt_socket = request.accept(None).await.unwrap();
         tokio::spawn(async move {
             let client_desc = format!(
                 "(ip_port: {}, sockid: {})",

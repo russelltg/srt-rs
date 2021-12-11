@@ -8,8 +8,6 @@ mod modular_num;
 mod msg_number;
 mod seq_number;
 mod socket_id;
-mod srt_version;
-mod stream_id;
 mod time;
 
 pub use control::*;
@@ -18,12 +16,11 @@ pub use error::*;
 pub use msg_number::*;
 pub use seq_number::*;
 pub use socket_id::*;
-pub use srt_version::*;
-pub use stream_id::*;
 pub use time::*;
 
 use std::{
     fmt::{self, Debug, Formatter},
+    io,
     net::SocketAddr,
 };
 
@@ -138,4 +135,57 @@ impl Debug for Packet {
     }
 }
 
-pub type ReceivePacketResult = Result<(Packet, SocketAddr), PacketParseError>;
+#[derive(Debug)]
+pub enum ReceivePacketError {
+    Parse(PacketParseError),
+    Io(io::Error),
+}
+
+impl From<io::Error> for ReceivePacketError {
+    fn from(error: io::Error) -> Self {
+        ReceivePacketError::Io(error)
+    }
+}
+
+impl From<PacketParseError> for ReceivePacketError {
+    fn from(error: PacketParseError) -> Self {
+        ReceivePacketError::Parse(error)
+    }
+}
+
+impl fmt::Display for ReceivePacketError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use ReceivePacketError::*;
+        match self {
+            Parse(e) => <PacketParseError as fmt::Display>::fmt(e, f),
+            Io(e) => <io::Error as fmt::Display>::fmt(e, f),
+        }
+    }
+}
+
+impl std::error::Error for ReceivePacketError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        use ReceivePacketError::*;
+        match self {
+            Parse(e) => Some(e),
+            Io(e) => Some(e),
+        }
+    }
+}
+
+// NOTE: Eq, PartialEq are only here to accommodate structural comparison in tests without losing
+//  the ability to surface network errors for logging purposes, improve on this as needed, but don't
+//  remove.
+impl Eq for ReceivePacketError {}
+impl PartialEq for ReceivePacketError {
+    fn eq(&self, other: &Self) -> bool {
+        use ReceivePacketError::*;
+        match (self, other) {
+            (Parse(s), Parse(o)) => s.eq(o),
+            (Io(s), Io(o)) => s.kind().eq(&o.kind()) && s.raw_os_error().eq(&o.raw_os_error()),
+            _ => false,
+        }
+    }
+}
+
+pub type ReceivePacketResult = Result<(Packet, SocketAddr), ReceivePacketError>;

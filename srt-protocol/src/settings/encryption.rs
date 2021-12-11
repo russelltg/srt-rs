@@ -1,7 +1,7 @@
-use std::convert::TryFrom;
 use std::fmt::{self, Debug, Display, Formatter};
 
 pub use crate::{
+    options::{KeySize, Passphrase},
     packet::{DataEncryption, KeyingMaterialMessage},
     protocol::encryption::{
         key::WrapInitializationVector,
@@ -9,94 +9,6 @@ pub use crate::{
         stream::{KeyMaterialError, StreamEncryptionKeys},
     },
 };
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum KeySize {
-    Bytes16,
-    Bytes24,
-    Bytes32,
-}
-
-impl KeySize {
-    pub fn as_usize(self) -> usize {
-        use KeySize::*;
-        match self {
-            Bytes16 => 16,
-            Bytes24 => 24,
-            Bytes32 => 32,
-        }
-    }
-}
-
-impl TryFrom<u8> for KeySize {
-    type Error = InvalidKeySizeError;
-
-    fn try_from(value: u8) -> Result<Self, InvalidKeySizeError> {
-        use KeySize::*;
-        match value {
-            16 => Ok(Bytes16),
-            24 => Ok(Bytes24),
-            32 => Ok(Bytes32),
-            value => Err(InvalidKeySizeError(value)),
-        }
-    }
-}
-
-#[derive(Clone, Eq, PartialEq)]
-pub struct InvalidKeySizeError(u8);
-
-// https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md#srto_pbkeylen
-// TODO: revisit the 0/Default value scenario
-impl Debug for InvalidKeySizeError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Invalid encryption key size. Valid sizes are 16, 24, or 32 bytes."
-        )
-    }
-}
-
-// https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md#srto_passphrase
-#[derive(Clone, Eq, PartialEq)]
-pub struct Passphrase(String);
-
-impl Passphrase {
-    pub fn as_bytes(&self) -> &[u8] {
-        self.0.as_bytes()
-    }
-}
-
-impl From<&'static str> for Passphrase {
-    fn from(value: &'static str) -> Self {
-        Self::try_from(value.to_string()).unwrap()
-    }
-}
-
-impl TryFrom<String> for Passphrase {
-    type Error = PassphraseError;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        if !(10..=79).contains(&value.len()) {
-            return Err(PassphraseError(value.len()));
-        }
-        Ok(Passphrase(value))
-    }
-}
-
-impl fmt::Debug for Passphrase {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Passphrase").finish()
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct PassphraseError(usize);
-
-impl Display for PassphraseError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Invalid password length: {}. The password must be minimum 10 and maximum 79 characters long.", self.0)
-    }
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeySettings {
@@ -213,30 +125,5 @@ impl CipherSettings {
 
     pub fn wrap_keying_material(&self) -> Option<KeyingMaterialMessage> {
         self.stream_keys.wrap_with(&self.key_settings)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn formatting() {
-        assert_eq!(
-            format!("{:?}", Passphrase::from("1234567890")),
-            "Passphrase"
-        );
-    }
-
-    #[test]
-    fn try_from() {
-        assert_eq!(
-            Passphrase::try_from("123456789".to_string()),
-            Err(PassphraseError(9))
-        );
-        assert_eq!(
-            Passphrase::try_from(String::from_utf8_lossy(&[b'X'; 80]).to_string()),
-            Err(PassphraseError(80))
-        );
     }
 }

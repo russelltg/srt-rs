@@ -1,9 +1,16 @@
-use std::{collections::HashMap, io, net::SocketAddr, time::Instant};
+use std::{
+    collections::HashMap,
+    fmt::Error,
+    io::{self, ErrorKind},
+    net::SocketAddr,
+    time::Instant,
+};
 
 use futures::{channel::mpsc, prelude::*, stream::unfold};
 use log::{info, warn};
 
 use srt_protocol::{
+    listener::AccessControlResponse,
     packet::*,
     protocol::pending_connection::{listen::Listen, ConnectionResult},
     settings::*,
@@ -26,6 +33,7 @@ struct MultiplexState<A: StreamAcceptor> {
 
 impl<T: StreamAcceptor> MultiplexState<T> {
     async fn next_conn(&mut self) -> Result<Option<SrtSocket>, io::Error> {
+        use ReceivePacketError::*;
         loop {
             match self.socket.receive().await {
                 Ok(packet) => {
@@ -33,8 +41,8 @@ impl<T: StreamAcceptor> MultiplexState<T> {
                         return Ok(Some(complete));
                     }
                 }
-                Err(PacketParseError::Io(e)) => return Err(e),
-                Err(e) => warn!("Packet parsing error: {}", e),
+                Err(Io(e)) => return Err(e),
+                Err(Parse(e)) => warn!("Packet parsing error: {}", e),
             }
         }
     }
@@ -57,10 +65,28 @@ impl<T: StreamAcceptor> MultiplexState<T> {
         let listen = self
             .pending
             .entry(from)
-            .or_insert_with(|| Listen::new(init_settings.copy_randomize()));
+            .or_insert_with(|| Listen::new(init_settings.copy_randomize(), false));
 
         // already started connection?
-        let conn = match listen.handle_packet(Ok(packet), Instant::now(), &mut self.acceptor) {
+        let now = Instant::now();
+
+        use ConnectionResult::*;
+        let result = match listen.handle_packet(now, Ok(packet)) {
+            RequestAccess(request) => {
+                use AccessControlResponse::*;
+                let response = match self
+                    .acceptor
+                    .accept(request.stream_id.as_ref().map(|s| s.as_str()), from)
+                {
+                    Ok(mut accept) => Accepted(accept.take_key_settings()),
+                    Err(reason) => Rejected(reason),
+                };
+                listen.handle_access_control_response(now, response)
+            }
+            r => r,
+        };
+
+        let conn = match result {
             ConnectionResult::SendPacket(packet) => {
                 self.socket.send(packet).await?;
                 return Ok(None);
@@ -85,6 +111,7 @@ impl<T: StreamAcceptor> MultiplexState<T> {
                 c
             }
             ConnectionResult::Failure(error) => return Err(error),
+            _ => return Err(io::Error::new(ErrorKind::Unsupported, Error)),
         };
 
         let (s, socket) = self.socket.clone_channel(100);

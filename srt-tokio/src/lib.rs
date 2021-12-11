@@ -7,7 +7,7 @@
 //!
 //! # Quick start
 //! ```rust
-//! use srt_tokio::SrtSocketBuilder;
+//! use srt_tokio::SrtSocket;
 //! use futures::prelude::*;
 //! use bytes::Bytes;
 //! use std::time::Instant;
@@ -19,7 +19,7 @@
 //!# -> ()
 //! {
 //!     let sender_fut = async {
-//!         let mut tx = SrtSocketBuilder::new_listen().local_port(2223).connect().await?;
+//!         let mut tx = SrtSocket::builder().listen(2223).await?;
 //!
 //!         let iter = ["1", "2", "3"];
 //!         
@@ -31,7 +31,7 @@
 //!     };
 //!
 //!     let receiver_fut = async {
-//!         let mut rx = SrtSocketBuilder::new_connect("127.0.0.1:2223").connect().await?;
+//!         let mut rx = SrtSocket::builder().call("127.0.0.1:2223", None).await?;
 //!
 //!         assert_eq!(rx.try_next().await?.map(|(_i, b)| b), Some(b"1"[..].into()));
 //!         assert_eq!(rx.try_next().await?.map(|(_i, b)| b), Some(b"2"[..].into()));
@@ -48,12 +48,19 @@
 //!
 
 mod builder;
+mod listener;
 mod multiplex;
 mod net;
 mod pending_connection;
 mod socket;
 mod watch;
 
-pub use crate::builder::{ConnInitMethod, SrtSocketBuilder};
-pub use crate::multiplex::{multiplex, StreamerServer};
-pub use crate::socket::{SocketStatistics, SrtSocket};
+pub mod options;
+pub use srt_protocol::access;
+
+pub use crate::{
+    builder::{ConnInitMethod, SrtSocketBuilder},
+    listener::{ConnectionRequest, ListenerStatistics, SrtListener},
+    multiplex::{multiplex, StreamerServer},
+    socket::{SocketStatistics, SrtSocket},
+};

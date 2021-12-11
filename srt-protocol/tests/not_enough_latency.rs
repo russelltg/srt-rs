@@ -11,6 +11,7 @@ use std::{
 pub mod simulator;
 
 use simulator::*;
+use srt_protocol::options::PacketCount;
 
 #[test]
 fn not_enough_latency() {
@@ -44,7 +45,7 @@ fn do_not_enough_latency(seed: u64, packets: usize) {
     };
 
     let (mut network, mut sender, mut receiver) =
-        simulation.build(start, Duration::from_secs(2), 8192);
+        simulation.build(start, Duration::from_secs(2), PacketCount(8192));
 
     input_data_simulation(start, packets, PACKET_SPACING, &mut network.sender);
 
