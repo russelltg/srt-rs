@@ -11,7 +11,7 @@ use crate::{connection::ConnectionSettings, packet::*};
 pub struct SendBuffer {
     latency_window: Duration,
     flow_window_size: Option<usize>,
-    buffer: VecDeque<DataPacket>,
+    buffer: VecDeque<SendBufferEntry>,
     next_send: Option<SeqNumber>,
     next_full_ack: FullAckSeqNumber,
     // 1) Sender's Loss List: The sender's loss list is used to store the
@@ -19,14 +19,23 @@ pub struct SendBuffer {
     //    through NAK packets or inserted in a timeout event. The numbers
     //    are stored in increasing order.
     lost_list: BTreeSet<SeqNumber>,
+    // Timeouts is a Min-heap of RTOs
     timeouts: BinaryHeap<RtoTimeoutEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
+struct SendBufferEntry {
+    packet: DataPacket,
+    // this is tranmsit count, including the one that may be lost
+    // ie, the first time a packet is sent, this is one
+    transmit_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
 struct RtoTimeoutEntry {
     timeout: Instant,
     seq: SeqNumber,
-    rto_counter: usize,
+    transmit_count: u32, // how many times has it been transmitted
 }
 
 impl Ord for RtoTimeoutEntry {
@@ -58,10 +67,13 @@ impl SendBuffer {
     }
 
     pub fn push_data(&mut self, packet: DataPacket) {
-        if self.buffer.is_empty() {
-            self.buffer.push_back(packet.clone());
-        }
-        self.buffer.push_back(packet);
+        // if self.buffer.is_empty() {
+        //     self.buffer.push_back(packet.clone());
+        // }
+        self.buffer.push_back(SendBufferEntry {
+            packet,
+            transmit_count: 0,
+        });
     }
 
     pub fn is_flushed(&self) -> bool {
@@ -69,7 +81,7 @@ impl SendBuffer {
     }
 
     pub fn has_packets_to_send(&self) -> bool {
-        self.peek_next_packet().is_some() || !self.lost_list.is_empty()
+        self.front_packet().is_some() || !self.lost_list.is_empty()
     }
 
     pub fn update_largest_acked_seq_number(
@@ -131,47 +143,98 @@ impl SendBuffer {
     pub fn next_snd_actions(
         &mut self,
         ts_now: TimeStamp,
+        now: Instant,
+        rto_timeout: Duration,
         packets_to_send: u32,
         should_drain: bool,
     ) -> impl Iterator<Item = SenderAction> + '_ {
-        SenderAlgorithmIterator::new(self, ts_now, packets_to_send, should_drain)
+        SenderAlgorithmIterator::new(
+            self,
+            ts_now,
+            now,
+            rto_timeout,
+            packets_to_send,
+            should_drain,
+        )
     }
 
-    fn pop_next_packet(&mut self) -> Option<DataPacket> {
-        let packet = self.peek_next_packet()?.clone();
-        self.next_send = Some(packet.seq_number + 1);
-        Some(packet)
+    fn send_next_packet(&mut self, now: Instant, rto_timeout: Duration) -> Option<DataPacket> {
+        let packet = self.front_packet()?;
+        self.next_send = Some(packet + 1);
+        Some(self.send_packet(now, rto_timeout, packet))
     }
 
-    fn pop_next_16n_packet(&mut self) -> Option<DataPacket> {
-        match self.peek_next_packet().map(|p| p.seq_number % 16) {
-            Some(0) => self.pop_next_packet(),
-            _ => None,
+    fn send_next_16n_packet(&mut self, now: Instant, rto_timeout: Duration) -> Option<DataPacket> {
+        if self.front_packet()? % 16 == 0 {
+            self.send_next_packet(now, rto_timeout)
+        } else {
+            None
         }
     }
 
-    fn pop_next_lost_packet(&mut self) -> Option<DataPacket> {
-        let next_lost = self.pop_lost_list()?;
-        let mut packet = self.get_packet(next_lost)?.clone();
-        packet.retransmitted = true;
-        Some(packet)
+    fn send_next_lost_packet(&mut self, now: Instant, rto_timeout: Duration) -> Option<DataPacket> {
+        let seq = self.pop_lost_list()?;
+        Some(self.send_packet(now, rto_timeout, seq))
+    }
+
+    fn send_next_timed_out_packet(
+        &mut self,
+        now: Instant,
+        rto_timeout: Duration,
+    ) -> Option<DataPacket> {
+        let first_not_acked = match self.front_packet() {
+            Some(fna) => fna,
+            None => {
+                // All packets ACK'd, clear timeouts
+                self.timeouts.clear();
+                return None;
+            }
+        };
+
+        while let Some(&rto) = self.timeouts.peek() {
+            // Packet was ACK'd, cancel timer
+            if rto.seq < first_not_acked {
+                self.timeouts.pop();
+                continue;
+            }
+
+            let entry = self
+                .get(rto.seq)
+                .expect("Packet in future was in RTO heap, unexpected");
+
+            // this packet was retransmitted due to a NAK, so cancel this timer
+            if rto.transmit_count != entry.transmit_count {
+                self.timeouts.pop();
+                continue;
+            }
+
+            // if we get here, this timer is valid, check if it's timed out then exit
+            if now > rto.timeout {
+                return Some(self.send_packet(now, rto_timeout, rto.seq));
+            } else {
+                break;
+            }
+        }
+        None
     }
 
     fn drop_too_late_packets(&mut self, ts_now: TimeStamp) -> Option<Range<SeqNumber>> {
         let latency_window = self.latency_window;
-        let front = self
-            .send_buffer()
-            .next()
-            .filter(|p| ts_now > p.timestamp + latency_window)?;
+        let front = &self
+            .buffer
+            .front()
+            .filter(|p| ts_now > p.packet.timestamp + latency_window)?
+            .packet;
+
         let first = front.seq_number;
         let mut last = first;
         let mut message = front.message_number;
-        for next in self.send_buffer() {
-            if ts_now > next.timestamp + latency_window {
-                message = next.message_number;
-                last = next.seq_number;
-            } else if next.message_number == message {
-                last = next.seq_number;
+        for next in self.buffer.iter() {
+            if ts_now > next.packet.timestamp + latency_window {
+                message = next.packet.message_number;
+                last = next.packet.seq_number;
+            } else if next.packet.message_number == message {
+                last = next.packet.seq_number;
             } else {
                 break;
             }
@@ -191,7 +254,7 @@ impl SendBuffer {
     fn flush_on_close(&mut self, should_drain: bool) -> Option<DataPacket> {
         if should_drain && self.buffer.len() == 1 {
             self.next_send = None;
-            self.buffer.pop_front()
+            self.buffer.pop_front().map(|p| p.packet)
         } else {
             None
         }
@@ -207,11 +270,11 @@ impl SendBuffer {
         self.buffer.len().saturating_sub(1)
     }
 
-    fn peek_next_packet(&self) -> Option<&DataPacket> {
-        let front = self.front_packet()?;
-        let index = self.next_send.unwrap_or(front) - front;
-        self.get_at(index)
-    }
+    // fn peek_next_packet(&self) -> Option<&DataPacket> {
+    //     let front = self.front_packet()?;
+    //     let index = self.next_send.unwrap_or(front) - front;
+    //     self.get(index)
+    // }
 
     fn pop_lost_list(&mut self) -> Option<SeqNumber> {
         let next = self.lost_list.iter().copied().next()?;
@@ -227,25 +290,51 @@ impl SendBuffer {
             .next()
     }
 
+    // All packets that are sent go through this function
+    // It records send times and scheudles RTO timer
+    //
+    // Panics if seq_num is not in the buffer
+    fn send_packet(
+        &mut self,
+        now: Instant,
+        rto_timeout: Duration,
+        seq_num: SeqNumber,
+    ) -> DataPacket {
+        let front = self.front_packet().unwrap();
+        let idx = seq_num - front;
+        let entry = &mut self.buffer[idx as usize];
+        entry.transmit_count += 1;
+
+        // clone packet first, then update retransmitted flag
+        // this way, only the first will have it as false
+        let packet = entry.packet.clone();
+        entry.packet.retransmitted = true;
+
+        // add to RTO timer
+        self.timeouts.push(RtoTimeoutEntry {
+            timeout: now + rto_timeout,
+            seq: packet.seq_number,
+            transmit_count: entry.transmit_count,
+        });
+
+        packet
+    }
+
+    fn get(&self, seq: SeqNumber) -> Option<&SendBufferEntry> {
+        self.buffer.get((seq - self.front_packet()?) as usize)
+    }
+
     // use these internal accessor methods to ensure we always
     // account for the one remaining packet we need to keep around
     // in order to send a final packet on flush and close
-    fn get_packet(&self, seq_number: SeqNumber) -> Option<&DataPacket> {
-        let front = self.front_packet()?;
-        let index = seq_number - front;
-        self.get_at(index)
-    }
+    // fn get_packet(&self, seq_number: SeqNumber) -> Option<&DataPacket> {
+    //     let front = self.front_packet()?;
+    //     let index = seq_number - front;
+    //     self.get(index)
+    // }
 
     fn front_packet(&self) -> Option<SeqNumber> {
-        self.send_buffer().next().map(|p| p.seq_number)
-    }
-
-    fn send_buffer(&self) -> impl Iterator<Item = &DataPacket> {
-        self.buffer.iter().skip(1)
-    }
-
-    fn get_at(&self, index: u32) -> Option<&DataPacket> {
-        self.buffer.get((index + 1) as usize)
+        self.buffer.front().map(|p| p.packet.seq_number)
     }
 }
 
@@ -336,7 +425,10 @@ where
 #[derive(Clone, Debug, PartialEq)]
 pub enum SenderAction {
     Send(DataPacket),
-    Retransmit(DataPacket),
+    // Retransmission from RTO
+    RetransmitRto(DataPacket),
+    // Retransmission from NAK
+    RetransmitNak(DataPacket),
     Drop(Range<SeqNumber>),
     WaitForInput,
     // sender flow window exceeded"
@@ -349,6 +441,8 @@ pub enum SenderAction {
 pub struct SenderAlgorithmIterator<'a> {
     buffer: &'a mut SendBuffer,
     ts_now: TimeStamp,
+    now: Instant,
+    rto_timeout: Duration,
     should_drain: bool,
     packets_to_send: u32,
     attempt_16n_packet: bool,
@@ -358,12 +452,16 @@ impl<'a> SenderAlgorithmIterator<'a> {
     pub fn new(
         buffer: &'a mut SendBuffer,
         ts_now: TimeStamp,
+        now: Instant,
+        rto_timeout: Duration,
         packets_to_send: u32,
         should_drain: bool,
     ) -> Self {
         Self {
             buffer,
             ts_now,
+            now,
+            rto_timeout,
             should_drain,
             packets_to_send,
             attempt_16n_packet: false,
@@ -375,9 +473,14 @@ impl<'a> SenderAlgorithmIterator<'a> {
         Some(SenderAction::Send(p))
     }
 
-    fn retransmit(&mut self, p: DataPacket) -> Option<SenderAction> {
+    fn retransmit_nak(&mut self, p: DataPacket) -> Option<SenderAction> {
         self.packets_to_send = self.packets_to_send.saturating_sub(1);
-        Some(SenderAction::Retransmit(p))
+        Some(SenderAction::RetransmitNak(p))
+    }
+
+    fn retransmit_rto(&mut self, p: DataPacket) -> Option<SenderAction> {
+        self.packets_to_send = self.packets_to_send.saturating_sub(1);
+        Some(SenderAction::RetransmitRto(p))
     }
 
     fn wait_for_input(&mut self) -> Option<SenderAction> {
@@ -404,7 +507,7 @@ impl<'a> Iterator for SenderAlgorithmIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.attempt_16n_packet {
             self.attempt_16n_packet = false;
-            if let Some(p) = self.buffer.pop_next_16n_packet() {
+            if let Some(p) = self.buffer.send_next_16n_packet(self.now, self.rto_timeout) {
                 return self.send(p);
             }
         }
@@ -427,8 +530,18 @@ impl<'a> Iterator for SenderAlgorithmIterator<'a> {
         //      packet in the list and remove it from the list. Go to 5).
         //
         // NOTE: the reference implementation doesn't jump to 5), so we don't either
-        else if let Some(p) = self.buffer.pop_next_lost_packet() {
-            self.retransmit(p)
+        else if let Some(p) = self
+            .buffer
+            .send_next_lost_packet(self.now, self.rto_timeout)
+        {
+            self.retransmit_nak(p)
+        }
+        // TODO: is this were this goes in the priority list??
+        else if let Some(p) = self
+            .buffer
+            .send_next_timed_out_packet(self.now, self.rto_timeout)
+        {
+            self.retransmit_rto(p)
         }
         //   4)
         //        a. If the number of unacknowledged packets exceeds the
@@ -437,7 +550,7 @@ impl<'a> Iterator for SenderAlgorithmIterator<'a> {
         // TODO: account for looping here <--- WAT?
         else if self.buffer.flow_window_exceeded() {
             self.wait_for_ack()
-        } else if let Some(p) = self.buffer.pop_next_packet() {
+        } else if let Some(p) = self.buffer.send_next_packet(self.now, self.rto_timeout) {
             //        b. Pack a new data packet and send it out.
             //   5) If the sequence number of the current packet is 16n, where n is an
             //      integer, go to 2).
@@ -518,20 +631,24 @@ mod test {
     }
 
     fn retransmit_data_packet(n: u32) -> SenderAction {
-        SenderAction::Retransmit(test_data_packet(n, true))
+        SenderAction::RetransmitNak(test_data_packet(n, true))
     }
 
     #[test]
     fn send_packets() {
         use SenderAction::*;
         let start = TimeStamp::MIN;
+        let start_inst = Instant::now();
+        let rto_timeout = Duration::from_secs(10);
         let mut buffer = SendBuffer::new(&new_settings());
         for n in 0..=16u32 {
             buffer.push_data(test_data_packet(n, false));
         }
 
         for n in 0..=16 {
-            let actions = buffer.next_snd_actions(start, 1, false).collect::<Vec<_>>();
+            let actions = buffer
+                .next_snd_actions(start, start_inst, rto_timeout, 1, false)
+                .collect::<Vec<_>>();
             match n {
                 0..=14 => assert_eq!(actions, vec![send_data_packet(n)], "n={}", n),
                 // even if only 1 packet is requested, it should send the 16th packet immediately anyway
@@ -548,6 +665,8 @@ mod test {
     fn retransmit_packets() {
         use SenderAction::*;
         let start = TimeStamp::MIN;
+        let start_inst = Instant::now();
+        let rto_timeout = Duration::from_secs(10);
         let mut buffer = SendBuffer::new(&new_settings());
 
         for n in 0..=13 {
@@ -555,7 +674,7 @@ mod test {
         }
 
         let actions = buffer
-            .next_snd_actions(start, 14, false)
+            .next_snd_actions(start, start_inst, rto_timeout, 14, false)
             .filter(|a| !matches!(a, &Send(_)))
             .collect::<Vec<_>>();
         assert_eq!(actions, vec![]);
@@ -572,7 +691,9 @@ mod test {
 
         // retransmit lost packets
         // prioritize the oldest packets: retransmit in order of ascending sequence number
-        let actions = buffer.next_snd_actions(start, 2, false).collect::<Vec<_>>();
+        let actions = buffer
+            .next_snd_actions(start, start_inst, rto_timeout, 2, false)
+            .collect::<Vec<_>>();
         assert_eq!(
             actions,
             vec![retransmit_data_packet(7), retransmit_data_packet(11),]
@@ -580,7 +701,9 @@ mod test {
         assert!(buffer.has_packets_to_send());
 
         // when there are no packets left to retransmit, wait for more data
-        let actions = buffer.next_snd_actions(start, 3, false).collect::<Vec<_>>();
+        let actions = buffer
+            .next_snd_actions(start, start_inst, rto_timeout, 3, false)
+            .collect::<Vec<_>>();
         assert_eq!(
             actions,
             vec![
@@ -596,13 +719,17 @@ mod test {
     fn ack() {
         use AckError::*;
         let now = TimeStamp::MIN;
+        let start_inst = Instant::now();
+        let rto_timeout = Duration::from_secs(10);
         let mut buffer = SendBuffer::new(&new_settings());
 
         for n in 0..=5 {
             buffer.push_data(test_data_packet(n, false));
         }
 
-        let _ = buffer.next_snd_actions(now, 5, false).count();
+        let _ = buffer
+            .next_snd_actions(now, start_inst, rto_timeout, 5, false)
+            .count();
         assert_eq!(
             buffer.update_largest_acked_seq_number(SeqNumber(2), None),
             Ok(AckAction {
@@ -655,13 +782,17 @@ mod test {
     fn nak() {
         use Loss::*;
         let now = TimeStamp::MIN;
+        let start_inst = Instant::now();
+        let rto_timeout = Duration::from_secs(10);
         let mut buffer = SendBuffer::new(&new_settings());
 
         for n in 0..=2 {
             buffer.push_data(test_data_packet(n, false));
         }
 
-        let _ = buffer.next_snd_actions(now, 3, false).count();
+        let _ = buffer
+            .next_snd_actions(now, start_inst, rto_timeout, 3, false)
+            .count();
         assert!(!buffer.has_packets_to_send());
 
         //
@@ -694,13 +825,17 @@ mod test {
     #[test]
     fn nak_then_ack() {
         let now = TimeStamp::MIN;
+        let start_inst = Instant::now();
+        let rto_timeout = Duration::from_secs(10);
         let mut buffer = SendBuffer::new(&new_settings());
 
         for n in 0..=2 {
             buffer.push_data(test_data_packet(n, false));
         }
 
-        let _ = buffer.next_snd_actions(now, 3, false).count();
+        let _ = buffer
+            .next_snd_actions(now, start_inst, rto_timeout, 3, false)
+            .count();
         let _ = buffer
             .add_to_loss_list([SeqNumber(1)].iter().collect())
             .count();
@@ -722,6 +857,8 @@ mod test {
         use Loss::*;
         use SenderAction::*;
         let start = TimeStamp::MIN;
+        let start_inst = Instant::now();
+        let rto_timeout = Duration::from_secs(10);
         let mut buffer = SendBuffer::new(&new_settings());
         for n in 0..=4 {
             buffer.push_data(test_data_packet(n, false));
@@ -731,7 +868,7 @@ mod test {
         // send the reset or leave them queued
         let ts_now = start + TSBPD + TSBPD / 4 + 2 * MILLIS;
         let actions = buffer
-            .next_snd_actions(ts_now, 1, false)
+            .next_snd_actions(ts_now, start_inst, rto_timeout, 1, false)
             .collect::<Vec<_>>();
         assert_eq!(
             actions,
@@ -742,7 +879,7 @@ mod test {
         // drop sent packets too
         let ts_now = ts_now + 2 * MILLIS;
         let actions = buffer
-            .next_snd_actions(ts_now, 1, false)
+            .next_snd_actions(ts_now, start_inst, rto_timeout, 1, false)
             .collect::<Vec<_>>();
         assert_eq!(
             actions,
@@ -760,7 +897,7 @@ mod test {
         assert!(buffer.has_packets_to_send());
         let ts_now = ts_now + 4 * MILLIS;
         let actions = buffer
-            .next_snd_actions(ts_now, 1, false)
+            .next_snd_actions(ts_now, start_inst, rto_timeout, 1, false)
             .collect::<Vec<_>>();
         assert_eq!(
             actions,

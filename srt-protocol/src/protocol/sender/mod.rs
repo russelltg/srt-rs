@@ -49,6 +49,10 @@ impl Sender {
     pub fn has_packets_to_send(&self) -> bool {
         self.send_buffer.has_packets_to_send()
     }
+
+    pub fn calculate_rto_timeout(&self) -> std::time::Duration {
+        self.congestion_control.calculate_rto_timeout()
+    }
 }
 
 pub struct SenderContext<'a> {
@@ -189,9 +193,12 @@ impl<'a> SenderContext<'a> {
 
     pub fn on_snd_event(&mut self, now: Instant, elapsed_periods: u32) {
         use SenderAction::*;
+        let rto_timeout = self.sender.calculate_rto_timeout();
         let ts_now = self.sender.time_base.timestamp_from(now);
         let actions = self.sender.send_buffer.next_snd_actions(
             ts_now,
+            now,
+            rto_timeout,
             elapsed_periods,
             self.status.should_drain_send_buffer(),
         );
@@ -200,7 +207,11 @@ impl<'a> SenderContext<'a> {
                 Send(d) => {
                     self.output.send_data(now, d);
                 }
-                Retransmit(d) => {
+                RetransmitNak(d) => {
+                    self.output.send_data(now, d);
+                }
+                RetransmitRto(d) => {
+                    self.sender.congestion_control.on_rto();
                     self.output.send_data(now, d);
                 }
                 Drop(_) => {}

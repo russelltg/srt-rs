@@ -131,6 +131,10 @@ impl SenderCongestionControl {
         result
     }
 
+    pub fn on_rto(&mut self) {
+        todo!();
+    }
+
     fn calculate_max_data_rate(&self, actual_data_rate: DataRate) -> DataRate {
         use LiveBandwidthMode::*;
         match self.bandwidth_mode {
@@ -150,6 +154,10 @@ impl SenderCongestionControl {
             }
         }
         Duration::from_micros(1)
+    }
+
+    pub fn calculate_rto_timeout(&self) -> Duration {
+        todo!()
     }
 }
 
