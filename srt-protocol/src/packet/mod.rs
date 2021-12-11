@@ -165,7 +165,11 @@ impl fmt::Display for ReceivePacketError {
 
 impl std::error::Error for ReceivePacketError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self)
+        use ReceivePacketError::*;
+        match self {
+            Parse(e) => Some(e),
+            Io(e) => Some(e),
+        }
     }
 }
 
