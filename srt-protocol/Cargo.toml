@@ -17,9 +17,9 @@ bytes = "1.1.0"
 cipher = "0.3.0"
 derive_more = "*"
 hex = "0.4.3"
-hmac = "0.11.0"
+hmac = "0.12.0"
 rand = "0.8.4"
-sha-1 = "0.9.8"
+sha-1 = "0.10.0"
 streaming-stats = "0.2.3"
 take-until = "0.1.0"
 thiserror = "1.0.30"
@@ -34,7 +34,7 @@ version = "0.4.14"
 
 [dependencies.pbkdf2]
 default-features = false
-version = "0.9.0"
+version = "0.10.0"
 
 [dev-dependencies]
 proptest = "1.0.0"
