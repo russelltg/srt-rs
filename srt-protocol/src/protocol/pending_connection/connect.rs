@@ -205,6 +205,7 @@ impl Connect {
 mod test {
     use std::time::Duration;
 
+    use assert_matches::assert_matches;
     use rand::random;
 
     use crate::{options, protocol::pending_connection::ConnectionReject};
@@ -234,20 +235,16 @@ mod test {
         });
 
         let resp = c.handle_packet(Ok((first, test_remote())), Instant::now());
-        assert!(
-            matches!(
-                resp,
-                ConnectionResult::SendPacket((Packet::Control(ControlPacket {
-                    control_type: ControlTypes::Handshake(HandshakeControlInfo {
-                        shake_type: ShakeType::Conclusion,
-                        socket_id,
-                        syn_cookie: 5554,
-                        ..
-                    }), ..
-                }), _)) if socket_id == TEST_SOCKID
-            ),
-            "{:?}",
-            resp
+        assert_matches!(
+            resp,
+            ConnectionResult::SendPacket((Packet::Control(ControlPacket {
+                control_type: ControlTypes::Handshake(HandshakeControlInfo {
+                    shake_type: ShakeType::Conclusion,
+                    socket_id,
+                    syn_cookie: 5554,
+                    ..
+                }), ..
+            }), _)) if socket_id == TEST_SOCKID
         );
 
         // send rejection
@@ -267,16 +264,12 @@ mod test {
         });
 
         let resp = c.handle_packet(Ok((rejection, test_remote())), Instant::now());
-        assert!(
-            matches!(
-                resp,
-                ConnectionResult::Reject(
-                    _,
-                    ConnectionReject::Rejected(RejectReason::Server(ServerRejectReason::BadMode)),
-                )
-            ),
-            "{:?}",
-            resp
+        assert_matches!(
+            resp,
+            ConnectionResult::Reject(
+                _,
+                ConnectionReject::Rejected(RejectReason::Server(ServerRejectReason::BadMode)),
+            )
         );
     }
 

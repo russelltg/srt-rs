@@ -429,6 +429,8 @@ impl DuplexConnection {
 
 #[cfg(test)]
 mod duplex_connection {
+    use assert_matches::assert_matches;
+
     use Action::*;
     use ControlTypes::*;
     use Packet::*;
@@ -496,10 +498,10 @@ mod duplex_connection {
         );
 
         now += SND;
-        assert!(matches!(
+        assert_matches!(
             connection.handle_input(now, Input::Timer),
-            SendPacket((Data(_), _)),
-        ));
+            SendPacket((Data(_), _))
+        );
 
         // acknowledgement
         now += SND;
@@ -532,11 +534,11 @@ mod duplex_connection {
         );
 
         // closing: drain last item in send buffer
-        assert!(matches!(
+        assert_matches!(
             connection.handle_input(now, Input::Timer),
             SendPacket((Data(_), _))
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             connection.handle_input(now, Input::Timer),
             SendPacket((
                 Control(ControlPacket {
@@ -545,7 +547,7 @@ mod duplex_connection {
                 }),
                 _
             ))
-        ));
+        );
         assert_eq!(
             connection.handle_input(now, Input::Timer),
             WaitForData(100 * MILLIS)
@@ -575,19 +577,19 @@ mod duplex_connection {
         );
 
         now += SND;
-        assert!(matches!(
+        assert_matches!(
             connection.handle_input(now, Input::Timer),
             SendPacket((Data(_), _))
-        ));
+        );
 
-        assert!(matches!(
+        assert_matches!(
             connection.handle_input(now + TSBPD, Input::Timer),
             SendPacket((Data(_), _))
-        ));
+        );
 
         // timeout
         now += TSBPD + TSBPD / 4; // TSBPD * 1.25
-        assert!(matches!(
+        assert_matches!(
             connection.handle_input(now, Input::Timer),
             SendPacket((
                 Control(ControlPacket {
@@ -596,11 +598,8 @@ mod duplex_connection {
                 }),
                 _
             ))
-        ));
-        assert!(matches!(
-            connection.handle_input(now, Input::Timer),
-            WaitForData(_)
-        ));
+        );
+        assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(_));
 
         // https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-3.2.9
         //

@@ -321,6 +321,7 @@ impl AutomaticRepeatRequestAlgorithm {
 
 #[cfg(test)]
 mod automatic_repeat_request_algorithm {
+    use assert_matches::assert_matches;
     use bytes::Bytes;
 
     use DataPacketAction::*;
@@ -546,10 +547,10 @@ mod automatic_repeat_request_algorithm {
         );
 
         let now = start + Duration::from_millis(10);
-        assert!(matches!(
+        assert_matches!(
             arq.handle_ack2_packet(now, FullAckSeqNumber::INITIAL),
             Some(_)
-        ));
+        );
         assert_eq!(arq.pop_next_message(now), Ok(None));
 
         let now = start + Duration::from_secs(10);
