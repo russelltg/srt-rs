@@ -61,10 +61,10 @@ impl ConnectionRequest {
         ))
     }
 
-    pub async fn reject(self, reason: i32) -> Result<(), std::io::Error> {
+    pub async fn reject(self, reason: RejectReason) -> Result<(), std::io::Error> {
         Ok(self
             .response_sender
-            .send(AccessControlResponse::Rejected(RejectReason::User(reason)))
+            .send(AccessControlResponse::Rejected(reason))
             .await?)
     }
 }

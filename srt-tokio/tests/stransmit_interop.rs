@@ -21,8 +21,9 @@ use libloading::{Library, Symbol};
 use log::{debug, info};
 use tokio::{net::UdpSocket, task::spawn_blocking, time};
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
+use srt_protocol::options::PacketCount;
 
-use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
+use srt_tokio::SrtSocket;
 
 macro_rules! allow_not_found {
     ($x:expr) => {
@@ -116,10 +117,9 @@ async fn stransmit_client() -> Result<(), Error> {
 
     let listener = async {
         // connect to process
-        let mut conn = SrtSocketBuilder::new(ConnInitMethod::Listen)
-            .local_port(2453)
+        let mut conn = SrtSocket::builder()
             .latency(Duration::from_millis(827))
-            .connect()
+            .listen(2453)
             .await
             .unwrap();
         assert_eq!(
@@ -179,9 +179,9 @@ async fn stransmit_server() -> Result<(), Error> {
 
     // start SRT connector
     let serv = async {
-        let mut sender = SrtSocketBuilder::new_connect("127.0.0.1:2340")
+        let mut sender = SrtSocket::builder()
             .latency(Duration::from_millis(99))
-            .connect()
+            .call("127.0.0.1:2340", None)
             .await
             .unwrap();
 
@@ -224,9 +224,9 @@ async fn stransmit_rendezvous() -> Result<(), Error> {
     const PACKETS: u32 = 1_000;
 
     let sender_fut = async move {
-        let mut sender = SrtSocketBuilder::new_rendezvous("127.0.0.1:2544")
+        let mut sender = SrtSocket::builder()
             .local_port(2545)
-            .connect()
+            .rendezvous("127.0.0.1:2544")
             .await
             .unwrap();
 
@@ -270,9 +270,9 @@ async fn stransmit_encrypt() -> Result<(), Error> {
         .spawn());
 
     let recvr_fut = async move {
-        let recv = SrtSocketBuilder::new_connect("127.0.0.1:2678")
-            .crypto(16, "password123")
-            .connect()
+        let recv = SrtSocket::builder()
+            .encryption(16, "password123")
+            .call("127.0.0.1:2678", None)
             .await
             .unwrap();
 
@@ -297,10 +297,9 @@ async fn stransmit_decrypt() -> Result<(), Error> {
     const PACKETS: u32 = 1_000;
 
     let sender_fut = async move {
-        let mut snd = SrtSocketBuilder::new_listen()
-            .crypto(16, "password123")
-            .local_port(2909)
-            .connect()
+        let mut snd = SrtSocket::builder()
+            .encryption(16, "password123")
+            .listen(2909)
             .await
             .unwrap();
 
@@ -345,9 +344,9 @@ async fn stransmit_encrypt_rekey() -> Result<(), Error> {
         .spawn());
 
     let recvr_fut = async move {
-        let recv = SrtSocketBuilder::new_connect("127.0.0.1:2012")
-            .crypto(16, "password123")
-            .connect()
+        let recv = SrtSocket::builder()
+            .encryption(16, "password123")
+            .call("127.0.0.1:2012", None)
             .await
             .unwrap();
 
@@ -372,9 +371,8 @@ async fn test_c_client_interop() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     let srt_rs_side = async move {
-        let mut sock = SrtSocketBuilder::new_listen()
-            .local_port(2811)
-            .connect()
+        let mut sock = SrtSocket::builder()
+            .listen(2811)
             .await
             .unwrap();
 
@@ -411,9 +409,8 @@ async fn bidirectional_interop() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     let srt_rs_side = async move {
-        let mut sock = SrtSocketBuilder::new_listen()
-            .local_port(2812)
-            .connect()
+        let mut sock = SrtSocket::builder()
+            .listen(2812)
             .await
             .unwrap();
 
@@ -454,12 +451,13 @@ async fn bidirectional_interop_encrypt_rekey() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     let srt_rs_side = async move {
-        let sock = SrtSocketBuilder::new_listen()
-            .local_port(2813)
-            .crypto(16, "password123")
-            .km_pre_announcement_period(60)
-            .km_refresh_period(128)
-            .connect()
+        let sock = SrtSocket::builder()
+            .encryption(16, "password123")
+            .set(|options| {
+                options.encryption.km_refresh.period = PacketCount(128);
+                options.encryption.km_refresh.pre_announcement_period = PacketCount(60);
+            })
+            .listen(2813)
             .await
             .unwrap();
 

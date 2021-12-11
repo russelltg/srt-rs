@@ -7,6 +7,11 @@ use std::{
     string::FromUtf8Error,
 };
 
+// SRTO_STREAMID
+/// A string that can be set on the socket prior to connecting. The listener side will be able to
+/// retrieve this stream ID from the socket that is returned from srt_accept (for a connected socket
+/// with that stream ID). This string can be used completely free-form. However, it's highly
+/// recommended to follow the SRT Access Control (Stream ID) Guidlines.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct StreamId(String);
 
