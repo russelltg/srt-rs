@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::{
     net::{IpAddr, SocketAddr},
     time::Instant,
@@ -155,22 +156,35 @@ impl Connect {
         }
     }
 
-    pub fn handle_packet(&mut self, next: (Packet, SocketAddr), now: Instant) -> ConnectionResult {
-        let (packet, from) = next;
-        match (self.state.clone(), packet) {
-            (InductionResponseWait(_), Packet::Control(control)) => match control.control_type {
-                ControlTypes::Handshake(shake) => {
-                    self.wait_for_induction(from, control.timestamp, shake, now)
+    pub fn handle_packet(&mut self, packet: ReceivePacketResult, now: Instant) -> ConnectionResult {
+        use ReceivePacketError::*;
+        match packet {
+            Ok((packet, from)) => match (self.state.clone(), packet) {
+                (InductionResponseWait(_), Packet::Control(control)) => {
+                    match control.control_type {
+                        ControlTypes::Handshake(shake) => {
+                            self.wait_for_induction(from, control.timestamp, shake, now)
+                        }
+                        control_type => NotHandled(HandshakeExpected(control_type)),
+                    }
                 }
-                control_type => NotHandled(HandshakeExpected(control_type)),
+                (ConclusionResponseWait(_, cm), Packet::Control(control)) => {
+                    match control.control_type {
+                        ControlTypes::Handshake(shake) => {
+                            self.wait_for_conclusion(from, now, shake, cm)
+                        }
+                        control_type => NotHandled(HandshakeExpected(control_type)),
+                    }
+                }
+                (_, Packet::Data(data)) => NotHandled(ControlExpected(data)),
+                (_, _) => NoAction,
             },
-            (ConclusionResponseWait(_, cm), Packet::Control(control)) => match control.control_type
-            {
-                ControlTypes::Handshake(shake) => self.wait_for_conclusion(from, now, shake, cm),
-                control_type => NotHandled(HandshakeExpected(control_type)),
-            },
-            (_, Packet::Data(data)) => NotHandled(ControlExpected(data)),
-            (_, _) => NoAction,
+            Err(Io(error)) => Failure(error),
+            Err(Parse(PacketParseError::BadConnectionType(c))) => Failure(std::io::Error::new(
+                ErrorKind::ConnectionReset,
+                Parse(PacketParseError::BadConnectionType(c)),
+            )),
+            Err(Parse(e)) => NotHandled(ConnectError::ParseFailed(e)),
         }
     }
 
@@ -193,7 +207,7 @@ mod test {
 
     use rand::random;
 
-    use crate::protocol::pending_connection::ConnectionReject;
+    use crate::{options, protocol::pending_connection::ConnectionReject};
 
     use super::*;
 
@@ -219,7 +233,7 @@ mod test {
             }),
         });
 
-        let resp = c.handle_packet((first, test_remote()), Instant::now());
+        let resp = c.handle_packet(Ok((first, test_remote())), Instant::now());
         assert!(
             matches!(
                 resp,
@@ -252,7 +266,7 @@ mod test {
             }),
         });
 
-        let resp = c.handle_packet((rejection, test_remote()), Instant::now());
+        let resp = c.handle_packet(Ok((rejection, test_remote())), Instant::now());
         assert!(
             matches!(
                 resp,
@@ -282,7 +296,9 @@ mod test {
                 recv_latency: Duration::from_millis(20),
                 bandwidth: Default::default(),
                 statistics_interval: Duration::from_secs(1),
-                recv_buffer_size: 8192,
+                recv_buffer_size: options::PacketCount(8192),
+                max_packet_size: options::PacketSize(1500),
+                max_flow_size: options::PacketCount(8192),
             },
             sid,
             random(),

@@ -1,3 +1,5 @@
+pub use super::listener::ListenerStatistics;
+
 use std::time::Duration;
 
 /// SRT provides a powerful set of statistical data on a socket. This data can be used to keep an eye

@@ -1,13 +1,13 @@
 pub mod connect;
+mod hsv5;
 pub mod listen;
 pub mod rendezvous;
 
-mod cookie;
-mod hsv5;
+pub(crate) mod cookie;
 
-use std::{error::Error, fmt, net::SocketAddr};
+use std::{error::Error, fmt, io, net::SocketAddr};
 
-use crate::{connection::Connection, packet::*};
+use crate::{connection::Connection, options::StreamId, packet::*, settings::KeySettings};
 
 #[non_exhaustive]
 #[derive(Debug)]
@@ -16,7 +16,7 @@ pub enum ConnectError {
     ControlExpected(DataPacket),
     HandshakeExpected(ControlTypes),
     InductionExpected(HandshakeControlInfo),
-    WaveahandExpected(HandshakeControlInfo),
+    WavehandExpected(HandshakeControlInfo),
     AgreementExpected(HandshakeControlInfo),
     UnexpectedHost(SocketAddr, SocketAddr),
     ConclusionExpected(HandshakeControlInfo),
@@ -28,9 +28,26 @@ pub enum ConnectError {
     ExpectedHsResp,
     ExpectedExtFlags,
     ExpectedNoExtFlags,
+    ExpectedAccessControlResponse,
+    ParseFailed(PacketParseError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct AccessControlRequest {
+    pub local_socket_id: SocketId,
+    pub remote: SocketAddr,
+    pub remote_socket_id: SocketId,
+    pub stream_id: Option<StreamId>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum AccessControlResponse {
+    Accepted(Option<KeySettings>),
+    Rejected(RejectReason),
+    Dropped,
+}
+
+#[derive(Debug, Eq, PartialEq)]
 pub enum ConnectionReject {
     /// local rejected remote
     Rejecting(RejectReason),
@@ -47,6 +64,8 @@ pub enum ConnectionResult {
     SendPacket((Packet, SocketAddr)),
     Connected(Option<(Packet, SocketAddr)>, Connection),
     NoAction,
+    RequestAccess(AccessControlRequest),
+    Failure(io::Error),
 }
 
 impl fmt::Display for ConnectError {
@@ -56,7 +75,7 @@ impl fmt::Display for ConnectError {
             ControlExpected(pack) => write!(f, "Expected Control packet, found {:?}", pack),
             HandshakeExpected(got) => write!(f, "Expected Handshake packet, found: {:?}", got),
             InductionExpected(got) => write!(f, "Expected Induction (1) packet, found: {:?}", got),
-            WaveahandExpected(got) => write!(f, "Expected Waveahand (0) packet, found: {:?}", got),
+            WavehandExpected(got) => write!(f, "Expected Waveahand (0) packet, found: {:?}", got),
             AgreementExpected(got) => write!(f, "Expected Agreement (-2) packet, found: {:?}", got),
             UnexpectedHost(host, got) => write!(
                 f,
@@ -94,6 +113,11 @@ impl fmt::Display for ConnectError {
             ExpectedNoExtFlags => {
                 write!(f, "Initiator did not expect handshake flags, but got some")
             }
+            ParseFailed(e) => write!(f, "Failed to parse packet: {}", e),
+            ExpectedAccessControlResponse => write!(
+                f,
+                "Expected an access control response but instead received a packet from the peer"
+            ),
         }
     }
 }

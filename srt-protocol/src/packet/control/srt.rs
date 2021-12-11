@@ -7,7 +7,7 @@ use bitflags::bitflags;
 use bytes::{Buf, BufMut};
 use log::warn;
 
-use crate::packet::{PacketParseError, SrtVersion};
+use crate::{options::SrtVersion, packet::PacketParseError};
 
 /// The SRT-specific control packets
 /// These are `Packet::Custom` types
@@ -669,7 +669,7 @@ impl TryFrom<u8> for CipherType {
 mod tests {
     use super::{KeyingMaterialMessage, SrtControlPacket, SrtHandshake, SrtShakeFlags};
 
-    use crate::packet::*;
+    use crate::{options::*, packet::*};
 
     use std::{io::Cursor, time::Duration};
 

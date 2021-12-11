@@ -1,26 +1,22 @@
 use std::{
     collections::HashMap,
-    io::{self, Cursor},
+    fmt::Error,
+    io::{self, ErrorKind},
     net::SocketAddr,
-    sync::Arc,
     time::Instant,
 };
 
-use bytes::BytesMut;
-use futures::{prelude::*, stream::unfold};
+use futures::{channel::mpsc, prelude::*, stream::unfold};
 use log::{info, warn};
-use tokio::{
-    net::UdpSocket,
-    sync::mpsc::{self, Sender},
-};
-use tokio_stream::wrappers::ReceiverStream;
 
 use srt_protocol::{
+    listener::AccessControlResponse,
     packet::*,
     protocol::pending_connection::{listen::Listen, ConnectionResult},
     settings::*,
 };
 
+use crate::net::PacketSocket;
 use crate::{socket::create_bidrectional_srt, SrtSocket};
 
 pub use self::streamer_server::StreamerServer;
@@ -28,57 +24,38 @@ pub use self::streamer_server::StreamerServer;
 mod streamer_server;
 
 struct MultiplexState<A: StreamAcceptor> {
-    sock: Arc<UdpSocket>,
+    socket: PacketSocket,
     pending: HashMap<SocketAddr, Listen>,
     acceptor: A,
-    conns: HashMap<SocketId, Sender<(Packet, SocketAddr)>>,
+    conns: HashMap<SocketId, mpsc::Sender<ReceivePacketResult>>,
     init_settings: ConnInitSettings,
-    recv_buffer: BytesMut,
 }
 
 impl<T: StreamAcceptor> MultiplexState<T> {
     async fn next_conn(&mut self) -> Result<Option<SrtSocket>, io::Error> {
+        use ReceivePacketError::*;
         loop {
-            self.sock.readable().await?;
-            self.recv_buffer.clear();
-            match self.sock.try_recv_buf_from(&mut self.recv_buffer) {
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-                Err(e) => return Err(e),
-                Ok((bytes_read, from)) => {
-                    let packet = Packet::parse(
-                        &mut Cursor::new(&self.recv_buffer[..bytes_read]),
-                        self.sock.local_addr().unwrap().is_ipv6(),
-                    );
-                    match packet {
-                        Ok(packet) => {
-                            if let Some(complete) = self.delegate_packet(packet, from).await? {
-                                return Ok(Some(complete));
-                            }
-                        }
-                        Err(e) => warn!("Packet parsing error: {}", e),
+            match self.socket.receive().await {
+                Ok(packet) => {
+                    if let Some(complete) = self.delegate_packet(packet).await? {
+                        return Ok(Some(complete));
                     }
                 }
+                Err(Io(e)) => return Err(e),
+                Err(Parse(e)) => warn!("Packet parsing error: {}", e),
             }
         }
     }
 
-    async fn send_packet(&mut self, pack: &Packet, to: SocketAddr) -> Result<(), io::Error> {
-        self.recv_buffer.clear();
-        pack.serialize(&mut self.recv_buffer);
-        self.sock.send_to(&self.recv_buffer, to).await?;
-
-        Ok(())
-    }
-
     async fn delegate_packet(
         &mut self,
-        pack: Packet,
-        from: SocketAddr,
+        packet: (Packet, SocketAddr),
     ) -> Result<Option<SrtSocket>, io::Error> {
+        let from = packet.1;
         // fast path--an already established connection
-        let dst_sockid = pack.dest_sockid();
+        let dst_sockid = packet.0.dest_sockid();
         if let Some(chan) = self.conns.get_mut(&dst_sockid) {
-            if let Err(_send_err) = chan.send((pack, from)).await {
+            if let Err(_send_err) = chan.send(Ok(packet)).await {
                 self.conns.remove(&dst_sockid);
             }
             return Ok(None);
@@ -88,17 +65,35 @@ impl<T: StreamAcceptor> MultiplexState<T> {
         let listen = self
             .pending
             .entry(from)
-            .or_insert_with(|| Listen::new(init_settings.copy_randomize()));
+            .or_insert_with(|| Listen::new(init_settings.copy_randomize(), false));
 
         // already started connection?
-        let conn = match listen.handle_packet((pack, from), Instant::now(), &mut self.acceptor) {
-            ConnectionResult::SendPacket((packet, addr)) => {
-                self.send_packet(&packet, addr).await?;
+        let now = Instant::now();
+
+        use ConnectionResult::*;
+        let result = match listen.handle_packet(now, Ok(packet)) {
+            RequestAccess(request) => {
+                use AccessControlResponse::*;
+                let response = match self
+                    .acceptor
+                    .accept(request.stream_id.as_ref().map(|s| s.as_str()), from)
+                {
+                    Ok(mut accept) => Accepted(accept.take_key_settings()),
+                    Err(reason) => Rejected(reason),
+                };
+                listen.handle_access_control_response(now, response)
+            }
+            r => r,
+        };
+
+        let conn = match result {
+            ConnectionResult::SendPacket(packet) => {
+                self.socket.send(packet).await?;
                 return Ok(None);
             }
             ConnectionResult::Reject(pa, rej) => {
-                if let Some((packet, to)) = pa {
-                    self.send_packet(&packet, to).await?;
+                if let Some(packet) = pa {
+                    self.socket.send(packet).await?;
                 }
                 info!("Rejected connection from {}: {}", from, rej);
                 self.pending.remove(&from);
@@ -110,23 +105,22 @@ impl<T: StreamAcceptor> MultiplexState<T> {
             }
             ConnectionResult::NoAction => return Ok(None),
             ConnectionResult::Connected(pa, c) => {
-                if let Some((packet, to)) = pa {
-                    self.send_packet(&packet, to).await?;
+                if let Some(packet) = pa {
+                    self.socket.send(packet).await?;
                 }
                 c
             }
+            ConnectionResult::Failure(error) => return Err(error),
+            _ => return Err(io::Error::new(ErrorKind::Unsupported, Error)),
         };
 
-        let (s, r) = mpsc::channel(100);
+        let (s, socket) = self.socket.clone_channel(100);
 
         self.conns.insert(conn.settings.local_sockid, s);
 
         self.pending.remove(&from); // remove from pending connections, it's been resolved
-        Ok(Some(create_bidrectional_srt(
-            self.sock.clone(),
-            ReceiverStream::new(r),
-            conn,
-        )))
+
+        Ok(Some(create_bidrectional_srt(socket, conn)))
     }
 }
 
@@ -137,11 +131,10 @@ pub async fn multiplex(
 ) -> Result<impl Stream<Item = Result<SrtSocket, io::Error>>, io::Error> {
     Ok(unfold(
         MultiplexState {
-            sock: Arc::new(UdpSocket::bind(addr).await?),
+            socket: PacketSocket::bind(addr, 1024 * 1024).await?,
             pending: HashMap::new(),
             acceptor,
             conns: HashMap::new(),
-            recv_buffer: BytesMut::with_capacity(1024 * 1024),
             init_settings,
         },
         |mut state| async move {

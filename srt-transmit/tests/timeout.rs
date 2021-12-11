@@ -1,13 +1,14 @@
-use bytes::Bytes;
-use srt_tokio::SrtSocketBuilder;
 use std::{env, path::PathBuf, process::Stdio, time::Instant};
 
+use bytes::Bytes;
 use futures::prelude::*;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::Command,
     time::{sleep, Duration},
 };
+
+use srt_tokio::SrtSocket;
 
 #[cfg(target_os = "windows")]
 const STRANSMIT_NAME: &str = "srt-transmit.exe";
@@ -39,7 +40,7 @@ fn find_stransmit_rs() -> PathBuf {
 async fn receiver_timeout() {
     let _ = pretty_env_logger::try_init();
 
-    let b = SrtSocketBuilder::new_connect("127.0.0.1:1878").connect();
+    let b = SrtSocket::builder().call("127.0.0.1:1878", None);
 
     let stranmsit_rs = find_stransmit_rs();
     let mut a = Command::new(&stranmsit_rs)
@@ -70,7 +71,7 @@ async fn receiver_timeout() {
 async fn sender_timeout() {
     let _ = pretty_env_logger::try_init();
 
-    let b = SrtSocketBuilder::new_listen().local_port(1879).connect();
+    let b = SrtSocket::builder().listen(1879);
 
     let stranmsit_rs = find_stransmit_rs();
     let mut a = Command::new(&stranmsit_rs)

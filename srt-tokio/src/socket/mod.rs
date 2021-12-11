@@ -1,6 +1,8 @@
+mod builder;
+mod state;
+
 use std::{
     io,
-    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -16,11 +18,17 @@ use futures::{
 use log::{error, trace};
 use srt_protocol::{
     connection::{Action, Connection, ConnectionSettings, DuplexConnection, Input},
+    options::{OptionsError, OptionsOf, SocketOptions, Validation},
     packet::*,
 };
-use tokio::{net::UdpSocket, sync::watch, time::sleep_until};
+use tokio::{net::UdpSocket, task::JoinHandle, time::sleep_until};
 
-use crate::statistics::{SocketStatistics, SrtSocketStatistics};
+use super::{net::*, options::BindOptions, watch};
+
+use builder::SrtSocketBuilder;
+use state::SrtSocketState;
+
+pub use srt_protocol::statistics::SocketStatistics;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
 ///
@@ -32,88 +40,171 @@ use crate::statistics::{SocketStatistics, SrtSocketStatistics};
 #[derive(Debug)]
 pub struct SrtSocket {
     // receiver datastructures
-    output_data: mpsc::Receiver<(Instant, Bytes)>,
+    output_data_receiver: mpsc::Receiver<(Instant, Bytes)>,
 
     // sender datastructures
-    input_data: mpsc::Sender<(Instant, Bytes)>,
+    input_data_sender: mpsc::Sender<(Instant, Bytes)>,
 
-    statistics: SrtSocketStatistics,
+    statistics_receiver: watch::Receiver<SocketStatistics>,
 
     settings: ConnectionSettings,
 }
 
-/// This spawns two new tasks:
-/// 1. Receive packets and send them to either the sender or the receiver through
-///    a channel
-/// 2. Take outgoing packets and send them on the socket
-pub fn create_bidrectional_srt(
-    socket: Arc<UdpSocket>,
-    packets: impl Stream<Item = (Packet, SocketAddr)> + Unpin + Send + 'static,
-    conn: Connection,
-) -> SrtSocket {
-    let (output_data_sender, output_data_receiver) = mpsc::channel(128);
-    let (input_data_sender, input_data_receiver) = mpsc::channel(128);
-    let (statistics_sender, statistics_receiver) = watch::channel(SocketStatistics::new());
-    let settings = conn.settings.clone();
-    tokio::spawn(async move {
-        // Using run_input_loop breaks a couple of the stransmit_interop tests.
-        // Both stransmit_decrypt and stransmit_server run indefinitely. For now,
-        // run_handler_loop exclusively, until a fix is found or an API decision
-        // is reached.
-        if Instant::now().elapsed().as_nanos() != 0 {
-            run_handler_loop(
-                socket,
-                packets,
-                statistics_sender,
-                output_data_sender,
-                input_data_receiver,
-                conn,
-            )
-            .await;
-        } else {
-            run_input_loop(
-                socket,
-                packets,
-                statistics_sender,
-                output_data_sender,
-                input_data_receiver,
-                conn,
-            )
-            .await;
-        }
-    });
+impl SrtSocket {
+    pub fn builder() -> SrtSocketBuilder {
+        SrtSocketBuilder::default()
+    }
 
-    SrtSocket {
-        statistics: SrtSocketStatistics::new(statistics_receiver),
-        output_data: output_data_receiver,
-        input_data: input_data_sender,
-        settings,
+    pub fn with<O>(options: O) -> SrtSocketBuilder
+    where
+        SocketOptions: OptionsOf<O>,
+        O: Validation<Error = OptionsError>,
+    {
+        Self::builder().with(options)
+    }
+
+    pub async fn bind(options: BindOptions) -> Result<Self, io::Error> {
+        use BindOptions::*;
+        let socket_options = match &options {
+            Listen(options) => &options.socket,
+            Call(options) => &options.socket,
+            Rendezvous(options) => &options.socket,
+        };
+        let socket = UdpSocket::bind(socket_options.connect.local).await?;
+
+        Self::bind_with_socket(options, socket).await
+    }
+
+    async fn bind_with_socket(options: BindOptions, socket: UdpSocket) -> Result<Self, io::Error> {
+        let mut socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
+        use BindOptions::*;
+        let conn = match options {
+            Listen(options) => {
+                crate::pending_connection::listen(&mut socket, options.socket.clone().into())
+                    .await?
+            }
+            Call(options) => {
+                crate::pending_connection::connect(
+                    &mut socket,
+                    options.remote,
+                    options.socket.connect.local.ip(),
+                    options.socket.clone().into(),
+                    options.stream_id.as_ref().map(|s| s.to_string()),
+                    rand::random(),
+                )
+                .await?
+            }
+            Rendezvous(options) => {
+                crate::pending_connection::rendezvous(
+                    &mut socket,
+                    options.socket.connect.local,
+                    options.remote,
+                    options.socket.clone().into(),
+                    rand::random(),
+                )
+                .await?
+            }
+        };
+
+        let (_, socket) = SrtSocketState::spawn_socket(socket, DuplexConnection::new(conn));
+
+        Ok(socket)
+    }
+
+    pub(crate) fn create(
+        settings: ConnectionSettings,
+        input_data_sender: mpsc::Sender<(Instant, Bytes)>,
+        output_data_receiver: mpsc::Receiver<(Instant, Bytes)>,
+        statistics_receiver: watch::Receiver<SocketStatistics>,
+    ) -> SrtSocket {
+        SrtSocket {
+            settings,
+            output_data_receiver,
+            input_data_sender,
+            statistics_receiver,
+        }
+    }
+
+    pub(crate) fn spawn(
+        conn: Connection,
+        socket: PacketSocket,
+        input_data_receiver: mpsc::Receiver<(Instant, Bytes)>,
+        output_data_sender: mpsc::Sender<(Instant, Bytes)>,
+        statistics_sender: watch::Sender<SocketStatistics>,
+    ) -> (JoinHandle<()>, ConnectionSettings) {
+        let settings = conn.settings.clone();
+
+        let handle = tokio::spawn(async move {
+            // Using run_input_loop breaks a couple of the stransmit_interop tests.
+            // Both stransmit_decrypt and stransmit_server run indefinitely. For now,
+            // run_handler_loop exclusively, until a fix is found or an API decision
+            // is reached.
+            if Instant::now().elapsed().as_nanos() != 0 {
+                run_handler_loop(
+                    socket,
+                    statistics_sender,
+                    output_data_sender,
+                    input_data_receiver,
+                    conn,
+                )
+                .await;
+            } else {
+                run_input_loop(
+                    socket,
+                    statistics_sender,
+                    output_data_sender,
+                    input_data_receiver,
+                    conn,
+                )
+                .await;
+            }
+        });
+
+        (handle, settings)
     }
 }
 
+/// This spawns a new task for the socket I/O loop
+pub fn create_bidrectional_srt(socket: PacketSocket, conn: Connection) -> SrtSocket {
+    let (output_data_sender, output_data_receiver) = mpsc::channel(128);
+    let (input_data_sender, input_data_receiver) = mpsc::channel(128);
+    let (statistics_sender, statistics_receiver) = watch::channel();
+
+    let (_, settings) = SrtSocket::spawn(
+        conn,
+        socket,
+        input_data_receiver,
+        output_data_sender,
+        statistics_sender,
+    );
+
+    SrtSocket::create(
+        settings,
+        input_data_sender,
+        output_data_receiver,
+        statistics_receiver,
+    )
+}
+
 async fn run_handler_loop(
-    socket: Arc<UdpSocket>,
-    packets: impl Stream<Item = (Packet, SocketAddr)> + Unpin + Send + 'static,
+    socket: PacketSocket,
     statistics_sender: watch::Sender<SocketStatistics>,
     output_data: mpsc::Sender<(Instant, Bytes)>,
     input_data: mpsc::Receiver<(Instant, Bytes)>,
     connection: Connection,
 ) {
     let local_sockid = connection.settings.local_sockid;
+    let mut socket = socket;
     let mut input_data = input_data.fuse();
     let mut output_data = output_data;
-    let mut packets = packets.fuse();
     let mut connection = DuplexConnection::new(connection);
-    let mut serialize_buffer = Vec::new();
     while connection.is_open() {
         if connection.should_update_statistics(Instant::now()) {
             let _ = statistics_sender.send(connection.statistics().clone());
         }
 
-        while let Some((packet, addr)) = connection.next_packet(Instant::now()) {
-            serialize_buffer.clear();
-            packet.serialize(&mut serialize_buffer);
-            if let Err(e) = socket.send_to(&serialize_buffer, addr).await {
+        while let Some(packet) = connection.next_packet(Instant::now()) {
+            if let Err(e) = socket.send(packet).await {
                 error!("Error while sending packet: {:?}", e); // TODO: real error handling
             }
         }
@@ -142,7 +233,7 @@ async fn run_handler_loop(
             // one of the entities requested wakeup
             _ = timeout_fut.fuse() => Input::Timer,
             // new packet received
-            packet = packets.next() =>
+            packet = socket.receive().fuse() =>
                 Input::Packet(packet),
             // new packet queued
             data = input_data.next() => {
@@ -162,19 +253,17 @@ async fn run_handler_loop(
 }
 
 async fn run_input_loop(
-    socket: Arc<UdpSocket>,
-    packets: impl Stream<Item = (Packet, SocketAddr)> + Unpin + Send + 'static,
+    socket: PacketSocket,
     statistics_sender: watch::Sender<SocketStatistics>,
     output_data: Sender<(Instant, Bytes)>,
     input_data: Receiver<(Instant, Bytes)>,
     connection: Connection,
 ) {
+    let mut socket = socket;
     let mut input_data = input_data.fuse();
     let mut output_data = output_data;
-    let mut packets = packets.fuse();
     let mut connection = DuplexConnection::new(connection);
     let mut input = Input::Timer;
-    let mut serialize_buffer = Vec::new();
     loop {
         let now = Instant::now();
         input = match connection.handle_input(now, input) {
@@ -187,10 +276,8 @@ async fn run_input_loop(
                 }
                 Input::DataReleased
             }
-            Action::SendPacket((packet, address)) => {
-                serialize_buffer.clear();
-                packet.serialize(&mut serialize_buffer);
-                if let Err(e) = socket.send_to(&serialize_buffer, address).await {
+            Action::SendPacket(packet) => {
+                if let Err(e) = socket.send(packet).await {
                     error!("Error while seding packet: {:?}", e); // TODO: real error handling
                 }
                 Input::PacketSent
@@ -203,7 +290,7 @@ async fn run_input_loop(
                 let timeout = now + wait;
                 select! {
                     _ = sleep_until(timeout.into()).fuse() => Input::Timer,
-                    packet = packets.next() =>
+                    packet = socket.receive().fuse() =>
                         Input::Packet(packet),
                     res = input_data.next() => {
                         Input::Data(res)
@@ -223,7 +310,7 @@ impl SrtSocket {
     }
 
     pub fn statistics(&mut self) -> &mut (impl Stream<Item = SocketStatistics> + Clone) {
-        &mut self.statistics
+        &mut self.statistics_receiver
     }
 }
 
@@ -231,7 +318,7 @@ impl Stream for SrtSocket {
     type Item = Result<(Instant, Bytes), io::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        Poll::Ready(ready!(Pin::new(&mut self.output_data).poll_next(cx)).map(Ok))
+        Poll::Ready(ready!(Pin::new(&mut self.output_data_receiver).poll_next(cx)).map(Ok))
     }
 }
 
@@ -239,21 +326,23 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
     type Error = io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(ready!(Pin::new(&mut self.input_data).poll_ready(cx))
-            .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?))
+        Poll::Ready(Ok(ready!(
+            Pin::new(&mut self.input_data_sender).poll_ready(cx)
+        )
+        .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))?))
     }
     fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Self::Error> {
-        self.input_data
+        self.input_data_sender
             .start_send(item)
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.input_data)
+        Pin::new(&mut self.input_data_sender)
             .poll_flush(cx)
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
     }
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.input_data)
+        Pin::new(&mut self.input_data_sender)
             .poll_close(cx)
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
     }

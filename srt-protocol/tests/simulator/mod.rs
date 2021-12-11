@@ -12,9 +12,9 @@ use rand_distr::Normal;
 
 use srt_protocol::{
     connection::{Connection, ConnectionSettings, DuplexConnection, Input},
+    options::*,
     packet::*,
     protocol::handshake::Handshake,
-    settings::*,
 };
 
 #[derive(Eq, PartialEq)]
@@ -32,8 +32,15 @@ impl Ord for SentPacket {
     }
 }
 
-#[derive(Eq, PartialEq)]
 struct ScheduledInput(Instant, Input);
+
+impl PartialEq for ScheduledInput {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for ScheduledInput {}
 
 impl PartialOrd for ScheduledInput {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -116,13 +123,11 @@ impl NetworkSimulator {
         if to == self.sender.addr() {
             self.sender.schedule_input(
                 release_at,
-                Input::Packet(Some((packet, self.receiver.addr()))),
+                Input::Packet(Ok((packet, self.receiver.addr()))),
             );
         } else if to == self.receiver.addr() {
-            self.receiver.schedule_input(
-                release_at,
-                Input::Packet(Some((packet, self.sender.addr()))),
-            );
+            self.receiver
+                .schedule_input(release_at, Input::Packet(Ok((packet, self.sender.addr()))));
         } else {
             error!("Dropping {:?}", packet)
         }
@@ -158,11 +163,11 @@ impl RandomLossSimulation {
         &mut self,
         start: Instant,
         latency: Duration,
-        recv_buffer_size: usize,
+        recv_buffer_size: PacketCount,
     ) -> (NetworkSimulator, DuplexConnection, DuplexConnection) {
         let sender = self.new_connection_settings(start, latency);
         let receiver = ConnectionSettings {
-            remote: (sender.remote.ip(), sender.remote.port() + 1).into(),
+            remote: (sender.remote.ip(), sender.remote.port().wrapping_add(1)).into(),
             remote_sockid: sender.local_sockid,
             local_sockid: sender.remote_sockid,
             init_seq_num: sender.init_seq_num,
@@ -199,14 +204,14 @@ impl RandomLossSimulation {
             socket_start_time: start,
             rtt: Duration::default(),
             init_seq_num: self.rng.gen(),
-            max_packet_size: 1316,
-            max_flow_size: 8192,
+            max_packet_size: ByteCount(1316),
+            max_flow_size: PacketCount(8192),
             send_tsbpd_latency: latency,
             recv_tsbpd_latency: latency,
             cipher: None,
             stream_id: None,
-            bandwidth: LiveBandwidthMode::default(),
-            recv_buffer_size: 8192,
+            bandwidth: Default::default(),
+            recv_buffer_size: PacketCount(8192),
             statistics_interval: Duration::from_secs(1),
         }
     }

@@ -1,21 +1,19 @@
-use core::default::Default;
-
 // rate in bytes per second
-pub type DataRate = u64;
-pub type Percent = u64;
+use super::*;
 
 /// https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-5.1.1
 ///
 /// Note that Maximum Bandwidth, Input Rate, and Input Rate Estimate are bytes per second
 /// and Overhead is a percentage.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum LiveBandwidthMode {
     /// Set the maximum bandwidth explicitly.
     ///
     /// The recommended default value is 1 Gbps. The default value is set only for live streaming.
     ///
-    /// Note that this static setting is not well-suited to a variable input, like when you change the bitrate on an encoder.
-    /// Each time the input bitrate is configured on the encoder, this value should also be reconfigured.
+    /// Note that this static setting is not well-suited to a variable input, like when you change
+    /// the bitrate on an encoder. Each time the input bitrate is configured on the encoder, this
+    /// value should also be reconfigured.
     Set(DataRate), // m_llMaxBW != 0
 
     /// Set the SRT send input rate and overhead.

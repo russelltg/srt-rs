@@ -1348,8 +1348,11 @@ impl HandshakeControlInfo {
 #[cfg(test)]
 mod test {
     use super::*;
+
     use std::{array::IntoIter, time::Duration};
     use std::{convert::TryInto, io::Cursor};
+
+    use crate::options::*;
 
     fn ser_des_test(pack: ControlPacket) -> Vec<u8> {
         let mut buf = vec![];

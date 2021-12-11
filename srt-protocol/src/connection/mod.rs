@@ -4,6 +4,7 @@ pub use status::*;
 use std::{
     convert::TryFrom,
     fmt::Debug,
+    io,
     net::SocketAddr,
     time::{Duration, Instant},
 };
@@ -11,6 +12,7 @@ use std::{
 use bytes::Bytes;
 
 use crate::{
+    options::*,
     packet::*,
     protocol::{
         handshake::Handshake,
@@ -19,17 +21,17 @@ use crate::{
         sender::{Sender, SenderContext},
         time::Timers,
     },
-    settings::{CipherSettings, LiveBandwidthMode},
+    settings::CipherSettings,
     statistics::SocketStatistics,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Connection {
     pub settings: ConnectionSettings,
     pub handshake: Handshake,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct ConnectionSettings {
     /// The remote socket to send & receive to
     pub remote: SocketAddr,
@@ -51,17 +53,17 @@ pub struct ConnectionSettings {
     pub init_seq_num: SeqNumber,
 
     /// The maximum packet size
-    pub max_packet_size: usize,
+    pub max_packet_size: ByteCount,
 
     /// The maxiumum flow size
-    pub max_flow_size: u32,
+    pub max_flow_size: PacketCount,
 
     /// The TSBPD of the connection--the max of each side's repspective latencies
     pub send_tsbpd_latency: Duration,
     pub recv_tsbpd_latency: Duration,
 
     /// Size of the receive buffer, in packets
-    pub recv_buffer_size: usize,
+    pub recv_buffer_size: PacketCount,
     pub cipher: Option<CipherSettings>,
     pub stream_id: Option<String>,
     pub bandwidth: LiveBandwidthMode,
@@ -91,10 +93,10 @@ pub enum Action<'a> {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum Input {
     Data(Option<(Instant, Bytes)>),
-    Packet(Option<(Packet, SocketAddr)>),
+    Packet(ReceivePacketResult),
     DataReleased,
     PacketSent,
     StatisticsUpdated,
@@ -144,6 +146,10 @@ impl DuplexConnection {
 
     pub fn is_open(&self) -> bool {
         self.status.is_open()
+    }
+
+    pub fn settings(&self) -> &ConnectionSettings {
+        &self.settings
     }
 
     pub fn update_statistics(&mut self, now: Instant) {
@@ -276,11 +282,13 @@ impl DuplexConnection {
         }
     }
 
-    pub fn handle_packet_input(&mut self, now: Instant, packet: Option<(Packet, SocketAddr)>) {
+    pub fn handle_packet_input(&mut self, now: Instant, packet: ReceivePacketResult) {
         self.debug(now, "packet", &packet);
+        use ReceivePacketError::*;
         match packet {
-            Some(packet) => self.handle_packet(now, packet),
-            None => self.handle_socket_close(now),
+            Ok(packet) => self.handle_packet(now, packet),
+            Err(Io(error)) => self.handle_socket_close(now, error),
+            Err(Parse(e)) => self.warn(now, "packet", &e),
         }
     }
 
@@ -289,8 +297,8 @@ impl DuplexConnection {
         self.status.on_data_stream_closed(now);
     }
 
-    fn handle_socket_close(&mut self, now: Instant) {
-        self.warn(now, "closed socket", &());
+    fn handle_socket_close(&mut self, now: Instant, error: io::Error) {
+        self.warn(now, "closed socket", &error);
         self.status.on_socket_closed(now);
     }
 
@@ -452,11 +460,11 @@ mod duplex_connection {
                 socket_start_time: now,
                 rtt: Duration::default(),
                 init_seq_num: SeqNumber::new_truncate(0),
-                max_packet_size: 1316,
-                max_flow_size: 8192,
+                max_packet_size: ByteCount(1316),
+                max_flow_size: PacketCount(8192),
                 send_tsbpd_latency: TSBPD,
                 recv_tsbpd_latency: TSBPD,
-                recv_buffer_size: 1024 * 1316,
+                recv_buffer_size: PacketCount(1024),
                 cipher: None,
                 stream_id: None,
                 bandwidth: LiveBandwidthMode::Unlimited,
@@ -512,7 +520,7 @@ mod duplex_connection {
             )),
         });
         assert_eq!(
-            connection.handle_input(now, Input::Packet(Some((packet, remote_addr())))),
+            connection.handle_input(now, Input::Packet(Ok((packet, remote_addr())))),
             SendPacket((
                 Control(ControlPacket {
                     timestamp: TimeStamp::from_micros(2_000),
@@ -614,7 +622,7 @@ mod duplex_connection {
         assert_eq!(
             connection.handle_input(
                 now,
-                Input::Packet(Some((
+                Input::Packet(Ok((
                     Control(ControlPacket {
                         timestamp: TimeStamp::MIN + SND + TSBPD + TSBPD / 4,
                         dest_sockid: remote_sockid(),

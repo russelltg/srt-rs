@@ -3,7 +3,7 @@ use futures::prelude::*;
 use futures::stream;
 use log::info;
 use rand::{prelude::StdRng, Rng, SeedableRng};
-use srt_tokio::SrtSocketBuilder;
+use srt_tokio::SrtSocket;
 use std::time::{Duration, Instant};
 use tokio::{net::UdpSocket, time::sleep};
 
@@ -13,9 +13,9 @@ async fn invalid_packets() {
     let _ = pretty_env_logger::try_init();
 
     let sender = async {
-        let mut sender = SrtSocketBuilder::new_connect("127.0.0.1:8876")
+        let mut sender = SrtSocket::builder()
             .local_port(8877)
-            .connect()
+            .call("127.0.0.1:8876", None)
             .await
             .unwrap();
 
@@ -28,11 +28,7 @@ async fn invalid_packets() {
         sender.close().await.unwrap();
     };
     let recvr = async {
-        let mut recvr = SrtSocketBuilder::new_listen()
-            .local_port(8876)
-            .connect()
-            .await
-            .unwrap();
+        let mut recvr = SrtSocket::builder().listen(":8876").await.unwrap();
 
         info!("Receiver initialised");
 
