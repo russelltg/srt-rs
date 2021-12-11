@@ -484,6 +484,7 @@ mod test {
 
     use std::time::{Duration, Instant};
 
+    use assert_matches::assert_matches;
     use bytes::Bytes;
 
     const MILLIS: Duration = Duration::from_millis(1);
@@ -801,7 +802,7 @@ mod test {
                 .next_snd_actions(TimeStamp::MIN + n * TimeSpan::from_micros(1_000), 1, false)
                 .collect::<Vec<_>>();
             assert_eq!(a.len(), 1);
-            assert!(matches!(a[0], Send(_)));
+            assert_matches!(a[0], Send(_));
             assert_eq!(buffer.duration(), Duration::from_millis(9)); // not removed from buffer until ack
 
             assert_eq!(buffer.len(), 10);
