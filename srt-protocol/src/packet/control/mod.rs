@@ -1027,26 +1027,8 @@ impl Acknowledgement {
     }
 
     fn serialized_size(&self) -> usize {
-        size_of::<u32>()
-            + self
-                .statistics()
-                .map(|st| {
-                    3 * size_of::<u32>()
-                        + st.packet_receive_rate
-                            .map(|_| {
-                                size_of::<u32>()
-                                    + st.estimated_link_capacity
-                                        .map(|_| {
-                                            size_of::<u32>()
-                                                + st.data_receive_rate
-                                                    .map(|_| size_of::<u32>())
-                                                    .unwrap_or(0)
-                                        })
-                                        .unwrap_or(0)
-                            })
-                            .unwrap_or(0)
-                })
-                .unwrap_or(0)
+        size_of::<u32>() // ack number
+            + self.statistics().map(AckStatistics::serialized_size).unwrap_or(0)
     }
 }
 
@@ -1345,6 +1327,27 @@ impl HandshakeControlInfo {
     }
 }
 
+impl AckStatistics {
+    fn serialized_size(&self) -> usize {
+        size_of::<u32>()
+            * (3 + match self {
+                Self {
+                    packet_receive_rate: None,
+                    ..
+                } => 0,
+                Self {
+                    estimated_link_capacity: None,
+                    ..
+                } => 1,
+                Self {
+                    data_receive_rate: None,
+                    ..
+                } => 2,
+                _ => 3,
+            })
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1544,9 +1547,9 @@ mod test {
         ser_des_test(ControlPacket {
             timestamp: TimeStamp::from_micros(100),
             dest_sockid: rand::random(),
-            control_type: ControlTypes::Srt(SrtControlPacket::Filter(
+            control_type: ControlTypes::Srt(SrtControlPacket::Filter(FilterSpec(
                 IntoIter::new([("hi".to_string(), "bye".to_string())]).collect(),
-            )),
+            ))),
         });
     }
 

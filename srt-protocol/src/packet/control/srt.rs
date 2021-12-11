@@ -1,5 +1,5 @@
 use std::{
-    fmt::{self, Formatter},
+    fmt::{self, Display, Formatter},
     {collections::BTreeMap, convert::TryFrom, time::Duration},
 };
 
@@ -45,7 +45,7 @@ pub enum SrtControlPacket {
     /// Filter seems to be a string of
     /// comma-separted key-value pairs like:
     /// a:b,c:d
-    Filter(BTreeMap<String, String>),
+    Filter(FilterSpec),
 
     // ID = 8
     Group {
@@ -54,6 +54,9 @@ pub enum SrtControlPacket {
         weight: u16,
     },
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilterSpec(pub BTreeMap<String, String>);
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum GroupType {
@@ -304,12 +307,16 @@ fn string_to_le_bytes(str: &str, into: &mut impl BufMut) {
     }
 }
 
-fn generate_filter_string(filter: &BTreeMap<String, String>) -> String {
-    filter
-        .iter()
-        .map(|(a, b)| format!("{}:{}", a, b))
-        .collect::<Vec<_>>()
-        .join(",")
+impl Display for FilterSpec {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        for (i, (k, v)) in self.0.iter().enumerate() {
+            write!(f, "{}:{}", k, v)?;
+            if i != self.0.len() - 1 {
+                write!(f, ",")?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl SrtControlPacket {
@@ -334,7 +341,7 @@ impl SrtControlPacket {
             // Filter
             7 => {
                 let filter_str = le_bytes_to_string(buf)?;
-                Ok(Filter(
+                Ok(Filter(FilterSpec(
                     filter_str
                         .split(',')
                         .map(|kv| {
@@ -352,7 +359,7 @@ impl SrtControlPacket {
                             Ok((k.to_string(), v.to_string()))
                         })
                         .collect::<Result<_, _>>()?,
-                ))
+                )))
             }
             8 => {
                 let ty = buf.get_u8().into();
@@ -391,7 +398,7 @@ impl SrtControlPacket {
                 k.serialize(into);
             }
             Filter(filter) => {
-                string_to_le_bytes(&generate_filter_string(filter), into);
+                string_to_le_bytes(&format!("{}", filter), into);
             }
             Group { ty, flags, weight } => {
                 into.put_u8((*ty).into());
@@ -420,7 +427,7 @@ impl SrtControlPacket {
             Congestion(str) | StreamId(str) => ((str.len() + 3) / 4) as u16, // round up to nearest multiple of 4
             // 1 32-bit word packed with type, flags, and weight
             Group { .. } => 1,
-            Filter(filter) => ((generate_filter_string(filter).len() + 3) / 4) as u16, // TODO: not optimial performace, but probably okay
+            Filter(filter) => ((format!("{}", filter).len() + 3) / 4) as u16, // TODO: not optimial performace, but probably okay
             _ => unimplemented!("{:?}", self),
         }
     }
