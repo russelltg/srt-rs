@@ -180,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
     let binding = SrtListener::builder().bind(1234).await?;
     tokio::pin!(binding);
 
-    while let Some(request) = binding.next().await {
+    while let Some(request) = binding.incoming().next().await {
         let socket = request.accept(None).await?;
         tokio::spawn(async move {
             let socket_id = socket.settings().remote_sockid.0;

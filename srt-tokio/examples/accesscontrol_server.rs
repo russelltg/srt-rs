@@ -38,8 +38,8 @@ async fn main() -> io::Result<()> {
     let mut server = SrtListener::builder().bind(3333).await.unwrap();
 
     while let Some(request) = server.incoming().next().await {
-        let stream_id = request.stream_id().map(|s| s.clone());
-        match access_control(stream_id.as_ref(), request.remote().clone()) {
+        let stream_id = request.stream_id().cloned();
+        match access_control(stream_id.as_ref(), request.remote()) {
             Ok(()) => {
                 let mut sender = request.accept(None).await.unwrap();
                 let mut stream = stream::iter(
