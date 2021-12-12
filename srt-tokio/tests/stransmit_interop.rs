@@ -19,9 +19,9 @@ use futures::{future::try_join, join, stream, SinkExt, Stream, StreamExt};
 use libc::sockaddr;
 use libloading::{Library, Symbol};
 use log::{debug, info};
+use srt_protocol::options::PacketCount;
 use tokio::{net::UdpSocket, task::spawn_blocking, time};
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
-use srt_protocol::options::PacketCount;
 
 use srt_tokio::SrtSocket;
 
@@ -371,10 +371,7 @@ async fn test_c_client_interop() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     let srt_rs_side = async move {
-        let mut sock = SrtSocket::builder()
-            .listen(2811)
-            .await
-            .unwrap();
+        let mut sock = SrtSocket::builder().listen(2811).await.unwrap();
 
         for _ in 0..100 {
             let (_, msg) = sock.next().await.unwrap().unwrap();
@@ -409,10 +406,7 @@ async fn bidirectional_interop() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     let srt_rs_side = async move {
-        let mut sock = SrtSocket::builder()
-            .listen(2812)
-            .await
-            .unwrap();
+        let mut sock = SrtSocket::builder().listen(2812).await.unwrap();
 
         time::sleep(Duration::from_millis(500)).await;
 
