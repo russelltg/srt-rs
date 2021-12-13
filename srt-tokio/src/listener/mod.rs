@@ -89,7 +89,9 @@ mod tests {
     use futures::{channel::oneshot, future::join_all, prelude::*};
     use log::{debug, info};
 
-    use crate::{ConnectionRequest, ListenerStatistics, SrtListener, SrtSocket};
+    use crate::{access::*, SrtSocket};
+
+    use super::*;
 
     #[tokio::test]
     async fn accept_reject() -> Result<()> {
@@ -120,7 +122,7 @@ mod tests {
                     Select::Connection(Some(request)) => {
                         let stream_id = request.stream_id().unwrap();
                         if stream_id.eq(&"reject".into()) {
-                            let _ = request.reject(42).await.unwrap();
+                            let _ = request.reject(RejectReason::User(42)).await.unwrap();
                         } else {
                             let mut sender = request.accept(None).await.unwrap();
                             let mut stream = stream::iter(
@@ -208,7 +210,10 @@ mod tests {
                     Select::Connection(Some(request)) => {
                         let stream_id = request.stream_id().expect("stream_id");
                         if stream_id.eq(&"reject".into()) {
-                            let _ = request.reject(42).await.expect("reject");
+                            let _ = request
+                                .reject(RejectReason::User(42))
+                                .await
+                                .expect("reject");
                         } else {
                             let mut sender = request.accept(None).await.expect("accept");
                             let mut stream = stream::iter(

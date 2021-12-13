@@ -22,7 +22,7 @@
 //!         let mut tx = SrtSocket::builder().listen(2223).await?;
 //!
 //!         let iter = ["1", "2", "3"];
-//!         
+//!
 //!         tx.send_all(&mut stream::iter(&iter)
 //!             .map(|b| Ok((Instant::now(), Bytes::from(*b))))).await?;
 //!         tx.close().await?;

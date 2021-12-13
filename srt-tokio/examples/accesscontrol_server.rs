@@ -4,70 +4,62 @@ use bytes::Bytes;
 use futures::{stream, SinkExt, StreamExt};
 use log::info;
 
-use srt_tokio::{access::*, options::*, ConnInitMethod, SrtSocket, SrtSocketBuilder};
+use srt_tokio::{access::*, options::*, SrtListener};
 
-struct AccessController;
+fn access_control(stream_id: Option<&StreamId>, ip: SocketAddr) -> Result<(), RejectReason> {
+    info!("Got request from {} for {:?}", ip, stream_id);
 
-impl StreamAcceptor for AccessController {
-    fn accept(
-        &mut self,
-        streamid: Option<&str>,
-        ip: SocketAddr,
-    ) -> Result<AcceptParameters, RejectReason> {
-        info!("Got request from {} for {:?}", ip, streamid);
+    let mut acl = stream_id
+        .ok_or(RejectReason::Server(ServerRejectReason::HostNotFound))?
+        .as_str()
+        .parse::<AccessControlList>()
+        .map_err(|_| RejectReason::Server(ServerRejectReason::BadRequest))?;
 
-        let mut acl = streamid
-            .ok_or(RejectReason::Server(ServerRejectReason::HostNotFound))?
-            .parse::<AccessControlList>()
-            .map_err(|_| RejectReason::Server(ServerRejectReason::BadRequest))?;
-
-        for entry in acl
-            .0
-            .drain(..)
-            .filter_map(|a| StandardAccessControlEntry::try_from(a).ok())
-        {
-            match entry {
-                StandardAccessControlEntry::UserName(u) if u == "admin" => {
-                    return Ok(AcceptParameters::new())
-                }
-                _ => continue,
-            }
+    for entry in acl
+        .0
+        .drain(..)
+        .filter_map(|a| StandardAccessControlEntry::try_from(a).ok())
+    {
+        match entry {
+            StandardAccessControlEntry::UserName(u) if u == "admin" => return Ok(()),
+            _ => continue,
         }
-
-        info!("rejecting, not admin");
-
-        Err(RejectReason::Server(ServerRejectReason::Forbidden))
     }
+
+    info!("rejecting, not admin");
+
+    Err(RejectReason::Server(ServerRejectReason::Forbidden))
 }
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let _ = pretty_env_logger::try_init();
 
-    let mut server = SrtSocketBuilder::new(ConnInitMethod::Listen)
-        .local_port(3333)
-        .build_multiplexed_with_acceptor(AccessController)
-        .await
-        .unwrap()
-        .boxed();
+    let mut server = SrtListener::builder().bind(3333).await.unwrap();
 
-    while let Some(Ok(mut sender)) = server.next().await {
-        let mut stream = stream::iter(
-            Some(Ok((
-                Instant::now(),
-                Bytes::from(format!(
-                    "Hello admin!! Your SID is {:?}",
-                    sender.settings().stream_id
-                )),
-            )))
-            .into_iter(),
-        );
+    while let Some(request) = server.incoming().next().await {
+        let stream_id = request.stream_id().cloned();
+        match access_control(stream_id.as_ref(), request.remote()) {
+            Ok(()) => {
+                let mut sender = request.accept(None).await.unwrap();
+                let mut stream = stream::iter(
+                    Some(Ok((
+                        Instant::now(),
+                        Bytes::from(format!("Hello admin!! Your SID is {:?}", stream_id)),
+                    )))
+                    .into_iter(),
+                );
 
-        tokio::spawn(async move {
-            sender.send_all(&mut stream).await.unwrap();
-            sender.close().await.unwrap();
-            info!("Sender finished");
-        });
+                tokio::spawn(async move {
+                    sender.send_all(&mut stream).await.unwrap();
+                    sender.close().await.unwrap();
+                    info!("Sender finished");
+                });
+            }
+            Err(reason) => {
+                request.reject(reason).await.unwrap();
+            }
+        }
     }
     Ok(())
 }
