@@ -125,6 +125,7 @@ impl SrtSocket {
         }
     }
 
+    /// This spawns a new task for the socket I/O loop
     pub(crate) fn spawn(
         conn: Connection,
         socket: PacketSocket,
@@ -162,28 +163,6 @@ impl SrtSocket {
 
         (handle, settings)
     }
-}
-
-/// This spawns a new task for the socket I/O loop
-pub fn create_bidrectional_srt(socket: PacketSocket, conn: Connection) -> SrtSocket {
-    let (output_data_sender, output_data_receiver) = mpsc::channel(128);
-    let (input_data_sender, input_data_receiver) = mpsc::channel(128);
-    let (statistics_sender, statistics_receiver) = watch::channel();
-
-    let (_, settings) = SrtSocket::spawn(
-        conn,
-        socket,
-        input_data_receiver,
-        output_data_sender,
-        statistics_sender,
-    );
-
-    SrtSocket::create(
-        settings,
-        input_data_sender,
-        output_data_receiver,
-        statistics_receiver,
-    )
 }
 
 async fn run_handler_loop(

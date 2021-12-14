@@ -1,4 +1,8 @@
+mod streamer_server;
+
 use std::{
+    borrow::Cow,
+    convert::TryInto,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     ops::Deref,
     path::Path,
@@ -8,9 +12,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{bail, format_err, Error};
+use anyhow::{anyhow, bail, format_err, Error};
 use bytes::Bytes;
 use clap::{App, Arg};
+use log::info;
 use url::{Host, Url};
 
 use futures::{
@@ -28,8 +33,12 @@ use tokio::{
 };
 use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
 
-use log::info;
-use srt_tokio::{ConnInitMethod, SrtSocketBuilder, StreamerServer};
+use srt_tokio::{
+    options::{BindOptions, CallerOptions, ListenerOptions, RendezvousOptions, SocketOptions},
+    SrtSocket,
+};
+
+use streamer_server::*;
 
 const AFTER_HELPTEXT: &str = include_str!("helptext.txt");
 
@@ -63,70 +72,49 @@ fn read_to_stream(read: impl AsyncRead + Unpin) -> impl Stream<Item = Result<Byt
     })
 }
 
-fn add_srt_args<C>(
-    args: impl Iterator<Item = (C, C)>,
-    mut builder: SrtSocketBuilder,
-) -> Result<SrtSocketBuilder, Error>
+fn parse_srt_args<C>(args: impl Iterator<Item = (C, C)>) -> Result<SocketOptions, Error>
 where
     C: Deref<Target = str>,
 {
-    let mut crypto: Option<(u8, String)> = None;
+    let mut options = SocketOptions::default();
     for (k, v) in args {
         match &*k {
             "latency_ms" => {
-                builder = builder.latency(Duration::from_millis(match v.parse() {
+                let latency = Duration::from_millis(match v.parse() {
                     Ok(i) => i,
                     Err(e) => bail!(
                         "Failed to parse latency_ms parameter to input as integer: {}",
                         e
                     ),
-                }))
+                });
+                options.sender.peer_latency = latency;
+                options.receiver.latency = latency;
             }
             "interface" => {
-                builder = builder.local_addr(match v.parse() {
+                options.connect.local.set_ip(match v.parse() {
                     Ok(local) => local,
                     Err(e) => bail!("Failed to parse interface parameter as ip address: {}", e),
-                })
+                });
             }
-            "local_port" => match builder.conn_type() {
-                ConnInitMethod::Listen => {
-                    bail!("local_port is incompatible with listen connection technique")
-                }
-                _ => {
-                    builder = builder.local_port(match v.parse() {
-                        Ok(addr) => addr,
-                        Err(e) => bail!("Failed to parse local_port as a 16-bit integer: {}", e),
-                    })
-                }
-            },
-            "passphrase" => match &mut crypto {
-                Some((_, ref mut pw)) => *pw = (&*v).into(),
-                None => crypto = Some((16, (&*v).into())),
-            },
+            "local_port" => options.connect.local.set_port(match v.parse() {
+                Ok(addr) => addr,
+                Err(e) => bail!("Failed to parse local_port as a 16-bit integer: {}", e),
+            }),
+            "passphrase" => {
+                options.encryption.passphrase = Some(v.to_string().try_into()?);
+            }
             "pbkeylen" => {
-                let kl = match v.parse() {
-                    Ok(i @ 16) | Ok(i @ 24) | Ok(i @ 32) => i,
-                    Ok(invalid) => bail!("Invalid key length {}, must be 16, 24, or 32", invalid),
-                    Err(e) => bail!("Failed to parse key length: {}", e),
-                };
-                match &mut crypto {
-                    Some((ref mut sz, _)) => *sz = kl,
-                    None => crypto = Some((kl, "".into())),
-                }
+                let size: u8 = v
+                    .parse()
+                    .map_err(|e| anyhow!("Failed to parse key length: {}", e))?;
+                options.encryption.key_size = size.try_into()?;
+                // this has already been handled, ignore
             }
-            // this has already been handled, ignore
             "rendezvous" | "multiplex" | "autoreconnect" => (),
             unrecog => bail!("Unrecgonized parameter '{}' for srt", unrecog),
-        };
-    }
-    if let Some((sz, pw)) = crypto {
-        if pw.is_empty() {
-            bail!("pbkeylen specified with no passphrase");
         }
-        builder = builder.crypto(sz, pw);
     }
-
-    Ok(builder)
+    Ok(options)
 }
 
 // get the local port and address from the input url
@@ -158,23 +146,6 @@ fn local_port_addr(url: &Url, kind: &str) -> Result<(u16, Option<SocketAddr>), E
         ),
         Some(Host::Ipv4(v4)) => (0, Some(SocketAddr::new(IpAddr::V4(v4), port))),
         Some(Host::Ipv6(v6)) => (0, Some(SocketAddr::new(IpAddr::V6(v6), port))),
-    })
-}
-
-fn get_conn_init_method(
-    addr: Option<SocketAddr>,
-    rendezvous_v: Option<&str>,
-) -> Result<ConnInitMethod, Error> {
-    Ok(match (addr, rendezvous_v) {
-        // address but not rendezvous -> connect
-        (Some(addr), None) => ConnInitMethod::Connect(addr, None),
-        // no address or rendezvous -> listen
-        (None, None) => ConnInitMethod::Listen,
-        // address and rendezvous flag -> rendezvous
-        (Some(addr), Some("")) => ConnInitMethod::Rendezvous(addr),
-        // various invalid combinations
-        (None, Some("")) => bail!("Cannot have rendezvous connection without host specified"),
-        (_, Some(unex)) => bail!("Unexpected value for rendezvous: {}, expected empty", unex),
     })
 }
 
@@ -225,28 +196,55 @@ where
     Ok(addr)
 }
 
-async fn make_srt_input(
+fn parse_socket_options(
+    input_url: &Url,
     input_addr: Option<SocketAddr>,
-    input_url: Url,
     input_local_port: u16,
-) -> Result<BoxStream<'static, Bytes>, Error> {
-    let mut builder = SrtSocketBuilder::new(get_conn_init_method(
-        input_addr,
+) -> Result<BindOptions, Error> {
+    let socket_options = parse_srt_args(input_url.query_pairs())?;
+
+    let rendezvous_v = parse_rendezvous(input_url);
+
+    let bind_options = match (input_addr, rendezvous_v.as_deref()) {
+        // address but not rendezvous -> connect
+        (Some(addr), None) => BindOptions::Call(CallerOptions::with(addr, None, socket_options)?),
+        // no address or rendezvous -> listen
+        (None, None) => {
+            BindOptions::Listen(ListenerOptions::with(input_local_port, socket_options)?)
+        }
+        // address and rendezvous flag -> rendezvous
+        (Some(addr), Some("")) => {
+            BindOptions::Rendezvous(RendezvousOptions::with(addr, socket_options)?)
+        }
+        // various invalid combinations
+        (None, Some("")) => bail!("Cannot have rendezvous connection without host specified"),
+        (_, Some(unex)) => bail!("Unexpected value for rendezvous: {}, expected empty", unex),
+    };
+
+    Ok(bind_options)
+}
+
+fn parse_rendezvous(input_url: &Url) -> Option<Cow<str>> {
+    let rendezvous_v =
         input_url
             .query_pairs()
-            .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None })
-            .as_deref(),
-    )?)
-    .local_port(input_local_port);
+            .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None });
+    rendezvous_v
+}
 
-    builder = add_srt_args(input_url.query_pairs(), builder)?;
+async fn make_srt_input(
+    input_url: Url,
+    input_addr: Option<SocketAddr>,
+    input_local_port: u16,
+) -> Result<BoxStream<'static, Bytes>, Error> {
+    let bind_options = parse_socket_options(&input_url, input_addr, input_local_port);
 
     // make sure multiplex was not specified
     if input_url.query_pairs().any(|(k, _)| &*k == "multiplex") {
         bail!("multiplex is not a valid option for input urls");
     }
-    Ok(builder
-        .connect()
+
+    Ok(SrtSocket::bind(bind_options?)
         .await?
         .map(Result::unwrap)
         .map(|(_, b)| b)
@@ -285,7 +283,7 @@ fn resolve_input<'a>(
                             (input_addr, input_url, input_local_port),
                             move |(input_addr, input_url, input_local_port)| async move {
                                 Some((
-                                    make_srt_input(input_addr, input_url.clone(), input_local_port)
+                                    make_srt_input(input_url.clone(), input_addr, input_local_port)
                                         .await,
                                     (input_addr, input_url, input_local_port),
                                 ))
@@ -293,7 +291,7 @@ fn resolve_input<'a>(
                         )
                         .boxed()
                     } else {
-                        once(make_srt_input(input_addr, input_url, input_local_port)).boxed()
+                        once(make_srt_input(input_url, input_addr, input_local_port)).boxed()
                     }
                 }
                 "tcp" => {
@@ -357,14 +355,7 @@ async fn make_srt_ouput(
     output_url: Url,
     output_local_port: u16,
 ) -> Result<BoxSink, Error> {
-    let builder = SrtSocketBuilder::new(get_conn_init_method(
-        output_addr,
-        output_url
-            .query_pairs()
-            .find_map(|(a, b)| if a == "rendezvous" { Some(b) } else { None })
-            .as_deref(),
-    )?)
-    .local_port(output_local_port);
+    let bind_options = parse_socket_options(&output_url, output_addr, output_local_port)?;
 
     let is_multiplex = match (
         output_url
@@ -372,28 +363,26 @@ async fn make_srt_ouput(
             .find(|(k, _)| k == "multiplex")
             .as_ref()
             .map(|(_, v)| &**v),
-        builder.conn_type(),
+        &bind_options,
     ) {
         // OK
-        (Some(""), ConnInitMethod::Listen) => true,
-        (None, _) => false,
+        (Some(""), BindOptions::Listen(options)) => Some(options),
+        (None, _) => None,
 
         // not OK
         (Some(""), _) => bail!("The multiplex option is only supported for listen connections"),
         (Some(a), _) => bail!("Unexpected value for multiplex: {}", a),
     };
-    let builder = add_srt_args(output_url.query_pairs(), builder)?;
 
-    if is_multiplex {
-        Ok(StreamerServer::new(builder.build_multiplexed().await?)
-            .with(|b| future::ok((Instant::now(), b)))
-            .boxed_sink())
-    } else {
-        Ok(builder
-            .connect()
+    match is_multiplex {
+        Some(options) => Ok(StreamerServer::bind(options.clone())
             .await?
             .with(|b| future::ok((Instant::now(), b)))
-            .boxed_sink())
+            .boxed_sink()),
+        None => Ok(SrtSocket::bind(bind_options)
+            .await?
+            .with(|b| future::ok((Instant::now(), b)))
+            .boxed_sink()),
     }
 }
 

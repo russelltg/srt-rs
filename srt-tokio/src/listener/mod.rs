@@ -52,7 +52,6 @@ impl SrtListener {
         let task = tokio::spawn(async move {
             state.run_loop().await;
         });
-
         Ok(Self {
             settings,
             request_receiver,
