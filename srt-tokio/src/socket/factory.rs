@@ -4,14 +4,14 @@ use bytes::Bytes;
 use futures::{channel::mpsc, prelude::*, select};
 use log::{error, trace};
 use srt_protocol::{
-    connection::{Action, DuplexConnection, Input},
+    connection::{Action, Connection, ConnectionSettings, DuplexConnection, Input},
     packet::TimeSpan,
 };
 use tokio::{task::JoinHandle, time::sleep_until};
 
 use crate::{net::PacketSocket, watch, SocketStatistics, SrtSocket};
 
-pub struct SrtSocketState {
+struct SrtSocketState {
     socket: PacketSocket,
     connection: DuplexConnection,
     statistics_sender: watch::Sender<SocketStatistics>,
@@ -20,35 +20,6 @@ pub struct SrtSocketState {
 }
 
 impl SrtSocketState {
-    pub fn spawn_socket(
-        socket: PacketSocket,
-        connection: DuplexConnection,
-    ) -> (JoinHandle<()>, SrtSocket) {
-        let (output_data_sender, output_data_receiver) = mpsc::channel(128);
-        let (input_data_sender, input_data_receiver) = mpsc::channel(128);
-        let (statistics_sender, statistics_receiver) = watch::channel();
-        let settings = connection.settings().clone();
-
-        let state = SrtSocketState {
-            socket,
-            connection,
-            statistics_sender,
-            output_data_sender,
-            input_data_receiver,
-        };
-
-        let handle = tokio::spawn(async move { state.run_loop().await });
-
-        let socket = SrtSocket {
-            settings,
-            output_data_receiver,
-            input_data_sender,
-            statistics_receiver,
-        };
-
-        (handle, socket)
-    }
-
     pub async fn run_loop(self) {
         // Using run_input_loop breaks a couple of the stransmit_interop tests.
         // Both stransmit_decrypt and stransmit_server run indefinitely. For now,
@@ -168,4 +139,71 @@ impl SrtSocketState {
             error!("Error while closing data output stream {:?}", e);
         }
     }
+}
+
+#[derive(Debug)]
+pub struct SrtSocketFactory {
+    output_data_receiver: mpsc::Receiver<(Instant, Bytes)>,
+    input_data_sender: mpsc::Sender<(Instant, Bytes)>,
+    statistics_receiver: watch::Receiver<SocketStatistics>,
+}
+
+impl SrtSocketFactory {
+    pub fn create_socket(self, settings: ConnectionSettings) -> SrtSocket {
+        SrtSocket {
+            settings,
+            output_data_receiver: self.output_data_receiver,
+            input_data_sender: self.input_data_sender,
+            statistics_receiver: self.statistics_receiver,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SrtSocketTaskFactory {
+    output_data_sender: mpsc::Sender<(Instant, Bytes)>,
+    input_data_receiver: mpsc::Receiver<(Instant, Bytes)>,
+    statistics_sender: watch::Sender<SocketStatistics>,
+}
+
+impl SrtSocketTaskFactory {
+    pub fn spawn_task(
+        self,
+        socket: PacketSocket,
+        connection: Connection,
+    ) -> (JoinHandle<()>, ConnectionSettings) {
+        let settings = connection.settings.clone();
+
+        let state = SrtSocketState {
+            socket,
+            connection: DuplexConnection::new(connection),
+            statistics_sender: self.statistics_sender,
+            output_data_sender: self.output_data_sender,
+            input_data_receiver: self.input_data_receiver,
+        };
+
+        let handle = tokio::spawn(async move { state.run_loop().await });
+
+        (handle, settings)
+    }
+}
+
+pub fn split_new() -> (SrtSocketFactory, SrtSocketTaskFactory) {
+    let (output_data_sender, output_data_receiver) = mpsc::channel(128);
+    let (input_data_sender, input_data_receiver) = mpsc::channel(128);
+    let (statistics_sender, statistics_receiver) = watch::channel();
+
+    let socket_factory = SrtSocketFactory {
+        output_data_receiver,
+        input_data_sender,
+        statistics_receiver,
+    };
+
+    let state_factory = SrtSocketTaskFactory {
+        output_data_sender,
+        input_data_receiver,
+        statistics_sender,
+    };
+
+    (socket_factory, state_factory)
 }

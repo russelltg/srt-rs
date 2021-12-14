@@ -174,11 +174,11 @@ fn ui_test(flags: &[&str], stderr: &str) {
             child.stderr.unwrap().read_to_string(&mut string).unwrap();
 
             assert_eq!(
-                stderr.lines().count(),
                 string.lines().count(),
+                stderr.lines().count(),
                 "Line counnt differed. \nExpected: \n{}\nActual:\n{}",
-                stderr,
-                string
+                string,
+                stderr
             );
 
             // windows puts stranmsit-rs.exe instead of stranmsit-rs, this isn't a real failure so just remove all .exe

@@ -76,6 +76,7 @@ fn parse_srt_args<C>(args: impl Iterator<Item = (C, C)>) -> Result<SocketOptions
 where
     C: Deref<Target = str>,
 {
+    let mut key = false;
     let mut options = SocketOptions::default();
     for (k, v) in args {
         match &*k {
@@ -108,11 +109,14 @@ where
                     .parse()
                     .map_err(|e| anyhow!("Failed to parse key length: {}", e))?;
                 options.encryption.key_size = size.try_into()?;
-                // this has already been handled, ignore
+                key = true;
             }
             "rendezvous" | "multiplex" | "autoreconnect" => (),
             unrecog => bail!("Unrecgonized parameter '{}' for srt", unrecog),
         }
+    }
+    if key && options.encryption.passphrase.is_none() {
+        bail!("pbkeylen specified with no passphrase")
     }
     Ok(options)
 }
@@ -210,6 +214,9 @@ fn parse_socket_options(
         (Some(addr), None) => BindOptions::Call(CallerOptions::with(addr, None, socket_options)?),
         // no address or rendezvous -> listen
         (None, None) => {
+            if input_url.query_pairs().any(|(a, _)| a == "local_port") {
+                bail!("local_port is incompatible with listen connection technique")
+            }
             BindOptions::Listen(ListenerOptions::with(input_local_port, socket_options)?)
         }
         // address and rendezvous flag -> rendezvous
@@ -390,7 +397,6 @@ fn resolve_output(output_url: DataType) -> Result<SinkStream, Error> {
     Ok(match output_url {
         DataType::Url(output_url) => {
             let (output_local_port, output_addr) = local_port_addr(&output_url, "output")?;
-
             match output_url.scheme() {
                 "udp" if output_addr.is_none() => bail!(
                     "Must designate a ip to send to to send UDP. \

@@ -53,8 +53,8 @@ mod pending_connection;
 mod socket;
 mod watch;
 
-pub mod options;
 pub use srt_protocol::access;
+pub use srt_protocol::options;
 
 pub use crate::{
     listener::{ConnectionRequest, ListenerStatistics, SrtListener},
