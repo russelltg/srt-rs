@@ -47,9 +47,7 @@
 //! ```
 //!
 
-mod builder;
 mod listener;
-mod multiplex;
 mod net;
 mod pending_connection;
 mod socket;
@@ -59,8 +57,6 @@ pub mod options;
 pub use srt_protocol::access;
 
 pub use crate::{
-    builder::{ConnInitMethod, SrtSocketBuilder},
     listener::{ConnectionRequest, ListenerStatistics, SrtListener},
-    multiplex::{multiplex, StreamerServer},
     socket::{SocketStatistics, SrtSocket},
 };

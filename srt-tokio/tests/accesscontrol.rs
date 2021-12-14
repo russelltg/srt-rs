@@ -87,20 +87,16 @@ async fn streamid() -> io::Result<()> {
                 .call("127.0.0.1:2000", Some(stream_id.as_str()))
                 .await;
 
-            if i < 5 {
-                let mut recvr = recvr.unwrap();
+            let mut recvr = recvr.unwrap();
 
-                info!("Created connection");
+            info!("Created connection");
 
-                let first = recvr.next().await;
-                assert_eq!(first.unwrap().unwrap().1, "asdf");
-                let second = recvr.next().await;
-                assert!(second.is_none());
+            let first = recvr.next().await;
+            assert_eq!(first.unwrap().unwrap().1, "asdf");
+            let second = recvr.next().await;
+            assert!(second.is_none());
 
-                info!("Connection done");
-            } else {
-                assert_eq!(recvr.unwrap_err().kind(), io::ErrorKind::ConnectionRefused);
-            }
+            info!("Connection done");
         }));
     }
 

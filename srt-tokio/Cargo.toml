@@ -1,43 +1,62 @@
 [package]
-name = "srt-tokio"
-version = "0.1.0"
 authors = ["Russell Greene <russellgreene8@gmail.com>"]
 description = "SRT implementation in Rust"
-license = "Apache-2.0"
 documentation = "https://docs.rs/srt-rs"
-homepage = "https://github.com/russelltg/srt-rs"
-repository = "https://github.com/russelltg/srt-rs"
 edition = "2018"
+homepage = "https://github.com/russelltg/srt-rs"
+license = "Apache-2.0"
+name = "srt-tokio"
 publish = false
-
+repository = "https://github.com/russelltg/srt-rs"
+version = "0.1.0"
 [dependencies]
-srt-protocol = { path = "../srt-protocol" }
-log = { version = "0.4", default-features = false }
-futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 bytes = "1"
 rand = "0.8"
 tokio-stream = "0.1"
-ac-ffmpeg = { version = "0.17", optional = true }
+
+[dependencies.ac-ffmpeg]
+optional = true
+version = "0.17"
+
+[dependencies.futures]
+default-features = false
+features = ["std", "async-await"]
+version = "0.3"
+
+[dependencies.log]
+default-features = false
+version = "0.4"
+
+[dependencies.srt-protocol]
+path = "../srt-protocol"
 
 [dependencies.tokio]
-version = "1"
 features = ["net", "time", "test-util", "macros", "io-util", "io-std", "sync"]
+version = "1"
 
 [dev-dependencies]
 anyhow = "1"
-pretty_env_logger = { version = "0.4", default-features = false }
-rand = "0.8"
-rand_distr = "0.4"
-tokio-util = { version = "0.6", features = ["net", "codec"] }
-tokio-stream = { version = "0.1.7", features = ["sync"] }
-libloading = "0.7"
 lazy_static = "1"
 libc = "0.2"
+libloading = "0.7"
+rand = "0.8"
+rand_distr = "0.4"
+
+[dev-dependencies.pretty_env_logger]
+default-features = false
+version = "0.4"
 
 [dev-dependencies.tokio]
-version = "1"
 features = ["rt-multi-thread"]
+version = "1"
 
+[dev-dependencies.tokio-stream]
+features = ["sync"]
+version = "0.1.7"
+
+[dev-dependencies.tokio-util]
+features = ["net", "codec"]
+version = "0.6"
 
 [features]
 default = []
