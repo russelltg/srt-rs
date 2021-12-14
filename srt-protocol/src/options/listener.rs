@@ -1,4 +1,5 @@
 use std::convert::TryInto;
+use std::net::Ipv4Addr;
 
 use super::*;
 
@@ -21,7 +22,11 @@ impl ListenerOptions {
             .map_err(|_| OptionsError::InvalidLocalAddress)?;
 
         let mut options = Self { socket };
-        options.socket.connect.local = local.into();
+        options.socket.connect.local.set_port(local.port());
+        if local.ip() != Ipv4Addr::UNSPECIFIED {
+            options.socket.connect.local.set_ip(local.ip());
+        }
+
         options.try_validate()
     }
 }
