@@ -49,7 +49,6 @@
 
 mod listener;
 mod net;
-mod pending_connection;
 mod socket;
 mod watch;
 
