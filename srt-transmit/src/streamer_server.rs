@@ -1,104 +1,77 @@
 use std::{
-    io::{self, ErrorKind},
+    io,
     pin::Pin,
-    sync::mpsc::TryRecvError,
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
-use bus::{Bus, BusReader};
 use bytes::Bytes;
-use futures::{channel::mpsc, select, sink::Sink, FutureExt, SinkExt, StreamExt};
-use tokio::time::sleep;
+use futures::{channel::oneshot, select, sink::Sink, FutureExt, SinkExt, StreamExt};
+use log::warn;
+use tokio::sync::broadcast::{self, error::*};
 
 use srt_tokio::{
     options::{ListenerOptions, Valid},
-    ConnectionRequest, SrtListener, SrtSocket,
+    SrtListener, SrtSocket,
 };
 
-// Bus is the best concurrent pub/sub primitive so far in Rust. It is lock free, bounded, low
-// allocation, but it is just not async, yet. Also, the receiver instances (i.e. subscriber) can't
-// be directly cloned either, so it is awkward to use as a replacement for a typical channel. Since
-// a reference to the Bus is necessary in order to construct new subscribers, an mpsc channel is
-// placed in front of the Bus and a tokio task is spawned to both read from this channel and then
-// push it to the bus as well as accepting new connection requests and spawning new tasks that read
-// from a per connection Bus subscriber, sending the data to the new connection socket.
-//
-// TODO: get rid of mpsc channel and consider writing a legit Sink wrapper for Bus, or find an
-//  alternative pub/sub bus
-pub struct StreamerServer(mpsc::Sender<(Instant, Bytes)>);
+pub struct StreamerServer(broadcast::Sender<(Instant, Bytes)>, oneshot::Sender<()>);
 
 impl StreamerServer {
     pub async fn bind(options: Valid<ListenerOptions>) -> Result<Self, io::Error> {
-        let (sender, receiver) = mpsc::channel(100);
+        let (broadcast_sender, broadcast_receiver) = broadcast::channel(10_000);
+        let (cancel_sender, cancel_receiver) = oneshot::channel();
+
         let listener = SrtListener::bind(options).await?;
+        let server = broadcast_sender.clone();
         tokio::spawn(async move {
-            Self::run_receive_loop(listener, receiver).await;
+            Self::run_receive_loop(
+                listener,
+                cancel_receiver,
+                broadcast_sender,
+                broadcast_receiver,
+            )
+            .await;
         });
 
-        Ok(StreamerServer(sender))
+        Ok(StreamerServer(server, cancel_sender))
     }
 
     pub async fn run_receive_loop(
         mut listener: SrtListener,
-        receiver: mpsc::Receiver<(Instant, Bytes)>,
+        cancel: oneshot::Receiver<()>,
+        broadcast_sender: broadcast::Sender<(Instant, Bytes)>,
+        _broadcast_receiver: broadcast::Receiver<(Instant, Bytes)>,
     ) {
         let mut incoming = listener.incoming().fuse();
-        let mut receiver = receiver.fuse();
-        let mut bus = Bus::new(10_000);
-
-        loop {
-            enum Select {
-                Request(Option<ConnectionRequest>),
-                Data(Option<(Instant, Bytes)>),
-                Timer,
-            }
-
-            use Select::*;
-            let selection = select! (
-                request = incoming.next() => Request(request),
-                data = receiver.next() => Data(data),
-                _ = sleep(Duration::from_micros(1)).fuse() => Timer,
-            );
-
-            match selection {
-                Request(Some(request)) => {
-                    let sender = request.accept(None).await.unwrap();
-                    let input = bus.add_rx();
-                    tokio::spawn(async move {
-                        Self::run_send_loop(sender, input).await;
-                    });
-                }
-                Data(Some(data)) => {
-                    if let Err(data) = bus.try_broadcast(data) {
-                        let mut pending_data = Some(data);
-                        while let Some(data) = pending_data.take() {
-                            tokio::time::sleep(Duration::from_micros(1)).await;
-                            if let Err(data) = bus.try_broadcast(data) {
-                                pending_data = Some(data);
-                            }
-                        }
-                    }
-                }
-                Timer => {}
-                Data(None) | Request(None) => break,
-            }
+        let mut cancel = cancel.fuse();
+        while let Some(request) = select!(
+                    _ = cancel => return,
+                    result = incoming.next() => result)
+        {
+            let sender = request.accept(None).await.unwrap();
+            let input = broadcast_sender.subscribe();
+            let run_send_loop = Self::run_send_loop(sender, input);
+            tokio::spawn(run_send_loop);
         }
     }
 
-    async fn run_send_loop(mut sender: SrtSocket, mut input: BusReader<(Instant, Bytes)>) {
+    async fn run_send_loop(
+        mut sender: SrtSocket,
+        mut input: broadcast::Receiver<(Instant, Bytes)>,
+    ) {
         loop {
-            match input.try_recv() {
-                Ok(val) => {
-                    if sender.send(val).await.is_err() {
+            match input.recv().await {
+                Ok(data) => {
+                    if sender.send(data).await.is_err() {
                         break;
                     }
                 }
-                Err(TryRecvError::Empty) => {
-                    tokio::time::sleep(Duration::from_micros(1)).await;
-                }
-                Err(TryRecvError::Disconnected) => {
+                Err(RecvError::Closed) => {
                     break;
+                }
+                Err(RecvError::Lagged(dropped)) => {
+                    warn!("Stream server dropped packets {}", dropped)
                 }
             }
         }
@@ -107,41 +80,36 @@ impl StreamerServer {
 }
 
 impl Sink<(Instant, Bytes)> for StreamerServer {
-    type Error = io::Error;
+    type Error = SendError<(Instant, Bytes)>;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        self.0
-            .poll_ready(cx)
-            .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Self::Error> {
-        self.0
-            .start_send(item)
-            .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))
+    fn start_send(self: Pin<&mut Self>, item: (Instant, Bytes)) -> Result<(), Self::Error> {
+        let _ = self.0.send(item)?;
+        Ok(())
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.0)
-            .poll_flush(cx)
-            .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.0)
-            .poll_close(cx)
-            .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))
+
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::time::Duration;
 
+    use crate::SrtSocket;
     use anyhow::Result;
     use bytes::Bytes;
-    use futures::{future::join_all, SinkExt, StreamExt};
+    use futures::future::join_all;
     use log::info;
-    use srt_tokio::SrtSocket;
+    use tokio::time::sleep;
 
     use super::*;
 
@@ -153,9 +121,11 @@ mod tests {
             let options = ListenerOptions::new(2000).unwrap();
             let mut server = StreamerServer::bind(options).await.unwrap();
             let end = Instant::now() + Duration::from_secs(1);
+            let mut count = 0;
             while end > Instant::now() {
+                count += 1;
                 server
-                    .send((Instant::now(), Bytes::from("asdf")))
+                    .send((Instant::now(), Bytes::from(format!("asdf {}", count))))
                     .await
                     .unwrap();
                 sleep(Duration::from_millis(10)).await;
@@ -177,7 +147,7 @@ mod tests {
 
                 while let Some(data) = recvr.next().await {
                     info!("Data {}: {:?}", i, data);
-                    assert_eq!(data.unwrap().1, "asdf");
+                    assert!(data.unwrap().1.starts_with("asdf".as_bytes()));
                 }
 
                 info!("Receiving done {}", i);
