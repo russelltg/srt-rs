@@ -57,7 +57,7 @@ impl SessionState {
                 let reject = reject.clone();
                 self.reject(session_id, reject)
             }
-            Open => unreachable!("this should no happen"),
+            Open => unreachable!("this should not happen"),
             Dropping => Action::DropConnection(session_id),
         }
     }

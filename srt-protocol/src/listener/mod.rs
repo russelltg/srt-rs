@@ -69,7 +69,7 @@ impl MultiplexListener {
     fn handle_packet(&mut self, now: Instant, packet: (Packet, SocketAddr)) -> Action {
         self.stats.rx_packets += 1;
         //self.stats.rx_bytes += packet
-        let session_id = SessionId(packet.1, packet.0.dest_sockid());
+        let session_id = SessionId(packet.1);
         let settings = &self.settings;
         self.sessions
             .entry(session_id)
@@ -222,7 +222,7 @@ mod test {
     }
 
     fn session_id() -> SessionId {
-        SessionId(conn_addr(), dest_sock_id())
+        SessionId(conn_addr())
     }
 
     fn build_hs_pack(i: HandshakeControlInfo) -> Packet {
