@@ -1,4 +1,8 @@
 mod builder;
+mod call;
+mod listen;
+mod rendezvous;
+
 pub(crate) mod factory;
 
 use std::{
@@ -64,34 +68,13 @@ impl SrtSocket {
     }
 
     async fn bind_with_socket(options: BindOptions, socket: UdpSocket) -> Result<Self, io::Error> {
-        let mut socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
+        let socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
+
         use BindOptions::*;
-        let connection = match options {
-            Listen(options) => {
-                crate::pending_connection::listen(&mut socket, options.socket.clone().into())
-                    .await?
-            }
-            Call(options) => {
-                crate::pending_connection::connect(
-                    &mut socket,
-                    options.remote,
-                    options.socket.connect.local.ip(),
-                    options.socket.clone().into(),
-                    options.stream_id.as_ref().map(|s| s.to_string()),
-                    rand::random(),
-                )
-                .await?
-            }
-            Rendezvous(options) => {
-                crate::pending_connection::rendezvous(
-                    &mut socket,
-                    options.socket.connect.local,
-                    options.remote,
-                    options.socket.clone().into(),
-                    rand::random(),
-                )
-                .await?
-            }
+        let (socket, connection) = match options {
+            Listen(options) => listen::bind_with(socket, options).await?,
+            Call(options) => call::bind_with(socket, options).await?,
+            Rendezvous(options) => rendezvous::bind_with(socket, options).await?,
         };
 
         let (new_socket, new_state) = factory::split_new();
