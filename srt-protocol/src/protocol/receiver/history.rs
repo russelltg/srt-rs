@@ -6,11 +6,8 @@ use crate::packet::{FullAckSeqNumber, SeqNumber, TimeSpan};
 #[derive(Debug)]
 struct AckHistoryEntry {
     /// the highest packet sequence number received that this ACK packet ACKs + 1
-    data_seqence_numer: SeqNumber,
-
-    /// the ack sequence number
+    data_sequence_number: SeqNumber,
     ack_sequence_number: FullAckSeqNumber,
-
     departure_time: Instant,
 }
 
@@ -66,7 +63,7 @@ impl AckHistoryWindow {
 
         let index = ack_seq_num - front.ack_sequence_number;
         let ack = self.buffer.get(index)?;
-        self.largest_ack2_dsn = ack.data_seqence_numer;
+        self.largest_ack2_dsn = ack.data_sequence_number;
 
         Some(TimeSpan::from_interval(ack.departure_time, now))
     }
@@ -86,10 +83,10 @@ impl AckHistoryWindow {
         let is_last_ack_too_recent = |last: &AckHistoryEntry| {
             let interval = TimeSpan::from_interval(last.departure_time, now);
             // make sure this ACK number is greater or equal to one sent previously
-            next_dsn < last.data_seqence_numer ||
+            next_dsn < last.data_sequence_number ||
             // or, (b) it is equal to the ACK number in the
             // last ACK
-            next_dsn == last.data_seqence_numer &&
+            next_dsn == last.data_sequence_number &&
                 // and the time interval between these two ACK packets is
                 // less than 2 RTTs,
                 interval < rtt_mean * 2
@@ -99,7 +96,8 @@ impl AckHistoryWindow {
         }
 
         // drain expired entries from ACK History Window
-        let latency_window = self.tsbpd_latency + Duration::from_millis(10);
+        // drain expired entries from ACK History Window
+        let latency_window = self.tsbpd_latency;
         let has_expired = |ack: &AckHistoryEntry| now > ack.departure_time + latency_window;
         while self.buffer.front().map_or(false, has_expired) {
             let _ = self.buffer.pop_front();
@@ -111,7 +109,7 @@ impl AckHistoryWindow {
         // add it to the ack history
         self.last_ack_dsn = next_dsn;
         self.buffer.push_back(AckHistoryEntry {
-            data_seqence_numer: next_dsn,
+            data_sequence_number: next_dsn,
             ack_sequence_number: next_fasn,
             departure_time: now,
         });
