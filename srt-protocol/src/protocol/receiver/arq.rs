@@ -222,6 +222,11 @@ impl AutomaticRepeatRequestAlgorithm {
     }
 
     pub fn on_full_ack_event(&mut self, now: Instant) -> Option<Acknowledgement> {
+        // NOTE: if a Full ACK is sent when the receive buffer is full, the Sender will stall
+        if self.receive_buffer.buffer_available() == 0 {
+            return None;
+        }
+
         let (fasn, dsn) = self.ack_history_window.next_full_ack(
             now,
             self.rtt.mean(),
