@@ -139,12 +139,15 @@ impl MultiplexListener {
         Action::WaitForInput
     }
 
-    fn handle_failure(&self, now: Instant, result_of: ResultOf) -> Action {
+    fn handle_failure(&mut self, now: Instant, result_of: ResultOf) -> Action {
         self.warn(now, "failure", &result_of);
 
-        // TODO: stats? anything else?
-
-        Action::WaitForInput
+        use ResultOf::*;
+        match result_of {
+            DelegatePacket(session_id) => Action::DropConnection(session_id),
+            // TODO: stats? anything else?
+            _ => Action::WaitForInput,
+        }
     }
 
     fn handle_close(&mut self) -> Action {
