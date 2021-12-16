@@ -81,7 +81,7 @@ impl Drop for SrtListener {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     use anyhow::Result;
     use bytes::Bytes;
@@ -270,9 +270,6 @@ mod tests {
 
     #[tokio::test]
     async fn multiplex_timeout() {
-        use std::time::Duration;
-        use std::{io::Error, time::Instant};
-
         use bytes::Bytes;
         use futures::{stream, SinkExt, StreamExt};
         use log::info;
@@ -280,9 +277,9 @@ mod tests {
 
         use srt_protocol::options::*;
 
-        async fn run_listener() -> Result<i32, Error> {
+        async fn run_listener() -> Result<(), io::Error> {
             let port = 4444;
-            let binding = SrtListener::builder()
+            let mut binding = SrtListener::builder()
                 .with(Sender {
                     drop_delay: Duration::from_secs(20),
                     peer_latency: Duration::from_secs(1),
@@ -293,14 +290,11 @@ mod tests {
                 .await
                 .unwrap();
 
-            tokio::pin!(binding);
-
             info!("SRT Multiplex Server is listening on port: {}", port);
-            let mut join_handles = vec![];
             while let Some(request) = binding.incoming().next().await {
                 let mut srt_socket = request.accept(None).await.unwrap();
 
-                let handle = tokio::spawn(async move {
+                tokio::spawn(async move {
                     let client_desc = format!(
                         "(ip_port: {}, sockid: {})",
                         srt_socket.settings().remote,
@@ -322,26 +316,17 @@ mod tests {
                     .boxed();
 
                     if let Err(e) = srt_socket.send_all(&mut stream).await {
-                        println!("Send to client: {} error: {:?}", client_desc, e);
+                        info!("Send to client: {} error: {:?}", client_desc, e);
                     }
-                    println!("Client {} disconnected", client_desc);
+                    info!("Client {} disconnected", client_desc);
 
                     start.elapsed().as_secs() as i32
                 });
-                join_handles.push(handle);
             }
-
-            let min_elapsed_seconds = join_all(join_handles)
-                .await
-                .into_iter()
-                .map(|r| r.unwrap())
-                .min()
-                .unwrap_or_default();
-
-            Ok(min_elapsed_seconds)
+            Ok(())
         }
 
-        async fn run_receiver(id: u32) -> Result<i32, Error> {
+        async fn run_receiver(id: u32) -> Result<i32, io::Error> {
             let mut srt_socket = SrtSocket::builder()
                 .with(Receiver {
                     buffer_size: ByteCount(8192 * 100),
@@ -352,18 +337,18 @@ mod tests {
                 .await
                 .unwrap();
 
-            println!("Client {} connection opened", id);
+            info!("Client {} connection opened", id);
 
             let mut count = 1;
             let start = Instant::now();
             while let Some((_instant, _bytes)) = srt_socket.try_next().await? {
                 if count % 200 == 0 {
-                    println!("{} received {:?} packets", id, count);
+                    info!("{} received {:?} packets", id, count);
                 }
                 count += 1;
             }
-            println!("Client {} received {:?} packets", id, count);
-            println!("Client {} connection closed", id);
+            info!("Client {} received {:?} packets", id, count);
+            info!("Client {} connection closed", id);
 
             Ok(start.elapsed().as_secs() as i32)
         }
@@ -381,6 +366,7 @@ mod tests {
             .min()
             .unwrap_or_default();
 
+        // clients should have still received data well past the default peer timout
         assert!(min_elapsed_seconds > 5);
     }
 }

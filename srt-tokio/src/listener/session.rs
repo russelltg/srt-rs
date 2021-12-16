@@ -120,7 +120,14 @@ pub struct OpenConnection {
 
 impl OpenConnection {
     pub async fn send(&mut self, packet: (Packet, SocketAddr)) -> Result<(), ()> {
-        self.packet_sender.send(Ok(packet)).await.ok().ok_or(())
+        match self.packet_sender.try_send(Ok(packet)) {
+            Err(e) if e.is_full() => self.packet_sender.send(e.into_inner()).await.ok().ok_or(()),
+            r => r.ok().ok_or(()),
+        }
+    }
+
+    pub async fn close(&mut self) -> Result<(), ()> {
+        self.packet_sender.close().await.ok().ok_or(())
     }
 }
 
