@@ -96,7 +96,6 @@ impl AckHistoryWindow {
         }
 
         // drain expired entries from ACK History Window
-        // drain expired entries from ACK History Window
         let latency_window = self.tsbpd_latency;
         let has_expired = |ack: &AckHistoryEntry| now > ack.departure_time + latency_window;
         while self.buffer.front().map_or(false, has_expired) {

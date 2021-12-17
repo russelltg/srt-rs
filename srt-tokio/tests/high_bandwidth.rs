@@ -30,6 +30,7 @@ async fn high_bandwidth() -> Result<(), Error> {
     use srt_protocol::options::LiveBandwidthMode::*;
     let _ = pretty_env_logger::try_init();
 
+    const RATE_MBPS: u64 = 50;
     let sender_fut = async {
         let mut sock = SrtSocket::builder()
             .latency(Duration::from_millis(150))
@@ -39,7 +40,6 @@ async fn high_bandwidth() -> Result<(), Error> {
             .call("127.0.0.1:6654", None)
             .await?;
 
-        const RATE_MBPS: u64 = 50;
         let mut stream_gbps = stream_exact(Duration::from_micros(1_000_000 / 1024 / RATE_MBPS))
             .map(|bytes| Ok((Instant::now(), bytes)))
             .boxed();
@@ -52,13 +52,12 @@ async fn high_bandwidth() -> Result<(), Error> {
     };
 
     let recv_fut = async {
+        let latency = Duration::from_millis(150);
+        let buffer_size = latency.as_secs_f64() * 2. * (RATE_MBPS as f64 * 1_000_000.);
         let mut sock = SrtSocket::builder()
-            .with(Receiver {
-                buffer_size: ByteCount(8192 * 10),
-                ..Default::default()
-            })
-            .set(|options| options.session.statistics_interval = Duration::from_secs(2))
-            .latency(Duration::from_millis(150))
+            .set(|options| options.receiver.buffer_size = ByteCount(buffer_size as u64))
+            .set(|options| options.session.statistics_interval = Duration::from_secs(1))
+            .latency(latency)
             .listen(":6654")
             .await?
             .fuse();
