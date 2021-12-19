@@ -1,5 +1,7 @@
-use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 use crate::packet::{FullAckSeqNumber, SeqNumber, TimeSpan};
 
@@ -96,9 +98,9 @@ impl AckHistoryWindow {
         }
 
         // drain expired entries from ACK History Window
-        let latency_window = self.tsbpd_latency;
+        let latency_window = self.tsbpd_latency + rtt_mean * 2;
         let has_expired = |ack: &AckHistoryEntry| now > ack.departure_time + latency_window;
-        while self.buffer.front().map_or(false, has_expired) {
+        while self.buffer.len() > 1 && self.buffer.front().map_or(false, has_expired) {
             let _ = self.buffer.pop_front();
         }
 
@@ -192,6 +194,14 @@ mod ack_history_window {
         assert_ne!(
             window.buffer.front().unwrap().ack_sequence_number,
             FullAckSeqNumber::INITIAL
+        );
+
+        // ensure that even if the buffer window expires, FullAcSeqNumber stays monotonic
+        now += tsbpd_latency + rtt_mean * 2;
+        let expected_dsn = next_dsn.increment();
+        assert_eq!(
+            window.next_full_ack(now, rtt_mean, expected_dsn),
+            Some((FullAckSeqNumber::INITIAL + 100_000, expected_dsn))
         );
 
         assert_eq!(window.next_light_ack(next_dsn), None);
