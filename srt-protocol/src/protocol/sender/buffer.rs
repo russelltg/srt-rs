@@ -142,7 +142,9 @@ impl SendBuffer {
 
         while self.front_packet().filter(|f| *f < ack_number).is_some() {
             let p = self.buffer.pop_front();
-            self.buffer_len_bytes = self.buffer_len_bytes.saturating_sub(p.unwrap().wire_size());
+            self.buffer_len_bytes = self
+                .buffer_len_bytes
+                .saturating_sub(p.unwrap().packet.wire_size());
 
             received += 1;
         }
