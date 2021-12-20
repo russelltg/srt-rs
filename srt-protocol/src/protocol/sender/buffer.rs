@@ -274,11 +274,22 @@ impl SendBuffer {
             }
         }
 
+        let drop_range = first..last + 1;
+
         let count = last - first + 1;
         let _ = self.buffer.drain(0..count as usize).count();
 
+        // remove any lost packets from loss list
+        while let Some(&seq) = self.lost_list.iter().next() {
+            if drop_range.contains(&seq) {
+                self.lost_list.remove(&seq);
+            } else {
+                break;
+            }
+        }
+
         self.next_send = max(self.next_send, last + 1);
-        Some(first..last + 1)
+        Some(drop_range)
     }
 
     fn flush_on_close(&mut self, should_drain: bool) -> Option<DataPacket> {
