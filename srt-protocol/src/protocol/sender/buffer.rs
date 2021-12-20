@@ -239,6 +239,7 @@ impl SendBuffer {
 
             // if we get here, this timer is valid, check if it's timed out then exit
             if now > rto.timeout {
+                self.timeouts.pop();
                 return Some(
                     self.send_packet(now, rto_timeout, rto.seq)
                         .expect("Packet in RTO was not in buffer!"),
