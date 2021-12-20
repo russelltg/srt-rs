@@ -98,9 +98,7 @@ impl SendBuffer {
     }
 
     pub fn len(&self) -> usize {
-        // TODO: this is because of the extra push_back in Self::push_data
-        // to be removed eventually
-        self.buffer.len().saturating_sub(1)
+        self.buffer.len()
     }
 
     pub fn len_bytes(&self) -> usize {
@@ -995,7 +993,10 @@ mod test {
                 .update_largest_acked_seq_number(SeqNumber(n + 1), None)
                 .unwrap();
 
-            assert_eq!(buffer.duration(), Duration::from_millis(u64::from(9 - n)));
+            assert_eq!(
+                buffer.duration(),
+                Duration::from_millis(8u64.saturating_sub(n.into()))
+            );
             assert_eq!(buffer.len(), 9 - n as usize);
             assert_eq!(buffer.len_bytes(), wire_size * (9 - n as usize));
         }
