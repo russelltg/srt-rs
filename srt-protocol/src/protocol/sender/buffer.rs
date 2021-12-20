@@ -142,7 +142,7 @@ impl SendBuffer {
 
         while self.front_packet().filter(|f| *f < ack_number).is_some() {
             let p = self.buffer.pop_front();
-            self.buffer_len_bytes -= p.unwrap().packet.wire_size();
+            self.buffer_len_bytes = self.buffer_len_bytes.saturating_sub(p.unwrap().wire_size());
 
             received += 1;
         }
@@ -619,6 +619,7 @@ mod test {
 
     use std::time::{Duration, Instant};
 
+    use assert_matches::assert_matches;
     use bytes::Bytes;
 
     const MILLIS: Duration = Duration::from_millis(1);
@@ -969,7 +970,7 @@ mod test {
                 )
                 .collect::<Vec<_>>();
             assert_eq!(a.len(), 1);
-            assert!(matches!(a[0], Send(_)));
+            assert_matches!(a[0], Send(_));
             assert_eq!(buffer.duration(), Duration::from_millis(9)); // not removed from buffer until ack
 
             assert_eq!(buffer.len(), 10);

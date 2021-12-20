@@ -222,6 +222,11 @@ impl AutomaticRepeatRequestAlgorithm {
     }
 
     pub fn on_full_ack_event(&mut self, now: Instant) -> Option<Acknowledgement> {
+        // NOTE: if a Full ACK is sent when the receive buffer is full, the Sender will stall
+        if self.receive_buffer.buffer_available() == 0 {
+            return None;
+        }
+
         let (fasn, dsn) = self.ack_history_window.next_full_ack(
             now,
             self.rtt.mean(),
@@ -320,6 +325,7 @@ impl AutomaticRepeatRequestAlgorithm {
 
 #[cfg(test)]
 mod automatic_repeat_request_algorithm {
+    use assert_matches::assert_matches;
     use bytes::Bytes;
 
     use DataPacketAction::*;
@@ -543,10 +549,10 @@ mod automatic_repeat_request_algorithm {
         );
 
         let now = start + Duration::from_millis(10);
-        assert!(matches!(
+        assert_matches!(
             arq.handle_ack2_packet(now, FullAckSeqNumber::INITIAL),
             Some(_)
-        ));
+        );
         assert_eq!(arq.pop_next_message(now), Ok(None));
 
         let now = start + Duration::from_secs(10);

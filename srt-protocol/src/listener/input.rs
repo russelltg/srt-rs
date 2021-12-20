@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use crate::{
     connection::Connection,
-    packet::{Packet, ReceivePacketResult, SocketId},
+    packet::{Packet, ReceivePacketResult},
 };
 
 use super::*;
@@ -10,7 +10,7 @@ use super::*;
 pub use crate::protocol::pending_connection::{AccessControlRequest, AccessControlResponse};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct SessionId(pub SocketAddr, pub SocketId);
+pub struct SessionId(pub SocketAddr);
 
 #[derive(Debug, Eq, PartialEq)]
 #[allow(clippy::large_enum_variant)]

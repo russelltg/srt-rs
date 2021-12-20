@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
     use anyhow::{Context, Result};
     use bytes::Bytes;
     use futures::Stream;
-    use srt_tokio::SrtSocketBuilder;
+    use srt_tokio::SrtListener;
     use std::{
         fs::{self, File},
         io::{self, Read},
@@ -177,13 +177,11 @@ async fn main() -> anyhow::Result<()> {
 
     fs::create_dir_all("segments")?;
 
-    let binding = SrtSocketBuilder::new_listen()
-        .local_port(1234)
-        .build_multiplexed()
-        .await?;
+    let binding = SrtListener::builder().bind(1234).await?;
     tokio::pin!(binding);
 
-    while let Some(Ok(socket)) = binding.next().await {
+    while let Some(request) = binding.incoming().next().await {
+        let socket = request.accept(None).await?;
         tokio::spawn(async move {
             let socket_id = socket.settings().remote_sockid.0;
             let (tx, rx) = channel();

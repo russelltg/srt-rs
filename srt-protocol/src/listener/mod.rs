@@ -69,7 +69,7 @@ impl MultiplexListener {
     fn handle_packet(&mut self, now: Instant, packet: (Packet, SocketAddr)) -> Action {
         self.stats.rx_packets += 1;
         //self.stats.rx_bytes += packet
-        let session_id = SessionId(packet.1, packet.0.dest_sockid());
+        let session_id = SessionId(packet.1);
         let settings = &self.settings;
         self.sessions
             .entry(session_id)
@@ -139,12 +139,15 @@ impl MultiplexListener {
         Action::WaitForInput
     }
 
-    fn handle_failure(&self, now: Instant, result_of: ResultOf) -> Action {
+    fn handle_failure(&mut self, now: Instant, result_of: ResultOf) -> Action {
         self.warn(now, "failure", &result_of);
 
-        // TODO: stats? anything else?
-
-        Action::WaitForInput
+        use ResultOf::*;
+        match result_of {
+            DelegatePacket(session_id) => Action::DropConnection(session_id),
+            // TODO: stats? anything else?
+            _ => Action::WaitForInput,
+        }
     }
 
     fn handle_close(&mut self) -> Action {
@@ -164,6 +167,7 @@ impl MultiplexListener {
 
 #[cfg(test)]
 mod test {
+    use assert_matches::assert_matches;
     use std::{
         net::{IpAddr, Ipv4Addr},
         time::Duration,
@@ -221,7 +225,7 @@ mod test {
     }
 
     fn session_id() -> SessionId {
-        SessionId(conn_addr(), dest_sock_id())
+        SessionId(conn_addr())
     }
 
     fn build_hs_pack(i: HandshakeControlInfo) -> Packet {
@@ -241,41 +245,29 @@ mod test {
         let packet = build_hs_pack(test_induction());
         let action =
             listener.handle_input(Instant::now(), Input::Packet(Ok((packet, conn_addr()))));
-        assert!(matches!(action, Action::SendPacket(_)), "{:?}", action);
+        assert_matches!(action, Action::SendPacket(_));
 
         let packet = build_hs_pack(test_conclusion());
         let action =
             listener.handle_input(Instant::now(), Input::Packet(Ok((packet, conn_addr()))));
-        assert!(
-            matches!(action, Action::RequestAccess(_, _)),
-            "{:?}",
-            action
-        );
+        assert_matches!(action, Action::RequestAccess(_, _));
 
         let action = listener.handle_input(
             Instant::now(),
             Input::AccessResponse(Some((session_id(), AccessControlResponse::Accepted(None)))),
         );
-        assert!(
-            matches!(action, Action::OpenConnection(_, _)),
-            "{:?}",
-            action
-        );
+        assert_matches!(action, Action::OpenConnection(_, _));
 
         use crate::listener::ResultOf::*;
 
         let action =
             listener.handle_input(Instant::now(), Input::Success(OpenConnection(session_id())));
-        assert!(matches!(action, Action::WaitForInput), "{:?}", action);
+        assert_matches!(action, Action::WaitForInput);
 
         let packet = build_hs_pack(test_conclusion());
         let action =
             listener.handle_input(Instant::now(), Input::Packet(Ok((packet, conn_addr()))));
-        assert!(
-            matches!(action, Action::DelegatePacket(_, _)),
-            "{:?}",
-            action
-        );
+        assert_matches!(action, Action::DelegatePacket(_, _));
     }
 
     #[test]
@@ -287,16 +279,12 @@ mod test {
         let packet = build_hs_pack(test_induction());
         let action =
             listener.handle_input(Instant::now(), Input::Packet(Ok((packet, conn_addr()))));
-        assert!(matches!(action, Action::SendPacket(_)), "{:?}", action);
+        assert_matches!(action, Action::SendPacket(_));
 
         let packet = build_hs_pack(test_conclusion());
         let action =
             listener.handle_input(Instant::now(), Input::Packet(Ok((packet, conn_addr()))));
-        assert!(
-            matches!(action, Action::RequestAccess(_, _)),
-            "{:?}",
-            action
-        );
+        assert_matches!(action, Action::RequestAccess(_, _));
 
         let action = listener.handle_input(
             Instant::now(),
@@ -305,25 +293,17 @@ mod test {
                 AccessControlResponse::Rejected(RejectReason::User(100)),
             ))),
         );
-        assert!(
-            matches!(
-                action,
-                Action::RejectConnection(_, Some((Packet::Control(_), _)))
-            ),
-            "{:?}",
-            action
+        assert_matches!(
+            action,
+            Action::RejectConnection(_, Some((Packet::Control(_), _)))
         );
 
         let packet = build_hs_pack(test_conclusion());
         let action =
             listener.handle_input(Instant::now(), Input::Packet(Ok((packet, conn_addr()))));
-        assert!(
-            matches!(
-                action,
-                Action::RejectConnection(_, Some((Packet::Control(_), _)))
-            ),
-            "{:?}",
-            action
+        assert_matches!(
+            action,
+            Action::RejectConnection(_, Some((Packet::Control(_), _)))
         );
 
         let action = listener.handle_input(

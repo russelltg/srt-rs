@@ -10,7 +10,7 @@ use bytes::BytesMut;
 use futures::channel::mpsc::Receiver;
 use futures::{channel::mpsc, prelude::*};
 use srt_protocol::packet::{Packet, ReceivePacketResult};
-use tokio::net::{ToSocketAddrs, UdpSocket};
+use tokio::net::UdpSocket;
 
 pub struct PacketSocket {
     socket: Arc<UdpSocket>,
@@ -19,14 +19,6 @@ pub struct PacketSocket {
 }
 
 impl PacketSocket {
-    pub async fn bind<A: ToSocketAddrs>(
-        address: A,
-        buffer_capacity: usize,
-    ) -> Result<Self, io::Error> {
-        let socket = Arc::new(UdpSocket::bind(address).await?);
-        Ok(Self::from_socket(socket, buffer_capacity))
-    }
-
     pub fn from_socket(socket: Arc<UdpSocket>, buffer_capacity: usize) -> Self {
         Self {
             socket,

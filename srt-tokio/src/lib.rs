@@ -22,7 +22,7 @@
 //!         let mut tx = SrtSocket::builder().listen(2223).await?;
 //!
 //!         let iter = ["1", "2", "3"];
-//!         
+//!
 //!         tx.send_all(&mut stream::iter(&iter)
 //!             .map(|b| Ok((Instant::now(), Bytes::from(*b))))).await?;
 //!         tx.close().await?;
@@ -47,20 +47,15 @@
 //! ```
 //!
 
-mod builder;
 mod listener;
-mod multiplex;
 mod net;
-mod pending_connection;
 mod socket;
 mod watch;
 
-pub mod options;
 pub use srt_protocol::access;
+pub use srt_protocol::options;
 
 pub use crate::{
-    builder::{ConnInitMethod, SrtSocketBuilder},
     listener::{ConnectionRequest, ListenerStatistics, SrtListener},
-    multiplex::{multiplex, StreamerServer},
     socket::{SocketStatistics, SrtSocket},
 };

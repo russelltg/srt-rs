@@ -223,6 +223,26 @@ impl Sub<Duration> for TimeSpan {
     }
 }
 
+impl Add<TimeSpan> for Duration {
+    type Output = Duration;
+
+    fn add(self, rhs: TimeSpan) -> Self::Output {
+        if rhs > TimeSpan::ZERO {
+            self + Duration::from_micros(rhs.as_micros() as u64)
+        } else {
+            self - Duration::from_micros(rhs.as_micros().abs() as u64)
+        }
+    }
+}
+
+impl Sub<TimeSpan> for Duration {
+    type Output = Duration;
+
+    fn sub(self, rhs: TimeSpan) -> Self::Output {
+        self.add(-rhs)
+    }
+}
+
 impl Add<TimeSpan> for Instant {
     type Output = Instant;
 
@@ -264,6 +284,10 @@ mod timestamp {
         assert_eq!(b - a, TimeSpan::from_micros(1));
         assert_eq!(a - b, TimeSpan::from_micros(-1));
         assert!(b > a);
+
+        let d = Duration::from_micros(10);
+        assert_eq!(d + TimeSpan::from_micros(1), Duration::from_micros(11));
+        assert_eq!(d + TimeSpan::from_micros(1), d - TimeSpan::from_micros(-1));
 
         let max = TimeStamp::MIN - TimeSpan::from_micros(1);
         let min = TimeStamp::MAX + TimeSpan::from_micros(1);

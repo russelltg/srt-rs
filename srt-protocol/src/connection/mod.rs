@@ -500,10 +500,10 @@ mod duplex_connection {
         );
 
         now += SND;
-        assert!(matches!(
+        assert_matches!(
             connection.handle_input(now, Input::Timer),
-            SendPacket((Data(_), _)),
-        ));
+            SendPacket((Data(_), _))
+        );
 
         // acknowledgement
         now += SND;
@@ -535,10 +535,10 @@ mod duplex_connection {
         );
 
         // closing: drain last item in send buffer
-        // assert_matches!(
-        //     connection.handle_input(now, Input::Timer),
-        //     SendPacket((Data(_), _))
-        // );
+        assert_matches!(
+            connection.handle_input(now, Input::Timer),
+            SendPacket((Data(_), _))
+        );
         assert_matches!(
             connection.handle_input(now, Input::Timer),
             SendPacket((

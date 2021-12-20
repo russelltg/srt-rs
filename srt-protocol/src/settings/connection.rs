@@ -1,4 +1,4 @@
-use std::{convert::TryInto, time::Duration};
+use std::time::Duration;
 
 use rand::random;
 
@@ -55,10 +55,10 @@ impl From<options::SocketOptions> for ConnInitSettings {
             key_settings: options
                 .encryption
                 .passphrase
-                .as_ref()
+                .clone()
                 .map(|passphrase| KeySettings {
                     key_size: options.encryption.key_size,
-                    passphrase: passphrase.to_string().try_into().unwrap(),
+                    passphrase,
                 }),
             key_refresh: KeyMaterialRefreshSettings::new(
                 options.encryption.km_refresh.period.into(),

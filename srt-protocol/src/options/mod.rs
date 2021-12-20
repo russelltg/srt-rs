@@ -38,14 +38,6 @@ pub use validation::*;
 
 // SRTO_PACKETFILTER - FEC not supported... yet
 
-// SRTO_STREAMID
-// A string that can be set on the socket prior to connecting. The listener side will be able to
-// retrieve this stream ID from the socket that is returned from srt_accept (for a connected socket
-// with that stream ID). You usually use SET on the socket used for srt_connect, and GET on the
-// socket retrieved from srt_accept. This string can be used completely free-form. However, it's
-// highly recommended to follow the SRT Access Control (Stream ID) Guidlines.
-// TODO: add StreamId to call connection methods/constructors, we don't need it as a parameter
-
 // TODO: look over these options, they could be useful for statistics
 //
 // SRTO_EVENT - events? not a configuration option

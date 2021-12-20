@@ -196,6 +196,7 @@ impl StreamEncryptionKeys {
 #[cfg(test)]
 mod test {
     use super::*;
+    use assert_matches::assert_matches;
 
     fn key_settings() -> KeySettings {
         KeySettings {
@@ -260,7 +261,7 @@ mod test {
 
         let res = StreamEncryptionKeys::unwrap_from(key_settings, &key_material);
 
-        assert!(matches!(res, Err(_)));
+        assert_matches!(res, Err(_));
     }
 
     #[test]
