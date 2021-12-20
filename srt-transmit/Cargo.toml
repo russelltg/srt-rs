@@ -11,6 +11,7 @@ edition = "2018"
 publish = false
 
 [dependencies]
+bus = "2"
 srt-tokio = { path = "../srt-tokio"}
 clap = { version = "2", default-features = false}
 log = { version = "0.4", default-features = false }

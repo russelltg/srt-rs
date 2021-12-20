@@ -69,7 +69,7 @@ impl MultiplexListener {
     fn handle_packet(&mut self, now: Instant, packet: (Packet, SocketAddr)) -> Action {
         self.stats.rx_packets += 1;
         //self.stats.rx_bytes += packet
-        let session_id = SessionId(packet.1, packet.0.dest_sockid());
+        let session_id = SessionId(packet.1);
         let settings = &self.settings;
         self.sessions
             .entry(session_id)
@@ -139,12 +139,15 @@ impl MultiplexListener {
         Action::WaitForInput
     }
 
-    fn handle_failure(&self, now: Instant, result_of: ResultOf) -> Action {
+    fn handle_failure(&mut self, now: Instant, result_of: ResultOf) -> Action {
         self.warn(now, "failure", &result_of);
 
-        // TODO: stats? anything else?
-
-        Action::WaitForInput
+        use ResultOf::*;
+        match result_of {
+            DelegatePacket(session_id) => Action::DropConnection(session_id),
+            // TODO: stats? anything else?
+            _ => Action::WaitForInput,
+        }
     }
 
     fn handle_close(&mut self) -> Action {
@@ -222,7 +225,7 @@ mod test {
     }
 
     fn session_id() -> SessionId {
-        SessionId(conn_addr(), dest_sock_id())
+        SessionId(conn_addr())
     }
 
     fn build_hs_pack(i: HandshakeControlInfo) -> Packet {

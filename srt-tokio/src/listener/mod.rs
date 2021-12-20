@@ -52,7 +52,6 @@ impl SrtListener {
         let task = tokio::spawn(async move {
             state.run_loop().await;
         });
-
         Ok(Self {
             settings,
             request_receiver,
@@ -82,7 +81,7 @@ impl Drop for SrtListener {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     use anyhow::Result;
     use bytes::Bytes;
@@ -267,5 +266,107 @@ mod tests {
         finished_send.send(()).unwrap();
         listener.await?;
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn multiplex_timeout() {
+        use bytes::Bytes;
+        use futures::{stream, SinkExt, StreamExt};
+        use log::info;
+        use tokio::time::sleep;
+
+        use srt_protocol::options::*;
+
+        async fn run_listener() -> Result<(), io::Error> {
+            let port = 4444;
+            let mut binding = SrtListener::builder()
+                .with(Sender {
+                    drop_delay: Duration::from_secs(20),
+                    peer_latency: Duration::from_secs(1),
+                    buffer_size: ByteCount(8192 * 100),
+                    ..Default::default()
+                })
+                .bind("127.0.0.1:4444")
+                .await
+                .unwrap();
+
+            info!("SRT Multiplex Server is listening on port: {}", port);
+            while let Some(request) = binding.incoming().next().await {
+                let mut srt_socket = request.accept(None).await.unwrap();
+
+                tokio::spawn(async move {
+                    let client_desc = format!(
+                        "(ip_port: {}, sockid: {})",
+                        srt_socket.settings().remote,
+                        srt_socket.settings().remote_sockid.0
+                    );
+
+                    info!("New client connected: {}", client_desc);
+
+                    let longer_than_peer_timeout = Duration::from_secs(7);
+                    let start = Instant::now();
+                    let mut stream = stream::unfold(0, |count| async move {
+                        let res = Ok((Instant::now(), Bytes::copy_from_slice(&[0; 1316])));
+                        sleep(Duration::from_millis(5)).await;
+                        if start.elapsed() > longer_than_peer_timeout {
+                            return None;
+                        }
+                        Some((res, count))
+                    })
+                    .boxed();
+
+                    if let Err(e) = srt_socket.send_all(&mut stream).await {
+                        info!("Send to client: {} error: {:?}", client_desc, e);
+                    }
+                    info!("Client {} disconnected", client_desc);
+
+                    start.elapsed().as_secs() as i32
+                });
+            }
+            Ok(())
+        }
+
+        async fn run_receiver(id: u32) -> Result<i32, io::Error> {
+            let mut srt_socket = SrtSocket::builder()
+                .with(Receiver {
+                    buffer_size: ByteCount(8192 * 100),
+                    latency: Duration::from_secs(1),
+                    ..Default::default()
+                })
+                .call("127.0.0.1:4444", None)
+                .await
+                .unwrap();
+
+            info!("Client {} connection opened", id);
+
+            let mut count = 1;
+            let start = Instant::now();
+            while let Some((_instant, _bytes)) = srt_socket.try_next().await? {
+                if count % 200 == 0 {
+                    info!("{} received {:?} packets", id, count);
+                }
+                count += 1;
+            }
+            info!("Client {} received {:?} packets", id, count);
+            info!("Client {} connection closed", id);
+
+            Ok(start.elapsed().as_secs() as i32)
+        }
+
+        let _listener_handle = tokio::spawn(run_listener());
+        let join_handles = [
+            tokio::spawn(run_receiver(1)),
+            tokio::spawn(run_receiver(2)),
+            tokio::spawn(run_receiver(3)),
+        ];
+        let min_elapsed_seconds = join_all(join_handles)
+            .await
+            .into_iter()
+            .map(|r| r.unwrap().unwrap_or_default())
+            .min()
+            .unwrap_or_default();
+
+        // clients should have still received data well past the default peer timout
+        assert!(min_elapsed_seconds > 5);
     }
 }

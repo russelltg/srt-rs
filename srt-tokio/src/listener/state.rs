@@ -87,7 +87,9 @@ impl SrtListenerState {
                 DelegatePacket(session_id, packet) => {
                     next.input_from(self.delegate_packet(session_id, packet).await)
                 }
-                DropConnection(session_id) => next.input_from(self.drop_connection(session_id)),
+                DropConnection(session_id) => {
+                    next.input_from(self.drop_connection(session_id).await)
+                }
                 UpdateStatistics(statistics) => {
                     next.input_from(self.statistics_sender.send(statistics.clone()))
                 }
@@ -148,14 +150,16 @@ impl SrtListenerState {
         session_id: SessionId,
         packet: (Packet, SocketAddr),
     ) -> Result<(), ()> {
-        let conn = self.open_connections.get_mut(&session_id).ok_or(())?;
-        conn.send(packet).await
+        match self.open_connections.get_mut(&session_id) {
+            Some(connection) => connection.send(packet).await,
+            None => Ok(()),
+        }
     }
 
-    fn drop_connection(&mut self, session_id: SessionId) -> Result<(), ()> {
+    async fn drop_connection(&mut self, session_id: SessionId) -> Result<(), ()> {
         match self.open_connections.remove(&session_id) {
-            Some(_) => Ok(()),
-            None => Err(()),
+            Some(mut connection) => connection.close().await,
+            None => Ok(()),
         }
     }
 }

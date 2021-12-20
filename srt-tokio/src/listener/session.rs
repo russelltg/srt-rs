@@ -1,6 +1,5 @@
-use std::{io::ErrorKind, net::SocketAddr, time::Instant};
+use std::{io::ErrorKind, net::SocketAddr};
 
-use bytes::Bytes;
 use futures::{
     channel::{mpsc, oneshot},
     SinkExt,
@@ -14,16 +13,18 @@ use srt_protocol::{
 };
 use tokio::task::JoinHandle;
 
-use crate::{net::PacketSocket, watch, SocketStatistics, SrtSocket};
+use crate::{
+    net::PacketSocket,
+    socket::factory::{self, SrtSocketFactory, SrtSocketTaskFactory},
+    SrtSocket,
+};
 
 #[derive(Debug)]
 pub struct ConnectionRequest {
     response_sender: ResponseSender,
     request: AccessControlRequest,
     settings_receiver: oneshot::Receiver<ConnectionSettings>,
-    input_data_sender: mpsc::Sender<(Instant, Bytes)>,
-    output_data_receiver: mpsc::Receiver<(Instant, Bytes)>,
-    statistics_receiver: watch::Receiver<SocketStatistics>,
+    socket_factory: SrtSocketFactory,
 }
 
 impl ConnectionRequest {
@@ -53,12 +54,7 @@ impl ConnectionRequest {
             .await
             .map_err(|e| std::io::Error::new(ErrorKind::NotConnected, e))?;
 
-        Ok(SrtSocket::create(
-            settings,
-            self.input_data_sender,
-            self.output_data_receiver,
-            self.statistics_receiver,
-        ))
+        Ok(self.socket_factory.create_socket(settings))
     }
 
     pub async fn reject(self, reason: RejectReason) -> Result<(), std::io::Error> {
@@ -69,11 +65,10 @@ impl ConnectionRequest {
     }
 }
 
+#[derive(Debug)]
 pub struct PendingConnection {
     settings_sender: oneshot::Sender<ConnectionSettings>,
-    input_data_receiver: mpsc::Receiver<(Instant, Bytes)>,
-    output_data_sender: mpsc::Sender<(Instant, Bytes)>,
-    statistics_sender: watch::Sender<SocketStatistics>,
+    task_factory: SrtSocketTaskFactory,
 }
 
 impl PendingConnection {
@@ -82,26 +77,21 @@ impl PendingConnection {
         request: AccessControlRequest,
         response_sender: mpsc::Sender<(SessionId, AccessControlResponse)>,
     ) -> (PendingConnection, ConnectionRequest) {
+        let (socket_factory, task_factory) = factory::split_new();
+
         let (settings_sender, settings_receiver) = oneshot::channel();
-        let (output_data_sender, output_data_receiver) = mpsc::channel(128);
-        let (input_data_sender, input_data_receiver) = mpsc::channel(128);
-        let (statistics_sender, statistics_receiver) = watch::channel();
         let response_sender = ResponseSender(session_id, response_sender);
 
         let state = PendingConnection {
             settings_sender,
-            output_data_sender,
-            input_data_receiver,
-            statistics_sender,
+            task_factory,
         };
 
         let request = ConnectionRequest {
             request,
             response_sender,
             settings_receiver,
-            input_data_sender,
-            output_data_receiver,
-            statistics_receiver,
+            socket_factory,
         };
 
         (state, request)
@@ -113,13 +103,7 @@ impl PendingConnection {
         connection: Connection,
     ) -> Result<OpenConnection, ()> {
         let (packet_sender, socket) = socket.clone_channel(100);
-        let (handle, settings) = SrtSocket::spawn(
-            connection,
-            socket,
-            self.input_data_receiver,
-            self.output_data_sender,
-            self.statistics_sender,
-        );
+        let (handle, settings) = self.task_factory.spawn_task(socket, connection);
         let _ = self.settings_sender.send(settings).ok().ok_or(())?;
         Ok(OpenConnection {
             _handle: handle,
@@ -128,6 +112,7 @@ impl PendingConnection {
     }
 }
 
+#[derive(Debug)]
 pub struct OpenConnection {
     _handle: JoinHandle<()>,
     packet_sender: mpsc::Sender<ReceivePacketResult>,
@@ -135,7 +120,14 @@ pub struct OpenConnection {
 
 impl OpenConnection {
     pub async fn send(&mut self, packet: (Packet, SocketAddr)) -> Result<(), ()> {
-        self.packet_sender.send(Ok(packet)).await.ok().ok_or(())
+        match self.packet_sender.try_send(Ok(packet)) {
+            Err(e) if e.is_full() => self.packet_sender.send(e.into_inner()).await.ok().ok_or(()),
+            r => r.ok().ok_or(()),
+        }
+    }
+
+    pub async fn close(&mut self) -> Result<(), ()> {
+        self.packet_sender.close().await.ok().ok_or(())
     }
 }
 

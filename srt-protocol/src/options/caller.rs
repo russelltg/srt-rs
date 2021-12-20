@@ -1,5 +1,5 @@
 use std::convert::TryInto;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use super::*;
 
@@ -16,7 +16,6 @@ impl CallerOptions {
         stream_id: Option<&str>,
     ) -> Result<Valid<Self>, OptionsError> {
         let socket = Default::default();
-
         Self::with(remote, stream_id, socket)
     }
 
@@ -29,6 +28,7 @@ impl CallerOptions {
             .try_into()
             .map_err(|_| OptionsError::InvalidRemoteAddress)?
             .into();
+
         let stream_id = match stream_id {
             Some(s) => Some(
                 s.to_string()
@@ -38,12 +38,22 @@ impl CallerOptions {
             None => None,
         };
 
-        Self {
+        let mut options = Self {
             remote,
             stream_id,
             socket,
-        }
-        .try_validate()
+        };
+
+        let local_ip = options.socket.connect.local.ip();
+        let remote_ip = options.remote.ip();
+        let local_ip = match (local_ip.is_ipv6(), remote_ip.is_ipv6()) {
+            (false, true) if local_ip == Ipv4Addr::UNSPECIFIED => Ipv6Addr::UNSPECIFIED.into(),
+            (true, false) if local_ip == Ipv6Addr::UNSPECIFIED => Ipv4Addr::UNSPECIFIED.into(),
+            _ => local_ip,
+        };
+        options.socket.connect.local.set_ip(local_ip);
+
+        options.try_validate()
     }
 }
 
