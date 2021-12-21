@@ -1,13 +1,18 @@
 use std::{
-    cmp::max,
+    cmp::{max, Reverse},
     collections::{BTreeSet, VecDeque},
     convert::TryFrom,
     ops::Range,
     time::Duration,
 };
 
-use crate::protocol::time::{Rtt, Timers};
-use crate::{connection::ConnectionSettings, packet::*};
+use keyed_priority_queue::KeyedPriorityQueue;
+
+use crate::{
+    connection::ConnectionSettings,
+    packet::*,
+    protocol::time::{Rtt, Timers},
+};
 
 #[derive(Debug)]
 pub struct SendBuffer {
@@ -23,41 +28,15 @@ pub struct SendBuffer {
     //    are stored in increasing order.
     lost_list: BTreeSet<SeqNumber>,
     rtt: Rtt,
+    rto_queue: KeyedPriorityQueue<SeqNumber, Reverse<(TimeStamp, SeqNumber)>>,
 }
 
 #[derive(Debug)]
 struct SendBufferEntry {
     packet: DataPacket,
-    // this is tranmsit count, including the one that may be lost
+    // this is transmit count, including the one that may be lost
     // ie, the first time a packet is sent, this is one
     transmit_count: i32,
-    timeout: Option<TimeStamp>,
-}
-
-impl SendBufferEntry {
-    // All packets that are sent go through this function
-    // It records transmit count and sets the per entry RTO timer
-    pub fn send_packet(&mut self, ts_now: TimeStamp, rtt: Option<Rtt>) -> DataPacket {
-        self.timeout = rtt.map(|rtt| {
-            // RTT + 4 * RTTVar + 2 * SYN
-            let rto_constant = rtt.mean() + 4 * rtt.variance() + 2 * Timers::SYN;
-            if self.transmit_count == 0 {
-                ts_now + rto_constant
-            } else {
-                // RTO = RexmitCount * (RTT + 4 * RTTVar + 2 * SYN) + SYN
-                ts_now + self.transmit_count * rto_constant + Timers::SYN
-            }
-        });
-
-        self.transmit_count += 1;
-
-        // clone packet first, then update retransmitted flag
-        // this way, only the first will have it as false
-        let packet = self.packet.clone();
-        self.packet.retransmitted = true;
-
-        packet
-    }
 }
 
 impl SendBuffer {
@@ -74,6 +53,7 @@ impl SendBuffer {
                 Duration::from_secs(1),
             ),
             rtt: Rtt::default(),
+            rto_queue: Default::default(),
         }
     }
 
@@ -85,7 +65,6 @@ impl SendBuffer {
         self.buffer.push_back(SendBufferEntry {
             packet,
             transmit_count: 0,
-            timeout: None,
         });
     }
 
@@ -153,7 +132,7 @@ impl SendBuffer {
         }
 
         while self.front_packet().filter(|f| *f < ack_number).is_some() {
-            let p = self.buffer.pop_front();
+            let p = self.pop_front();
             self.buffer_len_bytes = self
                 .buffer_len_bytes
                 .saturating_sub(p.unwrap().packet.wire_size());
@@ -189,9 +168,7 @@ impl SendBuffer {
     }
 
     fn send_next_packet(&mut self, ts_now: TimeStamp) -> Option<DataPacket> {
-        let rtt = self.rtt;
-        let entry = self.get_mut(self.next_send)?;
-        let packet_to_send = entry.send_packet(ts_now, Some(rtt));
+        let packet_to_send = self.send_packet(ts_now, self.next_send)?;
         self.next_send += 1; // increment after send_packet, which can return None
         Some(packet_to_send)
     }
@@ -206,19 +183,46 @@ impl SendBuffer {
 
     fn send_next_lost_packet(&mut self, ts_now: TimeStamp) -> Option<DataPacket> {
         let seq = self.pop_lost_list()?;
-        let entry = self
-            .get_mut(seq)
+        let packet = self
+            .send_packet(ts_now, seq)
             .expect("Packet in loss list was not in buffer!");
-        Some(entry.send_packet(ts_now, None))
+        Some(packet)
     }
 
     fn send_next_rto_packet(&mut self, ts_now: TimeStamp) -> Option<DataPacket> {
-        let entry = self
-            .buffer
-            .iter_mut()
-            .find(|entry| entry.timeout.unwrap_or(ts_now) < ts_now)?;
+        let next_rto = *self
+            .rto_queue
+            .peek()
+            .filter(|(_, rto)| rto.0 .0 < ts_now)?
+            .0;
+        self.send_packet(ts_now, next_rto)
+    }
 
-        Some(entry.send_packet(ts_now, Some(self.rtt)))
+    // All packets that are sent go through this function
+    // It records transmit count and sets the per entry RTO timer
+    fn send_packet(&mut self, ts_now: TimeStamp, seq_number: SeqNumber) -> Option<DataPacket> {
+        let index = seq_number - self.front_packet()?;
+        let entry = self.buffer.get_mut(index as usize)?;
+
+        // RTT + 4 * RTTVar + 2 * SYN
+        let rto_constant = self.rtt.mean() + 4 * self.rtt.variance() + 2 * Timers::SYN;
+        let rto = if entry.transmit_count == 0 {
+            rto_constant
+        } else {
+            // RTO = RexmitCount * (RTT + 4 * RTTVar + 2 * SYN) + SYN
+            entry.transmit_count * rto_constant + Timers::SYN
+        };
+        let _ = self
+            .rto_queue
+            .push(seq_number, Reverse((ts_now + rto, seq_number)));
+
+        // clone packet first, then update retransmitted flag
+        // this way, only the first will have it as false
+        let packet = entry.packet.clone();
+        entry.packet.retransmitted = true;
+        entry.transmit_count += 1;
+
+        Some(packet)
     }
 
     fn drop_too_late_packets(&mut self, ts_now: TimeStamp) -> Option<Range<SeqNumber>> {
@@ -265,7 +269,7 @@ impl SendBuffer {
         if should_drain && self.buffer.len() == 1 {
             // self.next_send = None; TODO: i'm not sure what functionality this was supposed to expose
 
-            let p = self.buffer.pop_front().map(|p| p.packet);
+            let p = self.pop_front().map(|p| p.packet);
             // This needs to be saturating because of the hack in Self::push_data, can be regular subtract otherwise
             self.buffer_len_bytes = self
                 .buffer_len_bytes
@@ -306,8 +310,10 @@ impl SendBuffer {
             .next()
     }
 
-    fn get_mut(&mut self, seq: SeqNumber) -> Option<&mut SendBufferEntry> {
-        self.buffer.get_mut((seq - self.front_packet()?) as usize)
+    fn pop_front(&mut self) -> Option<SendBufferEntry> {
+        let entry = self.buffer.pop_front()?;
+        let _ = self.rto_queue.remove(&entry.packet.seq_number);
+        Some(entry)
     }
 
     fn get(&self, seq: SeqNumber) -> Option<&SendBufferEntry> {
@@ -700,6 +706,7 @@ mod test {
 
         let now = start + TimeSpan::from_millis(1_000);
 
+        println!("{:?}", buffer);
         let actions = buffer.next_snd_actions(now, 3, false).collect::<Vec<_>>();
         assert_eq!(
             actions,
