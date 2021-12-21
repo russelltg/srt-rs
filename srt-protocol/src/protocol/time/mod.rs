@@ -40,7 +40,6 @@ pub struct Timers {
     exp_count: u32,
     peer_idle: Timer,
 
-    keepalive: Timer,
     statistics: Timer,
 }
 
@@ -59,7 +58,6 @@ impl Timers {
             peer_idle: Timer::new(now, Duration::from_secs(5)),
             // this isn't in the spec, but it's in the reference implementation
             // https://github.com/Haivision/srt/blob/1d7b391905d7e344d80b86b39ac5c90fda8764a9/srtcore/core.cpp#L10610-L10614
-            keepalive: Timer::new(now, Duration::from_secs(1)),
             statistics: Timer::new(now, statistics_interval),
         }
     }
@@ -111,10 +109,6 @@ impl Timers {
             })
     }
 
-    pub fn check_keepalive(&mut self, now: Instant) -> Option<u32> {
-        self.keepalive.check_expired(now)
-    }
-
     pub fn check_statistics(&mut self, now: Instant) -> Option<u32> {
         self.statistics.check_expired(now)
     }
@@ -135,10 +129,6 @@ impl Timers {
         self.peer_idle.reset(now)
     }
 
-    pub fn reset_keepalive(&mut self, now: Instant) {
-        self.keepalive.reset(now)
-    }
-
     fn calculate_periods(exp_count: u32, rtt: &Rtt) -> (Duration, Duration, Duration) {
         let ms = Duration::from_millis;
         let rtt_period = 4 * rtt.mean_as_duration() + rtt.variance_as_duration() + Self::SYN;
@@ -156,7 +146,7 @@ impl Timers {
 }
 
 #[cfg(test)]
-mod receive_timers {
+mod tests {
     use proptest::prelude::*;
 
     use super::*;

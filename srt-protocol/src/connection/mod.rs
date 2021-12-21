@@ -163,7 +163,6 @@ impl DuplexConnection {
 
     pub fn next_packet(&mut self, now: Instant) -> Option<(Packet, SocketAddr)> {
         self.output.pop_packet().map(|p| {
-            self.timers.reset_keepalive(now);
             self.stats.tx_all_packets += 1;
             self.stats.tx_all_bytes += u64::try_from(p.wire_size()).unwrap();
 
@@ -248,9 +247,6 @@ impl DuplexConnection {
         if let Some(elapsed_periods) = self.timers.check_snd(now) {
             self.sender().on_snd_event(now, elapsed_periods)
         }
-        if self.timers.check_keepalive(now).is_some() {
-            self.output.send_control(now, ControlTypes::KeepAlive);
-        }
 
         if self
             .status
@@ -266,6 +262,8 @@ impl DuplexConnection {
         ) {
             self.output.send_control(now, ControlTypes::Shutdown);
         }
+
+        self.output.ensure_alive(now);
 
         self.next_timer(now)
     }
@@ -479,15 +477,15 @@ mod duplex_connection {
     }
 
     #[test]
-    #[ignore]
     fn input_data_close() {
         let start = Instant::now();
         let mut connection = DuplexConnection::new(new_connection(start));
 
         let mut now = start;
+        assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(_));
         assert_eq!(
-            connection.handle_input(now, Input::Timer),
-            WaitForData(102 * MILLIS)
+            connection.handle_input(now, Input::Data(Some((start, Bytes::new())))),
+            WaitForData(SND)
         );
         assert_eq!(
             connection.handle_input(now, Input::Data(Some((start, Bytes::new())))),
@@ -505,10 +503,16 @@ mod duplex_connection {
             connection.handle_input(now, Input::Timer),
             SendPacket((Data(_), _))
         );
+        // only send packets at a rate in accordance with the calculated SND period
         assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(_));
 
-        // acknowledgement
         now += SND;
+        assert_matches!(
+            connection.handle_input(now, Input::Timer),
+            SendPacket((Data(_), _))
+        );
+
+        // acknowledge first packet
         let packet = Control(ControlPacket {
             timestamp: TimeStamp::MIN,
             dest_sockid: SocketId(2),
@@ -535,25 +539,10 @@ mod duplex_connection {
                 remote_addr()
             ))
         );
-        assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(_));
 
-        // wait to retranmsit last packet
+        // if the last packet was not acknowledged wait for drain timeout to actually close
+        //  which can include sending keep alive messages too
         now += Duration::from_secs(4);
-        assert_matches!(
-            connection.handle_input(now, Input::Timer),
-            SendPacket((
-                Control(ControlPacket {
-                    control_type: KeepAlive,
-                    ..
-                }),
-                _
-            ))
-        );
-        // TODO:
-        // assert_matches!(
-        //     connection.handle_input(now, Input::Timer),
-        //     SendPacket((Data(_), _))
-        // );
         assert_matches!(
             connection.handle_input(now, Input::Timer),
             SendPacket((
@@ -564,10 +553,7 @@ mod duplex_connection {
                 _
             ))
         );
-        assert_eq!(
-            connection.handle_input(now, Input::Timer),
-            WaitForData(100 * MILLIS)
-        );
+        assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(_));
         assert_eq!(connection.handle_input(now, Input::Timer), Close);
     }
 
@@ -611,18 +597,6 @@ mod duplex_connection {
             SendPacket((Data(DataPacket {seq_number, retransmitted: false, ..}), _)) if seq_number.0 == 1
         );
 
-        // TODO: This is a bug that's due to the keepalive timer only being reset after popping a packet from the send queue, so the keepalive
-        // packet gets queued before the timer gets reset
-        assert_matches!(
-            connection.handle_input(now, Input::Timer),
-            SendPacket((
-                Control(ControlPacket {
-                    control_type: KeepAlive,
-                    ..
-                }),
-                _
-            ))
-        );
         assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(_));
 
         now += TSBPD / 4; // TSBPD * 1.25

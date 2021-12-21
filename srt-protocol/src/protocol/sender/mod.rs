@@ -127,22 +127,17 @@ impl<'a> SenderContext<'a> {
             self.stats.rx_light_ack += 1;
         }
 
-        self.sender.congestion_control.on_ack();
-
-        match self
-            .sender
-            .send_buffer
-            .update_largest_acked_seq_number(ack.ack_number(), ack.full_ack_seq_number())
-        {
+        match self.sender.send_buffer.update_largest_acked_seq_number(
+            ack.ack_number(),
+            ack.full_ack_seq_number(),
+            ack.rtt(),
+        ) {
             Ok(AckAction {
                 received: _,
                 recovered: _,
                 send_ack2,
             }) => {
                 // TODO: add received and recovered to connection statistics
-                if let Some(stats) = ack.statistics() {
-                    self.sender.congestion_control.update_rtt(stats.rtt);
-                }
                 if let Some(full_ack) = send_ack2 {
                     self.output.send_control(now, ControlTypes::Ack2(full_ack))
                 }
@@ -206,12 +201,9 @@ impl<'a> SenderContext<'a> {
 
     pub fn on_snd_event(&mut self, now: Instant, elapsed_periods: u32) {
         use SenderAction::*;
-        let rto_timeout = self.sender.congestion_control.calculate_rto_timeout();
         let ts_now = self.sender.time_base.timestamp_from(now);
         let actions = self.sender.send_buffer.next_snd_actions(
             ts_now,
-            now,
-            rto_timeout,
             elapsed_periods,
             self.status.should_drain_send_buffer(),
         );
@@ -227,7 +219,6 @@ impl<'a> SenderContext<'a> {
                 }
                 RetransmitRto(d) => {
                     self.stats.tx_retransmit_data += 1;
-                    self.sender.congestion_control.on_rto();
                     self.output.send_data(now, d);
                 }
                 Drop(_) => {}

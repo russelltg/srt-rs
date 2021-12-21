@@ -997,6 +997,15 @@ impl Acknowledgement {
         }
     }
 
+    pub fn rtt(&self) -> Option<Rtt> {
+        match self {
+            Acknowledgement::Full(_, stats, _) | Acknowledgement::Small(_, stats) => {
+                Some(stats.rtt)
+            }
+            Acknowledgement::Lite(_) => None,
+        }
+    }
+
     pub fn statistics(&self) -> Option<&AckStatistics> {
         match self {
             Acknowledgement::Small(_, stats) | Acknowledgement::Full(_, stats, _) => Some(stats),
