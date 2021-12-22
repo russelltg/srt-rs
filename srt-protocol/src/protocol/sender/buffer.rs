@@ -287,12 +287,6 @@ impl SendBuffer {
         self.buffer.len().saturating_sub(1)
     }
 
-    // fn peek_next_packet(&self) -> Option<&DataPacket> {
-    //     let front = self.front_packet()?;
-    //     let index = self.next_send.unwrap_or(front) - front;
-    //     self.get(index)
-    // }
-
     fn pop_lost_list(&mut self) -> Option<SeqNumber> {
         let next = self.lost_list.iter().copied().next()?;
         let _ = self.lost_list.remove(&next);
@@ -316,15 +310,6 @@ impl SendBuffer {
     fn get(&self, seq: SeqNumber) -> Option<&SendBufferEntry> {
         self.buffer.get((seq - self.front_packet()?) as usize)
     }
-
-    // use these internal accessor methods to ensure we always
-    // account for the one remaining packet we need to keep around
-    // in order to send a final packet on flush and close
-    // fn get_packet(&self, seq_number: SeqNumber) -> Option<&DataPacket> {
-    //     let front = self.front_packet()?;
-    //     let index = seq_number - front;
-    //     self.get(index)
-    // }
 
     fn front_packet(&self) -> Option<SeqNumber> {
         self.buffer.front().map(|p| p.packet.seq_number)
