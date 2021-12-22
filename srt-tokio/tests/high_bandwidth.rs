@@ -12,11 +12,21 @@ use srt_tokio::{options::*, SocketStatistics, SrtSocket};
 
 fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
     let message = Bytes::from(vec![5; 1024]);
-    let last = tokio::time::Instant::now();
-    stream::unfold((message, last, duration), |(message, last, d)| async move {
-        tokio::time::sleep_until(last + d).await;
-        Some((message.clone(), (message, last + d, d)))
-    })
+    let first = tokio::time::Instant::now();
+    // This will momentarily double the data rate for the first few seconds, pushing the flow
+    // window, send and receive buffers past their limits. The connection should recover once the
+    // input data rate is stabilized.
+    stream::unfold(
+        (message, first, duration / 2),
+        move |(message, last, d)| async move {
+            tokio::time::sleep_until(last + d).await;
+            if first.elapsed() < Duration::from_secs(3) {
+                Some((message.clone(), (message, last + d, d)))
+            } else {
+                Some((message.clone(), (message, last + d, duration)))
+            }
+        },
+    )
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -53,7 +63,7 @@ async fn high_bandwidth() -> Result<(), Error> {
 
     let recv_fut = async {
         let latency = Duration::from_millis(150);
-        let buffer_size = latency.as_secs_f64() * 2. * (RATE_MBPS as f64 * 1_000_000.);
+        let buffer_size = latency.as_secs_f64() * 1.5 * (RATE_MBPS as f64 * 1_000_000.);
         let mut sock = SrtSocket::builder()
             .set(|options| options.receiver.buffer_size = ByteCount(buffer_size as u64))
             .set(|options| options.session.statistics_interval = Duration::from_secs(1))

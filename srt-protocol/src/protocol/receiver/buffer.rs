@@ -443,8 +443,8 @@ impl ReceiveBuffer {
     fn append_lost_packets(&mut self, now: Instant, lost: &Range<SeqNumber>) {
         let lost_count = lost.end - lost.start;
         for i in 0..lost_count {
-            self.buffer
-                .push_back(BufferPacket::Lost(LostPacket::new(lost.start + i, now)));
+            let loss = LostPacket::new(lost.start + i, now);
+            self.buffer.push_back(BufferPacket::Lost(loss));
         }
     }
 

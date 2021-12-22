@@ -24,18 +24,7 @@ pub struct ConnInitSettings {
 
 impl Default for ConnInitSettings {
     fn default() -> Self {
-        ConnInitSettings {
-            key_settings: None,
-            key_refresh: Default::default(),
-            send_latency: Duration::from_millis(50),
-            recv_latency: Duration::from_micros(50),
-            local_sockid: random(),
-            bandwidth: Default::default(),
-            recv_buffer_size: options::PacketCount(8192),
-            statistics_interval: Duration::from_secs(1),
-            max_packet_size: options::PacketSize(1500),
-            max_flow_size: options::PacketCount(8192),
-        }
+        options::SocketOptions::default().into()
     }
 }
 

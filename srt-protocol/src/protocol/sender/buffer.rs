@@ -17,7 +17,7 @@ use crate::{
 #[derive(Debug)]
 pub struct SendBuffer {
     latency_window: Duration,
-    flow_window_size: Option<usize>,
+    flow_window_size: usize,
     buffer: VecDeque<SendBufferEntry>,
     buffer_len_bytes: usize, // Invariant: buffer_len_bytes = sum of wire sizes of buffer
     next_send: SeqNumber,
@@ -47,7 +47,7 @@ impl SendBuffer {
             next_send: settings.init_seq_num,
             next_full_ack: FullAckSeqNumber::INITIAL,
             lost_list: BTreeSet::new(),
-            flow_window_size: None,
+            flow_window_size: settings.max_flow_size.0 as usize,
             latency_window: max(
                 settings.send_tsbpd_latency + settings.send_tsbpd_latency / 4, // 125% of TSBPD
                 Duration::from_secs(1),
@@ -278,13 +278,13 @@ impl SendBuffer {
     }
 
     fn flow_window_exceeded(&self) -> bool {
-        // Up to SRT 1.0.6, this value was set at 1000 pkts, which may be insufficient
-        // for satellite links with ~1000 msec RTT and high bit rate.
-        self.number_of_unacked_packets() > self.flow_window_size.unwrap_or(10_000)
+        self.number_of_unacked_packets() > self.flow_window_size
     }
 
     fn number_of_unacked_packets(&self) -> usize {
-        self.buffer.len().saturating_sub(1)
+        self.buffer
+            .front()
+            .map_or(0, |e| self.next_send - e.packet.seq_number) as usize
     }
 
     fn pop_lost_list(&mut self) -> Option<SeqNumber> {
@@ -688,7 +688,6 @@ mod test {
 
         let now = start + TimeSpan::from_millis(1_000);
 
-        println!("{:?}", buffer);
         let actions = buffer.next_snd_actions(now, 3, false).collect::<Vec<_>>();
         assert_eq!(
             actions,
@@ -917,5 +916,37 @@ mod test {
             assert_eq!(buffer.len(), 9 - n as usize);
             assert_eq!(buffer.len_bytes(), wire_size * (9 - n as usize));
         }
+    }
+
+    #[test]
+    fn flow_window_exceeded() {
+        let mut buffer = SendBuffer::new(&new_settings());
+
+        let max_flow_size = new_settings().max_flow_size.0 as u32 + 1;
+        for n in 0..max_flow_size {
+            buffer.push_data(test_data_packet(n, false));
+        }
+
+        // if the buffer is full of unsent packets it
+        assert!(!buffer.flow_window_exceeded());
+
+        // if the buffer is full of too many packets sent and un-ACKed packets, it will exceed the flow window
+        assert_eq!(
+            buffer
+                .next_snd_actions(TimeStamp::MIN, max_flow_size, false)
+                .count(),
+            max_flow_size as usize
+        );
+        assert!(buffer.flow_window_exceeded());
+
+        // if the sent packets in the buffer are then dropped before they are ACKed, it will no longer exceed the flow window
+        let latency = Duration::from_secs(10);
+        assert!(
+            buffer
+                .next_snd_actions(TimeStamp::MIN + latency, max_flow_size, false)
+                .count()
+                > 1
+        );
+        assert!(!buffer.flow_window_exceeded());
     }
 }
