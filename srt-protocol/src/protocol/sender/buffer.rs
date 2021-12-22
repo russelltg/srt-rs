@@ -58,9 +58,6 @@ impl SendBuffer {
     }
 
     pub fn push_data(&mut self, packet: DataPacket) {
-        // if self.buffer.is_empty() {
-        //     self.buffer.push_back(packet.clone());
-        // }
         self.buffer_len_bytes += packet.wire_size();
         self.buffer.push_back(SendBufferEntry {
             packet,
