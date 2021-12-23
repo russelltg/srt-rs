@@ -131,7 +131,7 @@ fn do_not_enough_latency(seed: u64, packets: usize) {
         packets * 2 / 3
     );
     assert!(
-        total_recvd < packets,
+        total_recvd <= packets,
         "received all ({}) packets, expected < {}",
         total_recvd,
         packets

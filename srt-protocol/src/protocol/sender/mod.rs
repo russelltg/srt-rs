@@ -127,20 +127,17 @@ impl<'a> SenderContext<'a> {
             self.stats.rx_light_ack += 1;
         }
 
-        match self
-            .sender
-            .send_buffer
-            .update_largest_acked_seq_number(ack.ack_number(), ack.full_ack_seq_number())
-        {
+        match self.sender.send_buffer.update_largest_acked_seq_number(
+            ack.ack_number(),
+            ack.full_ack_seq_number(),
+            ack.rtt(),
+        ) {
             Ok(AckAction {
                 received: _,
                 recovered: _,
                 send_ack2,
             }) => {
                 // TODO: add received and recovered to connection statistics
-                if let Some(_stats) = ack.statistics() {
-                    // TODO: add these to connection statistics
-                }
                 if let Some(full_ack) = send_ack2 {
                     self.output.send_control(now, ControlTypes::Ack2(full_ack))
                 }
@@ -216,7 +213,11 @@ impl<'a> SenderContext<'a> {
                     self.stats.tx_unique_data += 1;
                     self.output.send_data(now, d);
                 }
-                Retransmit(d) => {
+                RetransmitNak(d) => {
+                    self.stats.tx_retransmit_data += 1;
+                    self.output.send_data(now, d);
+                }
+                RetransmitRto(d) => {
                     self.stats.tx_retransmit_data += 1;
                     self.output.send_data(now, d);
                 }

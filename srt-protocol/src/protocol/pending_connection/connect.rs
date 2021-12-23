@@ -72,8 +72,8 @@ impl Connect {
             timestamp: TimeStamp::from_micros(0), // TODO: this is not zero in the reference implementation
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: self.starting_send_seqnum,
-                max_packet_size: 1500, // TODO: take as a parameter
-                max_flow_size: 8192,   // TODO: take as a parameter
+                max_packet_size: self.init_settings.max_packet_size,
+                max_flow_size: self.init_settings.max_flow_size,
                 socket_id: self.init_settings.local_sockid,
                 shake_type: ShakeType::Induction,
                 peer_addr: self.local_addr,
@@ -208,7 +208,10 @@ mod test {
     use assert_matches::assert_matches;
     use rand::random;
 
-    use crate::{options, protocol::pending_connection::ConnectionReject};
+    use crate::{
+        options::{self, PacketCount, PacketSize},
+        protocol::pending_connection::ConnectionReject,
+    };
 
     use super::*;
 
@@ -227,8 +230,8 @@ mod test {
                 socket_id: SocketId(5678),
                 info: HandshakeVsInfo::V5(HsV5Info::default()),
                 init_seq_num: random(),
-                max_packet_size: 8192,
-                max_flow_size: 1234,
+                max_packet_size: PacketSize(8192),
+                max_flow_size: PacketCount(1234),
                 shake_type: ShakeType::Induction,
                 peer_addr: [127, 0, 0, 1].into(),
             }),
@@ -253,8 +256,8 @@ mod test {
             dest_sockid: TEST_SOCKID,
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: random(),
-                max_packet_size: 8192,
-                max_flow_size: 1234,
+                max_packet_size: PacketSize(8192),
+                max_flow_size: PacketCount(1234),
                 shake_type: ShakeType::Rejection(RejectReason::Server(ServerRejectReason::BadMode)),
                 socket_id: SocketId(5678),
                 syn_cookie: 2222,

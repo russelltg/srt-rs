@@ -175,7 +175,7 @@ mod test {
 
     use rand::random;
 
-    use crate::options::SrtVersion;
+    use crate::options::{PacketCount, PacketSize, SrtVersion};
 
     use super::*;
 
@@ -186,8 +186,8 @@ mod test {
     fn test_induction() -> HandshakeControlInfo {
         HandshakeControlInfo {
             init_seq_num: random(),
-            max_packet_size: 1316,
-            max_flow_size: 256_000,
+            max_packet_size: PacketSize(1316),
+            max_flow_size: PacketCount(256_000),
             shake_type: ShakeType::Induction,
             socket_id: SocketId(15),
             syn_cookie: 0,
@@ -199,8 +199,8 @@ mod test {
     fn test_conclusion() -> HandshakeControlInfo {
         HandshakeControlInfo {
             init_seq_num: random(),
-            max_packet_size: 1316,
-            max_flow_size: 256_000,
+            max_packet_size: PacketSize(1316),
+            max_flow_size: PacketCount(256_000),
             shake_type: ShakeType::Conclusion,
             socket_id: SocketId(15),
             syn_cookie: crate::protocol::pending_connection::cookie::gen_cookie(&conn_addr()),

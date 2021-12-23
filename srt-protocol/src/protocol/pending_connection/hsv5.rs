@@ -1,8 +1,9 @@
 //! Defines the HSV5 "state machine"
 
 use std::{
+    cmp::{max, min},
     net::SocketAddr,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use crate::{connection::ConnectionSettings, options::*, packet::*, settings::*};
@@ -27,7 +28,7 @@ pub fn gen_hsv5_response(
         HandshakeVsInfo::V5(hs) => hs,
         _ => {
             return GenHsv5Result::Reject(ConnectionReject::Rejecting(
-                ServerRejectReason::Version.into(), // TODO: this error is tehcnially reserved for access control handlers, as the ref impl supports hsv4+5, while we only support 5
+                ServerRejectReason::Version.into(), // TODO: this error is technically reserved for access control handlers, as the ref impl supports hsv4+5, while we only support 5
             ));
         }
     };
@@ -98,6 +99,8 @@ pub fn gen_access_control_response(
         None
     };
 
+    let rtt = now - induction_time;
+
     GenHsv5Result::Accept(
         HandshakeVsInfo::V5(HsV5Info {
             crypto_size: cipher
@@ -116,19 +119,19 @@ pub fn gen_access_control_response(
         }),
         ConnectionSettings {
             remote: from,
+            rtt,
+            socket_start_time: now - rtt / 2, // initiate happened 0.5RTT ago
             remote_sockid: with_hsv5.socket_id,
-            local_sockid: settings.local_sockid,
-            socket_start_time: now - (now - induction_time) / 2, // initiate happened 0.5RTT ago
-            rtt: now - induction_time,
             init_seq_num: with_hsv5.init_seq_num,
-            max_packet_size: ByteCount(1500), // todo: parameters!
-            max_flow_size: PacketCount(8192),
-            send_tsbpd_latency: Duration::max(settings.send_latency, hs.recv_latency),
-            recv_tsbpd_latency: Duration::max(settings.recv_latency, hs.send_latency),
-            recv_buffer_size: settings.recv_buffer_size,
             cipher,
-            bandwidth: settings.bandwidth.clone(),
             stream_id: incoming.sid,
+            max_flow_size: max(settings.max_flow_size, with_hsv5.max_flow_size),
+            max_packet_size: min(settings.max_packet_size, with_hsv5.max_packet_size),
+            send_tsbpd_latency: max(settings.send_latency, hs.recv_latency),
+            recv_tsbpd_latency: max(settings.recv_latency, hs.send_latency),
+            bandwidth: settings.bandwidth.clone(),
+            local_sockid: settings.local_sockid,
+            recv_buffer_size: settings.recv_buffer_size,
             statistics_interval: settings.statistics_interval,
         },
     )
@@ -214,18 +217,18 @@ impl StartedInitiator {
         // validate response
         Ok(ConnectionSettings {
             remote: from,
-            remote_sockid: response.socket_id,
-            local_sockid: self.settings.local_sockid,
-            socket_start_time: self.initiate_time,
             rtt: now - self.initiate_time,
+            socket_start_time: self.initiate_time,
             init_seq_num: response.init_seq_num,
-            max_packet_size: ByteCount(1500), // todo: parameters!
-            max_flow_size: PacketCount(8192),
-            send_tsbpd_latency: Duration::max(self.settings.send_latency, hs.recv_latency),
-            recv_tsbpd_latency: Duration::max(self.settings.recv_latency, hs.send_latency),
+            remote_sockid: response.socket_id,
             cipher: self.cipher,
             stream_id: self.streamid,
-            bandwidth: Default::default(),
+            max_flow_size: max(self.settings.max_flow_size, response.max_flow_size),
+            max_packet_size: min(self.settings.max_packet_size, response.max_packet_size),
+            send_tsbpd_latency: max(self.settings.send_latency, hs.recv_latency),
+            recv_tsbpd_latency: max(self.settings.recv_latency, hs.send_latency),
+            bandwidth: self.settings.bandwidth,
+            local_sockid: self.settings.local_sockid,
             recv_buffer_size: self.settings.recv_buffer_size,
             statistics_interval: self.settings.statistics_interval,
         })

@@ -204,7 +204,7 @@ impl RandomLossSimulation {
             socket_start_time: start,
             rtt: Duration::default(),
             init_seq_num: self.rng.gen(),
-            max_packet_size: ByteCount(1316),
+            max_packet_size: PacketSize(1316),
             max_flow_size: PacketCount(8192),
             send_tsbpd_latency: latency,
             recv_tsbpd_latency: latency,

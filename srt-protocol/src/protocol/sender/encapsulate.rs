@@ -1,12 +1,11 @@
 use bytes::Bytes;
 
-use crate::options::ByteCount;
-use crate::{connection::ConnectionSettings, packet::*};
+use crate::{connection::ConnectionSettings, options::PacketSize, packet::*};
 
 #[derive(Debug)]
 pub struct Encapsulation {
     remote_socket_id: SocketId,
-    max_packet_size: ByteCount,
+    max_packet_size: PacketSize,
     next_message_number: MsgNumber,
     next_sequence_number: SeqNumber,
 }
@@ -43,7 +42,7 @@ impl Encapsulation {
 struct MessageEncapsulationIterator<'a> {
     next_sequence_number: &'a mut SeqNumber,
     remote_socket_id: SocketId,
-    max_packet_size: ByteCount,
+    max_packet_size: PacketSize,
     remaining: Bytes,
     packet_location: PacketLocation,
     message_number: MsgNumber,
@@ -90,7 +89,7 @@ mod encapsulation {
     fn new_encapsulation() -> Encapsulation {
         Encapsulation {
             remote_socket_id: SocketId(2),
-            max_packet_size: ByteCount(1024),
+            max_packet_size: PacketSize(1024),
             next_message_number: MsgNumber(1),
             next_sequence_number: SeqNumber(0),
         }

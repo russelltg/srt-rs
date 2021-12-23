@@ -1,26 +1,42 @@
 use std::{
-    cmp::max,
+    cmp::{max, Reverse},
     collections::{BTreeSet, VecDeque},
     convert::TryFrom,
     ops::Range,
     time::Duration,
 };
 
-use crate::{connection::ConnectionSettings, packet::*};
+use keyed_priority_queue::KeyedPriorityQueue;
+
+use crate::{
+    connection::ConnectionSettings,
+    packet::*,
+    protocol::time::{Rtt, Timers},
+};
 
 #[derive(Debug)]
 pub struct SendBuffer {
     latency_window: Duration,
-    flow_window_size: Option<usize>,
-    buffer: VecDeque<DataPacket>,
+    flow_window_size: usize,
+    buffer: VecDeque<SendBufferEntry>,
     buffer_len_bytes: usize, // Invariant: buffer_len_bytes = sum of wire sizes of buffer
-    next_send: Option<SeqNumber>,
+    next_send: SeqNumber,
     next_full_ack: FullAckSeqNumber,
     // 1) Sender's Loss List: The sender's loss list is used to store the
     //    sequence numbers of the lost packets fed back by the receiver
     //    through NAK packets or inserted in a timeout event. The numbers
     //    are stored in increasing order.
     lost_list: BTreeSet<SeqNumber>,
+    rtt: Rtt,
+    rto_queue: KeyedPriorityQueue<SeqNumber, Reverse<(TimeStamp, SeqNumber)>>,
+}
+
+#[derive(Debug)]
+struct SendBufferEntry {
+    packet: DataPacket,
+    // this is transmit count, including the one that may be lost
+    // ie, the first time a packet is sent, this is one
+    transmit_count: i32,
 }
 
 impl SendBuffer {
@@ -28,24 +44,25 @@ impl SendBuffer {
         Self {
             buffer: VecDeque::new(),
             buffer_len_bytes: 0,
-            next_send: None,
+            next_send: settings.init_seq_num,
             next_full_ack: FullAckSeqNumber::INITIAL,
             lost_list: BTreeSet::new(),
-            flow_window_size: None,
+            flow_window_size: settings.max_flow_size.0 as usize,
             latency_window: max(
                 settings.send_tsbpd_latency + settings.send_tsbpd_latency / 4, // 125% of TSBPD
                 Duration::from_secs(1),
             ),
+            rtt: Rtt::default(),
+            rto_queue: Default::default(),
         }
     }
 
     pub fn push_data(&mut self, packet: DataPacket) {
-        // Don't update buffer length twice here
-        if self.buffer.is_empty() {
-            self.buffer.push_back(packet.clone());
-        }
         self.buffer_len_bytes += packet.wire_size();
-        self.buffer.push_back(packet);
+        self.buffer.push_back(SendBufferEntry {
+            packet,
+            transmit_count: 0,
+        });
     }
 
     pub fn is_flushed(&self) -> bool {
@@ -53,22 +70,20 @@ impl SendBuffer {
     }
 
     pub fn has_packets_to_send(&self) -> bool {
-        self.peek_next_packet().is_some() || !self.lost_list.is_empty()
+        self.get(self.next_send).is_some() || !self.lost_list.is_empty()
     }
 
     pub fn duration(&self) -> Duration {
         match (self.buffer.front(), self.buffer.back()) {
             (Some(f), Some(l)) => Duration::from_micros(
-                u64::try_from((l.timestamp - f.timestamp).as_micros()).unwrap_or(0),
+                u64::try_from((l.packet.timestamp - f.packet.timestamp).as_micros()).unwrap_or(0),
             ),
             _ => Duration::from_secs(0),
         }
     }
 
     pub fn len(&self) -> usize {
-        // TODO: this is because of the extra push_back in Self::push_data
-        // to be removed eventually
-        self.buffer.len().saturating_sub(1)
+        self.buffer.len()
     }
 
     pub fn len_bytes(&self) -> usize {
@@ -79,16 +94,21 @@ impl SendBuffer {
         &mut self,
         ack_number: SeqNumber,
         full_ack: Option<FullAckSeqNumber>,
+        rtt: Option<Rtt>,
     ) -> Result<AckAction, AckError> {
         use AckError::*;
         let first = self.front_packet().ok_or(SendBufferEmpty)?;
-        let next = self.next_send.ok_or(SendBufferEmpty)?;
+        let next = self.next_send;
         if ack_number < first || ack_number > next {
             return Err(InvalidAck {
                 ack_number,
                 first,
                 next,
             });
+        }
+
+        if let Some(rtt) = rtt {
+            self.rtt = rtt;
         }
 
         if let Some(received_full_ack) = full_ack {
@@ -109,8 +129,10 @@ impl SendBuffer {
         }
 
         while self.front_packet().filter(|f| *f < ack_number).is_some() {
-            let p = self.buffer.pop_front();
-            self.buffer_len_bytes = self.buffer_len_bytes.saturating_sub(p.unwrap().wire_size());
+            let p = self.pop_front();
+            self.buffer_len_bytes = self
+                .buffer_len_bytes
+                .saturating_sub(p.unwrap().packet.wire_size());
 
             received += 1;
         }
@@ -142,61 +164,109 @@ impl SendBuffer {
         SenderAlgorithmIterator::new(self, ts_now, packets_to_send, should_drain)
     }
 
-    fn pop_next_packet(&mut self) -> Option<DataPacket> {
-        let packet = self.peek_next_packet()?.clone();
-        self.next_send = Some(packet.seq_number + 1);
-        Some(packet)
+    fn send_next_packet(&mut self, ts_now: TimeStamp) -> Option<DataPacket> {
+        let packet_to_send = self.send_packet(ts_now, self.next_send)?;
+        self.next_send += 1; // increment after send_packet, which can return None
+        Some(packet_to_send)
     }
 
-    fn pop_next_16n_packet(&mut self) -> Option<DataPacket> {
-        match self.peek_next_packet().map(|p| p.seq_number % 16) {
-            Some(0) => self.pop_next_packet(),
-            _ => None,
+    fn send_next_16n_packet(&mut self, ts_now: TimeStamp) -> Option<DataPacket> {
+        if self.next_send % 16 == 0 {
+            self.send_next_packet(ts_now)
+        } else {
+            None
         }
     }
 
-    fn pop_next_lost_packet(&mut self) -> Option<DataPacket> {
-        let next_lost = self.pop_lost_list()?;
-        let mut packet = self.get_packet(next_lost)?.clone();
-        packet.retransmitted = true;
+    fn send_next_lost_packet(&mut self, ts_now: TimeStamp) -> Option<DataPacket> {
+        let seq = self.pop_lost_list()?;
+        let packet = self
+            .send_packet(ts_now, seq)
+            .expect("Packet in loss list was not in buffer!");
+        Some(packet)
+    }
+
+    fn send_next_rto_packet(&mut self, ts_now: TimeStamp) -> Option<DataPacket> {
+        let next_rto = *self
+            .rto_queue
+            .peek()
+            .filter(|(_, rto)| rto.0 .0 < ts_now)?
+            .0;
+        self.send_packet(ts_now, next_rto)
+    }
+
+    // All packets that are sent go through this function
+    // It records transmit count and sets the per entry RTO timer
+    fn send_packet(&mut self, ts_now: TimeStamp, seq_number: SeqNumber) -> Option<DataPacket> {
+        let index = seq_number - self.front_packet()?;
+        let entry = self.buffer.get_mut(index as usize)?;
+
+        // RTT + 4 * RTTVar + 2 * SYN
+        let rto_constant = self.rtt.mean() + 4 * self.rtt.variance() + 2 * Timers::SYN;
+        let rto = if entry.transmit_count == 0 {
+            rto_constant
+        } else {
+            // RTO = RexmitCount * (RTT + 4 * RTTVar + 2 * SYN) + SYN
+            entry.transmit_count * rto_constant + Timers::SYN
+        };
+        let _ = self
+            .rto_queue
+            .push(seq_number, Reverse((ts_now + rto, seq_number)));
+
+        // clone packet first, then update retransmitted flag
+        // this way, only the first will have it as false
+        let packet = entry.packet.clone();
+        entry.packet.retransmitted = true;
+        entry.transmit_count += 1;
+
         Some(packet)
     }
 
     fn drop_too_late_packets(&mut self, ts_now: TimeStamp) -> Option<Range<SeqNumber>> {
         let latency_window = self.latency_window;
-        let front = self
-            .send_buffer()
-            .next()
-            .filter(|p| ts_now > p.timestamp + latency_window)?;
+        let front = &self
+            .buffer
+            .front()
+            .filter(|p| ts_now > p.packet.timestamp + latency_window)?
+            .packet;
+
         let first = front.seq_number;
         let mut last = first;
         let mut message = front.message_number;
-        for next in self.send_buffer() {
-            if ts_now > next.timestamp + latency_window {
-                message = next.message_number;
-                last = next.seq_number;
-            } else if next.message_number == message {
-                last = next.seq_number;
+        for next in self.buffer.iter() {
+            if ts_now > next.packet.timestamp + latency_window {
+                message = next.packet.message_number;
+                last = next.packet.seq_number;
+            } else if next.packet.message_number == message {
+                last = next.packet.seq_number;
             } else {
                 break;
             }
         }
 
+        let drop_range = first..last + 1;
+
         let count = last - first + 1;
         let _ = self.buffer.drain(0..count as usize).count();
 
-        self.next_send = self
-            .next_send
-            .filter(|next| *next > last)
-            .or(Some(last + 1));
+        // remove any lost packets from loss list
+        while let Some(&seq) = self.lost_list.iter().next() {
+            if drop_range.contains(&seq) {
+                self.lost_list.remove(&seq);
+            } else {
+                break;
+            }
+        }
 
-        Some(first..last + 1)
+        self.next_send = max(self.next_send, last + 1);
+        Some(drop_range)
     }
 
     fn flush_on_close(&mut self, should_drain: bool) -> Option<DataPacket> {
         if should_drain && self.buffer.len() == 1 {
-            self.next_send = None;
-            let p = self.buffer.pop_front();
+            // self.next_send = None; TODO: i'm not sure what functionality this was supposed to expose
+
+            let p = self.pop_front().map(|p| p.packet);
             // This needs to be saturating because of the hack in Self::push_data, can be regular subtract otherwise
             self.buffer_len_bytes = self
                 .buffer_len_bytes
@@ -208,19 +278,13 @@ impl SendBuffer {
     }
 
     fn flow_window_exceeded(&self) -> bool {
-        // Up to SRT 1.0.6, this value was set at 1000 pkts, which may be insufficient
-        // for satellite links with ~1000 msec RTT and high bit rate.
-        self.number_of_unacked_packets() > self.flow_window_size.unwrap_or(10_000)
+        self.number_of_unacked_packets() > self.flow_window_size
     }
 
     fn number_of_unacked_packets(&self) -> usize {
-        self.buffer.len().saturating_sub(1)
-    }
-
-    fn peek_next_packet(&self) -> Option<&DataPacket> {
-        let front = self.front_packet()?;
-        let index = self.next_send.unwrap_or(front) - front;
-        self.get_at(index)
+        self.buffer
+            .front()
+            .map_or(0, |e| self.next_send - e.packet.seq_number) as usize
     }
 
     fn pop_lost_list(&mut self) -> Option<SeqNumber> {
@@ -237,25 +301,18 @@ impl SendBuffer {
             .next()
     }
 
-    // use these internal accessor methods to ensure we always
-    // account for the one remaining packet we need to keep around
-    // in order to send a final packet on flush and close
-    fn get_packet(&self, seq_number: SeqNumber) -> Option<&DataPacket> {
-        let front = self.front_packet()?;
-        let index = seq_number - front;
-        self.get_at(index)
+    fn pop_front(&mut self) -> Option<SendBufferEntry> {
+        let entry = self.buffer.pop_front()?;
+        let _ = self.rto_queue.remove(&entry.packet.seq_number);
+        Some(entry)
+    }
+
+    fn get(&self, seq: SeqNumber) -> Option<&SendBufferEntry> {
+        self.buffer.get((seq - self.front_packet()?) as usize)
     }
 
     fn front_packet(&self) -> Option<SeqNumber> {
-        self.send_buffer().next().map(|p| p.seq_number)
-    }
-
-    fn send_buffer(&self) -> impl Iterator<Item = &DataPacket> {
-        self.buffer.iter().skip(1)
-    }
-
-    fn get_at(&self, index: u32) -> Option<&DataPacket> {
-        self.buffer.get((index + 1) as usize)
+        self.buffer.front().map(|p| p.packet.seq_number)
     }
 }
 
@@ -302,11 +359,10 @@ where
         let front = self.buffer.front_packet();
         let next_send = self.buffer.next_send;
         self.loss_list.next().map(|next| match (front, next_send) {
-            (_, Some(next_send)) if next >= next_send => (Ignored, next),
-            (_, None) => (Dropped, next),
+            (_, next_send) if next >= next_send => (Ignored, next),
             (Some(front), _) if next < front => (Dropped, next),
             (None, _) => (Dropped, next),
-            (Some(_), Some(_)) => {
+            (Some(_), _) => {
                 self.buffer.lost_list.insert(next);
                 (Added, next)
             }
@@ -346,7 +402,10 @@ where
 #[derive(Clone, Debug, PartialEq)]
 pub enum SenderAction {
     Send(DataPacket),
-    Retransmit(DataPacket),
+    // Retransmission from RTO
+    RetransmitRto(DataPacket),
+    // Retransmission from NAK
+    RetransmitNak(DataPacket),
     Drop(Range<SeqNumber>),
     WaitForInput,
     // sender flow window exceeded"
@@ -385,9 +444,14 @@ impl<'a> SenderAlgorithmIterator<'a> {
         Some(SenderAction::Send(p))
     }
 
-    fn retransmit(&mut self, p: DataPacket) -> Option<SenderAction> {
+    fn retransmit_nak(&mut self, p: DataPacket) -> Option<SenderAction> {
         self.packets_to_send = self.packets_to_send.saturating_sub(1);
-        Some(SenderAction::Retransmit(p))
+        Some(SenderAction::RetransmitNak(p))
+    }
+
+    fn retransmit_rto(&mut self, p: DataPacket) -> Option<SenderAction> {
+        self.packets_to_send = self.packets_to_send.saturating_sub(1);
+        Some(SenderAction::RetransmitRto(p))
     }
 
     fn wait_for_input(&mut self) -> Option<SenderAction> {
@@ -414,7 +478,7 @@ impl<'a> Iterator for SenderAlgorithmIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.attempt_16n_packet {
             self.attempt_16n_packet = false;
-            if let Some(p) = self.buffer.pop_next_16n_packet() {
+            if let Some(p) = self.buffer.send_next_16n_packet(self.ts_now) {
                 return self.send(p);
             }
         }
@@ -437,8 +501,10 @@ impl<'a> Iterator for SenderAlgorithmIterator<'a> {
         //      packet in the list and remove it from the list. Go to 5).
         //
         // NOTE: the reference implementation doesn't jump to 5), so we don't either
-        else if let Some(p) = self.buffer.pop_next_lost_packet() {
-            self.retransmit(p)
+        else if let Some(p) = self.buffer.send_next_lost_packet(self.ts_now) {
+            self.retransmit_nak(p)
+        } else if let Some(p) = self.buffer.send_next_rto_packet(self.ts_now) {
+            self.retransmit_rto(p)
         }
         //   4)
         //        a. If the number of unacknowledged packets exceeds the
@@ -447,7 +513,7 @@ impl<'a> Iterator for SenderAlgorithmIterator<'a> {
         // TODO: account for looping here <--- WAT?
         else if self.buffer.flow_window_exceeded() {
             self.wait_for_ack()
-        } else if let Some(p) = self.buffer.pop_next_packet() {
+        } else if let Some(p) = self.buffer.send_next_packet(self.ts_now) {
             //        b. Pack a new data packet and send it out.
             //   5) If the sequence number of the current packet is 16n, where n is an
             //      integer, go to 2).
@@ -480,12 +546,12 @@ impl<'a> Iterator for SenderAlgorithmIterator<'a> {
 mod test {
     use super::*;
 
-    use crate::options::{ByteCount, PacketCount};
-
     use std::time::{Duration, Instant};
 
     use assert_matches::assert_matches;
     use bytes::Bytes;
+
+    use crate::options::{PacketCount, PacketSize};
 
     const MILLIS: Duration = Duration::from_millis(1);
     const TSBPD: Duration = Duration::from_secs(2);
@@ -498,7 +564,7 @@ mod test {
             socket_start_time: Instant::now(),
             rtt: Duration::default(),
             init_seq_num: SeqNumber::new_truncate(0),
-            max_packet_size: ByteCount(1316),
+            max_packet_size: PacketSize(1316),
             max_flow_size: PacketCount(8192),
             send_tsbpd_latency: TSBPD,
             recv_tsbpd_latency: TSBPD,
@@ -528,8 +594,8 @@ mod test {
         SenderAction::Send(test_data_packet(n, false))
     }
 
-    fn retransmit_data_packet(n: u32) -> SenderAction {
-        SenderAction::Retransmit(test_data_packet(n, true))
+    fn nak_retransmit_packet(n: u32) -> SenderAction {
+        SenderAction::RetransmitNak(test_data_packet(n, true))
     }
 
     #[test]
@@ -556,7 +622,7 @@ mod test {
     }
 
     #[test]
-    fn retransmit_packets() {
+    fn nak_retransmit() {
         use SenderAction::*;
         let start = TimeStamp::MIN;
         let mut buffer = SendBuffer::new(&new_settings());
@@ -586,7 +652,7 @@ mod test {
         let actions = buffer.next_snd_actions(start, 2, false).collect::<Vec<_>>();
         assert_eq!(
             actions,
-            vec![retransmit_data_packet(7), retransmit_data_packet(11),]
+            vec![nak_retransmit_packet(7), nak_retransmit_packet(11),]
         );
         assert!(buffer.has_packets_to_send());
 
@@ -595,12 +661,42 @@ mod test {
         assert_eq!(
             actions,
             vec![
-                retransmit_data_packet(12),
-                retransmit_data_packet(13),
+                nak_retransmit_packet(12),
+                nak_retransmit_packet(13),
                 WaitForInput,
             ]
         );
         assert!(!buffer.has_packets_to_send());
+    }
+
+    #[test]
+    fn rto_retransmit() {
+        use SenderAction::*;
+        let start = TimeStamp::MAX;
+        let mut buffer = SendBuffer::new(&new_settings());
+
+        for n in 0..=2 {
+            buffer.push_data(test_data_packet(n, false));
+        }
+
+        assert_eq!(buffer.next_snd_actions(start, 3, false).count(), 3);
+
+        assert_eq!(
+            buffer.next_snd_actions(start, 3, false).collect::<Vec<_>>(),
+            vec![WaitForInput]
+        );
+
+        let now = start + TimeSpan::from_millis(1_000);
+
+        let actions = buffer.next_snd_actions(now, 3, false).collect::<Vec<_>>();
+        assert_eq!(
+            actions,
+            vec![
+                RetransmitRto(test_data_packet(0, true)),
+                RetransmitRto(test_data_packet(1, true)),
+                RetransmitRto(test_data_packet(2, true)),
+            ]
+        );
     }
 
     #[test]
@@ -615,7 +711,7 @@ mod test {
 
         let _ = buffer.next_snd_actions(now, 5, false).count();
         assert_eq!(
-            buffer.update_largest_acked_seq_number(SeqNumber(2), None),
+            buffer.update_largest_acked_seq_number(SeqNumber(2), None, None),
             Ok(AckAction {
                 received: 2,
                 recovered: 0,
@@ -624,7 +720,7 @@ mod test {
         );
         let full_ack = FullAckSeqNumber::new(1);
         assert_eq!(
-            buffer.update_largest_acked_seq_number(SeqNumber(4), full_ack),
+            buffer.update_largest_acked_seq_number(SeqNumber(4), full_ack, None),
             Ok(AckAction {
                 received: 2,
                 recovered: 0,
@@ -634,7 +730,7 @@ mod test {
 
         // ACK with from a Full ACK from the past should be ignored
         assert_eq!(
-            buffer.update_largest_acked_seq_number(SeqNumber(5), full_ack),
+            buffer.update_largest_acked_seq_number(SeqNumber(5), full_ack, None),
             Err(InvalidFullAck {
                 received_full_ack: full_ack.unwrap(),
                 next_full_ack: full_ack.unwrap() + 1
@@ -643,7 +739,7 @@ mod test {
 
         // ACK for packets from the past should be ignored
         assert_eq!(
-            buffer.update_largest_acked_seq_number(SeqNumber(1), None),
+            buffer.update_largest_acked_seq_number(SeqNumber(1), None, None),
             Err(InvalidAck {
                 ack_number: SeqNumber(1),
                 first: SeqNumber(4),
@@ -653,7 +749,7 @@ mod test {
 
         // ACK for unsent packets should be ignored
         assert_eq!(
-            buffer.update_largest_acked_seq_number(SeqNumber(6), None),
+            buffer.update_largest_acked_seq_number(SeqNumber(6), None, None),
             Err(InvalidAck {
                 ack_number: SeqNumber(6),
                 first: SeqNumber(4),
@@ -675,8 +771,7 @@ mod test {
         let _ = buffer.next_snd_actions(now, 3, false).count();
         assert!(!buffer.has_packets_to_send());
 
-        //
-        let _ = buffer.update_largest_acked_seq_number(SeqNumber(1), None);
+        let _ = buffer.update_largest_acked_seq_number(SeqNumber(1), None, None);
 
         let loss = buffer
             .add_to_loss_list(
@@ -718,7 +813,7 @@ mod test {
 
         // three packets received, one of them was lost but recovered
         assert_eq!(
-            buffer.update_largest_acked_seq_number(SeqNumber(3), None),
+            buffer.update_largest_acked_seq_number(SeqNumber(3), None, None),
             Ok(AckAction {
                 received: 3,
                 recovered: 1,
@@ -811,12 +906,47 @@ mod test {
 
         for n in 0..10 {
             buffer
-                .update_largest_acked_seq_number(SeqNumber(n + 1), None)
+                .update_largest_acked_seq_number(SeqNumber(n + 1), None, None)
                 .unwrap();
 
-            assert_eq!(buffer.duration(), Duration::from_millis(u64::from(9 - n)));
+            assert_eq!(
+                buffer.duration(),
+                Duration::from_millis(8u64.saturating_sub(n.into()))
+            );
             assert_eq!(buffer.len(), 9 - n as usize);
             assert_eq!(buffer.len_bytes(), wire_size * (9 - n as usize));
         }
+    }
+
+    #[test]
+    fn flow_window_exceeded() {
+        let mut buffer = SendBuffer::new(&new_settings());
+
+        let max_flow_size = new_settings().max_flow_size.0 as u32 + 1;
+        for n in 0..max_flow_size {
+            buffer.push_data(test_data_packet(n, false));
+        }
+
+        // if the buffer is full of unsent packets it
+        assert!(!buffer.flow_window_exceeded());
+
+        // if the buffer is full of too many packets sent and un-ACKed packets, it will exceed the flow window
+        assert_eq!(
+            buffer
+                .next_snd_actions(TimeStamp::MIN, max_flow_size, false)
+                .count(),
+            max_flow_size as usize
+        );
+        assert!(buffer.flow_window_exceeded());
+
+        // if the sent packets in the buffer are then dropped before they are ACKed, it will no longer exceed the flow window
+        let latency = Duration::from_secs(10);
+        assert!(
+            buffer
+                .next_snd_actions(TimeStamp::MIN + latency, max_flow_size, false)
+                .count()
+                > 1
+        );
+        assert!(!buffer.flow_window_exceeded());
     }
 }

@@ -27,7 +27,7 @@ pub use modular_num;
 macro_rules! modular_num_impls {
     (($($publicity:tt)*), $x:ident, $type:ident, $num:expr) => {
 
-        #[derive(Eq, PartialEq, Clone, Copy, Debug)]
+        #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
         $($publicity)* struct $x(pub $type);
 
         impl $x {

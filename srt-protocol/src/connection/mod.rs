@@ -53,12 +53,12 @@ pub struct ConnectionSettings {
     pub init_seq_num: SeqNumber,
 
     /// The maximum packet size
-    pub max_packet_size: ByteCount,
+    pub max_packet_size: PacketSize,
 
-    /// The maxiumum flow size
+    /// The maximum flow size
     pub max_flow_size: PacketCount,
 
-    /// The TSBPD of the connection--the max of each side's repspective latencies
+    /// The TSBPD of the connection--the max of each side's respective latencies
     pub send_tsbpd_latency: Duration,
     pub recv_tsbpd_latency: Duration,
 
@@ -163,7 +163,6 @@ impl DuplexConnection {
 
     pub fn next_packet(&mut self, now: Instant) -> Option<(Packet, SocketAddr)> {
         self.output.pop_packet().map(|p| {
-            self.timers.reset_keepalive(now);
             self.stats.tx_all_packets += 1;
             self.stats.tx_all_bytes += u64::try_from(p.wire_size()).unwrap();
 
@@ -248,9 +247,6 @@ impl DuplexConnection {
         if let Some(elapsed_periods) = self.timers.check_snd(now) {
             self.sender().on_snd_event(now, elapsed_periods)
         }
-        if self.timers.check_keepalive(now).is_some() {
-            self.output.send_control(now, ControlTypes::KeepAlive);
-        }
 
         if self
             .status
@@ -266,6 +262,8 @@ impl DuplexConnection {
         ) {
             self.output.send_control(now, ControlTypes::Shutdown);
         }
+
+        self.output.ensure_alive(now);
 
         self.next_timer(now)
     }
@@ -435,6 +433,8 @@ mod duplex_connection {
     use ControlTypes::*;
     use Packet::*;
 
+    use crate::protocol::time::Rtt;
+
     use super::*;
 
     const MILLIS: Duration = Duration::from_millis(1);
@@ -462,7 +462,7 @@ mod duplex_connection {
                 socket_start_time: now,
                 rtt: Duration::default(),
                 init_seq_num: SeqNumber::new_truncate(0),
-                max_packet_size: ByteCount(1316),
+                max_packet_size: PacketSize(1316),
                 max_flow_size: PacketCount(8192),
                 send_tsbpd_latency: TSBPD,
                 recv_tsbpd_latency: TSBPD,
@@ -482,9 +482,10 @@ mod duplex_connection {
         let mut connection = DuplexConnection::new(new_connection(start));
 
         let mut now = start;
+        assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(_));
         assert_eq!(
-            connection.handle_input(now, Input::Timer),
-            WaitForData(102 * MILLIS)
+            connection.handle_input(now, Input::Data(Some((start, Bytes::new())))),
+            WaitForData(SND)
         );
         assert_eq!(
             connection.handle_input(now, Input::Data(Some((start, Bytes::new())))),
@@ -502,17 +503,23 @@ mod duplex_connection {
             connection.handle_input(now, Input::Timer),
             SendPacket((Data(_), _))
         );
+        // only send packets at a rate in accordance with the calculated SND period
+        assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(_));
 
-        // acknowledgement
         now += SND;
+        assert_matches!(
+            connection.handle_input(now, Input::Timer),
+            SendPacket((Data(_), _))
+        );
+
+        // acknowledge first packet
         let packet = Control(ControlPacket {
             timestamp: TimeStamp::MIN,
             dest_sockid: SocketId(2),
             control_type: Ack(Acknowledgement::Full(
                 SeqNumber(1),
                 AckStatistics {
-                    rtt: TimeSpan::ZERO,
-                    rtt_variance: TimeSpan::ZERO,
+                    rtt: Rtt::new(TimeSpan::ZERO, TimeSpan::ZERO),
                     buffer_available: 10000,
                     packet_receive_rate: None,
                     estimated_link_capacity: None,
@@ -533,11 +540,9 @@ mod duplex_connection {
             ))
         );
 
-        // closing: drain last item in send buffer
-        assert_matches!(
-            connection.handle_input(now, Input::Timer),
-            SendPacket((Data(_), _))
-        );
+        // if the last packet was not acknowledged wait for drain timeout to actually close
+        //  which can include sending keep alive messages too
+        now += Duration::from_secs(4);
         assert_matches!(
             connection.handle_input(now, Input::Timer),
             SendPacket((
@@ -548,10 +553,7 @@ mod duplex_connection {
                 _
             ))
         );
-        assert_eq!(
-            connection.handle_input(now, Input::Timer),
-            WaitForData(100 * MILLIS)
-        );
+        assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(_));
         assert_eq!(connection.handle_input(now, Input::Timer), Close);
     }
 
@@ -579,26 +581,25 @@ mod duplex_connection {
         now += SND;
         assert_matches!(
             connection.handle_input(now, Input::Timer),
-            SendPacket((Data(_), _))
+            SendPacket((Data(DataPacket { seq_number, retransmitted: false, .. }), _)) if seq_number.0 == 0
         );
+        assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(SND));
 
-        assert_matches!(
-            connection.handle_input(now + TSBPD, Input::Timer),
-            SendPacket((Data(_), _))
-        );
+        // timeout : retransmits 0 and sends 1
+        now += TSBPD;
 
-        // timeout
-        now += TSBPD + TSBPD / 4; // TSBPD * 1.25
         assert_matches!(
             connection.handle_input(now, Input::Timer),
-            SendPacket((
-                Control(ControlPacket {
-                    control_type: KeepAlive,
-                    ..
-                }),
-                _
-            ))
+            SendPacket((Data(DataPacket {seq_number, retransmitted: true, ..}), _)) if seq_number.0 == 0
         );
+        assert_matches!(
+            connection.handle_input(now, Input::Timer),
+            SendPacket((Data(DataPacket {seq_number, retransmitted: false, ..}), _)) if seq_number.0 == 1
+        );
+
+        assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(_));
+
+        now += TSBPD / 4; // TSBPD * 1.25
         assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(_));
 
         // https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-3.2.9
