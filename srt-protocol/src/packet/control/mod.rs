@@ -18,7 +18,10 @@ use bitflags::bitflags;
 use bytes::{Buf, BufMut};
 use log::warn;
 
-use crate::protocol::time::Rtt;
+use crate::{
+    options::{PacketCount, PacketSize},
+    protocol::time::Rtt,
+};
 
 use super::*;
 
@@ -148,10 +151,10 @@ pub struct HandshakeControlInfo {
     pub init_seq_num: SeqNumber,
 
     /// Max packet size, including UDP/IP headers. 1500 by default
-    pub max_packet_size: u32,
+    pub max_packet_size: PacketSize,
 
     /// Max flow window size, by default 25600
-    pub max_flow_size: u32,
+    pub max_flow_size: PacketCount,
 
     /// Designates where in the handshake process this packet lies
     pub shake_type: ShakeType,
@@ -520,8 +523,8 @@ impl ControlTypes {
                 let type_ext_socket_type = buf.get_u16();
 
                 let init_seq_num = SeqNumber::new_truncate(buf.get_u32()); // TODO: should this truncate?
-                let max_packet_size = buf.get_u32();
-                let max_flow_size = buf.get_u32();
+                let max_packet_size = PacketSize(buf.get_u32() as u64);
+                let max_flow_size = PacketCount(buf.get_u32() as u64);
                 let shake_type = match ShakeType::try_from(buf.get_i32()) {
                     Ok(ct) => ct,
                     Err(err_ct) => return Err(PacketParseError::BadConnectionType(err_ct)),
@@ -1296,8 +1299,8 @@ impl HandshakeControlInfo {
         into.put_u32(self.info.version());
         into.put_u32(self.info.type_flags(self.shake_type));
         into.put_u32(self.init_seq_num.as_raw());
-        into.put_u32(self.max_packet_size);
-        into.put_u32(self.max_flow_size);
+        into.put_u32(self.max_packet_size.0 as u32);
+        into.put_u32(self.max_flow_size.0 as u32);
         into.put_i32(self.shake_type.into());
         into.put_u32(self.socket_id.0);
         into.put_i32(self.syn_cookie);
@@ -1399,8 +1402,8 @@ mod test {
             dest_sockid: SocketId(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber::new_truncate(1_827_131),
-                max_packet_size: 1500,
-                max_flow_size: 25600,
+                max_packet_size: PacketSize(1500),
+                max_flow_size: PacketCount(25600),
                 shake_type: ShakeType::Conclusion,
                 socket_id: SocketId(1231),
                 syn_cookie: 0,
@@ -1459,8 +1462,8 @@ mod test {
             dest_sockid: SocketId(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber(0),
-                max_packet_size: 1816,
-                max_flow_size: 0,
+                max_packet_size: PacketSize(1816),
+                max_flow_size: PacketCount(0),
                 shake_type: ShakeType::Conclusion,
                 socket_id: SocketId(0),
                 syn_cookie: 0,
@@ -1483,8 +1486,8 @@ mod test {
             dest_sockid: SocketId(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber(0),
-                max_packet_size: 1816,
-                max_flow_size: 0,
+                max_packet_size: PacketSize(1816),
+                max_flow_size: PacketCount(0),
                 shake_type: ShakeType::Conclusion,
                 socket_id: SocketId(0),
                 syn_cookie: 0,
@@ -1589,8 +1592,8 @@ mod test {
             dest_sockid: SocketId(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber(1010500246),
-                max_packet_size: 1500,
-                max_flow_size: 8192,
+                max_packet_size: PacketSize(1500),
+                max_flow_size: PacketCount(8192),
                 shake_type: ShakeType::Induction,
                 socket_id: SocketId(0x0669EAD2),
                 syn_cookie: 0,
@@ -1620,8 +1623,8 @@ mod test {
                 dest_sockid: SocketId(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: SeqNumber(1_153_345_037),
-                    max_packet_size: 1500,
-                    max_flow_size: 8192,
+                    max_packet_size: PacketSize(1500),
+                    max_flow_size: PacketCount(8192),
                     shake_type: ShakeType::Conclusion,
                     socket_id: SocketId(1_030_305_462),
                     syn_cookie: -471_595_555,
@@ -1666,8 +1669,8 @@ mod test {
                 dest_sockid: SocketId(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: SeqNumber(1_665_420_078),
-                    max_packet_size: 1500,
-                    max_flow_size: 8192,
+                    max_packet_size: PacketSize(1500),
+                    max_flow_size: PacketCount(8192),
                     shake_type: ShakeType::Conclusion,
                     socket_id: SocketId(0x37eb0ee5),
                     syn_cookie: 559_217_622,
@@ -1714,8 +1717,8 @@ mod test {
                 dest_sockid: SocketId(0),
                 control_type: ControlTypes::Handshake(HandshakeControlInfo {
                     init_seq_num: SeqNumber(1_877_981_400),
-                    max_packet_size: 1_500,
-                    max_flow_size: 8_192,
+                    max_packet_size: PacketSize(1_500),
+                    max_flow_size: PacketCount(8_192),
                     shake_type: ShakeType::Conclusion,
                     socket_id: SocketId(904_368_365),
                     syn_cookie: 1_561_775_338,
@@ -1808,8 +1811,8 @@ mod test {
             dest_sockid: SocketId(0),
             control_type: ControlTypes::Handshake(HandshakeControlInfo {
                 init_seq_num: SeqNumber(1373414328),
-                max_packet_size: 1464,
-                max_flow_size: 8192,
+                max_packet_size: PacketSize(1464),
+                max_flow_size: PacketCount(8192),
                 shake_type: ShakeType::Conclusion,
                 socket_id: SocketId(0x025C84B8),
                 syn_cookie: 0xda7ee4e7u32 as i32,

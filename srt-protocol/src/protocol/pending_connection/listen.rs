@@ -1,15 +1,15 @@
 use std::{convert::TryInto, net::SocketAddr, time::Instant};
 
-use ConnectionResult::*;
-use ListenState::*;
-
-use crate::{connection::Connection, packet::*, protocol::handshake::Handshake, settings::*};
-
-use super::{hsv5::gen_access_control_response, AccessControlRequest, AccessControlResponse};
+use crate::{packet::*, protocol::handshake::Handshake, settings::*};
 
 use super::{
-    cookie::gen_cookie, hsv5::GenHsv5Result, ConnectError, ConnectionReject, ConnectionResult,
+    cookie::gen_cookie, hsv5::gen_access_control_response, hsv5::GenHsv5Result,
+    AccessControlRequest, AccessControlResponse, ConnectError, Connection, ConnectionReject,
+    ConnectionResult,
 };
+
+use ConnectionResult::*;
+use ListenState::*;
 
 #[derive(Debug)]
 pub struct Listen {
@@ -286,10 +286,6 @@ impl Listen {
             }),
         };
 
-        // select the smaller packet size and max window size
-        // TODO: allow configuration of these parameters, for now just
-        // use the remote ones
-
         // finish the connection
         Connected(
             Some((resp_handshake.clone().into(), state.from)),
@@ -352,8 +348,8 @@ mod test {
     fn test_induction() -> HandshakeControlInfo {
         HandshakeControlInfo {
             init_seq_num: random(),
-            max_packet_size: 1316,
-            max_flow_size: 256_000,
+            max_packet_size: PacketSize(1316),
+            max_flow_size: PacketCount(256_000),
             shake_type: ShakeType::Induction,
             socket_id: random(),
             syn_cookie: 0,
@@ -365,8 +361,8 @@ mod test {
     fn test_conclusion() -> HandshakeControlInfo {
         HandshakeControlInfo {
             init_seq_num: random(),
-            max_packet_size: 1316,
-            max_flow_size: 256_000,
+            max_packet_size: PacketSize(1316),
+            max_flow_size: PacketCount(256_000),
             shake_type: ShakeType::Conclusion,
             socket_id: random(),
             syn_cookie: gen_cookie(&conn_addr()),

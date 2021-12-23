@@ -546,12 +546,12 @@ impl<'a> Iterator for SenderAlgorithmIterator<'a> {
 mod test {
     use super::*;
 
-    use crate::options::{PacketCount, PacketSize};
-
     use std::time::{Duration, Instant};
 
     use assert_matches::assert_matches;
     use bytes::Bytes;
+
+    use crate::options::{PacketCount, PacketSize};
 
     const MILLIS: Duration = Duration::from_millis(1);
     const TSBPD: Duration = Duration::from_secs(2);
