@@ -98,6 +98,8 @@ pub fn gen_access_control_response(
         None
     };
 
+    let rtt = now - induction_time;
+
     GenHsv5Result::Accept(
         HandshakeVsInfo::V5(HsV5Info {
             crypto_size: cipher
@@ -118,11 +120,11 @@ pub fn gen_access_control_response(
             remote: from,
             remote_sockid: with_hsv5.socket_id,
             local_sockid: settings.local_sockid,
-            socket_start_time: now - (now - induction_time) / 2, // initiate happened 0.5RTT ago
-            rtt: now - induction_time,
+            socket_start_time: now - (rtt) / 2, // initiate happened 0.5RTT ago
+            rtt,
             init_seq_num: with_hsv5.init_seq_num,
-            max_packet_size: ByteCount(1500), // todo: parameters!
-            max_flow_size: PacketCount(8192),
+            max_packet_size: settings.max_packet_size,
+            max_flow_size: settings.max_flow_size,
             send_tsbpd_latency: Duration::max(settings.send_latency, hs.recv_latency),
             recv_tsbpd_latency: Duration::max(settings.recv_latency, hs.send_latency),
             recv_buffer_size: settings.recv_buffer_size,
@@ -219,13 +221,13 @@ impl StartedInitiator {
             socket_start_time: self.initiate_time,
             rtt: now - self.initiate_time,
             init_seq_num: response.init_seq_num,
-            max_packet_size: ByteCount(1500), // todo: parameters!
-            max_flow_size: PacketCount(8192),
+            max_packet_size: self.settings.max_packet_size,
+            max_flow_size: self.settings.max_flow_size,
             send_tsbpd_latency: Duration::max(self.settings.send_latency, hs.recv_latency),
             recv_tsbpd_latency: Duration::max(self.settings.recv_latency, hs.send_latency),
             cipher: self.cipher,
             stream_id: self.streamid,
-            bandwidth: Default::default(),
+            bandwidth: self.settings.bandwidth,
             recv_buffer_size: self.settings.recv_buffer_size,
             statistics_interval: self.settings.statistics_interval,
         })

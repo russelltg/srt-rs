@@ -8,9 +8,9 @@ use std::{
 
 use log::trace;
 
-use srt_protocol::options::{ByteCount, PacketCount};
 use srt_protocol::{
     connection::{Connection, ConnectionSettings, DuplexConnection, Input},
+    options::{PacketCount, PacketSize},
     packet::*,
     protocol::handshake::Handshake,
 };
@@ -36,7 +36,7 @@ fn timestamp_rollover() {
         socket_start_time: start,
         rtt: Duration::default(),
         init_seq_num: init_seqnum,
-        max_packet_size: ByteCount(1316),
+        max_packet_size: PacketSize(1316),
         max_flow_size: PacketCount(8192),
         send_tsbpd_latency: Duration::from_millis(20),
         recv_tsbpd_latency: Duration::from_millis(20),
@@ -54,7 +54,7 @@ fn timestamp_rollover() {
         socket_start_time: start,
         rtt: Duration::default(),
         init_seq_num: init_seqnum,
-        max_packet_size: ByteCount(1316),
+        max_packet_size: PacketSize(1316),
         max_flow_size: PacketCount(8192),
 
         send_tsbpd_latency: Duration::from_millis(20),

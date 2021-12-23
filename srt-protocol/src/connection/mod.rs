@@ -53,12 +53,12 @@ pub struct ConnectionSettings {
     pub init_seq_num: SeqNumber,
 
     /// The maximum packet size
-    pub max_packet_size: ByteCount,
+    pub max_packet_size: PacketSize,
 
-    /// The maxiumum flow size
+    /// The maximum flow size
     pub max_flow_size: PacketCount,
 
-    /// The TSBPD of the connection--the max of each side's repspective latencies
+    /// The TSBPD of the connection--the max of each side's respective latencies
     pub send_tsbpd_latency: Duration,
     pub recv_tsbpd_latency: Duration,
 
@@ -462,7 +462,7 @@ mod duplex_connection {
                 socket_start_time: now,
                 rtt: Duration::default(),
                 init_seq_num: SeqNumber::new_truncate(0),
-                max_packet_size: ByteCount(1316),
+                max_packet_size: PacketSize(1316),
                 max_flow_size: PacketCount(8192),
                 send_tsbpd_latency: TSBPD,
                 recv_tsbpd_latency: TSBPD,

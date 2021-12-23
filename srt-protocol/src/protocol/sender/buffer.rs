@@ -546,7 +546,7 @@ impl<'a> Iterator for SenderAlgorithmIterator<'a> {
 mod test {
     use super::*;
 
-    use crate::options::{ByteCount, PacketCount};
+    use crate::options::{PacketCount, PacketSize};
 
     use std::time::{Duration, Instant};
 
@@ -564,7 +564,7 @@ mod test {
             socket_start_time: Instant::now(),
             rtt: Duration::default(),
             init_seq_num: SeqNumber::new_truncate(0),
-            max_packet_size: ByteCount(1316),
+            max_packet_size: PacketSize(1316),
             max_flow_size: PacketCount(8192),
             send_tsbpd_latency: TSBPD,
             recv_tsbpd_latency: TSBPD,

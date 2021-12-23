@@ -27,6 +27,12 @@ impl Div<PacketSize> for ByteCount {
 #[display(fmt = "{} bytes", "_0")]
 pub struct PacketSize(pub u64);
 
+impl From<PacketSize> for usize {
+    fn from(value: PacketSize) -> Self {
+        value.0 as usize
+    }
+}
+
 #[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 #[display(fmt = "{} packets", "_0")]
 pub struct PacketCount(pub u64);
