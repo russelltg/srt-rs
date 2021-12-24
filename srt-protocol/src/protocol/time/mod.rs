@@ -131,17 +131,18 @@ impl Timers {
 
     fn calculate_periods(exp_count: u32, rtt: &Rtt) -> (Duration, Duration, Duration) {
         let ms = Duration::from_millis;
-        let rtt_period = 4 * rtt.mean_as_duration() + rtt.variance_as_duration() + Self::SYN;
 
-        let nak_report_period_accelerator: u32 = 2;
-        let nak_period = nak_report_period_accelerator * rtt_period;
+        // NAKInterval = min((RTT + 4 * RTTVar) / 2, 20000) - i.e. floor of 20ms
+        let nak_rtt_period = (rtt.mean_as_duration() + 4 * rtt.variance_as_duration()) / 2;
+        let nak_period = max(nak_rtt_period, ms(20));
 
         // 0.5s minimum, according to page 9
         // but 0.3s in reference implementation
-        let exp_period = max(exp_count * rtt_period, exp_count * ms(300));
+        let exp_rtt_period = 4 * rtt.mean_as_duration() + rtt.variance_as_duration() + Self::SYN;
+        let exp_period = max(exp_count * exp_rtt_period, exp_count * ms(300));
 
         // full ack period is always 10 ms
-        (Duration::from_millis(10), nak_period, exp_period)
+        (ms(10), nak_period, exp_period)
     }
 }
 
@@ -153,11 +154,124 @@ mod tests {
 
     use crate::packet::TimeSpan;
 
+    proptest! {
+        #[test]
+        fn nak(simulated_rtt in 0i32..500_000) {
+            prop_assume!(simulated_rtt >= 0);
+            let mut rtt = Rtt::default();
+            for _ in 0..1000 {
+                rtt.update(TimeSpan::from_micros(simulated_rtt));
+            }
+
+            let ms = Duration::from_millis;
+            let rtt_mean = rtt.mean_as_duration();
+            let rtt_variance = rtt.variance_as_duration();
+
+            // above lower bound of NAK
+            prop_assume!((rtt_mean + 4 * rtt_variance) / 2 > ms(20));
+
+            let start = Instant::now();
+            let mut timers = Timers::new(start, ms(10_000));
+
+            timers.update_rtt(&rtt);
+
+            // NAKInterval = min(RTT + 4 * RTTVar / 2, 20ms) - i.e. floor 20ms
+            assert_eq!(timers.nak.next_instant() - start, (rtt_mean + 4 * rtt_variance) / 2);
+
+            // ACK is always 10ms
+            assert_eq!(timers.full_ack.next_instant() - start, ms(10));
+        }
+
+        #[test]
+        fn exp(simulated_rtt in 0i32..500_000) {
+            prop_assume!(simulated_rtt >= 0);
+            let mut rtt = Rtt::default();
+            for _ in 0..1000 {
+                rtt.update(TimeSpan::from_micros(simulated_rtt));
+            }
+
+            let ms = Duration::from_millis;
+            let syn = ms(10);
+            let rtt_mean = rtt.mean_as_duration();
+            let rtt_variance = rtt.variance_as_duration();
+
+            // above lower bound of EXP
+            prop_assume!(4 * rtt_mean + rtt_variance + syn > ms(300));
+
+            let start = Instant::now();
+            let mut timers = Timers::new(start, ms(10_000));
+
+            timers.update_rtt(&rtt);
+
+            // 4 * RTT + RTTVar + SYN
+            assert_eq!(timers.exp.next_instant() - start, 4 * rtt_mean + rtt_variance + syn);
+
+            // ACK is always 10ms
+            assert_eq!(timers.full_ack.next_instant() - start, ms(10));
+
+            // ACK is always 10ms
+            assert_eq!(timers.full_ack.next_instant() - start, ms(10));
+        }
+
+        #[test]
+        fn nak_lower_bound(simulated_rtt in 0i32..100_000) {
+            prop_assume!(simulated_rtt >= 10_000);
+            let mut rtt = Rtt::default();
+            for _ in 0..1000 {
+                rtt.update(TimeSpan::from_micros(simulated_rtt));
+            }
+
+            let ms = Duration::from_millis;
+            let rtt_mean = rtt.mean_as_duration();
+            let rtt_variance = rtt.variance_as_duration();
+
+            // below lower bound of NAK
+            prop_assume!((rtt_mean + 4 * rtt_variance) / 2 <= ms(20));
+
+            let start = Instant::now();
+            let mut timers = Timers::new(start, ms(10_000));
+
+            timers.update_rtt(&rtt);
+
+            // NAKInterval = min(RTT + 4 * RTTVar / 2, 20ms) - i.e. floor 20ms
+            assert_eq!(timers.nak.next_instant() - start, ms(20));
+
+            // ACK is always 10ms
+            assert_eq!(timers.full_ack.next_instant() - start, ms(10));
+        }
+
+        #[test]
+        fn exp_lower_bound(simulated_rtt in 0i32..100_000) {
+            prop_assume!(simulated_rtt >= 0);
+            let mut rtt = Rtt::default();
+            for _ in 0..1000 {
+                rtt.update(TimeSpan::from_micros(simulated_rtt));
+            }
+
+            let ms = Duration::from_millis;
+            let syn = ms(10);
+            let rtt_mean = rtt.mean_as_duration();
+            let rtt_variance = rtt.variance_as_duration();
+
+            // below lower bound of EXP
+            prop_assume!(4 * rtt_mean + rtt_variance + syn <= ms(300));
+
+            let start = Instant::now();
+            let mut timers = Timers::new(start, ms(10_000));
+
+            timers.update_rtt(&rtt);
+
+            // exp has a lower bound period of 300ms
+            assert_eq!(timers.exp.next_instant() - start, ms(300));
+
+            // ACK is always 10ms
+            assert_eq!(timers.full_ack.next_instant() - start, ms(10));
+        }
+    }
+
     #[test]
     fn next_timer() {
         let ms = TimeSpan::from_millis;
-        let rtt = Rtt::default();
-        let syn = ms(10);
         let start = Instant::now();
         let mut timers = Timers::new(start, Duration::MAX);
 
@@ -168,45 +282,43 @@ mod tests {
 
         // ack should be disabled if there are no packets waiting acknowledgement
         let actual_timer = timers.next_timer(now, false, None, 0);
-        assert_eq!(TimeSpan::from_interval(now, actual_timer), ms(102));
+        assert!(TimeSpan::from_interval(now, actual_timer) > ms(10));
 
-        // fast forward the clock, at 10ms, ack will fire multiple times before any other timer
-        let now = start + ms(100);
-        // only ack timer should fire
+        // fast forward the clock, ACK will fire before other timers
+        let now = start + ms(15);
+        // only ACK timer should fire
         assert!(timers.check_full_ack(now).is_some());
         assert!(timers.check_nak(now).is_none());
         assert!(timers.check_peer_idle_timeout(now).is_none());
 
-        // next timer should be nak
-        // NAK accelerator * 4 * RTT + RTTVar + SYN
-        let nak = 2 * (4 * rtt.mean() + rtt.variance() + syn);
+        // NAK will have a lower bound period of 20ms
+        let nak = ms(20);
         let actual_timer = timers.next_timer(now, false, Some(start + ms(10_000)), 1);
         assert_eq!(TimeSpan::from_interval(start, actual_timer), nak);
 
-        // only the nak timer should trigger
-        assert!(timers.check_full_ack(actual_timer).is_none());
+        // the NAK timer should trigger
+        assert!(timers.check_full_ack(actual_timer).is_some());
         assert!(timers.check_nak(actual_timer).is_some());
         assert!(timers.check_peer_idle_timeout(actual_timer).is_none());
 
-        // exp will have a lower bound period of 500ms
+        // EXP will have a lower bound period of 300ms
         let exp_lower_bound = ms(300);
         let now = start + exp_lower_bound;
 
-        // push time forward for ack and nak first
+        // push time forward for ACK and NAK first
         assert!(timers.check_full_ack(now).is_some());
         assert!(timers.check_nak(now).is_some());
 
-        // next timer should be exp
+        // next timer should be EXP
         let actual_timer = timers.next_timer(now, false, Some(start + ms(10_000)), 1);
         assert_eq!(
             TimeSpan::from_interval(start, actual_timer),
             exp_lower_bound
         );
 
-        // exp timer should trigger
+        // EXP timer should trigger
         assert!(timers.check_full_ack(actual_timer).is_none());
         assert!(timers.check_nak(actual_timer).is_none());
-
         let last_input = start;
         timers.reset_exp(last_input);
         for exp_count in 1..=16 {
@@ -217,69 +329,5 @@ mod tests {
         assert!(timers
             .check_peer_idle_timeout(last_input + 17 * exp_lower_bound)
             .is_some());
-    }
-
-    proptest! {
-        #[test]
-        fn update_rtt(simulated_rtt in 45_000i32..) {
-            prop_assume!(simulated_rtt >= 0);
-            let mut rtt = Rtt::default();
-            for _ in 0..1000 {
-                rtt.update(TimeSpan::from_micros(simulated_rtt));
-            }
-
-            let ms = Duration::from_millis;
-            let syn = ms(10);
-            let rtt_mean = rtt.mean_as_duration();
-            let rtt_variance = rtt.variance_as_duration();
-
-            // above lower bound of exp
-            prop_assume!(4 * rtt_mean + rtt_variance + syn > ms(300));
-
-            let start = Instant::now();
-            let mut timers = Timers::new(start, ms(10_000));
-
-            timers.update_rtt(&rtt);
-
-            // 4 * RTT + RTTVar + SYN
-            assert_eq!(timers.full_ack.next_instant() - start, Duration::from_millis(10));
-
-            // NAK accelerator * 4 * RTT + RTTVar + SYN
-            assert_eq!(timers.nak.next_instant() - start, 2 * (4 * rtt_mean + rtt_variance + syn));
-
-            // 4 * RTT + RTTVar + SYN
-            assert_eq!(timers.exp.next_instant() - start, 4 * rtt_mean + rtt_variance + syn);
-        }
-
-        #[test]
-        fn update_rtt_exp_lower_bound(simulated_rtt in 0i32..50_000) {
-            prop_assume!(simulated_rtt >= 0);
-            let mut rtt = Rtt::default();
-            for _ in 0..1000 {
-                rtt.update(TimeSpan::from_micros(simulated_rtt));
-            }
-
-            let ms = Duration::from_millis;
-            let syn = ms(10);
-            let rtt_mean = rtt.mean_as_duration();
-            let rtt_variance = rtt.variance_as_duration();
-
-            // below lower bound of exp
-            prop_assume!(4 * rtt_mean + rtt_variance + syn <= ms(300));
-
-            let start = Instant::now();
-            let mut timers = Timers::new(start, ms(10_000));
-
-            timers.update_rtt(&rtt);
-
-            // 4 * RTT + RTTVar + SYN
-            assert_eq!(timers.full_ack.next_instant() - start, Duration::from_millis(10));
-
-            // NAK accelerator * 4 * RTT + RTTVar + SYN
-            assert_eq!(timers.nak.next_instant() - start, 2 * (4 * rtt_mean + rtt_variance + syn));
-
-            // exp has a lower bound period of 300ms
-            assert_eq!(timers.exp.next_instant() - start, ms(300));
-        }
     }
 }
