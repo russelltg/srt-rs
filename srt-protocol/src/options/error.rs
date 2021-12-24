@@ -1,4 +1,4 @@
-use std::{io, io::ErrorKind, net::IpAddr};
+use std::{io, io::ErrorKind, net::IpAddr, time::Duration};
 
 use thiserror::Error;
 
@@ -44,6 +44,9 @@ pub enum OptionsError {
 
     #[error("{0}")]
     InvalidStreamId(StreamIdError),
+
+    #[error("IP TTL is invalid, must be > 0")]
+    InvalidIpTtl,
 }
 
 impl From<OptionsError> for io::Error {

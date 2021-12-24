@@ -8,6 +8,8 @@ use futures::{channel::mpsc, prelude::*};
 use srt_protocol::settings::ConnInitSettings;
 use tokio::{net::UdpSocket, task::JoinHandle};
 
+use crate::net::bind_socket;
+
 use super::{net::PacketSocket, options::*, watch};
 
 pub use builder::SrtListenerBuilder;
@@ -27,7 +29,7 @@ impl SrtListener {
     }
 
     pub async fn bind(options: Valid<ListenerOptions>) -> Result<Self, io::Error> {
-        let socket = UdpSocket::bind(options.socket.connect.local).await?;
+        let socket = bind_socket(&options.socket).await?;
         Self::bind_with_socket(options, socket).await
     }
 

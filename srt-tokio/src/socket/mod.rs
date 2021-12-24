@@ -62,8 +62,7 @@ impl SrtSocket {
             Call(options) => &options.socket,
             Rendezvous(options) => &options.socket,
         };
-        let socket = UdpSocket::bind(socket_options.connect.local).await?;
-
+        let socket = bind_socket(&socket_options).await?;
         Self::bind_with_socket(options, socket).await
     }
 
