@@ -60,7 +60,7 @@ pub struct DataPacket {
 }
 
 impl DataPacket {
-    pub const HEADER_SIZE: u64 = super::Packet::HEADER_SIZE;
+    pub const HEADER_SIZE: usize = super::Packet::HEADER_SIZE.0 as usize;
 }
 
 bitflags! {
@@ -140,7 +140,7 @@ impl DataPacket {
 
     pub fn wire_size(&self) -> usize {
         // 20 bytes IPv4 + 8 bytes of UDP + 16 bytes SRT header.
-        20 + 8 + 16 + self.payload.len()
+        Self::HEADER_SIZE + self.payload.len()
     }
 }
 

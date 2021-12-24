@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use rand::random;
 
-use crate::options;
+use crate::{options, packet::Packet};
 
 use super::*;
 
@@ -60,8 +60,10 @@ impl From<options::SocketOptions> for ConnInitSettings {
             recv_latency: options.receiver.latency,
             bandwidth: options.sender.bandwidth,
             statistics_interval: options.session.statistics_interval,
-            recv_buffer_size: options.receiver.buffer_size / options.session.max_segment_size,
-            send_buffer_size: options.sender.buffer_size / options.session.max_segment_size,
+            recv_buffer_size: options.receiver.buffer_size
+                / (options.session.max_segment_size - Packet::HEADER_SIZE),
+            send_buffer_size: options.sender.buffer_size
+                / (options.session.max_segment_size - Packet::HEADER_SIZE),
             max_packet_size: options.sender.max_payload_size,
             max_flow_size: options.sender.flow_control_window_size,
         }

@@ -172,7 +172,7 @@ impl DuplexConnection {
             match &p {
                 Packet::Data(d) => {
                     self.stats.tx_data += 1;
-                    self.stats.tx_bytes += d.payload.len() as u64 + DataPacket::HEADER_SIZE;
+                    self.stats.tx_bytes += u64::try_from(d.wire_size()).unwrap();
                 }
                 Packet::Control(c) => match c.control_type {
                     ControlTypes::Ack(ref a) => {
