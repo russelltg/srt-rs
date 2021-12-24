@@ -44,6 +44,7 @@ fn timestamp_rollover() {
         stream_id: None,
         bandwidth: Default::default(),
         recv_buffer_size: PacketCount(8192),
+        send_buffer_size: PacketCount(8192),
         statistics_interval: Duration::from_secs(1),
     };
 
@@ -63,6 +64,7 @@ fn timestamp_rollover() {
         stream_id: None,
         bandwidth: Default::default(),
         recv_buffer_size: PacketCount(8192),
+        send_buffer_size: PacketCount(8192),
         statistics_interval: Duration::from_secs(1),
     };
 

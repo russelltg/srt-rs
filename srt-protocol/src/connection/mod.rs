@@ -64,6 +64,8 @@ pub struct ConnectionSettings {
 
     /// Size of the receive buffer, in packets
     pub recv_buffer_size: PacketCount,
+    /// Size of the send buffer, in packets
+    pub send_buffer_size: PacketCount,
     pub cipher: Option<CipherSettings>,
     pub stream_id: Option<String>,
     pub bandwidth: LiveBandwidthMode,
@@ -467,6 +469,7 @@ mod duplex_connection {
                 send_tsbpd_latency: TSBPD,
                 recv_tsbpd_latency: TSBPD,
                 recv_buffer_size: PacketCount(1024),
+                send_buffer_size: PacketCount(1024),
                 cipher: None,
                 stream_id: None,
                 bandwidth: LiveBandwidthMode::Unlimited,

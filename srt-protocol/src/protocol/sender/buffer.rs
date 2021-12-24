@@ -10,6 +10,7 @@ use keyed_priority_queue::KeyedPriorityQueue;
 
 use crate::{
     connection::ConnectionSettings,
+    options::{ByteCount, PacketCount},
     packet::*,
     protocol::time::{Rtt, Timers},
 };
@@ -19,6 +20,7 @@ pub struct SendBuffer {
     latency_window: Duration,
     flow_window_size: usize,
     buffer: VecDeque<SendBufferEntry>,
+    max_buffer_size: usize,
     buffer_len_bytes: usize, // Invariant: buffer_len_bytes = sum of wire sizes of buffer
     next_send: SeqNumber,
     next_full_ack: FullAckSeqNumber,
@@ -39,6 +41,9 @@ struct SendBufferEntry {
     transmit_count: i32,
 }
 
+type DroppedPackets = (PacketCount, ByteCount);
+type PushDataResult = Result<(), DroppedPackets>;
+
 impl SendBuffer {
     pub fn new(settings: &ConnectionSettings) -> Self {
         Self {
@@ -48,6 +53,7 @@ impl SendBuffer {
             next_full_ack: FullAckSeqNumber::INITIAL,
             lost_list: BTreeSet::new(),
             flow_window_size: settings.max_flow_size.0 as usize,
+            max_buffer_size: settings.send_buffer_size.0 as usize,
             latency_window: max(
                 settings.send_tsbpd_latency + settings.send_tsbpd_latency / 4, // 125% of TSBPD
                 Duration::from_secs(1),
@@ -57,12 +63,22 @@ impl SendBuffer {
         }
     }
 
-    pub fn push_data(&mut self, packet: DataPacket) {
+    pub fn push_data(&mut self, packet: DataPacket) -> PushDataResult {
+        let result = if self.buffer.len() < self.max_buffer_size {
+            Ok(())
+        } else if let Some(entry) = self.buffer.pop_front() {
+            Err((PacketCount(1), ByteCount(entry.packet.wire_size() as u64)))
+        } else {
+            Ok(())
+        };
+
         self.buffer_len_bytes += packet.wire_size();
         self.buffer.push_back(SendBufferEntry {
             packet,
             transmit_count: 0,
         });
+
+        result
     }
 
     pub fn is_flushed(&self) -> bool {
@@ -572,6 +588,7 @@ mod test {
             stream_id: None,
             bandwidth: Default::default(),
             recv_buffer_size: PacketCount(8196),
+            send_buffer_size: PacketCount(8196),
             statistics_interval: Duration::from_secs(10),
         }
     }
@@ -604,7 +621,7 @@ mod test {
         let start = TimeStamp::MIN;
         let mut buffer = SendBuffer::new(&new_settings());
         for n in 0..=16u32 {
-            buffer.push_data(test_data_packet(n, false));
+            let _ = buffer.push_data(test_data_packet(n, false));
         }
 
         for n in 0..=16 {
@@ -628,7 +645,7 @@ mod test {
         let mut buffer = SendBuffer::new(&new_settings());
 
         for n in 0..=13 {
-            buffer.push_data(test_data_packet(n, false));
+            let _ = buffer.push_data(test_data_packet(n, false));
         }
 
         let actions = buffer
@@ -676,7 +693,7 @@ mod test {
         let mut buffer = SendBuffer::new(&new_settings());
 
         for n in 0..=2 {
-            buffer.push_data(test_data_packet(n, false));
+            let _ = buffer.push_data(test_data_packet(n, false));
         }
 
         assert_eq!(buffer.next_snd_actions(start, 3, false).count(), 3);
@@ -706,7 +723,7 @@ mod test {
         let mut buffer = SendBuffer::new(&new_settings());
 
         for n in 0..=5 {
-            buffer.push_data(test_data_packet(n, false));
+            let _ = buffer.push_data(test_data_packet(n, false));
         }
 
         let _ = buffer.next_snd_actions(now, 5, false).count();
@@ -765,7 +782,7 @@ mod test {
         let mut buffer = SendBuffer::new(&new_settings());
 
         for n in 0..=2 {
-            buffer.push_data(test_data_packet(n, false));
+            let _ = buffer.push_data(test_data_packet(n, false));
         }
 
         let _ = buffer.next_snd_actions(now, 3, false).count();
@@ -803,7 +820,7 @@ mod test {
         let mut buffer = SendBuffer::new(&new_settings());
 
         for n in 0..=2 {
-            buffer.push_data(test_data_packet(n, false));
+            let _ = buffer.push_data(test_data_packet(n, false));
         }
 
         let _ = buffer.next_snd_actions(now, 3, false).count();
@@ -830,7 +847,7 @@ mod test {
         let start = TimeStamp::MIN;
         let mut buffer = SendBuffer::new(&new_settings());
         for n in 0..=4 {
-            buffer.push_data(test_data_packet(n, false));
+            let _ = buffer.push_data(test_data_packet(n, false));
         }
 
         // drop queued packets when they are too late
@@ -886,7 +903,7 @@ mod test {
         let wire_size = test_data_packet(0, false).wire_size();
 
         for n in 0..10 {
-            buffer.push_data(test_data_packet(n, false));
+            let _ = buffer.push_data(test_data_packet(n, false));
             assert_eq!(buffer.duration(), Duration::from_millis(1) * n);
             assert_eq!(buffer.len(), n as usize + 1);
             assert_eq!(buffer.len_bytes(), wire_size * (n as usize + 1));
@@ -924,29 +941,38 @@ mod test {
 
         let max_flow_size = new_settings().max_flow_size.0 as u32 + 1;
         for n in 0..max_flow_size {
-            buffer.push_data(test_data_packet(n, false));
+            assert_eq!(buffer.push_data(test_data_packet(n, false)), Ok(()));
         }
 
         // if the buffer is full of unsent packets it
         assert!(!buffer.flow_window_exceeded());
 
         // if the buffer is full of too many packets sent and un-ACKed packets, it will exceed the flow window
-        assert_eq!(
-            buffer
-                .next_snd_actions(TimeStamp::MIN, max_flow_size, false)
-                .count(),
-            max_flow_size as usize
-        );
+        let actions = buffer.next_snd_actions(TimeStamp::MIN, max_flow_size, false);
+        assert_eq!(actions.count(), max_flow_size as usize);
         assert!(buffer.flow_window_exceeded());
 
         // if the sent packets in the buffer are then dropped before they are ACKed, it will no longer exceed the flow window
         let latency = Duration::from_secs(10);
-        assert!(
-            buffer
-                .next_snd_actions(TimeStamp::MIN + latency, max_flow_size, false)
-                .count()
-                > 1
-        );
+        let action = buffer.next_snd_actions(TimeStamp::MIN + latency, max_flow_size, false);
+        assert!(action.count() > 1);
         assert!(!buffer.flow_window_exceeded());
+    }
+
+    #[test]
+    fn max_send_buffer_size() {
+        let mut buffer = SendBuffer::new(&new_settings());
+
+        let send_buffer_size = new_settings().send_buffer_size.0 as u32;
+        for n in 0..send_buffer_size {
+            assert_eq!(buffer.push_data(test_data_packet(n, false)), Ok(()));
+        }
+
+        let expected_dropped_bytes = test_data_packet(0, false).wire_size() as u64;
+        let overflow_packet = test_data_packet(send_buffer_size, false);
+        assert_eq!(
+            buffer.push_data(overflow_packet),
+            Err((PacketCount(1), ByteCount(expected_dropped_bytes)))
+        );
     }
 }

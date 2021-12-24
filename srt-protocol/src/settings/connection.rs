@@ -18,6 +18,8 @@ pub struct ConnInitSettings {
 
     /// Receive buffer size in packets
     pub recv_buffer_size: options::PacketCount,
+    /// Size of the send buffer, in packets
+    pub send_buffer_size: options::PacketCount,
     pub max_packet_size: options::PacketSize,
     pub max_flow_size: options::PacketCount,
 }
@@ -59,6 +61,7 @@ impl From<options::SocketOptions> for ConnInitSettings {
             bandwidth: options.sender.bandwidth,
             statistics_interval: options.session.statistics_interval,
             recv_buffer_size: options.receiver.buffer_size / options.session.max_segment_size,
+            send_buffer_size: options.sender.buffer_size / options.session.max_segment_size,
             max_packet_size: options.sender.max_payload_size,
             max_flow_size: options.sender.flow_control_window_size,
         }

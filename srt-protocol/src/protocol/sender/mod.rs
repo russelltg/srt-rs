@@ -99,10 +99,13 @@ impl<'a> SenderContext<'a> {
             if let Some((bytes_enc, packet, km)) = self.sender.encryption.encrypt(packet) {
                 packets += 1;
                 bytes += packet.payload.len() as u64;
-                self.sender.send_buffer.push_data(packet);
-
                 if bytes_enc > 0 {
                     self.stats.tx_encrypted_data += 1;
+                }
+
+                if let Err((p_count, b_count)) = self.sender.send_buffer.push_data(packet) {
+                    self.stats.tx_dropped_data += p_count.0;
+                    self.stats.tx_dropped_bytes += b_count.0;
                 }
 
                 let control = km.map(ControlTypes::new_key_refresh_request);
