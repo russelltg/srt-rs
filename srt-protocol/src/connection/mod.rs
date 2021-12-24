@@ -563,10 +563,7 @@ mod duplex_connection {
         let mut connection = DuplexConnection::new(new_connection(start));
 
         let mut now = start;
-        assert_eq!(
-            connection.handle_input(now, Input::Timer),
-            WaitForData(102 * MILLIS)
-        );
+        assert_matches!(connection.handle_input(now, Input::Timer), WaitForData(_));
         assert_eq!(
             connection.handle_input(now, Input::Data(Some((start, Bytes::new())))),
             WaitForData(SND)
