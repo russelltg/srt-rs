@@ -1,4 +1,4 @@
-use std::{io, io::ErrorKind, net::IpAddr, time::Duration};
+use std::{io, io::ErrorKind, net::IpAddr};
 
 use thiserror::Error;
 
