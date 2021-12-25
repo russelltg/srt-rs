@@ -23,7 +23,7 @@ impl Div<PacketSize> for ByteCount {
     }
 }
 
-#[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Deref, Display, Into, Add, Sub, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 #[display(fmt = "{} bytes", "_0")]
 pub struct PacketSize(pub u64);
 

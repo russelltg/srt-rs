@@ -59,6 +59,10 @@ pub struct ControlPacket {
     pub control_type: ControlTypes,
 }
 
+impl ControlPacket {
+    pub const HEADER_SIZE: usize = super::Packet::HEADER_SIZE.0 as usize;
+}
+
 /// The different kind of control packets
 #[derive(Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -442,8 +446,7 @@ impl ControlPacket {
 
     pub fn wire_size(&self) -> usize {
         // 20 bytes IPv4 + 8 bytes of UDP + 16 bytes SRT header.
-        20 + 8
-            + 16
+        Self::HEADER_SIZE
             + match &self.control_type {
                 ControlTypes::Handshake(hs) => hs.serialized_size(),
                 ControlTypes::Ack(ack) => ack.serialized_size(),

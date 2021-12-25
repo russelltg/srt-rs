@@ -293,6 +293,7 @@ mod test {
                 bandwidth: Default::default(),
                 statistics_interval: Duration::from_secs(1),
                 recv_buffer_size: options::PacketCount(8192),
+                send_buffer_size: options::PacketCount(8192),
                 max_packet_size: options::PacketSize(1500),
                 max_flow_size: options::PacketCount(8192),
             },

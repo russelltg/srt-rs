@@ -132,6 +132,7 @@ pub fn gen_access_control_response(
             bandwidth: settings.bandwidth.clone(),
             local_sockid: settings.local_sockid,
             recv_buffer_size: settings.recv_buffer_size,
+            send_buffer_size: settings.send_buffer_size,
             statistics_interval: settings.statistics_interval,
         },
     )
@@ -230,6 +231,7 @@ impl StartedInitiator {
             bandwidth: self.settings.bandwidth,
             local_sockid: self.settings.local_sockid,
             recv_buffer_size: self.settings.recv_buffer_size,
+            send_buffer_size: self.settings.send_buffer_size,
             statistics_interval: self.settings.statistics_interval,
         })
     }
