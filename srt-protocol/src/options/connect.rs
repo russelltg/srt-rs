@@ -80,3 +80,20 @@ impl Validation for Connect {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn ttl_validate() {
+        assert_eq!(
+            Connect {
+                ip_ttl: 0,
+                ..Default::default()
+            }
+            .is_valid(),
+            Err(OptionsError::InvalidIpTtl)
+        );
+    }
+}
