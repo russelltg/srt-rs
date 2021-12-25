@@ -451,7 +451,7 @@ impl ControlPacket {
                 ControlTypes::Handshake(hs) => hs.serialized_size(),
                 ControlTypes::Ack(ack) => ack.serialized_size(),
                 ControlTypes::Nak(nak) => nak.0.len() * size_of::<u32>(),
-                ControlTypes::DropRequest { .. } => 3 * size_of::<u32>(),
+                ControlTypes::DropRequest { .. } => 2 * size_of::<u32>(),
                 ControlTypes::Srt(srt) => usize::from(srt.size_words()) * size_of::<u32>(),
                 ControlTypes::CongestionWarning
                 | ControlTypes::Ack2(_)
@@ -804,7 +804,7 @@ impl ControlTypes {
     fn additional_info(&self) -> u32 {
         match self {
             // These types have additional info
-            ControlTypes::DropRequest { msg_to_drop: a, .. } => a.as_raw(),
+            ControlTypes::DropRequest { msg_to_drop, .. } => msg_to_drop.as_raw(),
             ControlTypes::Ack2(a) | ControlTypes::Ack(Acknowledgement::Full(_, _, a)) => {
                 (*a).into()
             }
@@ -836,8 +836,10 @@ impl ControlTypes {
                     into.put_u32(loss);
                 }
             }
-            ControlTypes::DropRequest { msg_to_drop, range } => {
-                into.put_u32(msg_to_drop.as_raw());
+            ControlTypes::DropRequest {
+                msg_to_drop: _,
+                range,
+            } => {
                 into.put_u32(range.start().as_raw());
                 into.put_u32(range.end().as_raw());
             }
@@ -1556,6 +1558,18 @@ mod test {
     }
 
     #[test]
+    fn drop_request_ser_des_test() {
+        ser_des_test(ControlPacket {
+            timestamp: TimeStamp::from_micros(100),
+            dest_sockid: rand::random(),
+            control_type: ControlTypes::DropRequest {
+                msg_to_drop: MsgNumber(123),
+                range: SeqNumber(13)..=SeqNumber(100),
+            },
+        });
+    }
+
+    #[test]
     fn filter_ser_des_test() {
         ser_des_test(ControlPacket {
             timestamp: TimeStamp::from_micros(100),
@@ -1854,4 +1868,7 @@ mod test {
 
         assert_eq!(packet, reference);
     }
+
+    #[test]
+    fn drop_request() {}
 }
