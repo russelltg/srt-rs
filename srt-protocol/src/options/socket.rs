@@ -36,14 +36,34 @@ impl CompositeValidation for SocketOptions {
         if self.receiver.buffer_size
             > self.sender.flow_control_window_size * self.session.max_segment_size
         {
-            Err(OptionsError::ReceiveBufferTooLarge {
+            return Err(OptionsError::ReceiveBufferTooLarge {
                 buffer: self.receiver.buffer_size,
                 max_segment: self.session.max_segment_size,
                 flow_control_window: self.sender.flow_control_window_size,
-            })
-        } else {
-            Ok(())
+            });
         }
+
+        if self.connect.udp_recv_buffer_size
+            > self.sender.flow_control_window_size * self.session.max_segment_size
+        {
+            return Err(OptionsError::UdpReceiveBufferTooLarge {
+                udp_buffer: self.connect.udp_recv_buffer_size,
+                max_segment: self.session.max_segment_size,
+                flow_control_window: self.sender.flow_control_window_size,
+            });
+        }
+
+        if self.connect.udp_send_buffer_size
+            > self.sender.flow_control_window_size * self.session.max_segment_size
+        {
+            return Err(OptionsError::UdpSenderBufferTooLarge {
+                udp_buffer: self.connect.udp_send_buffer_size,
+                max_segment: self.session.max_segment_size,
+                flow_control_window: self.sender.flow_control_window_size,
+            });
+        }
+
+        Ok(())
     }
 }
 
@@ -83,6 +103,8 @@ mod test {
     use std::time::Duration;
 
     use super::*;
+
+    use assert_matches::assert_matches;
 
     #[test]
     fn test() -> Result<(), OptionsError> {
@@ -133,6 +155,48 @@ mod test {
             },
         }
         .try_validate()?;
+
+        assert_eq!(
+            SocketOptions::new().set(|op| {
+                op.connect.udp_recv_buffer_size = ByteCount(1500 * 10_000 + 1);
+                op.session.max_segment_size = PacketSize(1500);
+                op.sender.flow_control_window_size = PacketCount(10_000);
+            }),
+            Err(OptionsError::UdpReceiveBufferTooLarge {
+                udp_buffer: ByteCount(1500 * 10_000 + 1),
+                max_segment: PacketSize(1500),
+                flow_control_window: PacketCount(10_000),
+            })
+        );
+        assert_matches!(
+            SocketOptions::new().set(|op| {
+                op.connect.udp_recv_buffer_size = ByteCount(1500 * 10_000);
+                op.session.max_segment_size = PacketSize(1500);
+                op.sender.flow_control_window_size = PacketCount(10_000);
+            }),
+            Ok(_)
+        );
+
+        assert_eq!(
+            SocketOptions::new().set(|op| {
+                op.connect.udp_send_buffer_size = ByteCount(1500 * 10_000 + 1);
+                op.session.max_segment_size = PacketSize(1500);
+                op.sender.flow_control_window_size = PacketCount(10_000);
+            }),
+            Err(OptionsError::UdpSenderBufferTooLarge {
+                udp_buffer: ByteCount(1500 * 10_000 + 1),
+                max_segment: PacketSize(1500),
+                flow_control_window: PacketCount(10_000),
+            })
+        );
+        assert_matches!(
+            SocketOptions::new().set(|op| {
+                op.connect.udp_send_buffer_size = ByteCount(1500 * 10_000);
+                op.session.max_segment_size = PacketSize(1500);
+                op.sender.flow_control_window_size = PacketCount(10_000);
+            }),
+            Ok(_)
+        );
 
         Ok(())
     }

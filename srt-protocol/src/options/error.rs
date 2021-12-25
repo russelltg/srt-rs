@@ -27,6 +27,20 @@ pub enum OptionsError {
         flow_control_window: PacketCount,
     },
 
+    #[error("UDP Receive buffer larger than flow window, flow window={flow_control_window} mss={max_segment}, receive buffer={udp_buffer}")]
+    UdpReceiveBufferTooLarge {
+        udp_buffer: ByteCount,
+        max_segment: PacketSize,
+        flow_control_window: PacketCount,
+    },
+
+    #[error("UDP Send buffer larger than flow window, flow window={flow_control_window} mss={max_segment}, receive buffer={udp_buffer}")]
+    UdpSenderBufferTooLarge {
+        udp_buffer: ByteCount,
+        max_segment: PacketSize,
+        flow_control_window: PacketCount,
+    },
+
     #[error("Sender flow_control_window_size {0} is less than the minimum 32 packets")]
     FlowControlWindowMin(PacketCount),
 
@@ -44,6 +58,9 @@ pub enum OptionsError {
 
     #[error("{0}")]
     InvalidStreamId(StreamIdError),
+
+    #[error("IP TTL is invalid, must be > 0")]
+    InvalidIpTtl,
 }
 
 impl From<OptionsError> for io::Error {
