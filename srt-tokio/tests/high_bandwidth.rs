@@ -6,8 +6,8 @@ use std::{
 use anyhow::Error;
 use bytes::Bytes;
 use futures::{stream, FutureExt, SinkExt, Stream, StreamExt};
+use log::{error, info};
 use tokio::select;
-use log::{info, error};
 
 use srt_tokio::{options::*, SocketStatistics, SrtSocket};
 
@@ -54,7 +54,6 @@ async fn high_bandwidth() -> Result<(), Error> {
             .set(|options| {
                 options.sender.buffer_size = buffer_size * 10;
                 options.connect.udp_send_buffer_size = ByteCount(5_000_000);
-
             })
             .call("127.0.0.1:6654", None)
             .await?;
@@ -126,7 +125,7 @@ async fn high_bandwidth() -> Result<(), Error> {
 
     let send = tokio::spawn(sender_fut).fuse();
     let recv = tokio::spawn(recv_fut).fuse();
-    let timeout =     tokio::time::sleep(Duration::from_secs(60)).fuse();
+    let timeout = tokio::time::sleep(Duration::from_secs(60)).fuse();
 
     select!(
         result = send => error!("send: {:?}", result),

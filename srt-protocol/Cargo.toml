@@ -24,6 +24,7 @@ sha-1 = "0.10.0"
 streaming-stats = "0.2.3"
 take-until = "0.1.0"
 thiserror = "1.0.30"
+url = "=2.1.0" # https://github.com/servo/rust-url/issues/581
 
 [dependencies.aes]
 features = ["ctr"]

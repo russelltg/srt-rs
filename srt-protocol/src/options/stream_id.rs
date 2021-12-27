@@ -23,7 +23,7 @@ impl Deref for StreamId {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum StreamIdError {
     FromUtf8(FromUtf8Error),
     Length(usize),
