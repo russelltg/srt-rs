@@ -1,6 +1,6 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use srt_protocol::Packet;
+use srt_protocol::packet::Packet;
 use std::io::Cursor;
 
 fuzz_target!(|data: &[u8]| {
