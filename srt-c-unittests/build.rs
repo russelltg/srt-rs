@@ -19,5 +19,6 @@ fn main() {
     path.pop();
     path.pop();
     path.pop();
+    println!("cargo:rerun-if-changed={}/libsrt_c.so", path.display());
     println!("cargo:rustc-link-arg-bins={}/libsrt_c.so", path.display());
 }

@@ -283,7 +283,7 @@ enum SocketData {
     Initialized(SocketOptions, ApiOptions),
     ConnectingNonBlocking(JoinHandle<()>, ApiOptions),
     Established(SrtSocket, ApiOptions),
-    Listening(SrtListener, ApiOptions),
+    Listening(Option<SrtListener>, ApiOptions),
     ConnectFailed(io::Error),
 
     InvalidIntermediateState,
@@ -372,7 +372,7 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
         let ret = TOKIO_RUNTIME.block_on(SrtListener::bind(options));
         *l = SocketData::Listening(
             match ret {
-                Ok(l) => l,
+                Ok(l) => Some(l),
                 Err(e) => return set_error(&format!("Failed to listen on socket: {}", e)),
             },
             opts,
@@ -544,22 +544,38 @@ pub extern "C" fn srt_accept(
     };
 
     let mut l = sock.lock().unwrap();
-    if let SocketData::Listening(ref mut l, opts) = *l {
+    if let SocketData::Listening(ref mut listener, opts) = *l {
+        let mut listener = match listener.take() {
+            Some(l) => l,
+            None => return set_error("accept can only be called from one thread at a time"),
+        };
+
+        drop(l); // release mutex so other calls don't block
+
         TOKIO_RUNTIME.block_on(async {
             let req = if opts.rcv_syn {
                 // blocking
-                match l.incoming().next().await {
+                match listener.incoming().next().await {
                     Some(req) => req,
                     None => return set_error("Listener ended"),
                 }
             } else {
                 // nonblocking--10ms for now but could be shorter potentially
-                match timeout(Duration::from_millis(10), l.incoming().next()).await {
+                match timeout(Duration::from_millis(10), listener.incoming().next()).await {
                     Err(_) => return set_error("no new connections available"),
                     Ok(Some(req)) => req,
                     Ok(None) => return set_error("Listener ended"),
                 }
             };
+
+            // put listener back
+            {
+                let mut l = sock.lock().unwrap();
+                if let SocketData::Listening(ref mut in_state, _opts) = *l {
+                    *in_state = Some(listener);
+                }
+            }
+
             // TODO: acceptors
             let srt_socket = req.accept(None).await.unwrap();
             // TODO: are options inhereted like this?
