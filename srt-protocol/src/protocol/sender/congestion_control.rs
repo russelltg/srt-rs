@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    cmp::max,
+    time::{Duration, Instant},
+};
 
 use crate::options::{
     ByteCount, DataRate, LiveBandwidthMode, PacketCount, PacketPeriod, PacketRate, Percent,
@@ -135,9 +138,11 @@ impl SenderCongestionControl {
         use LiveBandwidthMode::*;
         match self.bandwidth_mode {
             Input { rate, overhead } => rate * (overhead + Percent(100)),
-            Set(max) => max,
+            Max(max) => max,
             Unlimited => Self::GIGABIT,
-            Estimated { overhead, .. } => actual_data_rate * (overhead + Percent(100)),
+            Estimated { overhead, expected } => {
+                max(expected, actual_data_rate) * (overhead + Percent(100))
+            }
         }
     }
 
@@ -207,7 +212,7 @@ mod sender_congestion_control {
     #[test]
     fn data_rate_max() {
         let max_data_rate = 10_000_000;
-        let data_rate = LiveBandwidthMode::Set(DataRate(max_data_rate));
+        let data_rate = LiveBandwidthMode::Max(DataRate(max_data_rate));
         let expected_data_rate = max_data_rate;
         let mean_packet_size = 100_000;
 
@@ -232,6 +237,7 @@ mod sender_congestion_control {
     fn data_rate_auto() {
         let auto_overhead = 5;
         let data_rate = LiveBandwidthMode::Estimated {
+            expected: DataRate(1_000_000),
             overhead: Percent(auto_overhead),
         };
         let expected_data_rate = ((100 + auto_overhead) * 10 * 100_000) / 100;
@@ -248,6 +254,35 @@ mod sender_congestion_control {
             None
         );
         let snd_period = control.on_input(start + micros(100_000), PacketCount(0), ByteCount(0));
+
+        let expected_snd_period = mean_packet_size * 10 * 100_000 / expected_data_rate;
+
+        assert_eq!(snd_period, Some(micros(expected_snd_period)));
+    }
+
+    #[test]
+    fn data_rate_auto_floor() {
+        let auto_overhead = 5;
+        let data_rate = LiveBandwidthMode::Estimated {
+            expected: DataRate(1_000_000),
+            overhead: Percent(auto_overhead),
+        };
+        let expected_data_rate = ((100 + auto_overhead) * 10 * 100_000) / 100;
+        let mean_packet_size = 100_000;
+
+        let micros = Duration::from_micros;
+        let start = Instant::now();
+        let mut control = SenderCongestionControl::new(data_rate);
+
+        // initialize statistics
+        assert_eq!(control.on_input(start, PacketCount(0), ByteCount(0)), None);
+        assert_eq!(
+            control.on_input(start, PacketCount(1), ByteCount(mean_packet_size)),
+            None
+        );
+
+        // if the actual data rate drops below the expected floor, don't increase the SND period
+        let snd_period = control.on_input(start + micros(500_000), PacketCount(0), ByteCount(0));
 
         let expected_snd_period = mean_packet_size * 10 * 100_000 / expected_data_rate;
 
