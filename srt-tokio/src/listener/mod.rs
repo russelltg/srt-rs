@@ -6,7 +6,7 @@ use std::{io, sync::Arc};
 
 use futures::{channel::mpsc, prelude::*};
 use srt_protocol::settings::ConnInitSettings;
-use tokio::{net::UdpSocket, task::JoinHandle};
+use tokio::{net::UdpSocket, sync::oneshot, task::JoinHandle};
 
 use crate::net::bind_socket;
 
@@ -18,8 +18,9 @@ pub use srt_protocol::statistics::ListenerStatistics;
 
 pub struct SrtListener {
     settings: ConnInitSettings,
-    request_receiver: mpsc::Receiver<ConnectionRequest>,
+    request_receiver: Option<mpsc::Receiver<ConnectionRequest>>,
     statistics_receiver: watch::Receiver<ListenerStatistics>,
+    close_req: Option<oneshot::Sender<()>>,
     _task: JoinHandle<()>,
 }
 
@@ -42,6 +43,7 @@ impl SrtListener {
         let local_address = socket.local_addr()?;
         let socket = PacketSocket::from_socket(Arc::new(socket), 1024 * 1024);
         let settings = ConnInitSettings::from(socket_options);
+        let (close_req, close_resp) = oneshot::channel();
         let (request_sender, request_receiver) = mpsc::channel(100);
         let (statistics_sender, statistics_receiver) = watch::channel();
         let state = SrtListenerState::new(
@@ -50,14 +52,16 @@ impl SrtListener {
             settings.clone(),
             request_sender,
             statistics_sender,
+            close_resp,
         );
         let task = tokio::spawn(async move {
             state.run_loop().await;
         });
         Ok(Self {
             settings,
-            request_receiver,
+            request_receiver: Some(request_receiver),
             statistics_receiver,
+            close_req: Some(close_req),
             _task: task,
         })
     }
@@ -70,8 +74,13 @@ impl SrtListener {
         &mut self.statistics_receiver
     }
 
-    pub fn incoming(&mut self) -> &mut impl Stream<Item = ConnectionRequest> {
-        &mut self.request_receiver
+    pub fn incoming(&mut self) -> impl Stream<Item = ConnectionRequest> + 'static {
+        self.request_receiver.take().unwrap()
+    }
+
+    pub fn close(&mut self) {
+        dbg!("got close");
+        let _ = self.close_req.take().unwrap().send(());
     }
 }
 

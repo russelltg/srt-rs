@@ -4,9 +4,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures::{channel::mpsc, prelude::*, select, SinkExt};
+use futures::{channel::mpsc, future::Fuse, prelude::*, select, SinkExt};
 use srt_protocol::{connection::Connection, listener::*, packet::*, settings::ConnInitSettings};
-use tokio::time::sleep_until;
+use tokio::{sync::oneshot, time::sleep_until};
 
 use crate::{net::PacketSocket, watch};
 
@@ -22,6 +22,7 @@ pub struct SrtListenerState {
     statistics_sender: watch::Sender<ListenerStatistics>,
     pending_connections: HashMap<SessionId, PendingConnection>,
     open_connections: HashMap<SessionId, OpenConnection>,
+    close_recvr: Fuse<oneshot::Receiver<()>>,
 }
 
 impl SrtListenerState {
@@ -31,6 +32,7 @@ impl SrtListenerState {
         settings: ConnInitSettings,
         request_sender: mpsc::Sender<ConnectionRequest>,
         statistics_sender: watch::Sender<ListenerStatistics>,
+        close_recvr: oneshot::Receiver<()>,
     ) -> Self {
         let listener = MultiplexListener::new(Instant::now(), local_address, settings);
         let (response_sender, response_receiver) = mpsc::channel(100);
@@ -44,6 +46,7 @@ impl SrtListenerState {
             statistics_sender,
             pending_connections: Default::default(),
             open_connections: Default::default(),
+            close_recvr: close_recvr.fuse(),
         }
     }
 
@@ -97,6 +100,7 @@ impl SrtListenerState {
                     packet = self.socket.receive().fuse() => Input::Packet(packet),
                     response = self.response_receiver.next() => Input::AccessResponse(response),
                     _ = sleep_until(timeout.into()).fuse() => Input::Timer,
+                    _ = &mut self.close_recvr => return,
                 },
                 Close => break,
             }
