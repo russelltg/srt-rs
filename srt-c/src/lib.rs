@@ -1,6 +1,8 @@
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
 
+mod errors;
+
 use std::{
     cell::RefCell,
     cmp::min,
@@ -20,7 +22,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures::{sink::SinkExt, AsyncWriteExt, StreamExt};
+use futures::{sink::SinkExt, StreamExt};
 use lazy_static::lazy_static;
 use libc::{sockaddr_in, sockaddr_in6, AF_INET};
 use log::{error, warn};
@@ -247,8 +249,12 @@ pub const LOG_INFO: c_int = 6;
 /// debug-level messages
 pub const LOG_DEBUG: c_int = 7;
 
+const SRT_SUCCESS: c_int = 0;
 /// Error return code
 pub const SRT_ERROR: c_int = -1;
+
+pub const SRT_LIVE_DEF_PLSIZE: c_int = 1316;
+pub const SRT_INVALID_SOCK: SRTSOCKET = -1;
 
 lazy_static! {
     static ref TOKIO_RUNTIME: Runtime = Runtime::new().unwrap();
@@ -320,12 +326,12 @@ fn sockaddr_from_c(addr: &libc::sockaddr, len: c_int) -> Option<SocketAddr> {
 #[no_mangle]
 pub extern "C" fn srt_startup() -> c_int {
     lazy_static::initialize(&TOKIO_RUNTIME);
-    0
+    SRT_SUCCESS
 }
 
 #[no_mangle]
 pub extern "C" fn srt_cleanup() -> c_int {
-    0
+    SRT_SUCCESS
 }
 
 #[no_mangle]
@@ -343,7 +349,7 @@ pub extern "C" fn srt_bind(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c_in
     let mut l = sock.lock().unwrap();
     if let SocketData::Initialized(ref mut b, _) = *l {
         b.connect.local = sa;
-        0
+        SRT_SUCCESS
     } else {
         set_error("Socket already connecting or listened, cannot bind anymore")
     }
@@ -376,7 +382,110 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
         return set_error("Cannot listen, listen or connect has already been called");
     }
 
-    0
+    SRT_SUCCESS
+}
+
+#[repr(C)]
+pub enum SRT_EPOLL_OPT {
+    SRT_EPOLL_OPT_NONE = 0x0, // fallback
+
+    // Values intended to be the same as in `<sys/epoll.h>`.
+    // so that if system values are used by mistake, they should have the same effect
+    // This applies to: IN, OUT, ERR and ET.
+    /// Ready for 'recv' operation:
+    ///
+    /// - For stream mode it means that at least 1 byte is available.
+    /// In this mode the buffer may extract only a part of the packet,
+    /// leaving next data possible for extraction later.
+    ///
+    /// - For message mode it means that there is at least one packet
+    /// available (this may change in future, as it is desired that
+    /// one full message should only wake up, not single packet of a
+    /// not yet extractable message).
+    ///
+    /// - For live mode it means that there's at least one packet
+    /// ready to play.
+    ///
+    /// - For listener sockets, this means that there is a new connection
+    /// waiting for pickup through the `srt_accept()` call, that is,
+    /// the next call to `srt_accept()` will succeed without blocking
+    /// (see an alias SRT_EPOLL_ACCEPT below).
+    SRT_EPOLL_IN = 0x1,
+
+    /// Ready for 'send' operation.
+    ///
+    /// - For stream mode it means that there's a free space in the
+    /// sender buffer for at least 1 byte of data. The next send
+    /// operation will only allow to send as much data as it is free
+    /// space in the buffer.
+    ///
+    /// - For message mode it means that there's a free space for at
+    /// least one UDP packet. The edge-triggered mode can be used to
+    /// pick up updates as the free space in the sender buffer grows.
+    ///
+    /// - For live mode it means that there's a free space for at least
+    /// one UDP packet. On the other hand, no readiness for OUT usually
+    /// means an extraordinary congestion on the link, meaning also that
+    /// you should immediately slow down the sending rate or you may get
+    /// a connection break soon.
+    ///
+    /// - For non-blocking sockets used with `srt_connect*` operation,
+    /// this flag simply means that the connection was established.
+    SRT_EPOLL_OUT = 0x4,
+
+    /// The socket has encountered an error in the last operation
+    /// and the next operation on that socket will end up with error.
+    /// You can retry the operation, but getting the error from it
+    /// is certain, so you may as well close the socket.
+    SRT_EPOLL_ERR = 0x8,
+
+    SRT_EPOLL_UPDATE = 0x10,
+    SRT_EPOLL_ET = 1 << 31,
+}
+
+// To avoid confusion in the internal code, the following
+// duplicates are introduced to improve clarity.
+pub const SRT_EPOLL_CONNECT: SRT_EPOLL_OPT = SRT_EPOLL_OPT::SRT_EPOLL_OUT;
+pub const SRT_EPOLL_ACCEPT: SRT_EPOLL_OPT = SRT_EPOLL_OPT::SRT_EPOLL_IN;
+
+#[no_mangle]
+pub extern "C" fn srt_epoll_create() -> c_int {
+    todo!()
+}
+
+#[no_mangle]
+pub extern "C" fn srt_epoll_add_usock(
+    _eid: c_int,
+    _sock: SRTSOCKET,
+    _events: *const c_int,
+) -> c_int {
+    todo!()
+}
+
+#[no_mangle]
+pub extern "C" fn srt_epoll_remove_usock(_eid: c_int, _sock: SRTSOCKET) -> c_int {
+    todo!()
+}
+
+#[no_mangle]
+pub extern "C" fn srt_epoll_release(_eid: c_int) -> c_int {
+    todo!()
+}
+
+#[no_mangle]
+pub extern "C" fn srt_epoll_wait(
+    _eid: c_int,
+    _readfds: *const SRTSOCKET,
+    _rnum: *const c_int,
+    _writefds: *const SRTSOCKET,
+    _wnum: *const c_int,
+    _msTimeOut: i64,
+    _lrfds: *const SRTSOCKET,
+    _lrnum: *const c_int,
+    _lwfds: *const SRTSOCKET,
+    _lwnum: *const c_int,
+) -> c_int {
+    todo!()
 }
 
 #[no_mangle]
@@ -420,7 +529,7 @@ pub extern "C" fn srt_connect(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c
         return set_error("Connect already called, invalid");
     }
 
-    0
+    SRT_SUCCESS
 }
 
 #[no_mangle]
@@ -473,15 +582,21 @@ thread_local! {
 }
 
 #[no_mangle]
+pub extern "C" fn srt_getlasterror(_errno_loc: *const c_int) -> c_int {
+    todo!()
+}
+
+#[no_mangle]
 pub extern "C" fn srt_getlasterror_str() -> *const c_char {
     LAST_ERROR.with(|f| f.borrow().as_c_str().as_ptr())
 }
 
 #[no_mangle]
-pub extern "C" fn srt_send(_sock: SRTSOCKET, _buf: *const c_char, _len: c_int) -> c_int {
-    todo!()
+pub extern "C" fn srt_send(sock: SRTSOCKET, buf: *const c_char, len: c_int) -> c_int {
+    srt_sendmsg2(sock, buf, len, None)
 }
 
+/// Returns number of bytes written
 #[no_mangle]
 pub extern "C" fn srt_sendmsg2(
     sock: SRTSOCKET,
@@ -509,7 +624,7 @@ pub extern "C" fn srt_sendmsg2(
         _ => return set_error("Connection not established, cannot send"),
     }
 
-    0
+    len
 }
 
 /// Returns the number of bytes read
@@ -600,6 +715,17 @@ pub extern "C" fn srt_setsockopt(
     todo!()
 }
 
+#[no_mangle]
+pub extern "C" fn srt_getsockopt(
+    _sock: SRTSOCKET,
+    _level: c_int,
+    _optname: SRT_SOCKOPT,
+    _optval: *const (),
+    _optlen: &mut c_int,
+) -> c_int {
+    todo!()
+}
+
 unsafe fn extract_int(val: *const (), len: c_int) -> Option<c_int> {
     if len != 4 {
         return None;
@@ -633,10 +759,11 @@ pub extern "C" fn srt_setsockflag(
     let sock = sock.lock().unwrap();
     use SocketData::*;
     use SRT_SOCKOPT::*;
-    match opt {
-        SRTO_SENDER => {}
-        SRTO_RCVSYN => match *sock {
-            Initialized(_, mut o) | ConnectingNonBlocking(_, mut o) | Established(_, mut o) => {
+
+    if let Initialized(_, mut o) | ConnectingNonBlocking(_, mut o) | Established(_, mut o) = *sock {
+        match opt {
+            SRTO_SENDER => {}
+            SRTO_RCVSYN => {
                 o.rcv_syn = match unsafe { extract_bool(optval, optlen) } {
                     Some(e) => e,
                     None => {
@@ -647,13 +774,26 @@ pub extern "C" fn srt_setsockflag(
                     }
                 }
             }
-            Listening(_, _) | ConnectFailed(_) | InvalidIntermediateState => {
-                return set_error(&format!("Option {:?} not settable in current state ", opt))
+            SRTO_SNDSYN => {
+                o.snd_syn = match unsafe { extract_bool(optval, optlen) } {
+                    Some(e) => e,
+                    None => {
+                        return set_error(&format!(
+                            "Failed to set option: {:?}: wrong data length",
+                            opt
+                        ))
+                    }
+                }
             }
-        },
-        o => unimplemented!("{:?}", o),
+            SRTO_CONNTIMEO => {
+                warn!("oops");
+            }
+            o => unimplemented!("{:?}", o),
+        }
+        SRT_SUCCESS
+    } else {
+        return set_error(&format!("Option {:?} not settable in current state ", opt));
     }
-    0
 }
 
 #[no_mangle]
@@ -663,7 +803,7 @@ pub extern "C" fn srt_close(socknum: SRTSOCKET) -> c_int {
         Some(sock) => sock,
     };
 
-    let mut retcode = 0;
+    let mut retcode = SRT_SUCCESS;
 
     let mut l = sock.lock().unwrap();
     if let SocketData::Established(ref mut s, _) = *l {
