@@ -16,7 +16,7 @@ async fn multiplexer() -> Result<()> {
     let listener = tokio::spawn(async {
         let mut server = SrtListener::builder().bind(2000).await.unwrap();
 
-        let incoming = server.incoming();
+        let mut incoming = server.incoming();
         let mut fused_finish = finished_recv.fuse();
         while let Some(request) =
             futures::select!(res = incoming.next().fuse() => res, _ = fused_finish => None)

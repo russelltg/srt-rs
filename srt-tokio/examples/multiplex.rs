@@ -18,7 +18,7 @@ async fn main() -> Result<(), Error> {
 
     println!("SRT Multiplex Server is listening on port: {}", port);
 
-    let incoming = binding.incoming();
+    let mut incoming = binding.incoming();
     while let Some(request) = incoming.next().await {
         let mut srt_socket = request.accept(None).await.unwrap();
         tokio::spawn(async move {

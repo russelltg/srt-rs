@@ -770,7 +770,7 @@ pub enum SRT_KM_STATE {
 }
 
 #[no_mangle]
-pub extern "C" fn srt_getsockstate(sock: SRTSOCKET) -> SRT_SOCKSTATUS {
+pub extern "C" fn srt_getsockstate(_sock: SRTSOCKET) -> SRT_SOCKSTATUS {
     todo!()
 }
 
