@@ -3,6 +3,7 @@
 
 use std::{
     cell::RefCell,
+    cmp::min,
     collections::BTreeMap,
     ffi::CString,
     intrinsics::transmute,
@@ -10,24 +11,29 @@ use std::{
     mem::{replace, size_of},
     net::SocketAddr,
     os::raw::{c_char, c_int},
-    slice::from_raw_parts,
+    slice::{from_raw_parts, from_raw_parts_mut},
     sync::{
         atomic::{AtomicI32, Ordering},
         Arc, Mutex, RwLock,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use bytes::Bytes;
-use futures::sink::SinkExt;
+use futures::{sink::SinkExt, AsyncWriteExt, StreamExt};
 use lazy_static::lazy_static;
 use libc::{sockaddr_in, sockaddr_in6, AF_INET};
-use srt_tokio::{SrtSocket, SrtSocketBuilder};
-use tokio::{runtime::Runtime, task::JoinHandle};
+use log::{error, warn};
+use srt_tokio::{
+    options::{ListenerOptions, SocketOptions, Validation},
+    SrtListener, SrtSocket,
+};
+use tokio::{runtime::Runtime, task::JoinHandle, time::timeout};
 
 pub type SRTSOCKET = i32;
 
 #[repr(C)]
+#[derive(Debug)]
 pub enum SRT_SOCKOPT {
     SRTO_MSS = 0,        // the Maximum Transfer Unit
     SRTO_SNDSYN = 1,     // if sending is blocking
@@ -268,9 +274,10 @@ impl Default for ApiOptions {
 }
 
 enum SocketData {
-    Initialized(SrtSocketBuilder, ApiOptions),
+    Initialized(SocketOptions, ApiOptions),
     ConnectingNonBlocking(JoinHandle<()>, ApiOptions),
     Established(SrtSocket, ApiOptions),
+    Listening(SrtListener, ApiOptions),
     ConnectFailed(io::Error),
 
     InvalidIntermediateState,
@@ -322,65 +329,136 @@ pub extern "C" fn srt_cleanup() -> c_int {
 }
 
 #[no_mangle]
-pub extern "C" fn srt_bind(_sock: SRTSOCKET, _name: &libc::sockaddr, _namelen: c_int) -> c_int {
-    todo!()
-}
-
-#[no_mangle]
-pub extern "C" fn srt_listen(_sock: SRTSOCKET, _backlog: c_int) -> c_int {
-    todo!()
-}
-
-#[no_mangle]
-pub extern "C" fn srt_connect(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c_int) -> c_int {
+pub extern "C" fn srt_bind(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c_int) -> c_int {
     let sa = match sockaddr_from_c(name, namelen) {
-        None => {
-            return set_error("Invalid socket address");
-        }
+        None => return set_error("Invalid socket address"),
         Some(sa) => sa,
     };
 
-    println!("Connecting to {}", sa);
-
     let sock = match get_sock(sock) {
-        None => {
-            return set_error("Invalid socket");
-        }
+        None => return set_error("Invalid socket"),
+        Some(sock) => sock,
+    };
+
+    let mut l = sock.lock().unwrap();
+    if let SocketData::Initialized(ref mut b, _) = *l {
+        b.connect.local = sa;
+        0
+    } else {
+        set_error("Socket already connecting or listened, cannot bind anymore")
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
+    let sock = match get_sock(sock) {
+        None => return set_error("Invalid socket"),
         Some(sock) => sock,
     };
 
     let mut l = sock.lock().unwrap();
     let sd = replace(&mut *l, SocketData::InvalidIntermediateState);
-    match sd {
-        SocketData::Initialized(sb, options) => {
-            if options.rcv_syn {
-                // blocking mode, wait on oneshot
-                let res = TOKIO_RUNTIME.block_on(async move { sb.call(sa, None).await });
-                match res {
-                    Ok(sock) => *l = SocketData::Established(sock, options),
-                    Err(e) => return set_error(&format!("Failed to connect: {}", e)),
-                }
-            } else {
-                // nonblocking mode
-                let sock_clone = sock.clone();
-                let task = TOKIO_RUNTIME.spawn(async move {
-                    let res = sb.call(sa, None).await;
-                    let mut l = sock_clone.lock().unwrap();
-                    match res {
-                        Ok(s) => *l = SocketData::Established(s, options),
-                        Err(e) => *l = SocketData::ConnectFailed(e),
-                    }
-                });
-                *l = SocketData::ConnectingNonBlocking(task, options);
-            }
-        }
-        _ => {
-            *l = sd; // restore state
-            return set_error("Connect already called, invalid");
-        }
+    if let SocketData::Initialized(so, opts) = sd {
+        let options = match (ListenerOptions { socket: so }.try_validate()) {
+            Ok(options) => options,
+            Err(e) => return set_error(&format!("Invalid options: {}", e)),
+        };
+        let ret = TOKIO_RUNTIME.block_on(SrtListener::bind(options));
+        *l = SocketData::Listening(
+            match ret {
+                Ok(l) => l,
+                Err(e) => return set_error(&format!("Failed to listen on socket: {}", e)),
+            },
+            opts,
+        )
+    } else {
+        *l = sd;
+        return set_error("Cannot listen, listen or connect has already been called");
     }
 
     0
+}
+
+#[no_mangle]
+pub extern "C" fn srt_connect(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c_int) -> c_int {
+    let sa = match sockaddr_from_c(name, namelen) {
+        None => return set_error("Invalid socket address"),
+        Some(sa) => sa,
+    };
+
+    let sock = match get_sock(sock) {
+        None => return set_error("Invalid socket"),
+        Some(sock) => sock,
+    };
+
+    let mut l = sock.lock().unwrap();
+    let sd = replace(&mut *l, SocketData::InvalidIntermediateState);
+    if let SocketData::Initialized(so, options) = sd {
+        let sb = SrtSocket::builder().with(so);
+        if options.rcv_syn {
+            // blocking mode, wait on oneshot
+            let res = TOKIO_RUNTIME.block_on(async move { sb.call(sa, None).await });
+            match res {
+                Ok(sock) => *l = SocketData::Established(sock, options),
+                Err(e) => return set_error(&format!("Failed to connect: {}", e)),
+            }
+        } else {
+            // nonblocking mode
+            let sock_clone = sock.clone();
+            let task = TOKIO_RUNTIME.spawn(async move {
+                let res = sb.call(sa, None).await;
+                let mut l = sock_clone.lock().unwrap();
+                match res {
+                    Ok(s) => *l = SocketData::Established(s, options),
+                    Err(e) => *l = SocketData::ConnectFailed(e),
+                }
+            });
+            *l = SocketData::ConnectingNonBlocking(task, options);
+        }
+    } else {
+        *l = sd; // restore state
+        return set_error("Connect already called, invalid");
+    }
+
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn srt_accept(
+    sock: SRTSOCKET,
+    _addr: &mut libc::sockaddr,
+    _addrlen: &mut c_int,
+) -> SRTSOCKET {
+    let sock = match get_sock(sock) {
+        None => return set_error("Invalid socket"),
+        Some(sock) => sock,
+    };
+
+    let mut l = sock.lock().unwrap();
+    if let SocketData::Listening(ref mut l, opts) = *l {
+        TOKIO_RUNTIME.block_on(async {
+            let req = if opts.rcv_syn {
+                // blocking
+                match l.incoming().next().await {
+                    Some(req) => req,
+                    None => return set_error("Listener ended"),
+                }
+            } else {
+                // nonblocking--10ms for now but could be shorter potentially
+                match timeout(Duration::from_millis(10), l.incoming().next()).await {
+                    Err(_) => return set_error("no new connections available"),
+                    Ok(Some(req)) => req,
+                    Ok(None) => return set_error("Listener ended"),
+                }
+            };
+            // TODO: acceptors
+            let srt_socket = req.accept(None).await.unwrap();
+            // TODO: are options inhereted like this?
+            insert_socket(SocketData::Established(srt_socket, opts))
+        })
+    } else {
+        return set_error("Listen was not called");
+    }
 }
 
 fn set_error(err: &str) -> c_int {
@@ -434,9 +512,52 @@ pub extern "C" fn srt_sendmsg2(
     0
 }
 
+/// Returns the number of bytes read
 #[no_mangle]
-pub extern "C" fn srt_recv(_sock: SRTSOCKET, _buf: *mut c_char, _len: c_int) -> c_int {
-    todo!()
+pub extern "C" fn srt_recv(sock: SRTSOCKET, buf: *mut c_char, len: c_int) -> c_int {
+    let sock = match get_sock(sock) {
+        None => return set_error("Invalid socket"),
+        Some(sock) => sock,
+    };
+
+    let bytes = unsafe { from_raw_parts_mut(buf as *mut u8, len as usize) };
+
+    let mut l = sock.lock().unwrap();
+    if let SocketData::Established(ref mut sock, opts) = *l {
+        TOKIO_RUNTIME.block_on(async {
+            let d = if opts.rcv_syn {
+                // block
+                sock.next().await
+            } else {
+                // nonblock
+                match timeout(Duration::from_millis(10), sock.next()).await {
+                    Err(_) => return set_error("no data to receive"),
+                    Ok(d) => d,
+                }
+            };
+
+            let (_, recvd) = match d {
+                Some(Ok(d)) => d,
+                Some(Err(e)) => return set_error(&format!("failed to receive message: {}", e)),
+                None => return set_error("stream ended permanantly"),
+            };
+
+            if bytes.len() < recvd.len() {
+                error!("Receive buffer was not large enough, truncating...");
+            }
+
+            let bytes_to_write = min(bytes.len(), recvd.len());
+            bytes[..bytes_to_write].copy_from_slice(&recvd[..bytes_to_write]);
+            bytes_to_write as c_int
+        })
+    } else {
+        set_error("Socket not connected")
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn srt_recvmsg(sock: SRTSOCKET, buf: *mut c_char, len: c_int) -> c_int {
+    srt_recv(sock, buf, len)
 }
 
 #[no_mangle]
@@ -448,18 +569,19 @@ pub extern "C" fn srt_bstats(
     todo!()
 }
 
-#[no_mangle]
-pub extern "C" fn srt_create_socket() -> SRTSOCKET {
+fn insert_socket(data: SocketData) -> SRTSOCKET {
     let mut sockets = SOCKETS.write().unwrap();
     let new_sockid = NEXT_SOCKID.fetch_add(1, Ordering::SeqCst);
-    sockets.insert(
-        new_sockid,
-        Arc::new(Mutex::new(SocketData::Initialized(
-            SrtSocket::builder(),
-            Default::default(),
-        ))),
-    );
+    sockets.insert(new_sockid, Arc::new(Mutex::new(data)));
     new_sockid
+}
+
+#[no_mangle]
+pub extern "C" fn srt_create_socket() -> SRTSOCKET {
+    insert_socket(SocketData::Initialized(
+        Default::default(),
+        Default::default(),
+    ))
 }
 
 #[no_mangle]
@@ -478,23 +600,58 @@ pub extern "C" fn srt_setsockopt(
     todo!()
 }
 
+unsafe fn extract_int(val: *const (), len: c_int) -> Option<c_int> {
+    if len != 4 {
+        return None;
+    }
+    Some((val as *const c_int).read())
+}
+
+unsafe fn extract_bool(val: *const (), len: c_int) -> Option<bool> {
+    extract_int(val, len).map(|i| match i {
+        0 => false,
+        1 => true,
+        o => {
+            warn!("Warning: bool should be 1 or 0, not {}. Assuming true", o);
+            true
+        }
+    })
+}
+
 #[no_mangle]
 pub extern "C" fn srt_setsockflag(
     sock: SRTSOCKET,
     opt: SRT_SOCKOPT,
-    _optval: *const (),
-    _optlen: c_int,
+    optval: *const (),
+    optlen: c_int,
 ) -> c_int {
     let sock = match get_sock(sock) {
         None => return set_error("Invalid socket"),
         Some(sock) => sock,
     };
 
-    let _sock = sock.lock().unwrap();
+    let sock = sock.lock().unwrap();
+    use SocketData::*;
     use SRT_SOCKOPT::*;
     match opt {
         SRTO_SENDER => {}
-        _ => unimplemented!(),
+        SRTO_RCVSYN => match *sock {
+            Initialized(_, mut o) | ConnectingNonBlocking(_, mut o) | Established(_, mut o) => {
+                o.rcv_syn = match unsafe { extract_bool(optval, optlen) } {
+                    Some(e) => e,
+                    None => {
+                        return set_error(&format!(
+                            "Failed to set option: {:?}: wrong data length",
+                            opt
+                        ))
+                    }
+                }
+            }
+            Listening(_, _) | ConnectFailed(_) | InvalidIntermediateState => {
+                return set_error(&format!("Option {:?} not settable in current state ", opt))
+            }
+        },
+        o => unimplemented!("{:?}", o),
     }
     0
 }

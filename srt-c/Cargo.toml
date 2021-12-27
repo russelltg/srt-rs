@@ -12,7 +12,10 @@ lazy_static = "1"
 libc = "0.2"
 bytes = "1"
 futures = "0.3"
+log = "0.4"
+
+
 
 [dependencies.tokio]
 version = "1"
-features = ["rt", "rt-multi-thread"]
+features = ["rt", "rt-multi-thread", "time"]
