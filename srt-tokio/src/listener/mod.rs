@@ -79,7 +79,6 @@ impl SrtListener {
     }
 
     pub fn close(&mut self) {
-        dbg!("got close");
         let _ = self.close_req.take().unwrap().send(());
     }
 }

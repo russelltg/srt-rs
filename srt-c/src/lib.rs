@@ -741,8 +741,51 @@ pub extern "C" fn srt_getsockopt(
     _sock: SRTSOCKET,
     _level: c_int,
     _optname: SRT_SOCKOPT,
-    _optval: *const (),
+    _optval: *mut (),
     _optlen: &mut c_int,
+) -> c_int {
+    todo!()
+}
+
+#[repr(C)]
+pub enum SRT_SOCKSTATUS {
+    SRTS_INIT = 1,
+    SRTS_OPENED,
+    SRTS_LISTENING,
+    SRTS_CONNECTING,
+    SRTS_CONNECTED,
+    SRTS_BROKEN,
+    SRTS_CLOSING,
+    SRTS_CLOSED,
+    SRTS_NONEXIST,
+}
+
+#[repr(C)]
+pub enum SRT_KM_STATE {
+    SRT_KM_S_UNSECURED = 0, //No encryption
+    SRT_KM_S_SECURING = 1,  //Stream encrypted, exchanging Keying Material
+    SRT_KM_S_SECURED = 2,   //Stream encrypted, keying Material exchanged, decrypting ok.
+    SRT_KM_S_NOSECRET = 3,  //Stream encrypted and no secret to decrypt Keying Material
+    SRT_KM_S_BADSECRET = 4, //Stream encrypted and wrong secret, cannot decrypt Keying Material
+}
+
+#[no_mangle]
+pub extern "C" fn srt_getsockstate(sock: SRTSOCKET) -> SRT_SOCKSTATUS {
+    todo!()
+}
+
+#[repr(C)]
+pub struct SRT_EPOLL_EVENT {
+    fd: SRTSOCKET,
+    events: c_int,
+}
+
+#[no_mangle]
+pub extern "C" fn srt_epoll_uwait(
+    _eid: c_int,
+    _fdsSet: *mut SRT_EPOLL_EVENT,
+    _fdsSize: c_int,
+    _msTimeOut: i64,
 ) -> c_int {
     todo!()
 }

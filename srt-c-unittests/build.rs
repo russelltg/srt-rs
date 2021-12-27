@@ -3,10 +3,12 @@ use std::{env, path::PathBuf};
 fn main() {
     println!("cargo:rerun-if-changed=tests/test_connection_timeout.cpp");
     println!("cargo:rerun-if-changed=tests/test_many_connections.cpp");
+    println!("cargo:rerun-if-changed=tests/test_enforced_encryption.cpp");
 
     cc::Build::new()
-        // .file("tests/test_connection_timeout.cpp")
+        .file("tests/test_connection_timeout.cpp")
         .file("tests/test_many_connections.cpp")
+        .file("tests/test_enforced_encryption.cpp")
         .include("../srt-c")
         .compile("units");
 
