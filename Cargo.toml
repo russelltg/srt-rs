@@ -1,2 +1,2 @@
 [workspace]
-members = ["srt-protocol", "srt-tokio", "srt-transmit"]
+members = ["srt-protocol", "srt-tokio", "srt-transmit", "srt-c"]

@@ -1,0 +1,14 @@
+
+language = "C"
+pragma_once = true
+after_includes = """
+#if defined __linux__ || defined __APPLE__
+    #include <sys/socket.h>
+#elif defined _WIN32 || defined WIN32
+    #include <winsock2.h>
+#endif
+"""
+cpp_compat = true
+
+[export]
+include = ["SRT_TRANSTYPE"]
