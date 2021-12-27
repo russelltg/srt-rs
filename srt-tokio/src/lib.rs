@@ -7,7 +7,7 @@
 //!
 //! # Quick start
 //! ```rust
-//! use srt_tokio::SrtSocketBuilder;
+//! use srt_tokio::SrtSocket;
 //! use futures::prelude::*;
 //! use bytes::Bytes;
 //! use std::time::Instant;
@@ -19,10 +19,10 @@
 //!# -> ()
 //! {
 //!     let sender_fut = async {
-//!         let mut tx = SrtSocketBuilder::new_listen().local_port(2223).connect().await?;
+//!         let mut tx = SrtSocket::builder().listen(2223).await?;
 //!
 //!         let iter = ["1", "2", "3"];
-//!         
+//!
 //!         tx.send_all(&mut stream::iter(&iter)
 //!             .map(|b| Ok((Instant::now(), Bytes::from(*b))))).await?;
 //!         tx.close().await?;
@@ -31,7 +31,7 @@
 //!     };
 //!
 //!     let receiver_fut = async {
-//!         let mut rx = SrtSocketBuilder::new_connect("127.0.0.1:2223").connect().await?;
+//!         let mut rx = SrtSocket::builder().call("127.0.0.1:2223", None).await?;
 //!
 //!         assert_eq!(rx.try_next().await?.map(|(_i, b)| b), Some(b"1"[..].into()));
 //!         assert_eq!(rx.try_next().await?.map(|(_i, b)| b), Some(b"2"[..].into()));
@@ -47,16 +47,15 @@
 //! ```
 //!
 
-mod builder;
-mod multiplex;
-mod pending_connection;
-pub mod tokio;
+mod listener;
+mod net;
+mod socket;
+mod watch;
 
-pub use crate::builder::{ConnInitMethod, SrtSocketBuilder};
-pub use crate::multiplex::{multiplex, StreamerServer};
-pub use crate::tokio::SrtSocket;
+pub use srt_protocol::access;
+pub use srt_protocol::options;
 
-use srt_protocol::connection::{Connection, ConnectionSettings};
-use srt_protocol::crypto;
-use srt_protocol::packet::Packet;
-use srt_protocol::SocketId;
+pub use crate::{
+    listener::{ConnectionRequest, ListenerStatistics, SrtListener},
+    socket::{SocketStatistics, SrtSocket},
+};

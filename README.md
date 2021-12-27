@@ -57,11 +57,5 @@ This repository is structured into 3 crates:
 * `srt-transmit`: A srt-live-tranmsit replacement written ontop of `srt-tokio`
 
 [codecov]: https://codecov.io/gh/russelltg/srt-rs
-[codecov badge]: https://codecov.io/gh/russelltg/srt-rs/branch/master/graph/badge.svg
-
-[build]: https://russelltg.visualstudio.com/srt-rs/_build/latest?definitionId=2&branchName=master
-[linux badge]: https://russelltg.visualstudio.com/srt-rs/_apis/build/status/russelltg.srt-rs?branchName=master&stageName=Multi%20OS%20native%20tests&jobName=Cargo%20test&configuration=Cargo%20test%20Linux
-[macos badge]: https://russelltg.visualstudio.com/srt-rs/_apis/build/status/russelltg.srt-rs?branchName=master&stageName=Multi%20OS%20native%20tests&jobName=Cargo%20test&configuration=Cargo%20test%20MacOS
-[windows badge]: https://russelltg.visualstudio.com/srt-rs/_apis/build/status/russelltg.srt-rs?branchName=master&stageName=Multi%20OS%20native%20tests&jobName=Cargo%20test&configuration=Cargo%20test%20Windows
-
+[codecov badge]: https://codecov.io/gh/russelltg/srt-rs/branch/main/graph/badge.svg
 [tokio]: https://tokio.rs

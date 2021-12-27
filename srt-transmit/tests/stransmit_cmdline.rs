@@ -174,11 +174,11 @@ fn ui_test(flags: &[&str], stderr: &str) {
             child.stderr.unwrap().read_to_string(&mut string).unwrap();
 
             assert_eq!(
-                stderr.lines().count(),
                 string.lines().count(),
+                stderr.lines().count(),
                 "Line counnt differed. \nExpected: \n{}\nActual:\n{}",
-                stderr,
-                string
+                string,
+                stderr
             );
 
             // windows puts stranmsit-rs.exe instead of stranmsit-rs, this isn't a real failure so just remove all .exe
@@ -210,10 +210,10 @@ mod stransmit_rs_snd_rcv {
     #[tokio::test]
     async fn basic() -> Result<(), Error> {
         test_send(
-            2000,
-            &["udp://:2000", "srt://127.0.0.1:2001"],
-            &["srt://:2001", "udp://127.0.0.1:2002"],
-            2002,
+            2900,
+            &["udp://:2900", "srt://127.0.0.1:2901"],
+            &["srt://:2901", "udp://127.0.0.1:2902"],
+            2902,
         )
         .await
     }
@@ -272,16 +272,16 @@ mod stransmit_rs_snd_rcv {
     #[tokio::test]
     async fn rendezvous() -> Result<(), Error> {
         test_send(
-            2010,
+            3010,
             &[
-                "udp://:2010",
-                "srt://127.0.0.1:2012?rendezvous&local_port=2011",
+                "udp://:3010",
+                "srt://127.0.0.1:3012?rendezvous&local_port=3011",
             ],
             &[
-                "srt://127.0.0.1:2011?rendezvous&local_port=2012",
-                "udp://127.0.0.1:2013",
+                "srt://127.0.0.1:3011?rendezvous&local_port=3012",
+                "udp://127.0.0.1:3013",
             ],
-            2013,
+            3013,
         )
         .await
     }
@@ -384,10 +384,10 @@ mod stransmit_rs_snd_rcv {
     #[tokio::test]
     async fn ipv6() -> Result<(), Error> {
         test_send(
-            2034,
-            &["udp://:2034", "srt://:2035?interface=::1"],
-            &["srt://[::1]:2035", "udp://localhost:2036"],
-            2036,
+            3034,
+            &["udp://:3034", "srt://:3035?interface=::1"],
+            &["srt://[::1]:3035", "udp://localhost:3036"],
+            3036,
         )
         .await
     }
@@ -416,8 +416,8 @@ mod stransmit_rs_snd_rcv {
         let failure_str = "Failed reconnect test";
 
         // it worked, restart b, send again
-        b.kill().await.expect(&failure_str);
-        b.wait().await.expect(&failure_str);
+        b.kill().await.expect(failure_str);
+        b.wait().await.expect(failure_str);
 
         let mut b = Command::new(&srs_path).args(b_args).spawn().unwrap();
 
@@ -426,11 +426,11 @@ mod stransmit_rs_snd_rcv {
 
         futures::try_join!(recvr, sender).unwrap();
 
-        a.kill().await.expect(&failure_str);
-        b.kill().await.expect(&failure_str);
+        a.kill().await.expect(failure_str);
+        b.kill().await.expect(failure_str);
 
-        a.wait().await.expect(&failure_str);
-        b.wait().await.expect(&failure_str);
+        a.wait().await.expect(failure_str);
+        b.wait().await.expect(failure_str);
 
         Ok(())
     }

@@ -1,4 +1,4 @@
-use srt_tokio::SrtSocketBuilder;
+use srt_tokio::SrtSocket;
 
 use bytes::Bytes;
 use futures::prelude::*;
@@ -13,22 +13,21 @@ async fn keepalive() {
     let _ = pretty_env_logger::try_init();
 
     let s = async {
-        let mut s = SrtSocketBuilder::new_connect("127.0.0.1:4444")
-            .connect()
+        let mut s = SrtSocket::builder()
+            .call("127.0.0.1:4444", None)
             .await
             .unwrap();
 
         sleep(Duration::from_secs(10)).await;
 
         s.send((Instant::now(), b"1234"[..].into())).await.unwrap();
+
+        sleep(Duration::from_secs(1)).await;
+
         s.close().await.unwrap();
     };
     let r = async {
-        let mut r = SrtSocketBuilder::new_listen()
-            .local_port(4444)
-            .connect()
-            .await
-            .unwrap();
+        let mut r = SrtSocket::builder().listen(":4444").await.unwrap();
         let res = r.try_next().await.unwrap().unwrap();
         assert_eq!(res.1, Bytes::from(&b"1234"[..]));
         let res = r.try_next().await.unwrap();

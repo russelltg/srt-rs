@@ -1,16 +1,20 @@
-use bytes::Bytes;
-use log::{error, warn};
-use rand::distributions::Bernoulli;
-use rand::prelude::*;
-use rand_distr::Normal;
-use srt_protocol::connection::{DuplexConnection, Input};
-use srt_protocol::protocol::handshake::Handshake;
-use srt_protocol::{Connection, ConnectionSettings, Packet};
 use std::{
     cmp::max,
     collections::BinaryHeap,
+    convert::TryFrom,
     net::SocketAddr,
     time::{Duration, Instant},
+};
+
+use log::{error, warn};
+use rand::{distributions::Bernoulli, prelude::*};
+use rand_distr::Normal;
+
+use srt_protocol::{
+    connection::{Connection, ConnectionSettings, DuplexConnection, Input},
+    options::*,
+    packet::*,
+    protocol::handshake::Handshake,
 };
 
 #[derive(Eq, PartialEq)]
@@ -28,8 +32,15 @@ impl Ord for SentPacket {
     }
 }
 
-#[derive(Eq, PartialEq)]
 struct ScheduledInput(Instant, Input);
+
+impl PartialEq for ScheduledInput {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for ScheduledInput {}
 
 impl PartialOrd for ScheduledInput {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -43,40 +54,18 @@ impl Ord for ScheduledInput {
     }
 }
 
-pub struct InputDataSimulation {
+pub fn input_data_simulation(
+    start: Instant,
     count: usize,
     pace: Duration,
-    next_send_time: Option<Instant>,
-    next_packet_id: usize,
-}
-
-impl InputDataSimulation {
-    pub fn new(start: Instant, count: usize, pace: Duration) -> InputDataSimulation {
-        InputDataSimulation {
-            count,
-            pace,
-            next_send_time: Some(start + pace),
-            next_packet_id: 0,
-        }
+    peer: &mut PeerSimulator,
+) {
+    let count = u32::try_from(count).unwrap();
+    for i in 1..=count {
+        let t = start + pace * i;
+        peer.schedule_input(t, Input::Data(Some((t, i.to_string().into()))));
     }
-
-    pub fn send_data_to(&mut self, now: Instant, peer: &mut PeerSimulator) {
-        while let Some(time) = self.next_send_time {
-            if time > now {
-                break;
-            }
-
-            if self.next_packet_id < self.count {
-                self.next_send_time = Some(time + self.pace);
-                self.next_packet_id += 1;
-                let data = Bytes::from(self.next_packet_id.to_string());
-                peer.schedule_input(now, Input::Data(Some((now, data))));
-            } else {
-                self.next_send_time = None;
-                peer.schedule_input(now, Input::Data(None));
-            }
-        }
-    }
+    peer.schedule_input(start + pace * (count + 1), Input::Data(None));
 }
 
 pub struct PeerSimulator {
@@ -134,13 +123,11 @@ impl NetworkSimulator {
         if to == self.sender.addr() {
             self.sender.schedule_input(
                 release_at,
-                Input::Packet(Some((packet, self.receiver.addr()))),
+                Input::Packet(Ok((packet, self.receiver.addr()))),
             );
         } else if to == self.receiver.addr() {
-            self.receiver.schedule_input(
-                release_at,
-                Input::Packet(Some((packet, self.sender.addr()))),
-            );
+            self.receiver
+                .schedule_input(release_at, Input::Packet(Ok((packet, self.sender.addr()))));
         } else {
             error!("Dropping {:?}", packet)
         }
@@ -176,14 +163,15 @@ impl RandomLossSimulation {
         &mut self,
         start: Instant,
         latency: Duration,
+        recv_buffer_size: PacketCount,
     ) -> (NetworkSimulator, DuplexConnection, DuplexConnection) {
         let sender = self.new_connection_settings(start, latency);
         let receiver = ConnectionSettings {
-            remote: (sender.remote.ip(), sender.remote.port() + 1).into(),
+            remote: (sender.remote.ip(), sender.remote.port().wrapping_add(1)).into(),
             remote_sockid: sender.local_sockid,
             local_sockid: sender.remote_sockid,
-            init_send_seq_num: sender.init_recv_seq_num,
-            init_recv_seq_num: sender.init_send_seq_num,
+            init_seq_num: sender.init_seq_num,
+            recv_buffer_size,
             ..sender.clone()
         };
 
@@ -215,14 +203,17 @@ impl RandomLossSimulation {
             local_sockid: self.rng.gen(),
             socket_start_time: start,
             rtt: Duration::default(),
-            init_send_seq_num: self.rng.gen(),
-            init_recv_seq_num: self.rng.gen(),
-            max_packet_size: 1316,
-            max_flow_size: 8192,
+            init_seq_num: self.rng.gen(),
+            max_packet_size: PacketSize(1316),
+            max_flow_size: PacketCount(8192),
             send_tsbpd_latency: latency,
             recv_tsbpd_latency: latency,
-            crypto_manager: None,
+            cipher: None,
             stream_id: None,
+            bandwidth: Default::default(),
+            recv_buffer_size: PacketCount(8192),
+            send_buffer_size: PacketCount(8192),
+            statistics_interval: Duration::from_secs(1),
         }
     }
 }

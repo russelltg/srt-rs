@@ -1,30 +1,29 @@
 use anyhow::Result;
-use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
+use srt_tokio::SrtSocket;
 use std::time::Duration;
 use tokio::time::sleep;
 
 use futures::prelude::*;
 
 async fn test_latency_exchange(
-    connecter_send_latency: Duration,
-    connecter_recv_latency: Duration,
+    connector_send_latency: Duration,
+    connector_rec_latency: Duration,
     listener_send_latency: Duration,
     listener_recv_latency: Duration,
 ) -> Result<()> {
-    let connecter = SrtSocketBuilder::new_connect("127.0.0.1:4000")
-        .send_latency(connecter_send_latency)
-        .receive_latency(connecter_recv_latency)
-        .connect();
+    let connector = SrtSocket::builder()
+        .send_latency(connector_send_latency)
+        .receive_latency(connector_rec_latency)
+        .call("127.0.0.1:4200", None);
 
-    let listener = SrtSocketBuilder::new(ConnInitMethod::Listen)
-        .local_port(4000)
+    let listener = SrtSocket::builder()
         .send_latency(listener_send_latency)
         .receive_latency(listener_recv_latency)
-        .connect();
+        .listen(":4200");
 
     let ((l2c1, c2l1), (l2c2, c2l2)) = futures::join!(
         async move {
-            let mut c = connecter.await.unwrap();
+            let mut c = connector.await.unwrap();
             let c2l = c.settings().send_tsbpd_latency;
             let l2c = c.settings().recv_tsbpd_latency;
             c.close().await.unwrap();
@@ -39,8 +38,8 @@ async fn test_latency_exchange(
         },
     );
 
-    let expected_l2c = Duration::max(connecter_recv_latency, listener_send_latency);
-    let expected_c2l = Duration::max(connecter_send_latency, listener_recv_latency);
+    let expected_l2c = Duration::max(connector_rec_latency, listener_send_latency);
+    let expected_c2l = Duration::max(connector_send_latency, listener_recv_latency);
 
     assert_eq!(l2c1, expected_l2c);
     assert_eq!(l2c2, expected_l2c);

@@ -1,32 +1,58 @@
 [package]
-name = "srt-protocol"
-version = "0.1.0"
 authors = ["Russell Greene <russellgreene8@gmail.com>"]
 description = "SRT implementation in Rust"
-license = "Apache-2.0"
 documentation = "https://docs.rs/srt-rs"
-homepage = "https://github.com/russelltg/srt-rs"
-repository = "https://github.com/russelltg/srt-rs"
 edition = "2018"
+homepage = "https://github.com/russelltg/srt-rs"
+license = "Apache-2.0"
+name = "srt-protocol"
 publish = false
+repository = "https://github.com/russelltg/srt-rs"
+version = "0.1.0"
 
 [dependencies]
-log = { version = "0.4", default-features = false }
-bytes = "1"
+array-init = "2.0.0"
+arraydeque = "0.4.5"
+bitflags = "1.3.2"
+bytes = "1.1.0"
+cipher = "0.3.0"
+derive_more = "*"
+hex = "0.4.3"
+hmac = "0.12.0"
+keyed_priority_queue = "0.4.1"
+rand = "0.8.4"
+sha-1 = "0.10.0"
 streaming-stats = "0.2.3"
-rand = "0.8"
-aes = { version = "0.7", features = ["ctr"] }
-cipher = "0.3"
-pbkdf2 = { version = "0.8", default-features = false }
-hmac = "0.11"
-sha-1 = "0.9"
-bitflags = "1"
+take-until = "0.1.0"
+thiserror = "1.0.30"
 
-# fuzzing
-arbitrary = { version = "1", optional = true, features = ["derive"] }
+[dependencies.arbitrary]
+version = "1"
+optional = true
+features = ["derive"]
+
+[dependencies.aes]
+features = ["ctr"]
+version = "0.7.5"
+
+[dependencies.log]
+default-features = false
+version = "0.4.14"
+
+[dependencies.pbkdf2]
+default-features = false
+version = "0.10.0"
+
 
 [dev-dependencies]
-proptest = "1.0"
-hex = "0.4"
-rand_distr = "0.4"
-pretty_env_logger = { version = "0.4", default-features = false }
+assert_matches = "1.0.0"
+proptest = "1.0.0"
+rand_distr = "0.4.2"
+
+[dev-dependencies.pretty_env_logger]
+default-features = false
+version = "0.4.0"
+
+[features]
+default = []
+log_disable = ["log/max_level_off"]

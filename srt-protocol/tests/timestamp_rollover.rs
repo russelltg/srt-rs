@@ -1,13 +1,19 @@
-use log::trace;
-use srt_protocol::connection::{DuplexConnection, Input};
-use srt_protocol::protocol::handshake::Handshake;
-use srt_protocol::{Connection, ConnectionSettings, SeqNumber, SocketId};
-use std::cmp::min;
-use std::time::{Duration, Instant};
-
 pub mod simulator;
-
 use simulator::*;
+
+use std::{
+    cmp::min,
+    time::{Duration, Instant},
+};
+
+use log::trace;
+
+use srt_protocol::{
+    connection::{Connection, ConnectionSettings, DuplexConnection, Input},
+    options::{PacketCount, PacketSize},
+    packet::*,
+    protocol::handshake::Handshake,
+};
 
 #[test]
 fn timestamp_rollover() {
@@ -29,14 +35,17 @@ fn timestamp_rollover() {
         local_sockid: s1_sockid,
         socket_start_time: start,
         rtt: Duration::default(),
-        init_send_seq_num: init_seqnum,
-        init_recv_seq_num: init_seqnum,
-        max_packet_size: 1316,
-        max_flow_size: 8192,
+        init_seq_num: init_seqnum,
+        max_packet_size: PacketSize(1316),
+        max_flow_size: PacketCount(8192),
         send_tsbpd_latency: Duration::from_millis(20),
         recv_tsbpd_latency: Duration::from_millis(20),
-        crypto_manager: None,
+        cipher: None,
         stream_id: None,
+        bandwidth: Default::default(),
+        recv_buffer_size: PacketCount(8192),
+        send_buffer_size: PacketCount(8192),
+        statistics_interval: Duration::from_secs(1),
     };
 
     let s2 = ConnectionSettings {
@@ -45,15 +54,18 @@ fn timestamp_rollover() {
         local_sockid: s2_sockid,
         socket_start_time: start,
         rtt: Duration::default(),
-        init_send_seq_num: init_seqnum,
-        init_recv_seq_num: init_seqnum,
-        max_packet_size: 1316,
-        max_flow_size: 8192,
+        init_seq_num: init_seqnum,
+        max_packet_size: PacketSize(1316),
+        max_flow_size: PacketCount(8192),
 
         send_tsbpd_latency: Duration::from_millis(20),
         recv_tsbpd_latency: Duration::from_millis(20),
-        crypto_manager: None,
+        cipher: None,
         stream_id: None,
+        bandwidth: Default::default(),
+        recv_buffer_size: PacketCount(8192),
+        send_buffer_size: PacketCount(8192),
+        statistics_interval: Duration::from_secs(1),
     };
 
     const PACKET_RATE: u32 = 10; // 10 packet/s
@@ -71,10 +83,11 @@ fn timestamp_rollover() {
         settings: s2,
         handshake: Handshake::Connector,
     });
-    let mut input_data = InputDataSimulation::new(
+    input_data_simulation(
         start,
         packs_to_send as usize,
         Duration::from_secs(1) / PACKET_RATE,
+        &mut network.sender,
     );
 
     let mut now = start;
@@ -83,11 +96,9 @@ fn timestamp_rollover() {
     let mut next_data = 1;
     loop {
         let sender_next_time = if sender.is_open() {
-            input_data.send_data_to(now, &mut network.sender);
-
             assert_eq!(sender.next_data(now), None);
 
-            while let Some(packet) = sender.next_packet() {
+            while let Some(packet) = sender.next_packet(now) {
                 network.send(now + latency, packet);
             }
 
@@ -111,7 +122,7 @@ fn timestamp_rollover() {
                 next_data = actual + 1;
             }
 
-            while let Some(packet) = receiver.next_packet() {
+            while let Some(packet) = receiver.next_packet(now) {
                 network.send(now + latency, packet);
             }
 

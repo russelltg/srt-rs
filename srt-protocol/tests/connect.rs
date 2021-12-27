@@ -1,3 +1,5 @@
+pub mod simulator;
+
 use std::{
     cmp::min,
     net::SocketAddr,
@@ -5,22 +7,19 @@ use std::{
 };
 
 use log::debug;
-use rand::{prelude::StdRng, SeedableRng};
-
+use rand::{prelude::StdRng, Rng, SeedableRng};
 use rand_distr::{Bernoulli, Normal};
-use simulator::*;
+
 use srt_protocol::{
-    accesscontrol::AllowAllStreamAcceptor,
-    connection::Input,
-    packet::ControlTypes,
-    pending_connection::{
-        connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnInitSettings,
-        ConnectionResult,
+    connection::{Connection, Input},
+    packet::*,
+    protocol::pending_connection::{
+        connect::Connect, listen::Listen, rendezvous::Rendezvous, ConnectionResult,
     },
-    Connection, ControlPacket, Packet, SeqNumber, SocketId,
+    settings::*,
 };
 
-pub mod simulator;
+use simulator::*;
 
 const CONN_TICK_TIME: Duration = Duration::from_millis(100);
 
@@ -29,7 +28,7 @@ enum ConnectEntity {
     PendingL(Listen),
     PendingC(Connect, Instant),
     PendingR(Rendezvous, Instant),
-    Done(Connection),
+    Done(Option<Connection>),
 }
 
 struct Conn {
@@ -48,44 +47,45 @@ impl ConnectEntity {
         conn: &mut NetworkSimulator,
         sim: &mut RandomLossSimulation,
     ) {
+        use ConnectionResult::*;
         let res = match self {
-            ConnectEntity::PendingL(l) => l.handle_packet(
-                (packet, remote_sa),
-                now,
-                &mut AllowAllStreamAcceptor::default(),
-            ),
-            ConnectEntity::PendingC(c, _) => c.handle_packet((packet, remote_sa), now),
-            ConnectEntity::PendingR(r, _) => r.handle_packet((packet, remote_sa), now),
-            ConnectEntity::Done(c) => {
+            ConnectEntity::PendingL(l) => l.handle_packet(now, Ok((packet, remote_sa))),
+            ConnectEntity::PendingC(c, _) => c.handle_packet(Ok((packet, remote_sa)), now),
+            ConnectEntity::PendingR(r, _) => r.handle_packet(Ok((packet, remote_sa)), now),
+            ConnectEntity::Done(Some(c)) => {
                 if let Packet::Control(ControlPacket {
                     control_type: ControlTypes::Handshake(hs),
                     ..
                 }) = &packet
                 {
                     match c.handshake.handle_handshake(hs.clone()) {
-                        Some(control_type) => ConnectionResult::SendPacket((
+                        Some(control_type) => SendPacket((
                             Packet::Control(ControlPacket {
                                 control_type,
                                 ..packet.control().unwrap().clone() // this is chekced in the pattern, but can't be @'d
                             }),
                             remote_sa,
                         )),
-                        None => ConnectionResult::NoAction,
+                        None => NoAction,
                     }
                 } else {
-                    ConnectionResult::NoAction
+                    NoAction
                 }
             }
+            _ => unreachable!("ConnectEntity is drained"),
         };
+
         match res {
-            ConnectionResult::Reject(_, _) => panic!("Reject?"),
-            ConnectionResult::SendPacket(pack) => conn.send_lossy(sim, now, pack),
-            ConnectionResult::Connected(Some(pack), c) => {
+            Reject(_, _) => panic!("Reject?"),
+            SendPacket(pack) => conn.send_lossy(sim, now, pack),
+            Connected(Some(pack), c) => {
                 conn.send_lossy(sim, now, pack);
-                *self = ConnectEntity::Done(c);
+                *self = ConnectEntity::Done(Some(c));
             }
-            ConnectionResult::Connected(None, conn) => *self = ConnectEntity::Done(conn),
-            ConnectionResult::NotHandled(_) | ConnectionResult::NoAction => {}
+            Connected(None, conn) => *self = ConnectEntity::Done(Some(conn)),
+            NotHandled(_) | ConnectionResult::NoAction => {}
+            Failure(_) => {}
+            RequestAccess(_) => {}
         }
     }
 
@@ -114,10 +114,12 @@ impl ConnectEntity {
                 }
                 ConnectionResult::Connected(Some(pack), c) => {
                     conn.send_lossy(sim, now, pack);
-                    *self = ConnectEntity::Done(c);
+                    *self = ConnectEntity::Done(Some(c));
                 }
-                ConnectionResult::Connected(None, conn) => *self = ConnectEntity::Done(conn),
+                ConnectionResult::Connected(None, conn) => *self = ConnectEntity::Done(Some(conn)),
                 ConnectionResult::NotHandled(_) | ConnectionResult::NoAction => {}
+                ConnectionResult::Failure(_) => {}
+                ConnectionResult::RequestAccess(_) => {}
             }
         }
     }
@@ -148,24 +150,23 @@ fn precise_ts0() {
             r_sa,
             s_sa.ip(),
             ConnInitSettings {
-                starting_send_seqnum: seqno,
                 local_sockid: s_sid,
-                crypto: None,
                 send_latency: Duration::from_millis(2000),
-                recv_latency: Duration::from_millis(20),
+                ..ConnInitSettings::default()
             },
             None,
+            seqno,
         ),
         start,
     );
 
-    let recv = ConnectEntity::PendingL(Listen::new(ConnInitSettings {
-        starting_send_seqnum: seqno,
-        local_sockid: r_sid,
-        crypto: None,
-        send_latency: Duration::from_millis(20),
-        recv_latency: Duration::from_millis(20),
-    }));
+    let recv = ConnectEntity::PendingL(Listen::new(
+        ConnInitSettings {
+            local_sockid: r_sid,
+            ..ConnInitSettings::default()
+        },
+        false,
+    ));
 
     let conn = NetworkSimulator::new(s_sa, r_sa);
 
@@ -198,6 +199,9 @@ fn precise_ts0() {
 
 #[test]
 fn lossy_connect() {
+    // previously failing seeds
+    do_lossy_connect(2687748015417457250);
+
     for _ in 0..100 {
         let seed = rand::random();
         println!("Connect seed is {}", seed);
@@ -231,24 +235,22 @@ fn do_lossy_connect(seed: u64) {
             l_sa,
             c_sa.ip(),
             ConnInitSettings {
-                starting_send_seqnum: start_seqno,
                 local_sockid: s_sid,
-                crypto: None,
-                send_latency: Duration::from_millis(20),
-                recv_latency: Duration::from_millis(20),
+                ..ConnInitSettings::default()
             },
             None,
+            start_seqno,
         ),
         start,
     );
 
-    let l = ConnectEntity::PendingL(Listen::new(ConnInitSettings {
-        starting_send_seqnum: start_seqno,
-        local_sockid: r_sid,
-        crypto: None,
-        send_latency: Duration::from_millis(20),
-        recv_latency: Duration::from_millis(20),
-    }));
+    let l = ConnectEntity::PendingL(Listen::new(
+        ConnInitSettings {
+            local_sockid: r_sid,
+            ..ConnInitSettings::default()
+        },
+        false,
+    ));
 
     complete(
         Conn {
@@ -281,7 +283,10 @@ fn do_lossy_rendezvous(seed: u64) {
     let a_sa: SocketAddr = ([127, 0, 0, 1], 2222).into();
     let b_sa: SocketAddr = ([127, 0, 0, 1], 2224).into();
 
-    let start_seqno = SeqNumber::new_truncate(0);
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    let a_start_seqno = rng.gen();
+    let b_start_seqno = rng.gen();
 
     let r_sid = SocketId(1234);
     let s_sid = SocketId(2234);
@@ -291,7 +296,7 @@ fn do_lossy_rendezvous(seed: u64) {
     let conn = NetworkSimulator::new(a_sa, b_sa);
 
     let sim = RandomLossSimulation {
-        rng: StdRng::seed_from_u64(seed),
+        rng,
         delay_dist: Normal::new(0.02, 0.02).unwrap(),
         drop_dist: Bernoulli::new(0.70).unwrap(),
     };
@@ -301,12 +306,10 @@ fn do_lossy_rendezvous(seed: u64) {
             a_sa,
             b_sa,
             ConnInitSettings {
-                starting_send_seqnum: start_seqno,
                 local_sockid: s_sid,
-                crypto: None,
-                send_latency: Duration::from_millis(20),
-                recv_latency: Duration::from_millis(20),
+                ..ConnInitSettings::default()
             },
+            a_start_seqno,
         ),
         start,
     );
@@ -316,29 +319,25 @@ fn do_lossy_rendezvous(seed: u64) {
             b_sa,
             a_sa,
             ConnInitSettings {
-                starting_send_seqnum: start_seqno,
                 local_sockid: r_sid,
-                crypto: None,
-                send_latency: Duration::from_millis(20),
-                recv_latency: Duration::from_millis(20),
+                ..ConnInitSettings::default()
             },
+            b_start_seqno,
         ),
         start,
     );
 
-    complete(Conn { a, b, conn, sim }, start);
+    let (a, b) = complete(Conn { a, b, conn, sim }, start);
+    assert_eq!(a.settings.init_seq_num, b.settings.init_seq_num);
 }
 
 fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {
-    const TIME_LIMIT: Duration = Duration::from_secs(10);
+    const TIME_LIMIT: Duration = Duration::from_secs(20);
 
     let mut current_time = start;
 
     loop {
-        // assert!(current_time - start < TIME_LIMIT);
-        if current_time - start > TIME_LIMIT {
-            println!("Hi")
-        }
+        assert!(current_time - start < TIME_LIMIT);
 
         let sender_time = loop {
             match conn.conn.sender.select_next_input(
@@ -347,7 +346,7 @@ fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {
                     .next_tick_time()
                     .unwrap_or(current_time + Duration::from_secs(1)),
             ) {
-                (time, Input::Packet(Some((packet, sa)))) => {
+                (time, Input::Packet(Ok((packet, sa)))) => {
                     debug!("b->a {:?}", packet);
                     conn.a
                         .handle_packet(packet, time, sa, &mut conn.conn, &mut conn.sim)
@@ -363,7 +362,7 @@ fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {
                     .next_tick_time()
                     .unwrap_or(current_time + Duration::from_secs(1)),
             ) {
-                (time, Input::Packet(Some((packet, sa)))) => {
+                (time, Input::Packet(Ok((packet, sa)))) => {
                     debug!("a->b {:?}", packet);
                     conn.b
                         .handle_packet(packet, time, sa, &mut conn.conn, &mut conn.sim)
@@ -379,7 +378,7 @@ fn complete(mut conn: Conn, start: Instant) -> (Connection, Connection) {
             .handle_tick(current_time, &mut conn.sim, &mut conn.conn);
 
         if let (ConnectEntity::Done(a), ConnectEntity::Done(b)) = (&mut conn.a, &mut conn.b) {
-            break (a.clone(), b.clone());
+            return (a.take().unwrap(), b.take().unwrap());
         }
 
         let next_time = min(sender_time, recvr_time);

@@ -1,14 +1,12 @@
+use std::{convert::TryFrom, io, net::SocketAddr, time::Instant};
+
 use bytes::Bytes;
 use futures::{channel::oneshot, future::join_all, stream, FutureExt, SinkExt, StreamExt};
 use log::info;
-use srt_protocol::{
-    accesscontrol::{
-        AcceptParameters, AccessControlList, StandardAccessControlEntry, StreamAcceptor,
-    },
-    packet::{RejectReason, ServerRejectReason},
-};
-use srt_tokio::SrtSocketBuilder;
-use std::{convert::TryFrom, io, net::SocketAddr, time::Instant};
+
+use srt_protocol::access::*;
+
+use srt_tokio::{SrtListener, SrtSocket};
 
 struct AccessController;
 
@@ -54,17 +52,14 @@ async fn streamid() -> io::Result<()> {
     let (finished_send, finished_recv) = oneshot::channel();
 
     let listener = tokio::spawn(async {
-        let mut server = SrtSocketBuilder::new_listen()
-            .local_port(2000)
-            .build_multiplexed_with_acceptor(AccessController)
-            .await
-            .unwrap()
-            .boxed();
+        let mut server = SrtListener::builder().bind(2000).await.unwrap();
 
+        let incoming = server.incoming();
         let mut fused_finish = finished_recv.fuse();
-        while let Some(Ok(mut sender)) =
-            futures::select!(res = server.next().fuse() => res, _ = fused_finish => None)
+        while let Some(request) =
+            futures::select!(res = incoming.next().fuse() => res, _ = fused_finish => None)
         {
+            let mut sender = request.accept(None).await.unwrap();
             let mut stream =
                 stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());
 
@@ -80,33 +75,28 @@ async fn streamid() -> io::Result<()> {
     let mut join_handles = vec![];
     for i in 0..10 {
         join_handles.push(tokio::spawn(async move {
-            let recvr = SrtSocketBuilder::new_connect_with_streamid(
-                "127.0.0.1:2000",
-                format!(
-                    "{}",
-                    AccessControlList(vec![
-                        StandardAccessControlEntry::UserName("russell".into()).into(),
-                        StandardAccessControlEntry::ResourceName(format!("{}", i)).into()
-                    ])
-                ),
-            )
-            .connect()
-            .await;
+            let stream_id = format!(
+                "{}",
+                AccessControlList(vec![
+                    StandardAccessControlEntry::UserName("russell".into()).into(),
+                    StandardAccessControlEntry::ResourceName(format!("{}", i)).into()
+                ])
+            );
 
-            if i < 5 {
-                let mut recvr = recvr.unwrap();
+            let recvr = SrtSocket::builder()
+                .call("127.0.0.1:2000", Some(stream_id.as_str()))
+                .await;
 
-                info!("Created connection");
+            let mut recvr = recvr.unwrap();
 
-                let first = recvr.next().await;
-                assert_eq!(first.unwrap().unwrap().1, "asdf");
-                let second = recvr.next().await;
-                assert!(second.is_none());
+            info!("Created connection");
 
-                info!("Connection done");
-            } else {
-                assert_eq!(recvr.unwrap_err().kind(), io::ErrorKind::ConnectionRefused);
-            }
+            let first = recvr.next().await;
+            assert_eq!(first.unwrap().unwrap().1, "asdf");
+            let second = recvr.next().await;
+            assert!(second.is_none());
+
+            info!("Connection done");
         }));
     }
 

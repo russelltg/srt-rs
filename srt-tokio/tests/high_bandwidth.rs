@@ -5,30 +5,51 @@ use std::{
 
 use anyhow::Error;
 use bytes::Bytes;
-use futures::{stream, SinkExt, Stream, StreamExt, TryStreamExt};
+use futures::{stream, SinkExt, Stream, StreamExt};
 use log::info;
-use srt_tokio::SrtSocketBuilder;
+
+use srt_tokio::{options::*, SocketStatistics, SrtSocket};
 
 fn stream_exact(duration: Duration) -> impl Stream<Item = Bytes> {
     let message = Bytes::from(vec![5; 1024]);
-    let last = tokio::time::Instant::now();
-    stream::unfold((message, last, duration), |(message, last, d)| async move {
-        tokio::time::sleep_until(last + d).await;
-        Some((message.clone(), (message, last + d, d)))
-    })
+    let first = tokio::time::Instant::now();
+    // This will momentarily double the data rate for the first few seconds, pushing the flow
+    // window, send and receive buffers past their limits. The connection should recover once the
+    // input data rate is stabilized.
+    stream::unfold(
+        (message, first, duration / 2),
+        move |(message, last, d)| async move {
+            tokio::time::sleep_until(last + d).await;
+            if first.elapsed() < Duration::from_secs(3) {
+                Some((message.clone(), (message, last + d, d)))
+            } else {
+                Some((message.clone(), (message, last + d, duration)))
+            }
+        },
+    )
+}
+
+#[allow(clippy::large_enum_variant)]
+enum Select {
+    Message((Instant, Bytes)),
+    Statistics(SocketStatistics),
 }
 
 #[tokio::test]
-#[ignore]
 async fn high_bandwidth() -> Result<(), Error> {
+    use srt_protocol::options::LiveBandwidthMode::*;
     let _ = pretty_env_logger::try_init();
 
+    const RATE_MBPS: u64 = 50;
     let sender_fut = async {
-        let mut sock = SrtSocketBuilder::new_connect("127.0.0.1:6654")
-            .connect()
+        let mut sock = SrtSocket::builder()
+            .latency(Duration::from_millis(150))
+            .bandwidth(Estimated {
+                overhead: Percent(20),
+            })
+            .call("127.0.0.1:6654", None)
             .await?;
 
-        const RATE_MBPS: u64 = 20;
         let mut stream_gbps = stream_exact(Duration::from_micros(1_000_000 / 1024 / RATE_MBPS))
             .map(|bytes| Ok((Instant::now(), bytes)))
             .boxed();
@@ -37,39 +58,59 @@ async fn high_bandwidth() -> Result<(), Error> {
 
         sock.send_all(&mut stream_gbps).await?;
 
-        Ok::<_, Error>(())
+        sock.close().await
     };
 
     let recv_fut = async {
-        let mut sock = SrtSocketBuilder::new_listen()
-            .local_port(6654)
-            .connect()
-            .await?;
+        let latency = Duration::from_millis(150);
+        let buffer_size = latency.as_secs_f64() * 1.5 * (RATE_MBPS as f64 * 1_000_000.);
+        let mut sock = SrtSocket::builder()
+            .set(|options| options.receiver.buffer_size = ByteCount(buffer_size as u64))
+            .set(|options| options.session.statistics_interval = Duration::from_secs(1))
+            .latency(latency)
+            .listen(":6654")
+            .await?
+            .fuse();
+
+        let mut statistics = sock.get_mut().statistics().clone().fuse();
 
         let mut window = VecDeque::new();
         let mut bytes_received = 0;
         let window_size = Duration::from_secs(1);
 
-        while let Some((_, bytes)) = sock.try_next().await? {
-            bytes_received += bytes.len();
-            window.push_back((Instant::now(), bytes.len()));
+        loop {
+            use Select::*;
+            let next = futures::select!(
+                message = sock.next() => Message(message.unwrap().unwrap()),
+                statistics = statistics.next() => Statistics(statistics.unwrap()),
+                complete => break,
+            );
 
-            while let Some((a, bytes)) = window.front() {
-                if Instant::now() - *a > window_size {
-                    bytes_received -= *bytes;
-                    window.pop_front();
-                } else {
-                    break;
+            match next {
+                Message((_, bytes)) => {
+                    bytes_received += bytes.len();
+                    window.push_back((Instant::now(), bytes.len()));
+
+                    while let Some((a, bytes)) = window.front() {
+                        if Instant::now() - *a > window_size {
+                            bytes_received -= *bytes;
+                            window.pop_front();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    print!(
+                        "Received {:10.3}MB, rate={:10.3}MB/s\r",
+                        bytes_received as f64 / 1024. / 1024.,
+                        bytes_received as f64 / 1024. / 1024. / window_size.as_secs_f64(),
+                    );
+                }
+                Statistics(statistics) => {
+                    println!("rx_unique_bytes: {:<30}", statistics.rx_unique_bytes);
                 }
             }
-
-            print!(
-                "Received {:10.3}MB, rate={:10.3}MB/s\r",
-                bytes_received as f64 / 1024. / 1024.,
-                bytes_received as f64 / 1024. / 1024. / window_size.as_secs_f64(),
-            );
         }
-
         Ok::<_, Error>(())
     };
 

@@ -4,22 +4,22 @@ use anyhow::Result;
 use bytes::Bytes;
 use futures::prelude::*;
 
-use srt_tokio::{ConnInitMethod, SrtSocketBuilder};
+use srt_tokio::SrtSocket;
+use tokio::time::sleep;
 
-const PACKET_SIZE: usize = 1 << 19;
+const PACKET_SIZE: usize = 15 * 1500;
 
 #[tokio::test]
 async fn message_splitting() -> Result<()> {
     let _ = pretty_env_logger::try_init();
 
-    let sender = SrtSocketBuilder::new_connect("127.0.0.1:11124")
+    let sender = SrtSocket::builder()
         .latency(Duration::from_secs(2))
-        .connect();
+        .call("127.0.0.1:11124", None);
 
-    let recvr = SrtSocketBuilder::new(ConnInitMethod::Listen)
+    let recvr = SrtSocket::builder()
         .latency(Duration::from_secs(2))
-        .local_port(11124)
-        .connect();
+        .listen(":11124");
 
     // send a really really long packet
     let long_message = Bytes::from(&[b'8'; PACKET_SIZE][..]);
@@ -27,6 +27,7 @@ async fn message_splitting() -> Result<()> {
     let sender = tokio::spawn(async move {
         let mut sender = sender.await?;
         sender.send((Instant::now(), long_message)).await?;
+        sleep(Duration::from_secs(5)).await;
         sender.close().await?;
         Ok(()) as Result<_>
     });

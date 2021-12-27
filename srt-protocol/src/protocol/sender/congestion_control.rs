@@ -1,145 +1,155 @@
 use std::time::{Duration, Instant};
 
-use crate::protocol::stats::*;
-use crate::SeqNumber;
+use crate::options::{
+    ByteCount, DataRate, LiveBandwidthMode, PacketCount, PacketPeriod, PacketRate, Percent,
+};
 
-#[derive(Debug)]
-struct MessageStats {
-    pub message_count: u64,
-    pub packet_count: u64,
-    pub bytes_total: u64,
+#[derive(Debug, Default)]
+pub struct RateEstimate {
+    pub mean: u64,
+    pub variance: u64,
 }
 
-impl Default for MessageStats {
-    fn default() -> Self {
-        Self {
-            message_count: 0,
-            packet_count: 0,
-            bytes_total: 0,
+#[derive(Debug, Default)]
+pub struct RateEstimation {
+    total: i128,
+    last: i128,
+    mean: i128,
+    variance: i128,
+}
+
+impl RateEstimation {
+    pub fn increment(&mut self, count: u64) {
+        self.total += count as i128;
+    }
+
+    pub fn calculate(&mut self, time: Duration) -> RateEstimate {
+        let count = self.total - self.last;
+        let time = time.as_micros() as i128;
+        if time > 0 {
+            let rate = count * 1_000_000 / time;
+            if self.mean == 0 && self.variance == 0 {
+                self.mean = rate;
+            } else {
+                // favor speeding up over slowing down
+                self.mean = if rate > self.mean {
+                    (self.mean + rate) / 2
+                } else {
+                    (self.mean * 7 + rate) / 8
+                };
+                let diff = (self.mean - rate).abs();
+                self.variance = (self.variance * 3 + diff) / 4;
+            }
+            self.last = self.total;
+        }
+        RateEstimate {
+            mean: self.mean as u64,
+            variance: self.variance as u64,
         }
     }
 }
 
-impl Stats for MessageStats {
-    type Measure = (u64, u64);
-
-    fn add(&mut self, (packets, bytes): Self::Measure) {
-        self.message_count += 1;
-        self.packet_count += packets;
-        self.bytes_total += bytes;
-    }
+#[derive(Debug, Default)]
+pub struct InputRateEstimate {
+    pub messages: RateEstimate,
+    pub packets: RateEstimate,
+    pub bytes: RateEstimate,
 }
 
-impl StatsWindow<MessageStats> {
-    pub fn mean_payload_size(&self) -> DataRate {
-        if self.stats.packet_count > 0 {
-            self.stats.bytes_total / self.stats.packet_count
-        } else {
-            0
-        }
-    }
-
-    pub fn data_rate(&self) -> DataRate {
-        if self.period.as_nanos() > 0 {
-            (self.stats.bytes_total as f64 / self.period.as_secs_f64()) as u64
-        } else {
-            0
-        }
-    }
+#[derive(Debug, Default)]
+pub struct InputRateEstimation {
+    pub messages: RateEstimation,
+    pub packets: RateEstimation,
+    pub bytes: RateEstimation,
 }
 
-// rate in bytes per second
-type DataRate = u64;
+impl InputRateEstimation {
+    fn add(&mut self, (packets, bytes): (PacketCount, ByteCount)) {
+        self.messages.increment(1);
+        self.packets.increment(packets.into());
+        self.bytes.increment(bytes.into());
+    }
 
-// TODO: move data rate algorithm configuration to a public protocol configuration module
-//       for now, just ignore that it's never used
-#[allow(dead_code)]
-#[derive(Debug)]
-pub(crate) enum LiveDataRate {
-    Fixed {
-        // m_llInputBW != 0
-        rate: DataRate,     // m_llInputBW
-        overhead: DataRate, // m_iOverheadBW
-    },
-    Max(DataRate), // m_llMaxBW != 0
-    Auto {
-        // m_llMaxBW == 0 && m_llInputBW == 0
-        overhead: DataRate, // m_iOverheadBW
-    },
-    Unlimited,
+    pub fn calculate(&mut self, elapsed: Duration) -> InputRateEstimate {
+        InputRateEstimate {
+            messages: self.messages.calculate(elapsed),
+            packets: self.packets.calculate(elapsed),
+            bytes: self.bytes.calculate(elapsed),
+        }
+    }
 }
 
 #[derive(Debug)]
-pub(crate) struct SenderCongestionControl {
-    message_stats_window: OnlineWindowedStats<MessageStats>,
-    message_stats: StatsWindow<MessageStats>,
-    live_data_rate: LiveDataRate,
-    window_size: Option<usize>,
-    current_data_rate: DataRate,
+pub struct SenderCongestionControl {
+    next: Option<Instant>,
+    estimation: InputRateEstimation,
+    bandwidth_mode: LiveBandwidthMode,
 }
 
+// https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-00#section-5.1.2
 impl SenderCongestionControl {
-    const GIGABIT: DataRate = 1_000_000_000 / 8;
-    pub fn new(live_data_rate: LiveDataRate, window_size: Option<usize>) -> Self {
+    const GIGABIT: DataRate = DataRate(1_000_000_000 / 8);
+
+    pub fn new(bandwidth_mode: LiveBandwidthMode) -> Self {
         Self {
-            message_stats_window: OnlineWindowedStats::new(Duration::from_secs(1)),
-            message_stats: Default::default(),
-            live_data_rate,
-            window_size,
-            current_data_rate: Self::GIGABIT,
+            next: None,
+            estimation: InputRateEstimation::default(),
+            bandwidth_mode,
         }
     }
 
-    pub fn on_input(&mut self, now: Instant, packets: u64, data_length: u64) {
-        let stats = self.message_stats_window.add(now, (packets, data_length));
-        if let Some(stats) = stats {
-            self.current_data_rate = self.updated_data_rate(stats.data_rate());
-            self.message_stats = stats;
+    pub fn on_input(
+        &mut self,
+        now: Instant,
+        packets: PacketCount,
+        bytes: ByteCount,
+    ) -> Option<Duration> {
+        const PERIOD: Duration = Duration::from_millis(100);
+        let result = match self.next.as_mut() {
+            None => {
+                self.next = Some(now + PERIOD);
+                None
+            }
+            Some(next) if now < *next => None,
+            Some(next) => {
+                let overflow = now - *next;
+                let overflow_periods = overflow.as_millis() / PERIOD.as_millis();
+                let elapsed_periods = 1 + overflow_periods as u32;
+                let elapsed = elapsed_periods * PERIOD;
+                *next += elapsed;
+
+                let estimate = self.estimation.calculate(elapsed);
+                let data_rate = estimate.bytes.mean;
+                let packet_rate = estimate.packets.mean;
+
+                Some(self.calculate_snd_period(PacketRate(packet_rate), DataRate(data_rate)))
+            }
+        };
+
+        self.estimation.add((packets, bytes));
+
+        result
+    }
+
+    fn calculate_max_data_rate(&self, actual_data_rate: DataRate) -> DataRate {
+        use LiveBandwidthMode::*;
+        match self.bandwidth_mode {
+            Input { rate, overhead } => rate * (overhead + Percent(100)),
+            Set(max) => max,
+            Unlimited => Self::GIGABIT,
+            Estimated { overhead, .. } => actual_data_rate * (overhead + Percent(100)),
         }
     }
 
     // from https://github.com/Haivision/srt/blob/580d8992c20ba4ff48d58b29fddf5fd5e7037f9d/srtcore/congctl.cpp#L166-L166
-    pub fn snd_period(&self) -> Duration {
-        if self.current_data_rate > 0 {
-            const UDP_HEADER_SIZE: usize = 28; // 20 bytes for IPv4 header, 8 bytes for UDP header
-            const HEADER_SIZE: usize = 16;
-            const SRT_DATA_HEADER_SIZE: usize = UDP_HEADER_SIZE + HEADER_SIZE;
-
-            let mean_packet_size =
-                self.message_stats.mean_payload_size() + SRT_DATA_HEADER_SIZE as u64;
-            // multiply packet size to adjust data rate to microseconds (i.e. x 1,000,000)
-            let period = mean_packet_size as u64 * 1_000_000 / self.current_data_rate as u64;
-
-            if period > 0 {
-                return Duration::from_micros(period);
+    fn calculate_snd_period(&self, packet_rate: PacketRate, data_rate: DataRate) -> Duration {
+        let max_data_rate = self.calculate_max_data_rate(data_rate);
+        if packet_rate > PacketRate(0) && max_data_rate > DataRate(0) {
+            if let Some(period) = PacketPeriod::try_from(max_data_rate, data_rate / packet_rate) {
+                return period;
             }
         }
         Duration::from_micros(1)
-    }
-
-    pub fn window_size(&self) -> u32 {
-        // Up to SRT 1.0.6, this value was set at 1000 pkts, which may be insufficient
-        // for satellite links with ~1000 msec RTT and high bit rate.
-        self.window_size.unwrap_or(1000) as u32
-    }
-
-    /// When an ACK packet is received
-    pub fn on_ack(&mut self) {}
-
-    /// When a NAK packet is received
-    pub fn on_nak(&mut self, _largest_seq_in_ll: SeqNumber) {}
-
-    /// On packet sent
-    pub fn on_packet_sent(&mut self) {}
-
-    fn updated_data_rate(&mut self, actual_data_rate: DataRate) -> DataRate {
-        use LiveDataRate::*;
-        match self.live_data_rate {
-            Fixed { rate, overhead } => rate * (100 + overhead) / 100,
-            Max(max) => max,
-            Unlimited => Self::GIGABIT,
-            Auto { overhead } => actual_data_rate * (100 + overhead) / 100,
-        }
     }
 }
 
@@ -149,100 +159,98 @@ mod sender_congestion_control {
 
     #[test]
     fn data_rate_unlimited() {
-        let data_rate = LiveDataRate::Unlimited;
+        let data_rate = LiveBandwidthMode::Unlimited;
 
         let ms = Duration::from_millis;
         let start = Instant::now();
-        let mut control = SenderCongestionControl::new(data_rate, None);
+        let mut control = SenderCongestionControl::new(data_rate);
 
         // initialize statistics
-        control.on_input(start, 0, 0);
+        control.on_input(start, PacketCount(0), ByteCount(0));
 
-        for n in 1..1001 {
-            control.on_input(start + ms(n), 2, 2_000);
+        for n in 1..100 {
+            control.on_input(start + ms(n), PacketCount(2), ByteCount(2_000));
         }
+        let snd_period = control.on_input(start + ms(1001), PacketCount(0), ByteCount(0));
 
-        assert_eq!(control.snd_period(), Duration::from_micros(8));
+        assert_eq!(snd_period, Some(Duration::from_micros(8)));
     }
 
     #[test]
     fn data_rate_fixed() {
         let fixed_rate = 1_000_000;
         let fixed_overhead = 100;
-        let data_rate = LiveDataRate::Fixed {
-            rate: fixed_rate,
-            overhead: fixed_overhead,
+        let data_rate = LiveBandwidthMode::Input {
+            rate: DataRate(fixed_rate),
+            overhead: Percent(fixed_overhead),
         };
         let expected_data_rate = (fixed_overhead + 100) * fixed_rate / 100;
-
-        let mean_payload_size = 1_000_000;
-        let packet_header_size = 44;
-        let expected_mean_packet_size = mean_payload_size + packet_header_size;
+        let mean_packet_size = 100_000;
 
         let micros = Duration::from_micros;
         let start = Instant::now();
-        let mut control = SenderCongestionControl::new(data_rate, None);
+        let mut control = SenderCongestionControl::new(data_rate);
 
         // initialize statistics
-        control.on_input(start, 0, 0);
-        control.on_input(start, 1, mean_payload_size);
-        control.on_input(start + micros(1_000_000), 0, 0);
+        assert_eq!(control.on_input(start, PacketCount(0), ByteCount(0)), None);
+        assert_eq!(
+            control.on_input(start, PacketCount(1), ByteCount(mean_packet_size)),
+            None
+        );
+        let snd_period = control.on_input(start + micros(100_000), PacketCount(0), ByteCount(0));
 
-        let expected_snd_period =
-            (expected_mean_packet_size as u64 * 1_000_000) / expected_data_rate as u64;
+        let expected_snd_period = mean_packet_size * 10 * 100_000 / expected_data_rate;
 
-        assert_eq!(control.snd_period(), micros(expected_snd_period));
+        assert_eq!(snd_period, Some(micros(expected_snd_period)));
     }
 
     #[test]
     fn data_rate_max() {
         let max_data_rate = 10_000_000;
-        let data_rate = LiveDataRate::Max(max_data_rate);
+        let data_rate = LiveBandwidthMode::Set(DataRate(max_data_rate));
         let expected_data_rate = max_data_rate;
-
-        let mean_payload_size = 1_000_000;
-        let packet_header_size = 44;
-        let expected_mean_packet_size = mean_payload_size + packet_header_size;
+        let mean_packet_size = 100_000;
 
         let micros = Duration::from_micros;
         let start = Instant::now();
-        let mut control = SenderCongestionControl::new(data_rate, None);
+        let mut control = SenderCongestionControl::new(data_rate);
 
         // initialize statistics
-        control.on_input(start, 0, 0);
-        control.on_input(start, 1, mean_payload_size);
-        control.on_input(start + micros(1_000_000), 0, 0);
+        assert_eq!(control.on_input(start, PacketCount(0), ByteCount(0)), None);
+        assert_eq!(
+            control.on_input(start, PacketCount(1), ByteCount(mean_packet_size)),
+            None
+        );
+        let snd_period = control.on_input(start + micros(100_000), PacketCount(0), ByteCount(0));
 
-        let expected_snd_period =
-            (expected_mean_packet_size as u64 * 1_000_000) / expected_data_rate as u64;
+        let expected_snd_period = (mean_packet_size * 10 * 100_000) / expected_data_rate as u64;
 
-        assert_eq!(control.snd_period(), micros(expected_snd_period));
+        assert_eq!(snd_period, Some(micros(expected_snd_period)));
     }
 
     #[test]
     fn data_rate_auto() {
         let auto_overhead = 5;
-        let data_rate = LiveDataRate::Auto {
-            overhead: auto_overhead,
+        let data_rate = LiveBandwidthMode::Estimated {
+            overhead: Percent(auto_overhead),
         };
-        let expected_data_rate = ((100 + auto_overhead) * 1_000_000) / 100;
-
-        let mean_payload_size = 1_000_000;
-        let packet_header_size = 44;
-        let expected_mean_packet_size = mean_payload_size + packet_header_size;
+        let expected_data_rate = ((100 + auto_overhead) * 10 * 100_000) / 100;
+        let mean_packet_size = 100_000;
 
         let micros = Duration::from_micros;
         let start = Instant::now();
-        let mut control = SenderCongestionControl::new(data_rate, None);
+        let mut control = SenderCongestionControl::new(data_rate);
 
         // initialize statistics
-        control.on_input(start, 0, 0);
-        control.on_input(start, 1, mean_payload_size);
-        control.on_input(start + micros(1_000_000), 0, 0);
+        assert_eq!(control.on_input(start, PacketCount(0), ByteCount(0)), None);
+        assert_eq!(
+            control.on_input(start, PacketCount(1), ByteCount(mean_packet_size)),
+            None
+        );
+        let snd_period = control.on_input(start + micros(100_000), PacketCount(0), ByteCount(0));
 
-        let expected_snd_period =
-            (expected_mean_packet_size as u64 * 1_000_000) / expected_data_rate as u64;
+        let expected_snd_period = mean_packet_size * 10 * 100_000 / expected_data_rate;
 
-        assert_eq!(control.snd_period(), micros(expected_snd_period));
+        assert_eq!(snd_period, Some(micros(expected_snd_period)));
     }
 }
