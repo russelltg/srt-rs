@@ -19,7 +19,7 @@ async fn single_packet_tsbpd() {
 
     let recvr = SrtSocket::builder()
         .latency(Duration::from_secs(2))
-        .listen(":3000");
+        .listen_on(":3000");
 
     // init the connection
     let (mut recvr, mut sender) = futures::try_join!(sender, recvr).unwrap();

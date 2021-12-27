@@ -27,7 +27,7 @@ async fn keepalive() {
         s.close().await.unwrap();
     };
     let r = async {
-        let mut r = SrtSocket::builder().listen(":4444").await.unwrap();
+        let mut r = SrtSocket::builder().listen_on(":4444").await.unwrap();
         let res = r.try_next().await.unwrap().unwrap();
         assert_eq!(res.1, Bytes::from(&b"1234"[..]));
         let res = r.try_next().await.unwrap();

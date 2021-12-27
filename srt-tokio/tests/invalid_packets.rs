@@ -28,7 +28,7 @@ async fn invalid_packets() {
         sender.close().await.unwrap();
     };
     let recvr = async {
-        let mut recvr = SrtSocket::builder().listen(":8876").await.unwrap();
+        let mut recvr = SrtSocket::builder().listen_on(":8876").await.unwrap();
 
         info!("Receiver initialised");
 

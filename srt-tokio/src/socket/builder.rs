@@ -135,9 +135,19 @@ impl SrtSocketBuilder {
         self
     }
 
-    pub async fn listen(self, local: impl TryInto<SocketAddress>) -> Result<SrtSocket, io::Error> {
-        let options = ListenerOptions::with(local, self.0)?;
-        Self::bind(options.into(), self.1).await
+    pub async fn listen_on(
+        self,
+        local: impl TryInto<SocketAddress>,
+    ) -> Result<SrtSocket, io::Error> {
+        self.local(local).listen().await
+    }
+
+    pub async fn listen(self) -> Result<SrtSocket, io::Error> {
+        Self::bind(
+            ListenerOptions { socket: self.0 }.try_validate()?.into(),
+            self.1,
+        )
+        .await
     }
 
     pub async fn call(

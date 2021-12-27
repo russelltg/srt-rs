@@ -68,7 +68,7 @@ async fn high_bandwidth() -> Result<(), Error> {
             .set(|options| options.receiver.buffer_size = ByteCount(buffer_size as u64))
             .set(|options| options.session.statistics_interval = Duration::from_secs(1))
             .latency(latency)
-            .listen(":6654")
+            .listen_on(":6654")
             .await?
             .fuse();
 

@@ -71,7 +71,7 @@ async fn receiver_timeout() {
 async fn sender_timeout() {
     let _ = pretty_env_logger::try_init();
 
-    let b = SrtSocket::builder().listen(1879);
+    let b = SrtSocket::builder().listen_on(1879);
 
     let stranmsit_rs = find_stransmit_rs();
     let mut a = Command::new(&stranmsit_rs)

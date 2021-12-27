@@ -19,7 +19,7 @@ async fn message_splitting() -> Result<()> {
 
     let recvr = SrtSocket::builder()
         .latency(Duration::from_secs(2))
-        .listen(":11124");
+        .listen_on(":11124");
 
     // send a really really long packet
     let long_message = Bytes::from(&[b'8'; PACKET_SIZE][..]);

@@ -19,6 +19,15 @@ pub trait OptionsOf<C>: CompositeValidation {
     fn set_options(&mut self, value: C);
 }
 
+impl<C> OptionsOf<C> for C
+where
+    C: CompositeValidation,
+{
+    fn set_options(&mut self, value: C) {
+        *self = value;
+    }
+}
+
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct Valid<T: Validation>(T);
 

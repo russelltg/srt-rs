@@ -119,7 +119,7 @@ async fn stransmit_client() -> Result<(), Error> {
         // connect to process
         let mut conn = SrtSocket::builder()
             .latency(Duration::from_millis(827))
-            .listen(2453)
+            .listen_on(2453)
             .await
             .unwrap();
         assert_eq!(
@@ -299,7 +299,7 @@ async fn stransmit_decrypt() -> Result<(), Error> {
     let sender_fut = async move {
         let mut snd = SrtSocket::builder()
             .encryption(16, "password123")
-            .listen(2909)
+            .listen_on(2909)
             .await
             .unwrap();
 
@@ -371,7 +371,7 @@ async fn test_c_client_interop() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     let srt_rs_side = async move {
-        let mut sock = SrtSocket::builder().listen(2811).await.unwrap();
+        let mut sock = SrtSocket::builder().listen_on(2811).await.unwrap();
 
         for _ in 0..100 {
             let (_, msg) = sock.next().await.unwrap().unwrap();
@@ -406,7 +406,7 @@ async fn bidirectional_interop() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     let srt_rs_side = async move {
-        let mut sock = SrtSocket::builder().listen(2812).await.unwrap();
+        let mut sock = SrtSocket::builder().listen_on(2812).await.unwrap();
 
         time::sleep(Duration::from_millis(500)).await;
 
@@ -451,7 +451,7 @@ async fn bidirectional_interop_encrypt_rekey() -> Result<(), Error> {
                 options.encryption.km_refresh.period = PacketCount(128);
                 options.encryption.km_refresh.pre_announcement_period = PacketCount(60);
             })
-            .listen(2813)
+            .listen_on(2813)
             .await
             .unwrap();
 
