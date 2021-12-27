@@ -13,6 +13,7 @@ use std::{
     mem::{replace, size_of},
     net::SocketAddr,
     os::raw::{c_char, c_int},
+    pin::Pin,
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::{
         atomic::{AtomicI32, Ordering},
@@ -22,13 +23,13 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures::{sink::SinkExt, StreamExt};
+use futures::{sink::SinkExt, Stream, StreamExt};
 use lazy_static::lazy_static;
 use libc::{sockaddr_in, sockaddr_in6, AF_INET};
 use log::{error, warn};
 use srt_tokio::{
     options::{ListenerOptions, SocketOptions, Validation},
-    SrtListener, SrtSocket,
+    ConnectionRequest, SrtListener, SrtSocket,
 };
 use tokio::{runtime::Runtime, task::JoinHandle, time::timeout};
 
@@ -283,10 +284,15 @@ enum SocketData {
     Initialized(SocketOptions, ApiOptions),
     ConnectingNonBlocking(JoinHandle<()>, ApiOptions),
     Established(SrtSocket, ApiOptions),
-    Listening(Option<SrtListener>, ApiOptions),
+    Listening(
+        SrtListener,
+        Option<Pin<Box<dyn Stream<Item = ConnectionRequest> + Send + Sync>>>,
+        ApiOptions,
+    ),
     ConnectFailed(io::Error),
 
     InvalidIntermediateState,
+    Closed,
 }
 
 fn get_sock(sock: SRTSOCKET) -> Option<Arc<Mutex<SocketData>>> {
@@ -370,13 +376,12 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
             Err(e) => return set_error(&format!("Invalid options: {}", e)),
         };
         let ret = TOKIO_RUNTIME.block_on(SrtListener::bind(options));
-        *l = SocketData::Listening(
-            match ret {
-                Ok(l) => Some(l),
-                Err(e) => return set_error(&format!("Failed to listen on socket: {}", e)),
-            },
-            opts,
-        )
+        let mut listener = match ret {
+            Ok(l) => l,
+            Err(e) => return set_error(&format!("Failed to listen on socket: {}", e)),
+        };
+        let stream = listener.incoming();
+        *l = SocketData::Listening(listener, Some(Box::pin(stream)), opts)
     } else {
         *l = sd;
         return set_error("Cannot listen, listen or connect has already been called");
@@ -544,8 +549,8 @@ pub extern "C" fn srt_accept(
     };
 
     let mut l = sock.lock().unwrap();
-    if let SocketData::Listening(ref mut listener, opts) = *l {
-        let mut listener = match listener.take() {
+    if let SocketData::Listening(ref _listener, ref mut stream, opts) = *l {
+        let mut stream = match stream.take() {
             Some(l) => l,
             None => return set_error("accept can only be called from one thread at a time"),
         };
@@ -555,13 +560,13 @@ pub extern "C" fn srt_accept(
         TOKIO_RUNTIME.block_on(async {
             let req = if opts.rcv_syn {
                 // blocking
-                match listener.incoming().next().await {
+                match stream.next().await {
                     Some(req) => req,
                     None => return set_error("Listener ended"),
                 }
             } else {
                 // nonblocking--10ms for now but could be shorter potentially
-                match timeout(Duration::from_millis(10), listener.incoming().next()).await {
+                match timeout(Duration::from_millis(10), stream.next()).await {
                     Err(_) => return set_error("no new connections available"),
                     Ok(Some(req)) => req,
                     Ok(None) => return set_error("Listener ended"),
@@ -571,8 +576,8 @@ pub extern "C" fn srt_accept(
             // put listener back
             {
                 let mut l = sock.lock().unwrap();
-                if let SocketData::Listening(ref mut in_state, _opts) = *l {
-                    *in_state = Some(listener);
+                if let SocketData::Listening(ref _listener, ref mut in_state, _opts) = *l {
+                    *in_state = Some(stream);
                 }
             }
 
@@ -822,12 +827,20 @@ pub extern "C" fn srt_close(socknum: SRTSOCKET) -> c_int {
     let mut retcode = SRT_SUCCESS;
 
     let mut l = sock.lock().unwrap();
-    if let SocketData::Established(ref mut s, _) = *l {
-        let res = TOKIO_RUNTIME.block_on(async move { s.close().await });
-        if let Err(e) = res {
-            set_error(&format!("Failed to close socket: {}", e));
-            retcode = SRT_ERROR;
+    match *l {
+        SocketData::Established(ref mut s, _) => {
+            let res = TOKIO_RUNTIME.block_on(async move { s.close().await });
+            if let Err(e) = res {
+                set_error(&format!("Failed to close socket: {}", e));
+                retcode = SRT_ERROR;
+            }
+            *l = SocketData::Closed
         }
+        SocketData::Listening(ref mut listener, _, _) => {
+            listener.close();
+            *l = SocketData::Closed;
+        }
+        _ => (),
     }
 
     let mut sockets = SOCKETS.write().unwrap();
