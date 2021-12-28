@@ -19,7 +19,7 @@
 //!# -> ()
 //! {
 //!     let sender_fut = async {
-//!         let mut tx = SrtSocket::builder().listen(2223).await?;
+//!         let mut tx = SrtSocket::builder().listen_on(2223).await?;
 //!
 //!         let iter = ["1", "2", "3"];
 //!

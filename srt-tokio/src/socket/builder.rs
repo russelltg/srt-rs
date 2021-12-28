@@ -22,7 +22,7 @@ pub struct SrtSocketBuilder(SocketOptions, Option<UdpSocket>);
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), io::Error> {
 /// let (a, b) = futures::try_join!(
-///     SrtSocket::builder().listen(":3333"),
+///     SrtSocket::builder().listen_on(":3333"),
 ///     SrtSocket::builder().call("127.0.0.1:3333", Some("stream ID")),
 /// )?;
 /// # Ok(())
