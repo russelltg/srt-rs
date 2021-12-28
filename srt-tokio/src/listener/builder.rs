@@ -4,7 +4,7 @@ use tokio::net::UdpSocket;
 
 use crate::options::*;
 
-use super::SrtListener;
+use super::{SrtIncoming, SrtListener};
 
 #[derive(Default)]
 pub struct SrtListenerBuilder(SocketOptions, Option<UdpSocket>);
@@ -90,7 +90,10 @@ impl SrtListenerBuilder {
         self
     }
 
-    pub async fn bind(self, local: impl TryInto<SocketAddress>) -> Result<SrtListener, io::Error> {
+    pub async fn bind(
+        self,
+        local: impl TryInto<SocketAddress>,
+    ) -> Result<(SrtListener, SrtIncoming), io::Error> {
         let options = ListenerOptions::with(local, self.0)?;
         match self.1 {
             None => SrtListener::bind(options).await,

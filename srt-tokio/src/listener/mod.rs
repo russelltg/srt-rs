@@ -18,10 +18,13 @@ pub use srt_protocol::statistics::ListenerStatistics;
 
 pub struct SrtListener {
     settings: ConnInitSettings,
-    request_receiver: Option<mpsc::Receiver<ConnectionRequest>>,
     statistics_receiver: watch::Receiver<ListenerStatistics>,
     close_req: Option<oneshot::Sender<()>>,
     _task: JoinHandle<()>,
+}
+
+pub struct SrtIncoming {
+    request_receiver: mpsc::Receiver<ConnectionRequest>,
 }
 
 impl SrtListener {
@@ -29,7 +32,7 @@ impl SrtListener {
         SrtListenerBuilder::default()
     }
 
-    pub async fn bind(options: Valid<ListenerOptions>) -> Result<Self, io::Error> {
+    pub async fn bind(options: Valid<ListenerOptions>) -> Result<(Self, SrtIncoming), io::Error> {
         let socket = bind_socket(&options.socket).await?;
         Self::bind_with_socket(options, socket).await
     }
@@ -37,7 +40,7 @@ impl SrtListener {
     pub async fn bind_with_socket(
         options: Valid<ListenerOptions>,
         socket: UdpSocket,
-    ) -> Result<Self, io::Error> {
+    ) -> Result<(Self, SrtIncoming), io::Error> {
         use state::SrtListenerState;
         let socket_options = options.into_value().socket;
         let local_address = socket.local_addr()?;
@@ -57,13 +60,15 @@ impl SrtListener {
         let task = tokio::spawn(async move {
             state.run_loop().await;
         });
-        Ok(Self {
-            settings,
-            request_receiver: Some(request_receiver),
-            statistics_receiver,
-            close_req: Some(close_req),
-            _task: task,
-        })
+        Ok((
+            Self {
+                settings,
+                statistics_receiver,
+                close_req: Some(close_req),
+                _task: task,
+            },
+            SrtIncoming { request_receiver },
+        ))
     }
 
     pub fn settings(&self) -> &ConnInitSettings {
@@ -74,12 +79,14 @@ impl SrtListener {
         &mut self.statistics_receiver
     }
 
-    pub fn incoming(&mut self) -> impl Stream<Item = ConnectionRequest> + 'static {
-        self.request_receiver.take().unwrap()
-    }
-
     pub fn close(&mut self) {
         let _ = self.close_req.take().unwrap().send(());
+    }
+}
+
+impl SrtIncoming {
+    pub fn incoming(&mut self) -> &mut impl Stream<Item = ConnectionRequest> {
+        &mut self.request_receiver
     }
 }
 
@@ -116,10 +123,11 @@ mod tests {
         let (finished_send, finished_recv) = oneshot::channel();
 
         let listener = tokio::spawn(async {
-            let mut server = SrtListener::builder().bind("127.0.0.1:4001").await.unwrap();
+            let (mut server, mut incoming) =
+                SrtListener::builder().bind("127.0.0.1:4001").await.unwrap();
             let mut statistics = server.statistics().clone().fuse();
 
-            let mut incoming = server.incoming().fuse();
+            let mut incoming = incoming.incoming().fuse();
             let mut fused_finish = finished_recv.fuse();
             loop {
                 let selection = futures::select!(
@@ -200,14 +208,14 @@ mod tests {
         let (finished_send, finished_recv) = oneshot::channel();
 
         let listener = tokio::spawn(async {
-            let mut server = SrtListener::builder()
+            let (mut server, mut incoming) = SrtListener::builder()
                 .encryption(0, "super secret passcode")
                 .bind("127.0.0.1:4002")
                 .await
                 .unwrap();
             let mut statistics = server.statistics().clone().fuse();
 
-            let mut incoming = server.incoming().fuse();
+            let mut incoming = incoming.incoming().fuse();
             let mut fused_finish = finished_recv.fuse();
             loop {
                 let selection = futures::select!(
@@ -289,7 +297,7 @@ mod tests {
 
         async fn run_listener() -> Result<(), io::Error> {
             let port = 4444;
-            let mut binding = SrtListener::builder()
+            let (_binding, mut incoming) = SrtListener::builder()
                 .with(Sender {
                     drop_delay: Duration::from_secs(20),
                     peer_latency: Duration::from_secs(1),
@@ -301,8 +309,7 @@ mod tests {
                 .unwrap();
 
             info!("SRT Multiplex Server is listening on port: {}", port);
-            let mut incoming = binding.incoming();
-            while let Some(request) = incoming.next().await {
+            while let Some(request) = incoming.incoming().next().await {
                 let mut srt_socket = request.accept(None).await.unwrap();
 
                 tokio::spawn(async move {
