@@ -13,17 +13,18 @@ use srt_protocol::{
     protocol::pending_connection::{connect::Connect, ConnectionResult},
 };
 
-use crate::net::PacketSocket;
+use crate::net::{lookup_remote_host, PacketSocket};
 
 pub async fn bind_with(
     mut socket: PacketSocket,
     options: Valid<CallerOptions>,
 ) -> Result<(PacketSocket, Connection), io::Error> {
     let stream_id = options.stream_id.as_ref().map(|s| s.to_string());
+    let remote = lookup_remote_host(&options.remote).await?;
 
     let mut tick_interval = interval(Duration::from_millis(100));
     let mut connect = Connect::new(
-        options.remote,
+        remote,
         options.socket.connect.local.ip(),
         options.socket.clone().into(),
         stream_id.clone(),

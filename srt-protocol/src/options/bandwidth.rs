@@ -14,7 +14,7 @@ pub enum LiveBandwidthMode {
     /// Note that this static setting is not well-suited to a variable input, like when you change
     /// the bitrate on an encoder. Each time the input bitrate is configured on the encoder, this
     /// value should also be reconfigured.
-    Set(DataRate), // m_llMaxBW != 0
+    Max(DataRate), // m_llMaxBW != 0
 
     /// Set the SRT send input rate and overhead.
     /// In this mode, SRT calculates the maximum bandwidth as follows:
@@ -57,9 +57,9 @@ pub enum LiveBandwidthMode {
     /// accumulated in the SRT send buffer, and delayed as a result, causing them to arrive too late
     /// at the decoder, and possible drops by the receiver.
     Estimated {
-        // expected: DataRate,     // m_llInputBW
         // m_llMaxBW == 0 && m_llInputBW == 0
-        overhead: Percent, // m_iOverheadBW
+        overhead: Percent,  // m_iOverheadBW
+        expected: DataRate, // SRTO_MININPUTBW
     },
     Unlimited,
 }

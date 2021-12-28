@@ -124,7 +124,7 @@ mod tests {
             .send_latency(Duration::from_secs(4))
             .latency(Duration::from_secs(1))
             .encryption(0, "super secret passcode")
-            .bandwidth(LiveBandwidthMode::Set(DataRate(1_000_000)))
+            .bandwidth(LiveBandwidthMode::Max(DataRate(1_000_000)))
             .socket(socket)
             .bind(9999)
             .await

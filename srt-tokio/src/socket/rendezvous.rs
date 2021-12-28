@@ -14,14 +14,14 @@ use srt_protocol::{
     settings::*,
 };
 
-use crate::net::PacketSocket;
+use crate::net::{lookup_remote_host, PacketSocket};
 
 pub async fn bind_with(
     mut socket: PacketSocket,
     options: Valid<RendezvousOptions>,
 ) -> Result<(PacketSocket, Connection), io::Error> {
     let local_addr = options.socket.connect.local;
-    let remote_public = options.remote;
+    let remote_public = lookup_remote_host(&options.remote).await?;
     let starting_seqno = rand::random();
     let init_settings: ConnInitSettings = options.socket.clone().into();
     let socket_id = init_settings.local_sockid;

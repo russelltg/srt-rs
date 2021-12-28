@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::{convert::TryInto, io, net::IpAddr, time::Duration};
 
-use tokio::net::{lookup_host, ToSocketAddrs, UdpSocket};
+use tokio::net::UdpSocket;
 
 use crate::options::*;
 
@@ -75,7 +75,12 @@ impl SrtSocketBuilder {
             .try_into()
             .map_err(|_| OptionsError::InvalidLocalAddress)
             .unwrap();
-        self.0.connect.local = address.into();
+
+        self.0.connect.local = address
+            .try_into()
+            .map_err(|_| OptionsError::InvalidLocalAddress)
+            .unwrap();
+
         self
     }
 
@@ -152,26 +157,18 @@ impl SrtSocketBuilder {
 
     pub async fn call(
         self,
-        remote_address: impl ToSocketAddrs,
+        remote: impl TryInto<SocketAddress>,
         stream_id: Option<&str>,
     ) -> Result<SrtSocket, io::Error> {
-        let address = lookup_host(remote_address)
-            .await?
-            .next()
-            .ok_or(OptionsError::InvalidRemoteAddress)?;
-        let options = CallerOptions::with(address, stream_id, self.0)?;
+        let options = CallerOptions::with(remote, stream_id, self.0)?;
         Self::bind(options.into(), self.1).await
     }
 
     pub async fn rendezvous(
         self,
-        remote_address: impl ToSocketAddrs,
+        remote: impl TryInto<SocketAddress>,
     ) -> Result<SrtSocket, io::Error> {
-        let address = lookup_host(remote_address)
-            .await?
-            .next()
-            .ok_or(OptionsError::InvalidRemoteAddress)?;
-        let options = RendezvousOptions::with(address, self.0)?;
+        let options = RendezvousOptions::with(remote, self.0)?;
         Self::bind(options.into(), self.1).await
     }
 

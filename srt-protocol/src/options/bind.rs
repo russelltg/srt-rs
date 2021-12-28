@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum BindOptions {
     Listen(Valid<ListenerOptions>),
     Call(Valid<CallerOptions>),
