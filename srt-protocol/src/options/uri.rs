@@ -18,29 +18,17 @@ pub struct SrtUri(BindOptions);
 #[derive(Error, Debug, Clone, Eq, PartialEq)]
 pub enum SrtUriError {
     #[error("{0}")]
-    InvalidOptions(OptionsError),
+    InvalidOptions(#[from] OptionsError),
     #[error("{0}")]
-    InvalidUrl(ParseError),
+    InvalidUrl(#[from] ParseError),
     #[error("Invalid adapter: {0}")]
-    InvalidAdapter(AddrParseError),
+    InvalidAdapter(#[from] AddrParseError),
     #[error("Invalid mode: {0}")]
     InvalidMode(String),
     #[error("Invalid parameter: {0}={1}, expected positive integer")]
     InvalidIntParameter(&'static str, String),
     #[error("Unimplemented parameter: {0}")]
     UnimplementedParameter(&'static str),
-}
-
-impl From<OptionsError> for SrtUriError {
-    fn from(error: OptionsError) -> Self {
-        Self::InvalidOptions(error)
-    }
-}
-
-impl From<ParseError> for SrtUriError {
-    fn from(error: ParseError) -> Self {
-        Self::InvalidUrl(error)
-    }
 }
 
 impl TryFrom<Url> for SrtUri {
