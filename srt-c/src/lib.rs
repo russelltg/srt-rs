@@ -28,13 +28,20 @@ use std::{
 use bytes::Bytes;
 use futures::{sink::SinkExt, StreamExt};
 use lazy_static::lazy_static;
-use libc::{sockaddr_in, sockaddr_in6, AF_INET};
 use log::{error, warn};
 use srt_tokio::{
     options::{ListenerOptions, SocketOptions, Validation},
     SrtIncoming, SrtListener, SrtSocket,
 };
 use tokio::{runtime::Runtime, task::JoinHandle, time::timeout};
+
+#[cfg(not(target_os = "windows"))]
+use libc::{sockaddr_in, sockaddr_in6, AF_INET, AF_INET6};
+#[cfg(target_os = "windows")]
+use winapi::shared::{
+    ws2def::{AF_INET, AF_INET6, SOCKADDR_IN},
+    ws2ipdef::SOCKADDR_IN6,
+};
 
 pub type SRTSOCKET = i32;
 
@@ -310,27 +317,51 @@ fn get_sock(sock: SRTSOCKET) -> Option<Arc<Mutex<SocketData>>> {
     SOCKETS.read().unwrap().get(&sock).cloned()
 }
 
-fn sockaddr_from_c(addr: &libc::sockaddr, len: c_int) -> Option<SocketAddr> {
-    let len = usize::try_from(len).unwrap();
-
-    if addr.sa_family as c_int != AF_INET {
-        return None;
-    }
-
-    if len == size_of::<sockaddr_in>() {
-        let sa_in: &sockaddr_in = unsafe { transmute(addr) };
-        Some(
-            (
-                sa_in.sin_addr.s_addr.to_ne_bytes(),
-                u16::from_be(sa_in.sin_port),
-            )
-                .into(),
-        )
-    } else if len == size_of::<sockaddr_in6>() {
-        let sa_in: &sockaddr_in6 = unsafe { transmute(addr) };
-        Some((sa_in.sin6_addr.s6_addr, u16::from_be(sa_in.sin6_port)).into())
-    } else {
-        None
+pub fn sockaddr_from_c(addr: &libc::sockaddr, len: c_int) -> Option<SocketAddr> {
+    match i32::from(addr.sa_family) {
+        AF_INET => {
+            #[cfg(not(target_os = "windows"))]
+            {
+                let sa_in: &sockaddr_in = unsafe { transmute(addr) };
+                Some(
+                    (
+                        sa_in.sin_addr.s_addr.to_ne_bytes(),
+                        u16::from_be(sa_in.sin_port),
+                    )
+                        .into(),
+                )
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let sa_in: &SOCKADDR_IN = unsafe { transmute(addr) };
+                Some(
+                    (
+                        unsafe { sa_in.sin_addr.S_un.S_addr() }.to_ne_bytes(),
+                        u16::from_be(sa_in.sin_port),
+                    )
+                        .into(),
+                )
+            }
+        }
+        AF_INET6 => {
+            #[cfg(not(target_os = "windows"))]
+            {
+                let sa_in: &sockaddr_in6 = unsafe { transmute(addr) };
+                Some((sa_in.sin6_addr.s6_addr, u16::from_be(sa_in.sin6_port)).into())
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let sa_in: &SOCKADDR_IN6 = unsafe { transmute(addr) };
+                Some(
+                    (
+                        *unsafe { sa_in.sin6_addr.u.Byte() },
+                        u16::from_be(sa_in.sin6_port),
+                    )
+                        .into(),
+                )
+            }
+        }
+        _ => None,
     }
 }
 
