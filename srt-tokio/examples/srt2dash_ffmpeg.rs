@@ -177,7 +177,7 @@ async fn main() -> anyhow::Result<()> {
 
     fs::create_dir_all("segments")?;
 
-    let (binding, mut incoming) = SrtListener::builder().bind(1234).await?;
+    let (_binding, mut incoming) = SrtListener::builder().bind(1234).await?;
 
     while let Some(request) = incoming.incoming().next().await {
         let socket = request.accept(None).await?;
