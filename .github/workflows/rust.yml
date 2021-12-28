@@ -100,7 +100,7 @@ jobs:
     - name: Install llvm-tools-preview
       run: rustup component add --toolchain nightly-2021-12-27 llvm-tools-preview
     - name: install srt
-      run: sudo apt-get install srt-tools
+      run: sudo apt-get install srt-tools libgtest-dev
     - name: Download grcov
       run: wget https://github.com/mozilla/grcov/releases/download/v0.8.2/grcov-linux-x86_64.tar.bz2 -O grcov.tar.bz2 && tar -xf grcov.tar.bz2
     - name: Build with profdata
