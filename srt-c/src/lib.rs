@@ -17,6 +17,7 @@ use std::{
     net::SocketAddr,
     os::raw::{c_char, c_int},
     pin::Pin,
+    ptr::NonNull,
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::{
         atomic::{AtomicI32, Ordering},
@@ -39,7 +40,7 @@ use tokio::{runtime::Runtime, task::JoinHandle, time::timeout};
 pub type SRTSOCKET = i32;
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum SRT_SOCKOPT {
     SRTO_MSS = 0,        // the Maximum Transfer Unit
     SRTO_SNDSYN = 1,     // if sending is blocking
@@ -298,6 +299,18 @@ enum SocketData {
     Closed,
 }
 
+impl SocketData {
+    fn options(&self) -> Option<&ApiOptions> {
+        match self {
+            SocketData::Initialized(_, opts)
+            | SocketData::ConnectingNonBlocking(_, opts)
+            | SocketData::Established(_, opts)
+            | SocketData::Listening(_, _, opts) => Some(opts),
+            _ => None,
+        }
+    }
+}
+
 fn get_sock(sock: SRTSOCKET) -> Option<Arc<Mutex<SocketData>>> {
     SOCKETS.read().unwrap().get(&sock).cloned()
 }
@@ -314,19 +327,13 @@ fn sockaddr_from_c(addr: &libc::sockaddr, len: c_int) -> Option<SocketAddr> {
         Some(
             (
                 sa_in.sin_addr.s_addr.to_ne_bytes(),
-                u16::from_ne_bytes(sa_in.sin_port.to_be_bytes()),
+                u16::from_be(sa_in.sin_port),
             )
                 .into(),
         )
     } else if len == size_of::<sockaddr_in6>() {
         let sa_in: &sockaddr_in6 = unsafe { transmute(addr) };
-        Some(
-            (
-                sa_in.sin6_addr.s6_addr,
-                u16::from_ne_bytes(sa_in.sin6_port.to_be_bytes()),
-            )
-                .into(),
-        )
+        Some((sa_in.sin6_addr.s6_addr, u16::from_be(sa_in.sin6_port)).into())
     } else {
         None
     }
@@ -732,7 +739,7 @@ pub extern "C" fn srt_recv(sock: SRTSOCKET, buf: *mut c_char, len: c_int) -> c_i
 
             let (_, recvd) = match d {
                 Some(Ok(d)) => d,
-                Some(Err(e)) => return set_error_fmt(SRT_ENOCONN, e), // TODO: not sure which error exactly here
+                Some(Err(e)) => return set_error_fmt(SRT_ECONNLOST, e), // TODO: not sure which error exactly here
                 None => return set_error(SRT_ECONNLOST),
             };
 
@@ -791,19 +798,23 @@ pub unsafe extern "C" fn srt_setsockopt(
     sock: SRTSOCKET,
     _level: c_int, // unused
     optname: SRT_SOCKOPT,
-    optval: *const (),
+    optval: Option<NonNull<()>>,
     optlen: c_int,
 ) -> c_int {
     srt_setsockflag(sock, optname, optval, optlen)
 }
 
+/// # Safety
+/// If `optval` is non-null, it must point to the correct datastructure
+/// as specified by the [options documentation](https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md)
+/// Additionally, `optlen` must start as the size of that datastructure
 #[no_mangle]
-pub extern "C" fn srt_getsockopt(
+pub unsafe extern "C" fn srt_getsockopt(
     sock: SRTSOCKET,
     _level: c_int,
     optname: SRT_SOCKOPT,
-    optval: *mut (),
-    optlen: &mut c_int,
+    optval: Option<NonNull<()>>,
+    optlen: Option<&mut c_int>,
 ) -> c_int {
     srt_getsockflag(sock, optname, optval, optlen)
 }
@@ -851,14 +862,14 @@ pub extern "C" fn srt_epoll_uwait(
     todo!()
 }
 
-unsafe fn extract_int(val: *const (), len: c_int) -> Option<c_int> {
-    if len != 4 {
-        return None;
+unsafe fn extract_int(val: Option<NonNull<()>>, len: c_int) -> Option<c_int> {
+    if let (Some(ptr), 4) = (val, len) {
+        return Some(*ptr.cast::<c_int>().as_ref());
     }
-    Some((val as *const c_int).read())
+    None
 }
 
-unsafe fn extract_bool(val: *const (), len: c_int) -> Option<bool> {
+unsafe fn extract_bool(val: Option<NonNull<()>>, len: c_int) -> Option<bool> {
     extract_int(val, len).map(|i| match i {
         0 => false,
         1 => true,
@@ -876,7 +887,7 @@ unsafe fn extract_bool(val: *const (), len: c_int) -> Option<bool> {
 pub unsafe extern "C" fn srt_setsockflag(
     sock: SRTSOCKET,
     opt: SRT_SOCKOPT,
-    optval: *const (),
+    optval: Option<NonNull<()>>,
     optlen: c_int,
 ) -> c_int {
     let sock = match get_sock(sock) {
@@ -910,28 +921,54 @@ pub unsafe extern "C" fn srt_setsockflag(
         }
         SRT_SUCCESS
     } else {
-        return set_error(SRT_ECONNSOCK); // this isn't alway right
+        set_error(SRT_ECONNSOCK) // this isn't always right
     }
 }
 
+/// # Safety
+/// If `optval` is non-null, it must point to the correct datastructure
+/// as specified by the [options documentation](https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md)
+/// Additionally, `optlen` must start as the size of that datastructure
 #[no_mangle]
-pub extern "C" fn srt_getsockflag(
+pub unsafe extern "C" fn srt_getsockflag(
     sock: SRTSOCKET,
     opt: SRT_SOCKOPT,
-    _optval: *mut (),
-    _optlen: *mut c_int,
+    optval: Option<NonNull<()>>,
+    optlen: Option<&mut c_int>,
 ) -> c_int {
+    let (optval, optlen) = match (optval, optlen) {
+        (Some(optval), Some(optlen)) => (optval, optlen),
+        _ => return set_error(SRT_EINVPARAM),
+    };
+
     let sock = match get_sock(sock) {
         None => return set_error(SRT_EINVSOCK),
         Some(sock) => sock,
     };
 
-    let _l = sock.lock().unwrap();
+    let l = sock.lock().unwrap();
 
-    match opt {
-        _ => unimplemented!("{:?}", opt),
+    enum Val {
+        Bool(bool),
     }
-    // SRT_SUCCESS
+    use Val::*;
+    use SRT_SOCKOPT::*;
+
+    let val = match (opt, l.options()) {
+        (SRTO_RCVSYN, Some(opts)) => Bool(opts.rcv_syn),
+        (SRTO_SNDSYN, Some(opts)) => Bool(opts.snd_syn),
+        _ => unimplemented!("{:?}", opt),
+    };
+
+    match val {
+        Bool(b) => {
+            if *optlen != size_of::<c_int>() as c_int {
+                return set_error(SRT_EINVPARAM);
+            }
+            *optval.cast::<c_int>().as_mut() = if b { 1 } else { 0 };
+        }
+    }
+    SRT_SUCCESS
 }
 
 #[no_mangle]
