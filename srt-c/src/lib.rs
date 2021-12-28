@@ -837,7 +837,7 @@ pub unsafe extern "C" fn srt_setsockopt(
     sock: SRTSOCKET,
     _level: c_int, // unused
     optname: SRT_SOCKOPT,
-    optval: Option<NonNull<()>>,
+    optval: *const (),
     optlen: c_int,
 ) -> c_int {
     srt_setsockflag(sock, optname, optval, optlen)
@@ -852,7 +852,7 @@ pub unsafe extern "C" fn srt_getsockopt(
     sock: SRTSOCKET,
     _level: c_int,
     optname: SRT_SOCKOPT,
-    optval: Option<NonNull<()>>,
+    optval: *mut (),
     optlen: Option<&mut c_int>,
 ) -> c_int {
     srt_getsockflag(sock, optname, optval, optlen)
@@ -926,9 +926,10 @@ unsafe fn extract_bool(val: Option<NonNull<()>>, len: c_int) -> Option<bool> {
 pub unsafe extern "C" fn srt_setsockflag(
     sock: SRTSOCKET,
     opt: SRT_SOCKOPT,
-    optval: Option<NonNull<()>>,
+    optval: *const (),
     optlen: c_int,
 ) -> c_int {
+    let optval = NonNull::new(optval as *mut ());
     let sock = match get_sock(sock) {
         None => return set_error(SRT_EINVSOCK),
         Some(sock) => sock,
@@ -972,9 +973,10 @@ pub unsafe extern "C" fn srt_setsockflag(
 pub unsafe extern "C" fn srt_getsockflag(
     sock: SRTSOCKET,
     opt: SRT_SOCKOPT,
-    optval: Option<NonNull<()>>,
+    optval: *mut (),
     optlen: Option<&mut c_int>,
 ) -> c_int {
+    let optval = NonNull::new(optval);
     let (optval, optlen) = match (optval, optlen) {
         (Some(optval), Some(optlen)) => (optval, optlen),
         _ => return set_error(SRT_EINVPARAM),

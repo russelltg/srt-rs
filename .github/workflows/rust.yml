@@ -63,6 +63,16 @@ jobs:
     - uses: actions/checkout@v2
     - name: Cargo clippy
       run: cargo clippy --tests --examples --features ac-ffmpeg -- -D clippy::all
+    - name: Check if C++ examples compile
+      run: make -C srt-c
+
+  c_header_updated:
+    - name: install cbindgen
+      run: cargo install --force cbindgen
+    - name: generate SRT header
+      run: cbindgen --config srt-c/cbindgen.toml --crate srt-c   --output srt-c/srtrs_new.h
+    - name: Check up to date
+      run: diff srt-c/srtrs.h srt-c/srtrs_new.h
   
   formatting:
     runs-on: ubuntu-latest
