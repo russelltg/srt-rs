@@ -3,11 +3,14 @@
 
 mod errors;
 
+use errors::{SRT_ERRNO, SRT_ERRNO::*};
+
 use std::{
     cell::RefCell,
     cmp::min,
     collections::BTreeMap,
     ffi::CString,
+    fmt,
     intrinsics::transmute,
     io,
     mem::{replace, size_of},
@@ -343,12 +346,12 @@ pub extern "C" fn srt_cleanup() -> c_int {
 #[no_mangle]
 pub extern "C" fn srt_bind(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c_int) -> c_int {
     let sa = match sockaddr_from_c(name, namelen) {
-        None => return set_error("Invalid socket address"),
+        None => return set_error_fmt(SRT_ECONNSETUP, "Invalid socket address"),
         Some(sa) => sa,
     };
 
     let sock = match get_sock(sock) {
-        None => return set_error("Invalid socket"),
+        None => return set_error(SRT_EINVSOCK),
         Some(sock) => sock,
     };
 
@@ -357,14 +360,14 @@ pub extern "C" fn srt_bind(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c_in
         b.connect.local = sa;
         SRT_SUCCESS
     } else {
-        set_error("Socket already connecting or listened, cannot bind anymore")
+        set_error(SRT_ECONNSOCK)
     }
 }
 
 #[no_mangle]
 pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
     let sock = match get_sock(sock) {
-        None => return set_error("Invalid socket"),
+        None => return set_error(SRT_EINVSOCK),
         Some(sock) => sock,
     };
 
@@ -373,24 +376,32 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
     if let SocketData::Initialized(so, opts) = sd {
         let options = match (ListenerOptions { socket: so }.try_validate()) {
             Ok(options) => options,
-            Err(e) => return set_error(&format!("Invalid options: {}", e)),
+            Err(e) => return set_error_fmt(SRT_EINVOP, format_args!("Invalid options: {}", e)),
         };
         let ret = TOKIO_RUNTIME.block_on(SrtListener::bind(options));
         let mut listener = match ret {
             Ok(l) => l,
-            Err(e) => return set_error(&format!("Failed to listen on socket: {}", e)),
+            Err(e) => {
+                return set_error_fmt(
+                    SRT_EINVOP,
+                    format_args!("Failed to listen on socket: {}", e),
+                )
+            }
         };
         let stream = listener.incoming();
         *l = SocketData::Listening(listener, Some(Box::pin(stream)), opts)
     } else {
         *l = sd;
-        return set_error("Cannot listen, listen or connect has already been called");
+        return set_error(SRT_ECONNSOCK);
     }
 
     SRT_SUCCESS
 }
 
 #[repr(C)]
+// I'm not sure if this lint is pointing out a potential issue or not
+// It however does create the right header for cbindgen, so I assume it's alright...
+#[allow(clippy::enum_clike_unportable_variant)]
 pub enum SRT_EPOLL_OPT {
     SRT_EPOLL_OPT_NONE = 0x0, // fallback
 
@@ -496,12 +507,12 @@ pub extern "C" fn srt_epoll_wait(
 #[no_mangle]
 pub extern "C" fn srt_connect(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c_int) -> c_int {
     let sa = match sockaddr_from_c(name, namelen) {
-        None => return set_error("Invalid socket address"),
+        None => return set_error_fmt(SRT_ECONNSETUP, "Invalid socket address"),
         Some(sa) => sa,
     };
 
     let sock = match get_sock(sock) {
-        None => return set_error("Invalid socket"),
+        None => return set_error(SRT_EINVSOCK),
         Some(sock) => sock,
     };
 
@@ -514,7 +525,9 @@ pub extern "C" fn srt_connect(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c
             let res = TOKIO_RUNTIME.block_on(async move { sb.call(sa, None).await });
             match res {
                 Ok(sock) => *l = SocketData::Established(sock, options),
-                Err(e) => return set_error(&format!("Failed to connect: {}", e)),
+                Err(e) => {
+                    return set_error_fmt(SRT_ENOSERVER, format_args!("Failed to connect: {}", e))
+                }
             }
         } else {
             // nonblocking mode
@@ -531,7 +544,7 @@ pub extern "C" fn srt_connect(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c
         }
     } else {
         *l = sd; // restore state
-        return set_error("Connect already called, invalid");
+        return set_error(SRT_ECONNSOCK);
     }
 
     SRT_SUCCESS
@@ -540,11 +553,17 @@ pub extern "C" fn srt_connect(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c
 #[no_mangle]
 pub extern "C" fn srt_accept(
     sock: SRTSOCKET,
-    _addr: &mut libc::sockaddr,
-    _addrlen: &mut c_int,
+    addr: Option<&mut libc::sockaddr>,
+    addrlen: Option<&mut c_int>,
 ) -> SRTSOCKET {
+    let addr = match (addr, addrlen) {
+        (None, None) | (None, Some(_)) => None,
+        (Some(addr), Some(addrlen)) => Some((addr, addrlen)),
+        (Some(_), None) => return set_error(SRT_EINVPARAM),
+    };
+
     let sock = match get_sock(sock) {
-        None => return set_error("Invalid socket"),
+        None => return set_error(SRT_EINVSOCK),
         Some(sock) => sock,
     };
 
@@ -552,7 +571,12 @@ pub extern "C" fn srt_accept(
     if let SocketData::Listening(ref _listener, ref mut stream, opts) = *l {
         let mut stream = match stream.take() {
             Some(l) => l,
-            None => return set_error("accept can only be called from one thread at a time"),
+            None => {
+                return set_error_fmt(
+                    SRT_EINVOP,
+                    "accept can only be called from one thread at a time",
+                )
+            }
         };
 
         drop(l); // release mutex so other calls don't block
@@ -560,18 +584,21 @@ pub extern "C" fn srt_accept(
         TOKIO_RUNTIME.block_on(async {
             let req = if opts.rcv_syn {
                 // blocking
-                match stream.next().await {
-                    Some(req) => req,
-                    None => return set_error("Listener ended"),
-                }
+                stream.next().await
             } else {
                 // nonblocking--10ms for now but could be shorter potentially
                 match timeout(Duration::from_millis(10), stream.next()).await {
-                    Err(_) => return set_error("no new connections available"),
-                    Ok(Some(req)) => req,
-                    Ok(None) => return set_error("Listener ended"),
+                    Err(_) => return set_error(SRT_EASYNCRCV),
+                    Ok(req) => req,
                 }
             };
+
+            let req = match req {
+                Some(req) => req,
+                None => return set_error(SRT_ESCLOSED),
+            };
+
+            let remote = req.remote();
 
             // put listener back
             {
@@ -582,34 +609,49 @@ pub extern "C" fn srt_accept(
             }
 
             // TODO: acceptors
-            let srt_socket = req.accept(None).await.unwrap();
+            let srt_socket = match req.accept(None).await {
+                Ok(sock) => sock,
+                Err(e) => return set_error_fmt(SRT_ESCLOSED, e), // TOOD: is this the right error?
+            };
+
+            if let Some((_addr, _len)) = addr {
+                todo!("{}", remote)
+            }
+
             // TODO: are options inhereted like this?
             insert_socket(SocketData::Established(srt_socket, opts))
         })
     } else {
-        return set_error("Listen was not called");
+        set_error(SRT_ENOLISTEN)
     }
 }
 
-fn set_error(err: &str) -> c_int {
-    LAST_ERROR.with(|l| {
-        *l.borrow_mut() = CString::new(err).unwrap();
+fn set_error_fmt(err: SRT_ERRNO, args: impl fmt::Display) -> c_int {
+    LAST_ERROR_STR.with(|l| {
+        // TODO: it would be great if this could reuse the same buffer
+        *l.borrow_mut() = CString::new(format!("{}", args)).unwrap();
     });
+    LAST_ERROR.with(|l| *l.borrow_mut() = err);
     SRT_ERROR
 }
 
+fn set_error(err: SRT_ERRNO) -> c_int {
+    set_error_fmt(err, err)
+}
+
 thread_local! {
-    pub static LAST_ERROR: RefCell<CString> = RefCell::new(CString::new("(no error set on this thread)").unwrap());
+    pub static LAST_ERROR_STR: RefCell<CString> = RefCell::new(CString::new("(no error set on this thread)").unwrap());
+    pub static LAST_ERROR: RefCell<SRT_ERRNO> = RefCell::new(SRT_ERRNO::SRT_SUCCESS);
 }
 
 #[no_mangle]
-pub extern "C" fn srt_getlasterror(_errno_loc: *const c_int) -> c_int {
-    todo!()
+pub extern "C" fn srt_getlasterror(_errno_loc: *mut c_int) -> c_int {
+    LAST_ERROR.with(|l| *l.borrow()) as c_int
 }
 
 #[no_mangle]
 pub extern "C" fn srt_getlasterror_str() -> *const c_char {
-    LAST_ERROR.with(|f| f.borrow().as_c_str().as_ptr())
+    LAST_ERROR_STR.with(|f| f.borrow().as_c_str().as_ptr())
 }
 
 #[no_mangle]
@@ -637,7 +679,7 @@ pub extern "C" fn srt_sendmsg2(
     _mctrl: Option<&SRT_MSGCTRL>,
 ) -> c_int {
     let sock = match get_sock(sock) {
-        None => return set_error("Invalid socket"),
+        None => return set_error(SRT_EINVSOCK),
         Some(sock) => sock,
     };
 
@@ -646,14 +688,19 @@ pub extern "C" fn srt_sendmsg2(
         SocketData::Established(ref mut sock, _opts) => {
             // TODO: implement blocking mode
             // TODO: use _mctrl
-            if let Err(_) = sock.try_send(
-                Instant::now(),
-                Bytes::copy_from_slice(unsafe { from_raw_parts(buf as *const u8, len as usize) }),
-            ) {
-                return set_error("Failed to send, sender buffer full");
+            if sock
+                .try_send(
+                    Instant::now(),
+                    Bytes::copy_from_slice(unsafe {
+                        from_raw_parts(buf as *const u8, len as usize)
+                    }),
+                )
+                .is_err()
+            {
+                return set_error(SRT_ELARGEMSG);
             }
         }
-        _ => return set_error("Connection not established, cannot send"),
+        _ => return set_error(SRT_ENOCONN),
     }
 
     len
@@ -663,7 +710,7 @@ pub extern "C" fn srt_sendmsg2(
 #[no_mangle]
 pub extern "C" fn srt_recv(sock: SRTSOCKET, buf: *mut c_char, len: c_int) -> c_int {
     let sock = match get_sock(sock) {
-        None => return set_error("Invalid socket"),
+        None => return set_error(SRT_EINVSOCK),
         Some(sock) => sock,
     };
 
@@ -678,15 +725,15 @@ pub extern "C" fn srt_recv(sock: SRTSOCKET, buf: *mut c_char, len: c_int) -> c_i
             } else {
                 // nonblock
                 match timeout(Duration::from_millis(10), sock.next()).await {
-                    Err(_) => return set_error("no data to receive"),
+                    Err(_) => return set_error(SRT_EASYNCRCV),
                     Ok(d) => d,
                 }
             };
 
             let (_, recvd) = match d {
                 Some(Ok(d)) => d,
-                Some(Err(e)) => return set_error(&format!("failed to receive message: {}", e)),
-                None => return set_error("stream ended permanantly"),
+                Some(Err(e)) => return set_error_fmt(SRT_ENOCONN, e), // TODO: not sure which error exactly here
+                None => return set_error(SRT_ECONNLOST),
             };
 
             if bytes.len() < recvd.len() {
@@ -698,7 +745,7 @@ pub extern "C" fn srt_recv(sock: SRTSOCKET, buf: *mut c_char, len: c_int) -> c_i
             bytes_to_write as c_int
         })
     } else {
-        set_error("Socket not connected")
+        set_error(SRT_ENOCONN)
     }
 }
 
@@ -736,8 +783,11 @@ pub extern "C" fn srt_setloglevel(_ll: c_int) {
     todo!()
 }
 
+/// # Safety
+/// `optval` must point to a structure of the right type depending on `optname`, according to
+/// [the option documentation](https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md)
 #[no_mangle]
-pub extern "C" fn srt_setsockopt(
+pub unsafe extern "C" fn srt_setsockopt(
     sock: SRTSOCKET,
     _level: c_int, // unused
     optname: SRT_SOCKOPT,
@@ -819,15 +869,18 @@ unsafe fn extract_bool(val: *const (), len: c_int) -> Option<bool> {
     })
 }
 
+/// # Safety
+/// `optval` must point to a structure of the right type depending on `optname`, according to
+/// [the option documentation](https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md)
 #[no_mangle]
-pub extern "C" fn srt_setsockflag(
+pub unsafe extern "C" fn srt_setsockflag(
     sock: SRTSOCKET,
     opt: SRT_SOCKOPT,
     optval: *const (),
     optlen: c_int,
 ) -> c_int {
     let sock = match get_sock(sock) {
-        None => return set_error("Invalid socket"),
+        None => return set_error(SRT_EINVSOCK),
         Some(sock) => sock,
     };
 
@@ -839,25 +892,15 @@ pub extern "C" fn srt_setsockflag(
         match opt {
             SRTO_SENDER => {}
             SRTO_RCVSYN => {
-                o.rcv_syn = match unsafe { extract_bool(optval, optlen) } {
+                o.rcv_syn = match extract_bool(optval, optlen) {
                     Some(e) => e,
-                    None => {
-                        return set_error(&format!(
-                            "Failed to set option: {:?}: wrong data length",
-                            opt
-                        ))
-                    }
+                    None => return set_error(SRT_EINVPARAM),
                 }
             }
             SRTO_SNDSYN => {
-                o.snd_syn = match unsafe { extract_bool(optval, optlen) } {
+                o.snd_syn = match extract_bool(optval, optlen) {
                     Some(e) => e,
-                    None => {
-                        return set_error(&format!(
-                            "Failed to set option: {:?}: wrong data length",
-                            opt
-                        ))
-                    }
+                    None => return set_error(SRT_EINVPARAM),
                 }
             }
             SRTO_CONNTIMEO => {
@@ -867,7 +910,7 @@ pub extern "C" fn srt_setsockflag(
         }
         SRT_SUCCESS
     } else {
-        return set_error(&format!("Option {:?} not settable in current state ", opt));
+        return set_error(SRT_ECONNSOCK); // this isn't alway right
     }
 }
 
@@ -879,16 +922,16 @@ pub extern "C" fn srt_getsockflag(
     _optlen: *mut c_int,
 ) -> c_int {
     let sock = match get_sock(sock) {
-        None => return set_error("Invalid socket"),
+        None => return set_error(SRT_EINVSOCK),
         Some(sock) => sock,
     };
 
-    let l = sock.lock().unwrap();
+    let _l = sock.lock().unwrap();
 
     match opt {
         _ => unimplemented!("{:?}", opt),
     }
-    SRT_SUCCESS
+    // SRT_SUCCESS
 }
 
 #[no_mangle]
@@ -929,7 +972,7 @@ pub extern "C" fn srt_listen_callback(
 #[no_mangle]
 pub extern "C" fn srt_close(socknum: SRTSOCKET) -> c_int {
     let sock = match get_sock(socknum) {
-        None => return set_error("Invalid socket"),
+        None => return set_error(SRT_EINVSOCK),
         Some(sock) => sock,
     };
 
@@ -940,8 +983,7 @@ pub extern "C" fn srt_close(socknum: SRTSOCKET) -> c_int {
         SocketData::Established(ref mut s, _) => {
             let res = TOKIO_RUNTIME.block_on(async move { s.close().await });
             if let Err(e) = res {
-                set_error(&format!("Failed to close socket: {}", e));
-                retcode = SRT_ERROR;
+                retcode = set_error_fmt(SRT_EINVOP, format_args!("Failed to close socket: {}", e));
             }
             *l = SocketData::Closed
         }
