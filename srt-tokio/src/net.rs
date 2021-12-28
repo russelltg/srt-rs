@@ -11,13 +11,12 @@ use bytes::BytesMut;
 use futures::channel::mpsc::Receiver;
 use futures::{channel::mpsc, prelude::*};
 use socket2::{Domain, Protocol, Socket, Type};
-use srt_protocol::{
-    options::SocketOptions,
-    packet::{Packet, ReceivePacketResult},
-};
+use srt_protocol::packet::{Packet, ReceivePacketResult};
 use tokio::net::UdpSocket;
 
-pub(crate) async fn bind_socket(options: &SocketOptions) -> Result<UdpSocket, io::Error> {
+use crate::options::*;
+
+pub async fn bind_socket(options: &SocketOptions) -> Result<UdpSocket, io::Error> {
     let socket = Socket::new(
         if options.connect.local.is_ipv4() {
             Domain::IPV4
@@ -28,14 +27,33 @@ pub(crate) async fn bind_socket(options: &SocketOptions) -> Result<UdpSocket, io
         Some(Protocol::UDP),
     )?;
 
+    let send_buffer_size = usize::try_from(options.connect.udp_send_buffer_size.0).unwrap();
+    let recv_buffer_size = usize::try_from(options.connect.udp_recv_buffer_size.0).unwrap();
+
     socket.set_nonblocking(true)?; // required for passing to tokio
-    socket
-        .set_recv_buffer_size(usize::try_from(options.connect.udp_recv_buffer_size.0).unwrap())?;
-    socket
-        .set_send_buffer_size(usize::try_from(options.connect.udp_send_buffer_size.0).unwrap())?;
+    socket.set_recv_buffer_size(recv_buffer_size)?;
+    socket.set_send_buffer_size(send_buffer_size)?;
     socket.bind(&options.connect.local.into())?;
 
     UdpSocket::from_std(socket.into())
+}
+
+pub async fn lookup_remote_host(remote: &SocketAddress) -> Result<SocketAddr, io::Error> {
+    use SocketHost::*;
+    let mut remote_address = match &remote.host {
+        Domain(domain) => tokio::net::lookup_host(domain)
+            .await?
+            .next()
+            .ok_or_else(|| {
+                io::Error::new(ErrorKind::NotFound, OptionsError::InvalidRemoteAddress)
+            })?,
+        Ipv4(ipv4) => SocketAddr::new((*ipv4).into(), 0),
+        Ipv6(ipv6) => SocketAddr::new((*ipv6).into(), 0),
+    };
+    if remote_address.port() == 0 {
+        remote_address.set_port(remote.port);
+    }
+    Ok(remote_address)
 }
 
 pub struct PacketSocket {

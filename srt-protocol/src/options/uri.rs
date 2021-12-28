@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     convert::{TryFrom, TryInto},
-    net::{AddrParseError, IpAddr, SocketAddr},
+    net::{AddrParseError, IpAddr},
     str::FromStr,
     time::Duration,
 };
@@ -21,8 +21,6 @@ pub enum SrtUriError {
     InvalidOptions(OptionsError),
     #[error("{0}")]
     InvalidUrl(ParseError),
-    #[error("Invalid domain: {0}")]
-    InvalidDomain(String),
     #[error("Invalid adapter: {0}")]
     InvalidAdapter(AddrParseError),
     #[error("Invalid mode: {0}")]
@@ -50,7 +48,7 @@ impl TryFrom<Url> for SrtUri {
 
     fn try_from(url: Url) -> Result<Self, Self::Error> {
         let (mode, adapter, stream_id, mut socket) = Self::parse_query_pairs(&url)?;
-        let host = Self::parse_host(&url)?;
+        let host = Self::parse_host(&url);
         let port = url.port();
 
         use SrtUrlMode::*;
@@ -58,17 +56,17 @@ impl TryFrom<Url> for SrtUri {
             (Unspecified, None, Some(port), None) => {
                 Ok(SrtUri(ListenerOptions::with(port, socket)?.into()))
             }
-            (Unspecified, None, Some(port), Some(ip)) | (Listener, Some(ip), Some(port), None) => {
-                Ok(SrtUri(
-                    ListenerOptions::with(SocketAddr::new(ip, port), socket)?.into(),
-                ))
-            }
+            (Unspecified, None, Some(port), Some(host))
+            | (Listener, Some(host), Some(port), None) => Ok(SrtUri(
+                ListenerOptions::with(SocketAddress { host, port }, socket)?.into(),
+            )),
             (Unspecified, Some(host), Some(port), adapter @ None)
             | (Caller, Some(host), Some(port), adapter) => {
-                if let Some(ip) = adapter {
+                if let Some(adapter) = adapter {
+                    let ip = adapter.try_into().unwrap();
                     socket.connect.local.set_ip(ip);
                 }
-                let remote = SocketAddr::new(host, port);
+                let remote = SocketAddress { host, port };
                 let stream_id = stream_id.as_ref().map(|s| s.as_ref());
                 Ok(SrtUri(
                     CallerOptions::with(remote, stream_id, socket)?.into(),
@@ -76,8 +74,9 @@ impl TryFrom<Url> for SrtUri {
             }
             (Unspecified, Some(host), Some(port), adapter @ Some(_))
             | (Rendezvous, Some(host), Some(port), adapter) => {
-                let remote = SocketAddr::new(host, port);
-                if let Some(ip) = adapter {
+                let remote = SocketAddress { host, port };
+                if let Some(adapter) = adapter {
+                    let ip = adapter.try_into().unwrap();
                     socket.connect.local.set_ip(ip);
                 }
 
@@ -118,7 +117,7 @@ enum SrtUrlMode {
 
 type QueryPairs<'a> = (
     SrtUrlMode,
-    Option<IpAddr>,
+    Option<SocketHost>,
     Option<Cow<'a, str>>,
     SocketOptions,
 );
@@ -128,7 +127,7 @@ impl SrtUri {
         use SrtUriError::*;
 
         let mut mode = SrtUrlMode::Unspecified;
-        let mut adapter: Option<IpAddr> = None;
+        let mut adapter: Option<SocketHost> = None;
         let mut stream_id = None;
         let mut socket = SocketOptions::default();
 
@@ -148,7 +147,11 @@ impl SrtUri {
                     };
                 }
                 "adapter" => {
-                    adapter = Some(IpAddr::from_str(value.as_ref()).map_err(InvalidAdapter)?);
+                    adapter = Some(
+                        IpAddr::from_str(value.as_ref())
+                            .map_err(InvalidAdapter)?
+                            .into(),
+                    );
                 }
                 "port" => {
                     let value = u16::try_from(Self::parse_int_param("port", value)?)
@@ -314,7 +317,7 @@ impl SrtUri {
         Ok((mode, adapter, stream_id, socket))
     }
 
-    fn parse_host(url: &Url) -> Result<Option<IpAddr>, SrtUriError> {
+    fn parse_host(url: &Url) -> Option<SocketHost> {
         let host = match url.host() {
             Some(Host::Domain(domain)) => Some(match IpAddr::from_str(domain) {
                 Ok(IpAddr::V4(ip)) => Host::Ipv4(ip),
@@ -323,13 +326,14 @@ impl SrtUri {
             }),
             host => host,
         };
-        let host: Option<IpAddr> = match host {
+
+        let host: Option<SocketHost> = match host {
             Some(Host::Domain("")) | None => None,
             Some(Host::Ipv4(ip)) => Some(ip.into()),
             Some(Host::Ipv6(ip)) => Some(ip.into()),
-            Some(Host::Domain(domain)) => return Err(SrtUriError::InvalidDomain(domain.into())),
+            Some(Host::Domain(domain)) => Some(SocketHost::Domain(domain.to_string())),
         };
-        Ok(host)
+        host
     }
 
     fn parse_int_param(key: &'static str, value: Cow<str>) -> Result<u64, SrtUriError> {
@@ -344,21 +348,23 @@ impl SrtUri {
 mod tests {
     use super::*;
 
+    use std::net::SocketAddr;
+
     #[test]
     fn parse_listen() {
         // Listener mode: if you leave the host part empty (adapter may be specified)
         assert_eq!(
-            SrtUri::from_str("srt://:1234"),
+            "srt://:1234".parse(),
             Ok(SrtUri(ListenerOptions::new(1234).unwrap().into()))
         );
         assert_eq!(
-            SrtUri::from_str("srt://:1234?adapter=127.0.0.1"),
+            "srt://:1234?adapter=127.0.0.1".parse(),
             Ok(SrtUri(
                 ListenerOptions::new("127.0.0.1:1234").unwrap().into()
             ))
         );
         assert_eq!(
-            SrtUri::from_str("srt://10.10.10.100:5001?mode=listener"),
+            "srt://10.10.10.100:5001?mode=listener".parse(),
             Ok(SrtUri(
                 ListenerOptions::new("10.10.10.100:5001").unwrap().into()
             ))
@@ -369,13 +375,13 @@ mod tests {
     fn parse_call() {
         // Caller mode: if you specify host part, but not adapter parameter
         assert_eq!(
-            SrtUri::from_str("srt://10.1.0.1:1234"),
+            "srt://10.1.0.1:1234".parse(),
             Ok(SrtUri(
                 CallerOptions::new("10.1.0.1:1234", None).unwrap().into()
             ))
         );
         assert_eq!(
-            SrtUri::from_str("srt://10.1.0.1:5001?adapter=127.0.0.1&port=4001&mode=caller"),
+            "srt://10.1.0.1:5001?adapter=127.0.0.1&port=4001&mode=caller".parse(),
             Ok(SrtUri(
                 CallerOptions::new("10.1.0.1:5001", None)
                     .unwrap()
@@ -391,33 +397,31 @@ mod tests {
     fn parse_rendezvous() {
         // Rendezvous mode: if you specify host AND adapter parameter
         assert_eq!(
-            SrtUri::from_str("srt://10.1.0.1:1234?adapter=127.0.0.1"),
+            "srt://10.1.0.1:1234?adapter=127.0.0.1".parse(),
             Ok(SrtUri(
                 RendezvousOptions::new("10.1.0.1:1234")
                     .unwrap()
-                    .set(|o| o.socket.connect.local =
-                        SocketAddr::from_str("127.0.0.1:1234").unwrap())
+                    .set(|o| o.socket.connect.local = "127.0.0.1:1234".parse().unwrap())
                     .unwrap()
                     .into()
             ))
         );
         assert_eq!(
-            SrtUri::from_str("srt://10.1.0.1:5001?mode=rendezvous"),
+            "srt://10.1.0.1:5001?mode=rendezvous".parse(),
             Ok(SrtUri(
                 RendezvousOptions::new("10.1.0.1:5001")
                     .unwrap()
-                    .set(|o| o.socket.connect.local = SocketAddr::from_str("0.0.0.0:5001").unwrap())
+                    .set(|o| o.socket.connect.local = "0.0.0.0:5001".parse().unwrap())
                     .unwrap()
                     .into()
             ))
         );
         assert_eq!(
-            SrtUri::from_str("srt://10.1.0.1:5001?port=4001&adapter=127.0.0.1"),
+            "srt://10.1.0.1:5001?port=4001&adapter=127.0.0.1".parse(),
             Ok(SrtUri(
                 RendezvousOptions::new("10.1.0.1:5001")
                     .unwrap()
-                    .set(|o| o.socket.connect.local =
-                        SocketAddr::from_str("127.0.0.1:4001").unwrap())
+                    .set(|o| o.socket.connect.local = "127.0.0.1:4001".parse().unwrap())
                     .unwrap()
                     .into()
             ))
@@ -457,7 +461,7 @@ mod tests {
         socket.sender.bandwidth = LiveBandwidthMode::Max(DataRate(10_000_000));
 
         assert_eq!(
-            SrtUri::from_str("srt://:1234?maxbw=10000000"),
+            "srt://:1234?maxbw=10000000".parse(),
             Ok(SrtUri(ListenerOptions::with(1234, socket).unwrap().into()))
         );
 
@@ -467,7 +471,7 @@ mod tests {
             overhead: Percent(5),
         };
         assert_eq!(
-            SrtUri::from_str("srt://:1234?inputbw=20000000"),
+            "srt://:1234?inputbw=20000000".parse(),
             Ok(SrtUri(ListenerOptions::with(1234, socket).unwrap().into()))
         );
 
@@ -477,7 +481,7 @@ mod tests {
             overhead: Percent(10),
         };
         assert_eq!(
-            SrtUri::from_str("srt://:1234?inputbw=20000000&oheadbw=10"),
+            "srt://:1234?inputbw=20000000&oheadbw=10".parse(),
             Ok(SrtUri(ListenerOptions::with(1234, socket).unwrap().into()))
         );
 
@@ -487,7 +491,7 @@ mod tests {
             overhead: Percent(5),
         };
         assert_eq!(
-            SrtUri::from_str("srt://:1234?mininputbw=30000000"),
+            "srt://:1234?mininputbw=30000000".parse(),
             Ok(SrtUri(ListenerOptions::with(1234, socket).unwrap().into()))
         );
 
@@ -497,7 +501,7 @@ mod tests {
             overhead: Percent(40),
         };
         assert_eq!(
-            SrtUri::from_str("srt://:1234?mininputbw=30000000&oheadbw=40"),
+            "srt://:1234?mininputbw=30000000&oheadbw=40".parse(),
             Ok(SrtUri(ListenerOptions::with(1234, socket).unwrap().into()))
         );
     }

@@ -1,11 +1,13 @@
-use std::convert::TryInto;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::{
+    convert::TryInto,
+    net::{Ipv4Addr, Ipv6Addr},
+};
 
 use super::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallerOptions {
-    pub remote: SocketAddr,
+    pub remote: SocketAddress,
     pub stream_id: Option<StreamId>,
     pub socket: SocketOptions,
 }
@@ -26,8 +28,7 @@ impl CallerOptions {
     ) -> Result<Valid<CallerOptions>, OptionsError> {
         let remote = remote
             .try_into()
-            .map_err(|_| OptionsError::InvalidRemoteAddress)?
-            .into();
+            .map_err(|_| OptionsError::InvalidRemoteAddress)?;
 
         let stream_id = match stream_id {
             Some(s) => Some(
@@ -38,19 +39,20 @@ impl CallerOptions {
             None => None,
         };
 
+        use SocketHost::*;
+        let local_ip = socket.connect.local.ip();
+        let local_ip = match (local_ip.is_ipv6(), &remote.host) {
+            (false, &Ipv6(_)) if local_ip == Ipv4Addr::UNSPECIFIED => Ipv6Addr::UNSPECIFIED.into(),
+            (true, &Ipv4(_)) if local_ip == Ipv6Addr::UNSPECIFIED => Ipv4Addr::UNSPECIFIED.into(),
+            _ => local_ip,
+        };
+
         let mut options = Self {
             remote,
             stream_id,
             socket,
         };
 
-        let local_ip = options.socket.connect.local.ip();
-        let remote_ip = options.remote.ip();
-        let local_ip = match (local_ip.is_ipv6(), remote_ip.is_ipv6()) {
-            (false, true) if local_ip == Ipv4Addr::UNSPECIFIED => Ipv6Addr::UNSPECIFIED.into(),
-            (true, false) if local_ip == Ipv6Addr::UNSPECIFIED => Ipv4Addr::UNSPECIFIED.into(),
-            _ => local_ip,
-        };
         options.socket.connect.local.set_ip(local_ip);
 
         options.try_validate()
@@ -62,9 +64,15 @@ impl Validation for CallerOptions {
 
     fn is_valid(&self) -> Result<(), Self::Error> {
         let local = &self.socket.connect.local;
-        if self.remote.ip().is_ipv4() != local.ip().is_ipv4() {
+        use SocketHost::*;
+        let mismatch = match (&self.remote.host, local.ip().is_ipv4()) {
+            (Ipv4(ipv4), false) => Some((*ipv4).into()),
+            (Ipv6(ipv6), true) => Some((*ipv6).into()),
+            _ => None,
+        };
+        if let Some(remote_ip) = mismatch {
             return Err(OptionsError::MismatchedAddressFamilies(
-                self.remote.ip(),
+                remote_ip,
                 local.ip(),
             ));
         }
