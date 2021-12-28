@@ -322,6 +322,9 @@ pub fn sockaddr_from_c(addr: &libc::sockaddr, len: c_int) -> Option<SocketAddr> 
         AF_INET => {
             #[cfg(not(target_os = "windows"))]
             {
+                if len as usize != size_of::<sockaddr_in>() {
+                    return None;
+                }
                 let sa_in: &sockaddr_in = unsafe { transmute(addr) };
                 Some(
                     (
@@ -333,6 +336,9 @@ pub fn sockaddr_from_c(addr: &libc::sockaddr, len: c_int) -> Option<SocketAddr> 
             }
             #[cfg(target_os = "windows")]
             {
+                if len as usize != size_of::<SOCKADDR_IN>() {
+                    return None;
+                }
                 let sa_in: &SOCKADDR_IN = unsafe { transmute(addr) };
                 Some(
                     (
@@ -346,11 +352,17 @@ pub fn sockaddr_from_c(addr: &libc::sockaddr, len: c_int) -> Option<SocketAddr> 
         AF_INET6 => {
             #[cfg(not(target_os = "windows"))]
             {
+                if len as usize != size_of::<sockaddr_in6>() {
+                    return None;
+                }
                 let sa_in: &sockaddr_in6 = unsafe { transmute(addr) };
                 Some((sa_in.sin6_addr.s6_addr, u16::from_be(sa_in.sin6_port)).into())
             }
             #[cfg(target_os = "windows")]
             {
+                if len as usize != size_of::<SOCKADDR_IN6>() {
+                    return None;
+                }
                 let sa_in: &SOCKADDR_IN6 = unsafe { transmute(addr) };
                 Some(
                     (
@@ -368,11 +380,13 @@ pub fn sockaddr_from_c(addr: &libc::sockaddr, len: c_int) -> Option<SocketAddr> 
 #[no_mangle]
 pub extern "C" fn srt_startup() -> c_int {
     lazy_static::initialize(&TOKIO_RUNTIME);
+    lazy_static::initialize(&SOCKETS);
     SRT_SUCCESS
 }
 
 #[no_mangle]
 pub extern "C" fn srt_cleanup() -> c_int {
+    SOCKETS.write().unwrap().clear();
     SRT_SUCCESS
 }
 
