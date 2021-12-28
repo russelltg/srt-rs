@@ -22,10 +22,11 @@ impl StreamerServer {
         let (broadcast_sender, broadcast_receiver) = broadcast::channel(10_000);
         let (cancel_sender, cancel_receiver) = oneshot::channel();
 
-        let (_listener, incoming) = SrtListener::bind(options).await?;
+        let (listener, incoming) = SrtListener::bind(options).await?;
         let server = broadcast_sender.clone();
         tokio::spawn(async move {
             Self::run_receive_loop(
+                listener,
                 incoming,
                 cancel_receiver,
                 broadcast_sender,
@@ -38,6 +39,7 @@ impl StreamerServer {
     }
 
     pub async fn run_receive_loop(
+        _listener: SrtListener,
         mut incoming: SrtIncoming,
         cancel: oneshot::Receiver<()>,
         broadcast_sender: broadcast::Sender<(Instant, Bytes)>,
