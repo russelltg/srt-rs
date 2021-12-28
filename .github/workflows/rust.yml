@@ -69,10 +69,10 @@ jobs:
   c_header_updated:
     runs-on: ubuntu-latest
     steps:
-    - name: install cbindgen
-      run: cargo install --force cbindgen
+    - name: download cbindgen
+      run: curl https://github.com/eqrion/cbindgen/releases/download/v0.20.0/cbindgen -o cbindgen && chmod +x ./cbindgen
     - name: generate SRT header
-      run: cbindgen --config srt-c/cbindgen.toml --crate srt-c   --output srt-c/srtrs_new.h
+      run: ./cbindgen --config srt-c/cbindgen.toml --crate srt-c   --output srt-c/srtrs_new.h
     - name: Check up to date
       run: diff srt-c/srtrs.h srt-c/srtrs_new.h
   
