@@ -617,6 +617,17 @@ pub extern "C" fn srt_send(sock: SRTSOCKET, buf: *const c_char, len: c_int) -> c
     srt_sendmsg2(sock, buf, len, None)
 }
 
+#[no_mangle]
+pub extern "C" fn srt_sendmsg(
+    _sock: SRTSOCKET,
+    _buf: *const c_char,
+    _len: c_int,
+    _ttl: c_int,
+    _inorder: c_int,
+) -> c_int {
+    todo!()
+}
+
 /// Returns number of bytes written
 #[no_mangle]
 pub extern "C" fn srt_sendmsg2(
@@ -727,24 +738,24 @@ pub extern "C" fn srt_setloglevel(_ll: c_int) {
 
 #[no_mangle]
 pub extern "C" fn srt_setsockopt(
-    _sock: SRTSOCKET,
+    sock: SRTSOCKET,
     _level: c_int, // unused
-    _optname: SRT_SOCKOPT,
-    _optval: *const (),
-    _optlen: c_int,
+    optname: SRT_SOCKOPT,
+    optval: *const (),
+    optlen: c_int,
 ) -> c_int {
-    todo!()
+    srt_setsockflag(sock, optname, optval, optlen)
 }
 
 #[no_mangle]
 pub extern "C" fn srt_getsockopt(
-    _sock: SRTSOCKET,
+    sock: SRTSOCKET,
     _level: c_int,
-    _optname: SRT_SOCKOPT,
-    _optval: *mut (),
-    _optlen: &mut c_int,
+    optname: SRT_SOCKOPT,
+    optval: *mut (),
+    optlen: &mut c_int,
 ) -> c_int {
-    todo!()
+    srt_getsockflag(sock, optname, optval, optlen)
 }
 
 #[repr(C)]
@@ -858,6 +869,61 @@ pub extern "C" fn srt_setsockflag(
     } else {
         return set_error(&format!("Option {:?} not settable in current state ", opt));
     }
+}
+
+#[no_mangle]
+pub extern "C" fn srt_getsockflag(
+    sock: SRTSOCKET,
+    opt: SRT_SOCKOPT,
+    _optval: *mut (),
+    _optlen: *mut c_int,
+) -> c_int {
+    let sock = match get_sock(sock) {
+        None => return set_error("Invalid socket"),
+        Some(sock) => sock,
+    };
+
+    let l = sock.lock().unwrap();
+
+    match opt {
+        _ => unimplemented!("{:?}", opt),
+    }
+    SRT_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn srt_getsockname(
+    _sock: SRTSOCKET,
+    _name: *mut libc::sockaddr,
+    _namelen: *mut c_int,
+) -> c_int {
+    todo!()
+}
+
+#[no_mangle]
+pub extern "C" fn srt_getpeername(
+    _sock: SRTSOCKET,
+    _name: *mut libc::sockaddr,
+    _namelen: *mut c_int,
+) -> c_int {
+    todo!()
+}
+
+type srt_listen_callback_fn = extern "C" fn(
+    opaq: *mut (),
+    ns: SRTSOCKET,
+    c_int,
+    peeraddr: *const libc::sockaddr,
+    streamid: *const c_char,
+) -> c_int;
+
+#[no_mangle]
+pub extern "C" fn srt_listen_callback(
+    _lsn: SRTSOCKET,
+    _hook_fn: srt_listen_callback_fn,
+    _hook_opaque: *mut (),
+) -> c_int {
+    todo!()
 }
 
 #[no_mangle]
