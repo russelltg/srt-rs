@@ -16,7 +16,6 @@ use std::{
     mem::{replace, size_of},
     net::SocketAddr,
     os::raw::{c_char, c_int},
-    pin::Pin,
     ptr::NonNull,
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::{
@@ -27,13 +26,13 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures::{sink::SinkExt, Stream, StreamExt};
+use futures::{sink::SinkExt, StreamExt};
 use lazy_static::lazy_static;
 use libc::{sockaddr_in, sockaddr_in6, AF_INET};
 use log::{error, warn};
 use srt_tokio::{
     options::{ListenerOptions, SocketOptions, Validation},
-    ConnectionRequest, SrtListener, SrtSocket,
+    SrtIncoming, SrtListener, SrtSocket,
 };
 use tokio::{runtime::Runtime, task::JoinHandle, time::timeout};
 
@@ -288,11 +287,7 @@ enum SocketData {
     Initialized(SocketOptions, ApiOptions),
     ConnectingNonBlocking(JoinHandle<()>, ApiOptions),
     Established(SrtSocket, ApiOptions),
-    Listening(
-        SrtListener,
-        Option<Pin<Box<dyn Stream<Item = ConnectionRequest> + Send + Sync>>>,
-        ApiOptions,
-    ),
+    Listening(SrtListener, Option<SrtIncoming>, ApiOptions),
     ConnectFailed(io::Error),
 
     InvalidIntermediateState,
@@ -386,7 +381,7 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
             Err(e) => return set_error_fmt(SRT_EINVOP, format_args!("Invalid options: {}", e)),
         };
         let ret = TOKIO_RUNTIME.block_on(SrtListener::bind(options));
-        let mut listener = match ret {
+        let (listener, incoming) = match ret {
             Ok(l) => l,
             Err(e) => {
                 return set_error_fmt(
@@ -395,8 +390,7 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
                 )
             }
         };
-        let stream = listener.incoming();
-        *l = SocketData::Listening(listener, Some(Box::pin(stream)), opts)
+        *l = SocketData::Listening(listener, Some(incoming), opts)
     } else {
         *l = sd;
         return set_error(SRT_ECONNSOCK);
@@ -575,8 +569,8 @@ pub extern "C" fn srt_accept(
     };
 
     let mut l = sock.lock().unwrap();
-    if let SocketData::Listening(ref _listener, ref mut stream, opts) = *l {
-        let mut stream = match stream.take() {
+    if let SocketData::Listening(ref _listener, ref mut incoming, opts) = *l {
+        let mut incoming = match incoming.take() {
             Some(l) => l,
             None => {
                 return set_error_fmt(
@@ -591,10 +585,10 @@ pub extern "C" fn srt_accept(
         TOKIO_RUNTIME.block_on(async {
             let req = if opts.rcv_syn {
                 // blocking
-                stream.next().await
+                incoming.incoming().next().await
             } else {
                 // nonblocking--10ms for now but could be shorter potentially
-                match timeout(Duration::from_millis(10), stream.next()).await {
+                match timeout(Duration::from_millis(10), incoming.incoming().next()).await {
                     Err(_) => return set_error(SRT_EASYNCRCV),
                     Ok(req) => req,
                 }
@@ -611,7 +605,7 @@ pub extern "C" fn srt_accept(
             {
                 let mut l = sock.lock().unwrap();
                 if let SocketData::Listening(ref _listener, ref mut in_state, _opts) = *l {
-                    *in_state = Some(stream);
+                    *in_state = Some(incoming);
                 }
             }
 

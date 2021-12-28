@@ -12,7 +12,7 @@ use tokio::sync::broadcast::{self, error::*};
 
 use srt_tokio::{
     options::{ListenerOptions, Valid},
-    SrtListener, SrtSocket,
+    SrtIncoming, SrtListener, SrtSocket,
 };
 
 pub struct StreamerServer(broadcast::Sender<(Instant, Bytes)>, oneshot::Sender<()>);
@@ -22,11 +22,11 @@ impl StreamerServer {
         let (broadcast_sender, broadcast_receiver) = broadcast::channel(10_000);
         let (cancel_sender, cancel_receiver) = oneshot::channel();
 
-        let listener = SrtListener::bind(options).await?;
+        let (_listener, incoming) = SrtListener::bind(options).await?;
         let server = broadcast_sender.clone();
         tokio::spawn(async move {
             Self::run_receive_loop(
-                listener,
+                incoming,
                 cancel_receiver,
                 broadcast_sender,
                 broadcast_receiver,
@@ -38,12 +38,12 @@ impl StreamerServer {
     }
 
     pub async fn run_receive_loop(
-        mut listener: SrtListener,
+        mut incoming: SrtIncoming,
         cancel: oneshot::Receiver<()>,
         broadcast_sender: broadcast::Sender<(Instant, Bytes)>,
         _broadcast_receiver: broadcast::Receiver<(Instant, Bytes)>,
     ) {
-        let mut incoming = listener.incoming().fuse();
+        let mut incoming = incoming.incoming().fuse();
         let mut cancel = cancel.fuse();
         while let Some(request) = select!(
                     _ = cancel => return,
