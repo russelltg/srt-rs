@@ -70,7 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: download cbindgen
-      run: curl https://github.com/eqrion/cbindgen/releases/download/v0.20.0/cbindgen -o cbindgen && chmod +x ./cbindgen
+      run: wget https://github.com/eqrion/cbindgen/releases/download/v0.20.0/cbindgen && chmod +x ./cbindgen
     - name: generate SRT header
       run: ./cbindgen --config srt-c/cbindgen.toml --crate srt-c   --output srt-c/srtrs_new.h
     - name: Check up to date
