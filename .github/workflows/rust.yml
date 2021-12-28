@@ -67,6 +67,8 @@ jobs:
       run: make -C srt-c
 
   c_header_updated:
+    runs-on: ubuntu-latest
+    steps:
     - name: install cbindgen
       run: cargo install --force cbindgen
     - name: generate SRT header
