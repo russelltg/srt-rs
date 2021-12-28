@@ -1,5 +1,7 @@
-use std::convert::TryInto;
-use std::net::Ipv4Addr;
+use std::{
+    convert::TryInto,
+    net::{Ipv4Addr, SocketAddr},
+};
 
 use super::*;
 
@@ -17,9 +19,16 @@ impl ListenerOptions {
         local: impl TryInto<SocketAddress>,
         socket: SocketOptions,
     ) -> Result<Valid<ListenerOptions>, OptionsError> {
-        let local = local
+        let local_address = local
             .try_into()
             .map_err(|_| OptionsError::InvalidLocalAddress)?;
+
+        use SocketHost::*;
+        let local = match local_address.host {
+            Ipv4(ipv4) => SocketAddr::new(ipv4.into(), local_address.port),
+            Ipv6(ipv6) => SocketAddr::new(ipv6.into(), local_address.port),
+            Domain(_) => return Err(OptionsError::InvalidLocalAddress),
+        };
 
         let mut options = Self { socket };
         options.socket.connect.local.set_port(local.port());

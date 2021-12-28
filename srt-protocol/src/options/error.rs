@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::options::*;
 
 // https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md#list-of-options
-#[derive(Error, Debug, Eq, PartialEq)]
+#[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum OptionsError {
     #[error("KM Refresh Period ({0}) must be non-zero and greater than 1/2 the KM Pre Announce Period ({1}).")]
     KeyMaterialRefresh(PacketCount, PacketCount),
@@ -17,10 +17,10 @@ pub enum OptionsError {
     #[error("MMS out of range: {0}. The maximum size of a UDP packet is 1500 bytes.")]
     MaxSegmentSizeOutOfRange(PacketSize),
 
-    #[error("{0}")]
+    #[error("Receive buffer too small {0}")]
     ReceiveBufferMin(ByteCount),
 
-    #[error("{buffer}, {max_segment}, {flow_control_window}")]
+    #[error("Receive buffer too big - buffer: {buffer}, max_segment: {max_segment}, flow_control_window: {flow_control_window}")]
     ReceiveBufferTooLarge {
         buffer: ByteCount,
         max_segment: PacketSize,
@@ -56,7 +56,7 @@ pub enum OptionsError {
     #[error("Invalid local address")]
     InvalidLocalAddress,
 
-    #[error("{0}")]
+    #[error("Invalid Stream Id {0}")]
     InvalidStreamId(StreamIdError),
 
     #[error("IP TTL is invalid, must be > 0")]

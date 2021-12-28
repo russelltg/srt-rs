@@ -5,8 +5,9 @@ use std::{
 
 use anyhow::Error;
 use bytes::Bytes;
-use futures::{stream, SinkExt, Stream, StreamExt};
-use log::info;
+use futures::{stream, FutureExt, SinkExt, Stream, StreamExt};
+use log::{error, info};
+use tokio::select;
 
 use srt_tokio::{options::*, SocketStatistics, SrtSocket};
 
@@ -41,11 +42,18 @@ async fn high_bandwidth() -> Result<(), Error> {
     let _ = pretty_env_logger::try_init();
 
     const RATE_MBPS: u64 = 50;
-    let sender_fut = async {
+    let latency = Duration::from_millis(150);
+    let buffer_size = ByteCount((latency.as_secs_f64() * (RATE_MBPS as f64 * 1_000_000.)) as u64);
+    let sender_fut = async move {
         let mut sock = SrtSocket::builder()
             .latency(Duration::from_millis(150))
             .bandwidth(Estimated {
+                expected: DataRate(RATE_MBPS * 1_000_000),
                 overhead: Percent(20),
+            })
+            .set(|options| {
+                options.sender.buffer_size = buffer_size * 10;
+                options.connect.udp_send_buffer_size = ByteCount(5_000_000);
             })
             .call("127.0.0.1:6654", None)
             .await?;
@@ -61,12 +69,13 @@ async fn high_bandwidth() -> Result<(), Error> {
         sock.close().await
     };
 
-    let recv_fut = async {
-        let latency = Duration::from_millis(150);
-        let buffer_size = latency.as_secs_f64() * 1.5 * (RATE_MBPS as f64 * 1_000_000.);
+    let recv_fut = async move {
         let mut sock = SrtSocket::builder()
-            .set(|options| options.receiver.buffer_size = ByteCount(buffer_size as u64))
-            .set(|options| options.session.statistics_interval = Duration::from_secs(1))
+            .set(|options| {
+                options.receiver.buffer_size = buffer_size * 2;
+                options.connect.udp_recv_buffer_size = ByteCount(5_000_000);
+                options.session.statistics_interval = Duration::from_secs(1);
+            })
             .latency(latency)
             .listen(":6654")
             .await?
@@ -114,10 +123,15 @@ async fn high_bandwidth() -> Result<(), Error> {
         Ok::<_, Error>(())
     };
 
-    tokio::spawn(sender_fut);
-    tokio::spawn(recv_fut);
+    let send = tokio::spawn(sender_fut).fuse();
+    let recv = tokio::spawn(recv_fut).fuse();
+    let timeout = tokio::time::sleep(Duration::from_secs(60)).fuse();
 
-    tokio::time::sleep(Duration::from_secs(60)).await;
+    select!(
+        result = send => error!("send: {:?}", result),
+        result = recv => error!("recv: {:?}", result),
+        _ = timeout => { }
+    );
 
     Ok(())
 }

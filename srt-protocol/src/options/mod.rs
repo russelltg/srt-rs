@@ -14,6 +14,7 @@ mod socket;
 mod srt_version;
 mod stream_id;
 mod units;
+mod uri;
 mod validation;
 
 pub use address::*;
