@@ -177,10 +177,9 @@ async fn main() -> anyhow::Result<()> {
 
     fs::create_dir_all("segments")?;
 
-    let binding = SrtListener::builder().bind(1234).await?;
-    tokio::pin!(binding);
+    let (_binding, mut incoming) = SrtListener::builder().bind(1234).await?;
 
-    while let Some(request) = binding.incoming().next().await {
+    while let Some(request) = incoming.incoming().next().await {
         let socket = request.accept(None).await?;
         tokio::spawn(async move {
             let socket_id = socket.settings().remote_sockid.0;

@@ -12,14 +12,11 @@ use srt_tokio::SrtListener;
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let port = 3333;
-    let binding = SrtListener::builder().bind(port).await?;
-
-    tokio::pin!(binding);
+    let (_binding, mut incoming) = SrtListener::builder().bind(port).await?;
 
     println!("SRT Multiplex Server is listening on port: {}", port);
 
-    let incoming = binding.incoming();
-    while let Some(request) = incoming.next().await {
+    while let Some(request) = incoming.incoming().next().await {
         let mut srt_socket = request.accept(None).await.unwrap();
         tokio::spawn(async move {
             let client_desc = format!(

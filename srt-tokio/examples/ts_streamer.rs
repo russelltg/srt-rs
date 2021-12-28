@@ -87,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut socket = SrtSocket::builder()
         .latency(Duration::from_millis(1000))
-        .listen(":1234")
+        .listen_on(":1234")
         .await?;
 
     println!("Connection established");

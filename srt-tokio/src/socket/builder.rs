@@ -22,7 +22,7 @@ pub struct SrtSocketBuilder(SocketOptions, Option<UdpSocket>);
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), io::Error> {
 /// let (a, b) = futures::try_join!(
-///     SrtSocket::builder().listen(":3333"),
+///     SrtSocket::builder().listen_on(":3333"),
 ///     SrtSocket::builder().call("127.0.0.1:3333", Some("stream ID")),
 /// )?;
 /// # Ok(())
@@ -140,9 +140,19 @@ impl SrtSocketBuilder {
         self
     }
 
-    pub async fn listen(self, local: impl TryInto<SocketAddress>) -> Result<SrtSocket, io::Error> {
-        let options = ListenerOptions::with(local, self.0)?;
-        Self::bind(options.into(), self.1).await
+    pub async fn listen_on(
+        self,
+        local: impl TryInto<SocketAddress>,
+    ) -> Result<SrtSocket, io::Error> {
+        self.local(local).listen().await
+    }
+
+    pub async fn listen(self) -> Result<SrtSocket, io::Error> {
+        Self::bind(
+            ListenerOptions { socket: self.0 }.try_validate()?.into(),
+            self.1,
+        )
+        .await
     }
 
     pub async fn call(

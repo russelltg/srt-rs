@@ -19,7 +19,7 @@ async fn test_latency_exchange(
     let listener = SrtSocket::builder()
         .send_latency(listener_send_latency)
         .receive_latency(listener_recv_latency)
-        .listen(":4200");
+        .listen_on(":4200");
 
     let ((l2c1, c2l1), (l2c2, c2l2)) = futures::join!(
         async move {

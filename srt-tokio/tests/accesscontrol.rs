@@ -52,12 +52,10 @@ async fn streamid() -> io::Result<()> {
     let (finished_send, finished_recv) = oneshot::channel();
 
     let listener = tokio::spawn(async {
-        let mut server = SrtListener::builder().bind(2000).await.unwrap();
+        let (_server, mut incoming) = SrtListener::builder().bind(2000).await.unwrap();
 
-        let incoming = server.incoming();
         let mut fused_finish = finished_recv.fuse();
-        while let Some(request) =
-            futures::select!(res = incoming.next().fuse() => res, _ = fused_finish => None)
+        while let Some(request) = futures::select!(res = incoming.incoming().next().fuse() => res, _ = fused_finish => None)
         {
             let mut sender = request.accept(None).await.unwrap();
             let mut stream =

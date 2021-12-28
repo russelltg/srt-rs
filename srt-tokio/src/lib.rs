@@ -19,7 +19,7 @@
 //!# -> ()
 //! {
 //!     let sender_fut = async {
-//!         let mut tx = SrtSocket::builder().listen(2223).await?;
+//!         let mut tx = SrtSocket::builder().listen_on(2223).await?;
 //!
 //!         let iter = ["1", "2", "3"];
 //!
@@ -56,6 +56,6 @@ pub use srt_protocol::access;
 pub use srt_protocol::options;
 
 pub use crate::{
-    listener::{ConnectionRequest, ListenerStatistics, SrtListener},
-    socket::{SocketStatistics, SrtSocket},
+    listener::{ConnectionRequest, ListenerStatistics, SrtIncoming, SrtListener},
+    socket::{SocketStatistics, SrtSocket, SrtSocketBuilder},
 };

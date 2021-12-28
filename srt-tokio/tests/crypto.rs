@@ -11,7 +11,7 @@ use tokio::{spawn, time::sleep};
 async fn test_crypto(size: u8) {
     let sender = SrtSocket::builder()
         .encryption(size, "password123")
-        .listen(":2000");
+        .listen_on(":2000");
 
     let recvr = SrtSocket::builder()
         .encryption(size, "password123")

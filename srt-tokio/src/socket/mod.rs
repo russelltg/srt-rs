@@ -14,7 +14,11 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures::{channel::mpsc, prelude::*, ready};
+use futures::{
+    channel::mpsc::{self, TrySendError},
+    prelude::*,
+    ready,
+};
 use srt_protocol::{
     connection::ConnectionSettings,
     options::{OptionsError, OptionsOf, SocketOptions, Validation},
@@ -23,8 +27,7 @@ use tokio::net::UdpSocket;
 
 use super::{net::*, options::BindOptions, watch};
 
-use builder::SrtSocketBuilder;
-
+pub use builder::SrtSocketBuilder;
 pub use srt_protocol::statistics::SocketStatistics;
 
 /// Connected SRT connection, generally created with [`SrtSocketBuilder`](crate::SrtSocketBuilder).
@@ -45,6 +48,12 @@ pub struct SrtSocket {
 impl SrtSocket {
     pub fn builder() -> SrtSocketBuilder {
         SrtSocketBuilder::default()
+    }
+
+    pub fn try_send(&mut self, srctime: Instant, data: Bytes) -> Result<(), (Instant, Bytes)> {
+        self.input_data_sender
+            .try_send((srctime, data))
+            .map_err(TrySendError::into_inner)
     }
 
     pub fn with<O>(options: O) -> SrtSocketBuilder

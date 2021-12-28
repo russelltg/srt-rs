@@ -77,7 +77,7 @@ async fn high_bandwidth() -> Result<(), Error> {
                 options.session.statistics_interval = Duration::from_secs(1);
             })
             .latency(latency)
-            .listen(":6654")
+            .listen_on(":6654")
             .await?
             .fuse();
 
