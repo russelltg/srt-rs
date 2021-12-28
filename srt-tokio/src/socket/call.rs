@@ -30,7 +30,13 @@ pub async fn bind_with(
         stream_id.clone(),
         rand::random(),
     );
+
+    let start_time = Instant::now();
     loop {
+        if start_time.elapsed() > options.socket.connect.timeout {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, ""));
+        }
+
         let result = select! {
             now = tick_interval.tick().fuse() => connect.handle_tick(now.into()),
             packet = socket.receive().fuse() => connect.handle_packet(packet, Instant::now()),
@@ -64,5 +70,36 @@ pub async fn bind_with(
             RequestAccess(_) => {}
             Failure(error) => return Err(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{
+        io,
+        time::{Duration, Instant},
+    };
+
+    use crate::SrtSocket;
+    use assert_matches::assert_matches;
+
+    #[tokio::test]
+    async fn conntimeo() {
+        // default-3s
+        let start = Instant::now();
+        let ret = SrtSocket::builder().call("127.0.0.1:1", None).await;
+        assert_matches!(ret, Err(e) if e.kind() == io::ErrorKind::TimedOut);
+        assert!(start.elapsed() > Duration::from_millis(3000));
+        assert!(start.elapsed() < Duration::from_millis(3500));
+
+        // try non-default: 5s
+        let start = Instant::now();
+        let ret = SrtSocket::builder()
+            .set(|o| o.connect.timeout = Duration::from_secs(5))
+            .call("127.0.0.1:1", None)
+            .await;
+        assert_matches!(ret, Err(e) if e.kind() == io::ErrorKind::TimedOut);
+        assert!(start.elapsed() > Duration::from_millis(5000));
+        assert!(start.elapsed() < Duration::from_millis(5500));
     }
 }

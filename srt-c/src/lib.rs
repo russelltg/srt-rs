@@ -302,13 +302,33 @@ enum SocketData {
 }
 
 impl SocketData {
-    fn options(&self) -> Option<&ApiOptions> {
+    fn api_opts(&self) -> Option<&ApiOptions> {
+        use SocketData::*;
         match self {
-            SocketData::Initialized(_, opts)
-            | SocketData::ConnectingNonBlocking(_, opts)
-            | SocketData::Established(_, opts)
-            | SocketData::Listening(_, _, opts) => Some(opts),
+            Initialized(_, opts)
+            | ConnectingNonBlocking(_, opts)
+            | Established(_, opts)
+            | Listening(_, _, opts) => Some(opts),
             _ => None,
+        }
+    }
+
+    fn sock_opts(&self) -> Option<&SocketOptions> {
+        if let SocketData::Initialized(ref opts, _) = self {
+            Some(opts)
+        } else {
+            None
+        }
+    }
+
+    fn opts_mut(&mut self) -> (Option<&mut ApiOptions>, Option<&mut SocketOptions>) {
+        use SocketData::*;
+        match self {
+            Initialized(so, ai) => (Some(ai), Some(so)),
+            ConnectingNonBlocking(_, ai) | Established(_, ai) | Listening(_, _, ai) => {
+                (Some(ai), None)
+            }
+            _ => (None, None),
         }
     }
 }
@@ -935,34 +955,38 @@ pub unsafe extern "C" fn srt_setsockflag(
         Some(sock) => sock,
     };
 
-    let sock = sock.lock().unwrap();
-    use SocketData::*;
+    let mut sock = sock.lock().unwrap();
     use SRT_SOCKOPT::*;
 
-    if let Initialized(_, mut o) | ConnectingNonBlocking(_, mut o) | Established(_, mut o) = *sock {
-        match opt {
-            SRTO_SENDER => {}
-            SRTO_RCVSYN => {
-                o.rcv_syn = match extract_bool(optval, optlen) {
-                    Some(e) => e,
-                    None => return set_error(SRT_EINVPARAM),
-                }
+    match (opt, sock.opts_mut()) {
+        (SRTO_SENDER, (_, _)) => {}
+        (SRTO_RCVSYN, (Some(o), _)) => {
+            o.rcv_syn = match extract_bool(optval, optlen) {
+                Some(e) => e,
+                None => return set_error(SRT_EINVPARAM),
             }
-            SRTO_SNDSYN => {
-                o.snd_syn = match extract_bool(optval, optlen) {
-                    Some(e) => e,
-                    None => return set_error(SRT_EINVPARAM),
-                }
-            }
-            SRTO_CONNTIMEO => {
-                warn!("oops");
-            }
-            o => unimplemented!("{:?}", o),
         }
-        SRT_SUCCESS
-    } else {
-        set_error(SRT_ECONNSOCK) // this isn't always right
+        (SRTO_SNDSYN, (Some(o), _)) => {
+            o.snd_syn = match extract_bool(optval, optlen) {
+                Some(e) => e,
+                None => return set_error(SRT_EINVPARAM),
+            }
+        }
+        (SRTO_CONNTIMEO, (_, Some(o))) => {
+            o.connect.timeout =
+                Duration::from_millis(match extract_int(optval, optlen).map(u64::try_from) {
+                    Some(Ok(to)) => to,
+                    Some(Err(_)) | None => return set_error(SRT_EINVPARAM),
+                });
+        }
+        (SRTO_TSBPDMODE, _) => match extract_bool(optval, optlen) {
+            Some(true) => {}
+            Some(false) => return set_error(SRT_EINVPARAM), // tsbpd=false is not implemented
+            None => return set_error(SRT_EINVPARAM),
+        },
+        (o, _) => unimplemented!("{:?}", o),
     }
+    SRT_SUCCESS
 }
 
 /// # Safety
@@ -991,13 +1015,15 @@ pub unsafe extern "C" fn srt_getsockflag(
 
     enum Val {
         Bool(bool),
+        Int(c_int),
     }
     use Val::*;
     use SRT_SOCKOPT::*;
 
-    let val = match (opt, l.options()) {
-        (SRTO_RCVSYN, Some(opts)) => Bool(opts.rcv_syn),
-        (SRTO_SNDSYN, Some(opts)) => Bool(opts.snd_syn),
+    let val = match (opt, l.api_opts(), l.sock_opts()) {
+        (SRTO_RCVSYN, Some(opts), _) => Bool(opts.rcv_syn),
+        (SRTO_SNDSYN, Some(opts), _) => Bool(opts.snd_syn),
+        (SRTO_CONNTIMEO, _, Some(opts)) => Int(opts.connect.timeout.as_millis() as c_int),
         _ => unimplemented!("{:?}", opt),
     };
 
@@ -1007,6 +1033,12 @@ pub unsafe extern "C" fn srt_getsockflag(
                 return set_error(SRT_EINVPARAM);
             }
             *optval.cast::<c_int>().as_mut() = if b { 1 } else { 0 };
+        }
+        Int(i) => {
+            if *optlen != size_of::<c_int>() as c_int {
+                return set_error(SRT_EINVPARAM);
+            }
+            *optval.cast::<c_int>().as_mut() = i;
         }
     }
     SRT_SUCCESS
