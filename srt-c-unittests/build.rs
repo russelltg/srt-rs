@@ -41,12 +41,6 @@ fn main() {
         .define("MinInputBWDefault", "DISABLED_MinInputBWDefault")
         .define("MinInputBWSet", "DISABLED_MinInputBWSet")
         .define("MinInputBWRuntime", "DISABLED_MinInputBWRuntime")
-        .define("StreamIDWrongLen", "DISABLED_StreamIDWrongLen")
-        .define("StreamIDOdd", "DISABLED_StreamIDOdd")
-        .define("StreamIDEven", "DISABLED_StreamIDEven")
-        .define("StreamIDAlmostFull", "DISABLED_StreamIDAlmostFull")
-        .define("StreamIDFull", "DISABLED_StreamIDFull")
-        .define("StreamIDLenListener", "DISABLED_StreamIDLenListener")
         // files
         .define("SRT_ENABLE_ENCRYPTION", None)
         .file("tests/test_connection_timeout.cpp")

@@ -23,7 +23,7 @@ use crate::{
 pub struct ConnectionRequest {
     response_sender: ResponseSender,
     request: AccessControlRequest,
-    settings_receiver: oneshot::Receiver<ConnectionSettings>,
+    settings_receiver: oneshot::Receiver<(ConnectionSettings, JoinHandle<()>)>,
     socket_factory: SrtSocketFactory,
 }
 
@@ -49,12 +49,12 @@ impl ConnectionRequest {
             .send(AccessControlResponse::Accepted(key_settings))
             .await?;
 
-        let settings = self
+        let (settings, jh) = self
             .settings_receiver
             .await
             .map_err(|e| std::io::Error::new(ErrorKind::NotConnected, e))?;
 
-        Ok(self.socket_factory.create_socket(settings))
+        Ok(self.socket_factory.create_socket(settings, jh))
     }
 
     pub async fn reject(self, reason: RejectReason) -> Result<(), std::io::Error> {
@@ -67,7 +67,7 @@ impl ConnectionRequest {
 
 #[derive(Debug)]
 pub struct PendingConnection {
-    settings_sender: oneshot::Sender<ConnectionSettings>,
+    settings_sender: oneshot::Sender<(ConnectionSettings, JoinHandle<()>)>,
     task_factory: SrtSocketTaskFactory,
 }
 
@@ -104,17 +104,17 @@ impl PendingConnection {
     ) -> Result<OpenConnection, ()> {
         let (packet_sender, socket) = socket.clone_channel(100);
         let (handle, settings) = self.task_factory.spawn_task(socket, connection);
-        let _ = self.settings_sender.send(settings).ok().ok_or(())?;
-        Ok(OpenConnection {
-            _handle: handle,
-            packet_sender,
-        })
+        let _ = self
+            .settings_sender
+            .send((settings, handle))
+            .ok()
+            .ok_or(())?;
+        Ok(OpenConnection { packet_sender })
     }
 }
 
 #[derive(Debug)]
 pub struct OpenConnection {
-    _handle: JoinHandle<()>,
     packet_sender: mpsc::Sender<ReceivePacketResult>,
 }
 

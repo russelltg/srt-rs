@@ -23,7 +23,7 @@ use srt_protocol::{
     connection::ConnectionSettings,
     options::{OptionsError, OptionsOf, SocketOptions, Validation},
 };
-use tokio::net::UdpSocket;
+use tokio::{net::UdpSocket, task::JoinHandle};
 
 use super::{net::*, options::BindOptions, watch};
 
@@ -43,6 +43,7 @@ pub struct SrtSocket {
     input_data_sender: mpsc::Sender<(Instant, Bytes)>,
     statistics_receiver: watch::Receiver<SocketStatistics>,
     settings: ConnectionSettings,
+    task: JoinHandle<()>,
 }
 
 impl SrtSocket {
@@ -86,10 +87,16 @@ impl SrtSocket {
         };
 
         let (new_socket, new_state) = factory::split_new();
-        let (_, settings) = new_state.spawn_task(socket, connection);
-        let socket = new_socket.create_socket(settings);
+        let (task, settings) = new_state.spawn_task(socket, connection);
+        let socket = new_socket.create_socket(settings, task);
 
         Ok(socket)
+    }
+
+    pub async fn close_and_finish(&mut self) -> Result<(), io::Error> {
+        self.close().await?;
+        (&mut self.task).await?;
+        Ok(())
     }
 }
 
