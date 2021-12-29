@@ -16,6 +16,7 @@ pub use builder::SrtListenerBuilder;
 pub use session::ConnectionRequest;
 pub use srt_protocol::statistics::ListenerStatistics;
 
+#[derive(Debug)]
 pub struct SrtListener {
     settings: ConnInitSettings,
     statistics_receiver: watch::Receiver<ListenerStatistics>,
@@ -23,6 +24,7 @@ pub struct SrtListener {
     task: JoinHandle<()>,
 }
 
+#[derive(Debug)]
 pub struct SrtIncoming {
     request_receiver: mpsc::Receiver<ConnectionRequest>,
 }
