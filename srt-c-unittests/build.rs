@@ -20,7 +20,6 @@ fn main() {
         .define("v6_calls_v6_mapped", "DISABLED_v6_calls_v6_mapped")
         .define("v6_calls_v6", "DISABLED_v6_calls_v6")
         .define("v6_calls_v4", "DISABLED_v6_calls_v4")
-        .define("Multiple", "DISABLED_Multiple")
         .define("IPv4_and_IPv6", "DISABLED_IPv4_and_IPv6")
         .define("SameAddr1", "DISABLED_SameAddr1")
         .define("SameAddr2", "DISABLED_SameAddr2")
