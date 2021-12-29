@@ -106,7 +106,7 @@ impl SrtListenerState {
             }
         }
 
-        for (_, conn) in &mut self.open_connections {
+        for conn in self.open_connections.values_mut() {
             let _ = conn.close().await;
         }
     }
