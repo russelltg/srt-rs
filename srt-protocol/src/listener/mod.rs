@@ -175,7 +175,10 @@ mod test {
 
     use rand::random;
 
-    use crate::options::{PacketCount, PacketSize, SrtVersion};
+    use crate::{
+        options::{PacketCount, PacketSize, SrtVersion},
+        settings::AcceptParameters,
+    };
 
     use super::*;
 
@@ -254,7 +257,10 @@ mod test {
 
         let action = listener.handle_input(
             Instant::now(),
-            Input::AccessResponse(Some((session_id(), AccessControlResponse::Accepted(None)))),
+            Input::AccessResponse(Some((
+                session_id(),
+                AccessControlResponse::Accepted(AcceptParameters::new()),
+            ))),
         );
         assert_matches!(action, Action::OpenConnection(_, _));
 

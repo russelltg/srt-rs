@@ -1,8 +1,4 @@
-use std::{
-    convert::{TryFrom, TryInto},
-    io,
-    time::Instant,
-};
+use std::{convert::TryFrom, io, time::Instant};
 
 use bytes::Bytes;
 use futures::{future::try_join_all, stream, SinkExt, StreamExt};
@@ -10,13 +6,9 @@ use log::info;
 
 use srt_protocol::{
     access::*, packet::CoreRejectReason, protocol::pending_connection::ConnectionReject,
-    settings::KeySettings,
 };
 
-use srt_tokio::{
-    options::{KeySize, StreamId},
-    SrtListener, SrtSocket,
-};
+use srt_tokio::{options::StreamId, SrtListener, SrtSocket};
 
 fn accept(streamid: Option<&StreamId>) -> Result<AcceptParameters, RejectReason> {
     info!("Got request for {:?}", streamid);
@@ -57,7 +49,7 @@ async fn streamid() -> io::Result<()> {
     let listener = tokio::spawn(async move {
         while let Some(request) = incoming.incoming().next().await {
             let mut sender = match accept(request.stream_id()) {
-                Ok(mut ap) => request.accept(ap.take_key_settings()).await.unwrap(),
+                Ok(ap) => request.accept(ap).await.unwrap(),
                 Err(rr) => {
                     request.reject(rr).await.unwrap();
                     continue;
@@ -128,15 +120,10 @@ async fn set_password() {
 
     let listener = tokio::spawn(async move {
         while let Some(request) = incoming.incoming().next().await {
-            let passphrase = request.stream_id().unwrap().as_str().try_into().unwrap();
-
-            if let Ok(mut sender) = request
-                .accept(Some(KeySettings {
-                    key_size: KeySize::AES128,
-                    passphrase,
-                }))
-                .await
-            {
+            let mut ap = AcceptParameters::new();
+            ap.set_key_settings(request.stream_id().unwrap().as_str(), 16)
+                .unwrap();
+            if let Ok(mut sender) = request.accept(ap).await {
                 let mut stream =
                     stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());
 

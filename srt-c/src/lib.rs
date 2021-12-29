@@ -5,7 +5,7 @@ mod errors;
 
 use errors::{SRT_ERRNO, SRT_ERRNO::*};
 use os_socketaddr::OsSocketAddr;
-use srt_protocol::{options::KeySize, settings::KeySettings};
+use srt_protocol::{options::KeySize, settings::AcceptParameters};
 
 use std::{
     cell::RefCell,
@@ -302,7 +302,7 @@ enum SocketData {
     ),
     ConnectFailed(io::Error),
 
-    Accepting(Option<KeySettings>),
+    Accepting(AcceptParameters),
 
     InvalidIntermediateState,
     Closed,
@@ -421,7 +421,7 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
         let task = TOKIO_RUNTIME.spawn(async move {
             let incoming_stream = incoming.incoming();
             while let Some(req) = incoming_stream.next().await {
-                let new_sock = insert_socket(SocketData::Accepting(None));
+                let new_sock = insert_socket(SocketData::Accepting(AcceptParameters::new()));
 
                 // get latest opts--callback may be changed at any point
                 let opts = {
@@ -465,18 +465,20 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
                 }
 
                 let new_sock_entry = get_sock(new_sock).expect("socket closed in a weird way?");
-                let key_settings = {
-                    let mut l = new_sock_entry.lock().unwrap();
-                    if let SocketData::Accepting(ref mut key_settings) = *l {
-                        key_settings.take()
-                    } else {
-                        // uhh definitely strange
-                        continue;
-                    }
+
+                let sd = replace(
+                    &mut *new_sock_entry.lock().unwrap(),
+                    SocketData::InvalidIntermediateState,
+                );
+                let ap = if let SocketData::Accepting(ap) = sd {
+                    ap
+                } else {
+                    // uhh definitely strange
+                    continue;
                 };
 
                 let remote = req.remote();
-                let srt_socket = match req.accept(key_settings).await {
+                let srt_socket = match req.accept(ap).await {
                     Ok(sock) => sock,
                     Err(_e) => continue, // TODO: remove from sockets
                 };
@@ -1013,16 +1015,22 @@ pub unsafe extern "C" fn srt_setsockflag(
     if let SocketData::Accepting(ref mut params) = *sock {
         match opt {
             SRTO_PASSPHRASE => {
-                *params = Some(KeySettings {
-                    passphrase: match extract_str(optval, optlen).map(Passphrase::try_from) {
-                        Some(Ok(p)) => p,
-                        Some(Err(_)) | None => return set_error(SRT_EINVPARAM),
-                    },
-                    key_size: params
-                        .as_ref()
-                        .map(|p| p.key_size)
-                        .unwrap_or(KeySize::Unspecified),
-                })
+                let size = params
+                    .take_key_settings()
+                    .map(|p| p.key_size)
+                    .unwrap_or(KeySize::Unspecified);
+                if params
+                    .set_key_settings(
+                        match extract_str(optval, optlen) {
+                            Some(p) => p,
+                            None => return set_error(SRT_EINVPARAM),
+                        },
+                        size.as_raw(),
+                    )
+                    .is_err()
+                {
+                    return set_error(SRT_EINVPARAM);
+                };
             }
             SRTO_RCVLATENCY => {
                 warn!("Unimplemented! This would require a hook where there currently is none!")

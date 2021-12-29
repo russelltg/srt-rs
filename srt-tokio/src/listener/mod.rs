@@ -142,7 +142,7 @@ mod tests {
                         if stream_id.eq(&"reject".into()) {
                             let _ = request.reject(RejectReason::User(42)).await.unwrap();
                         } else {
-                            let mut sender = request.accept(None).await.unwrap();
+                            let mut sender = request.accept(AcceptParameters::new()).await.unwrap();
                             let mut stream = stream::iter(
                                 Some(Ok((Instant::now(), Bytes::from("hello")))).into_iter(),
                             );
@@ -233,7 +233,10 @@ mod tests {
                                 .await
                                 .expect("reject");
                         } else {
-                            let mut sender = request.accept(None).await.expect("accept");
+                            let mut sender = request
+                                .accept(AcceptParameters::new())
+                                .await
+                                .expect("accept");
                             let mut stream = stream::iter(
                                 Some(Ok((Instant::now(), Bytes::from("hello")))).into_iter(),
                             );
@@ -311,7 +314,7 @@ mod tests {
 
             info!("SRT Multiplex Server is listening on port: {}", port);
             while let Some(request) = incoming.incoming().next().await {
-                let mut srt_socket = request.accept(None).await.unwrap();
+                let mut srt_socket = request.accept(AcceptParameters::new()).await.unwrap();
 
                 tokio::spawn(async move {
                     let client_desc = format!(

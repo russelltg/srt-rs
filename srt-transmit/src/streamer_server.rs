@@ -11,6 +11,7 @@ use log::warn;
 use tokio::sync::broadcast::{self, error::*};
 
 use srt_tokio::{
+    access::AcceptParameters,
     options::{ListenerOptions, Valid},
     SrtIncoming, SrtListener, SrtSocket,
 };
@@ -51,7 +52,7 @@ impl StreamerServer {
                     _ = cancel => return,
                     result = incoming.next() => result)
         {
-            let sender = request.accept(None).await.unwrap();
+            let sender = request.accept(AcceptParameters::new()).await.unwrap();
             let input = broadcast_sender.subscribe();
             let run_send_loop = Self::run_send_loop(sender, input);
             tokio::spawn(run_send_loop);

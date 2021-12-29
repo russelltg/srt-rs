@@ -1,7 +1,8 @@
-use std::{convert::TryInto, marker::PhantomData, net::SocketAddr};
+use std::convert::TryInto;
 
-use crate::{packet::RejectReason, settings::KeySettings};
+use crate::{options::OptionsError, settings::KeySettings};
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct AcceptParameters {
     key_settings: Option<KeySettings>,
 }
@@ -11,12 +12,16 @@ impl AcceptParameters {
         AcceptParameters { key_settings: None }
     }
 
-    pub fn set_key_settings(&mut self, passphrase: impl Into<String>, size: u8) -> &mut Self {
+    pub fn set_key_settings(
+        &mut self,
+        passphrase: impl Into<String>,
+        size: u8,
+    ) -> Result<&mut Self, OptionsError> {
         self.key_settings = Some(KeySettings {
-            key_size: size.try_into().unwrap(),
-            passphrase: passphrase.into().try_into().unwrap(),
+            key_size: size.try_into()?,
+            passphrase: passphrase.into().try_into()?,
         });
-        self
+        Ok(self)
     }
 
     pub fn take_key_settings(&mut self) -> Option<KeySettings> {
@@ -27,28 +32,5 @@ impl AcceptParameters {
 impl Default for AcceptParameters {
     fn default() -> Self {
         AcceptParameters::new()
-    }
-}
-
-pub trait StreamAcceptor {
-    fn accept(
-        &mut self,
-        streamid: Option<&str>,
-        ip: SocketAddr,
-    ) -> Result<AcceptParameters, RejectReason>;
-}
-
-#[derive(Default, Clone, Copy)]
-pub struct AllowAllStreamAcceptor {
-    _hidden: PhantomData<()>,
-}
-
-impl StreamAcceptor for AllowAllStreamAcceptor {
-    fn accept(
-        &mut self,
-        _streamid: Option<&str>,
-        _ip: SocketAddr,
-    ) -> Result<AcceptParameters, RejectReason> {
-        Ok(AcceptParameters::default())
     }
 }

@@ -41,7 +41,7 @@ async fn main() -> io::Result<()> {
         let stream_id = request.stream_id().cloned();
         match access_control(stream_id.as_ref(), request.remote()) {
             Ok(()) => {
-                let mut sender = request.accept(None).await.unwrap();
+                let mut sender = request.accept(AcceptParameters::new()).await.unwrap();
                 let mut stream = stream::iter(
                     Some(Ok((
                         Instant::now(),

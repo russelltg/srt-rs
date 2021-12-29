@@ -41,12 +41,9 @@ impl ConnectionRequest {
         self.request.stream_id.as_ref()
     }
 
-    pub async fn accept(
-        self,
-        key_settings: Option<KeySettings>,
-    ) -> Result<SrtSocket, std::io::Error> {
+    pub async fn accept(self, params: AcceptParameters) -> Result<SrtSocket, std::io::Error> {
         self.response_sender
-            .send(AccessControlResponse::Accepted(key_settings))
+            .send(AccessControlResponse::Accepted(params))
             .await?;
 
         let (settings, jh) = self

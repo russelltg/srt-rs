@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use srt_tokio::{SrtListener, SrtSocket};
+use srt_tokio::{access::AcceptParameters, SrtListener, SrtSocket};
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -19,7 +19,7 @@ async fn multiplexer() -> Result<()> {
         let mut fused_finish = finished_recv.fuse();
         while let Some(request) = futures::select!(res = incoming.incoming().next().fuse() => res, _ = fused_finish => None)
         {
-            let mut sender = request.accept(None).await.unwrap();
+            let mut sender = request.accept(AcceptParameters::new()).await.unwrap();
             let mut stream =
                 stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());
 

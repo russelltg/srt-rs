@@ -223,7 +223,7 @@ impl KeySize {
     pub fn as_usize(self) -> usize {
         use KeySize::*;
         match self {
-            Unspecified => 16,
+            Unspecified => 0,
             AES128 => 16,
             AES192 => 24,
             AES256 => 32,

@@ -7,7 +7,7 @@ pub(crate) mod cookie;
 
 use std::{error::Error, fmt, io, net::SocketAddr};
 
-use crate::{connection::Connection, options::StreamId, packet::*, settings::KeySettings};
+use crate::{connection::Connection, options::StreamId, packet::*, settings::AcceptParameters};
 
 #[non_exhaustive]
 #[derive(Debug)]
@@ -42,7 +42,7 @@ pub struct AccessControlRequest {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum AccessControlResponse {
-    Accepted(Option<KeySettings>),
+    Accepted(AcceptParameters),
     Rejected(RejectReason),
     Dropped,
 }

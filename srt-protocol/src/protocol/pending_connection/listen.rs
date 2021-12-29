@@ -75,9 +75,14 @@ impl Listen {
             AccessControlRequested(state, timestamp, shake, info) => {
                 use AccessControlResponse::*;
                 match response {
-                    Accepted(key_settings) => {
-                        self.accept_connection(now, &state, timestamp, shake, info, key_settings)
-                    }
+                    Accepted(mut ap) => self.accept_connection(
+                        now,
+                        &state,
+                        timestamp,
+                        shake,
+                        info,
+                        ap.take_key_settings(),
+                    ),
                     Rejected(rr) => self.make_rejection(
                         &shake,
                         state.from,

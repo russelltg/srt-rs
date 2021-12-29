@@ -7,7 +7,7 @@ use bytes::Bytes;
 use futures::{stream, SinkExt, StreamExt};
 use tokio::time::sleep;
 
-use srt_tokio::SrtListener;
+use srt_tokio::{access::AcceptParameters, SrtListener};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -17,7 +17,7 @@ async fn main() -> Result<(), Error> {
     println!("SRT Multiplex Server is listening on port: {}", port);
 
     while let Some(request) = incoming.incoming().next().await {
-        let mut srt_socket = request.accept(None).await.unwrap();
+        let mut srt_socket = request.accept(AcceptParameters::new()).await.unwrap();
         tokio::spawn(async move {
             let client_desc = format!(
                 "(ip_port: {}, sockid: {})",
