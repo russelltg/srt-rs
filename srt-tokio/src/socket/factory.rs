@@ -149,12 +149,13 @@ pub struct SrtSocketFactory {
 }
 
 impl SrtSocketFactory {
-    pub fn create_socket(self, settings: ConnectionSettings) -> SrtSocket {
+    pub fn create_socket(self, settings: ConnectionSettings, task: JoinHandle<()>) -> SrtSocket {
         SrtSocket {
             settings,
             output_data_receiver: self.output_data_receiver,
             input_data_sender: self.input_data_sender,
             statistics_receiver: self.statistics_receiver,
+            task,
         }
     }
 }

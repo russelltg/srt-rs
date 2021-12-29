@@ -100,10 +100,14 @@ impl SrtListenerState {
                     packet = self.socket.receive().fuse() => Input::Packet(packet),
                     response = self.response_receiver.next() => Input::AccessResponse(response),
                     _ = sleep_until(timeout.into()).fuse() => Input::Timer,
-                    _ = &mut self.close_recvr => return,
+                    _ = &mut self.close_recvr => break,
                 },
                 Close => break,
             }
+        }
+
+        for conn in self.open_connections.values_mut() {
+            let _ = conn.close().await;
         }
     }
 

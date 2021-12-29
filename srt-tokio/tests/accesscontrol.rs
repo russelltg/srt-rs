@@ -117,7 +117,7 @@ async fn streamid() -> io::Result<()> {
     // close the multiplex server when all is done
     try_join_all(join_handles).await.unwrap();
     info!("all finished");
-    server.close();
+    server.close().await;
     listener.await.unwrap();
     Ok(())
 }
@@ -183,6 +183,6 @@ async fn set_password() {
         )))
     );
 
-    server.close();
+    server.close().await;
     listener.await.unwrap();
 }

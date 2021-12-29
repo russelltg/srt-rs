@@ -20,7 +20,7 @@ pub struct SrtListener {
     settings: ConnInitSettings,
     statistics_receiver: watch::Receiver<ListenerStatistics>,
     close_req: Option<oneshot::Sender<()>>,
-    _task: JoinHandle<()>,
+    task: JoinHandle<()>,
 }
 
 pub struct SrtIncoming {
@@ -65,7 +65,7 @@ impl SrtListener {
                 settings,
                 statistics_receiver,
                 close_req: Some(close_req),
-                _task: task,
+                task,
             },
             SrtIncoming { request_receiver },
         ))
@@ -79,8 +79,9 @@ impl SrtListener {
         &mut self.statistics_receiver
     }
 
-    pub fn close(&mut self) {
+    pub async fn close(&mut self) {
         let _ = self.close_req.take().unwrap().send(());
+        (&mut self.task).await.unwrap();
     }
 }
 

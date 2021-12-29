@@ -297,6 +297,7 @@ enum SocketData {
     Listening(
         SrtListener,
         Option<mpsc::Receiver<(SRTSOCKET, SocketAddr)>>,
+        JoinHandle<()>,
         ApiOptions,
     ),
     ConnectFailed(io::Error),
@@ -314,7 +315,7 @@ impl SocketData {
             Initialized(_, _, opts)
             | ConnectingNonBlocking(_, opts)
             | Established(_, opts)
-            | Listening(_, _, opts) => Some(opts),
+            | Listening(_, _, _, opts) => Some(opts),
             _ => None,
         }
     }
@@ -331,7 +332,7 @@ impl SocketData {
         use SocketData::*;
         match self {
             Initialized(so, _, ai) => (Some(ai), Some(so)),
-            ConnectingNonBlocking(_, ai) | Established(_, ai) | Listening(_, _, ai) => {
+            ConnectingNonBlocking(_, ai) | Established(_, ai) | Listening(_, _, _, ai) => {
                 (Some(ai), None)
             }
             _ => (None, None),
@@ -347,6 +348,8 @@ fn get_sock(sock: SRTSOCKET) -> Option<Arc<Mutex<SocketData>>> {
 pub extern "C" fn srt_startup() -> c_int {
     lazy_static::initialize(&TOKIO_RUNTIME);
     lazy_static::initialize(&SOCKETS);
+
+    let _ = pretty_env_logger::try_init();
     SRT_SUCCESS
 }
 
@@ -415,7 +418,7 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
 
         let (mut s, r) = mpsc::channel(1024);
         let sock = sock.clone();
-        TOKIO_RUNTIME.spawn(async move {
+        let task = TOKIO_RUNTIME.spawn(async move {
             let incoming_stream = incoming.incoming();
             while let Some(req) = incoming_stream.next().await {
                 let new_sock = insert_socket(SocketData::Accepting(None));
@@ -488,7 +491,7 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
                 }
             }
         });
-        *l = SocketData::Listening(listener, Some(r), initial_opts)
+        *l = SocketData::Listening(listener, Some(r), task, initial_opts)
     } else {
         *l = sd;
         return set_error(SRT_ECONNSOCK);
@@ -680,7 +683,7 @@ pub extern "C" fn srt_accept(
     };
 
     let mut l = sock.lock().unwrap();
-    if let SocketData::Listening(ref _listener, ref mut incoming, opts) = *l {
+    if let SocketData::Listening(ref _listener, ref mut incoming, ref _jh, opts) = *l {
         let mut incoming = match incoming.take() {
             Some(l) => l,
             None => {
@@ -713,7 +716,7 @@ pub extern "C" fn srt_accept(
             // put listener back
             {
                 let mut l = sock.lock().unwrap();
-                if let SocketData::Listening(ref _listener, ref mut in_state, _opts) = *l {
+                if let SocketData::Listening(_listener, in_state, _jh, _opts) = &mut *l {
                     *in_state = Some(incoming);
                 }
             }
@@ -1101,18 +1104,31 @@ pub unsafe extern "C" fn srt_getsockflag(
 
     let l = sock.lock().unwrap();
 
-    enum Val {
+    enum Val<'a> {
         Bool(bool),
         Int(c_int),
+        Str(&'a str),
     }
     use Val::*;
     use SRT_SOCKOPT::*;
 
-    let val = match (opt, l.api_opts(), l.sock_opts()) {
-        (SRTO_RCVSYN, Some(opts), _) => Bool(opts.rcv_syn),
-        (SRTO_SNDSYN, Some(opts), _) => Bool(opts.snd_syn),
-        (SRTO_CONNTIMEO, _, Some(opts)) => Int(opts.connect.timeout.as_millis() as c_int),
-        _ => unimplemented!("{:?}", opt),
+    let val = if opt == SRTO_STREAMID {
+        match &*l {
+            SocketData::Initialized(_, sid, _) => {
+                Str(sid.as_ref().map(|s| s.as_str()).unwrap_or(""))
+            }
+            SocketData::Established(sock, _) => {
+                Str(sock.settings().stream_id.as_deref().unwrap_or(""))
+            }
+            _ => return set_error(SRT_EBOUNDSOCK),
+        }
+    } else {
+        match (opt, l.api_opts(), l.sock_opts()) {
+            (SRTO_RCVSYN, Some(opts), _) => Bool(opts.rcv_syn),
+            (SRTO_SNDSYN, Some(opts), _) => Bool(opts.snd_syn),
+            (SRTO_CONNTIMEO, _, Some(opts)) => Int(opts.connect.timeout.as_millis() as c_int),
+            _ => unimplemented!("{:?}", opt),
+        }
     };
 
     match val {
@@ -1127,6 +1143,15 @@ pub unsafe extern "C" fn srt_getsockflag(
                 return set_error(SRT_EINVPARAM);
             }
             *optval.cast::<c_int>().as_mut() = i;
+        }
+        Str(str) => {
+            if *optlen < (str.as_bytes().len() + 1) as c_int {
+                return set_error(SRT_EINVPARAM);
+            }
+            let optval = from_raw_parts_mut(optval.cast::<u8>().as_mut(), *optlen as usize);
+            optval[..str.as_bytes().len()].copy_from_slice(str.as_bytes());
+            optval[str.as_bytes().len()] = 0; // null terminator
+            *optlen = str.as_bytes().len() as c_int;
         }
     }
     SRT_SUCCESS
@@ -1205,16 +1230,19 @@ pub extern "C" fn srt_close(socknum: SRTSOCKET) -> c_int {
     let mut retcode = SRT_SUCCESS;
 
     let mut l = sock.lock().unwrap();
-    match *l {
+    match &mut *l {
         SocketData::Established(ref mut s, _) => {
-            let res = TOKIO_RUNTIME.block_on(async move { s.close().await });
+            let res = TOKIO_RUNTIME.block_on(async move { s.close_and_finish().await });
             if let Err(e) = res {
                 retcode = set_error_fmt(SRT_EINVOP, format_args!("Failed to close socket: {}", e));
             }
             *l = SocketData::Closed
         }
-        SocketData::Listening(ref mut listener, _, _) => {
-            listener.close();
+        SocketData::Listening(ref mut listener, _, jh, _) => {
+            TOKIO_RUNTIME.block_on(async {
+                listener.close().await;
+                jh.await.unwrap();
+            });
             *l = SocketData::Closed;
         }
         _ => (),
@@ -1224,13 +1252,4 @@ pub extern "C" fn srt_close(socknum: SRTSOCKET) -> c_int {
     sockets.remove(&socknum);
 
     retcode
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
 }
