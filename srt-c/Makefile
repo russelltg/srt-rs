@@ -16,7 +16,7 @@ $(SRT_H): cbindgen.toml src/lib.rs
 	cbindgen --config cbindgen.toml --crate srt-c --output srtrs.h
 
 examples/test-c-client: examples/test-c-client.cpp $(SRT_H) $(LIBSRT)
-	gcc $(CFLAGS) examples/test-c-client.cpp -L ../target/debug -l:libsrt_c.a -lpthread -lm -ldl -o examples/test-c-client 
+	g++ $(CFLAGS) examples/test-c-client.cpp -L ../target/debug -l:libsrt_c.a -lpthread -lm -ldl -o examples/test-c-client 
 
 examples/test-c-server: examples/test-c-server.cpp $(SRT_H) $(LIBSRT)
-	gcc $(CFLAGS) examples/test-c-server.cpp -L ../target/debug -l:libsrt_c.a -lpthread -lm -ldl -o examples/test-c-server
+	g++ $(CFLAGS) examples/test-c-server.cpp -L ../target/debug -l:libsrt_c.a -lpthread -lm -ldl -o examples/test-c-server
