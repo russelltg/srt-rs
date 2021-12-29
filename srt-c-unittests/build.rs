@@ -12,6 +12,7 @@ fn main() {
     println!("cargo:rerun-if-changed=tests/test_socket_options.cpp");
 
     cc::Build::new()
+        .cpp(true)
         // disable tests that don't pass yet
         .define("Nonblocking", "DISABLED_Nonblocking")
         .define("TestEnforcedEncryption", "DISABLED_TestEnforcedEncryption")
@@ -60,10 +61,8 @@ fn main() {
         .include("../srt-c")
         .compile("units");
 
-    println!("cargo:rustc-link-lib=stdc++");
     println!("cargo:rustc-link-lib=gtest");
     println!("cargo:rustc-link-lib=gtest_main");
-    println!("cargo:rustc-link-lib=m");
 
     let mut path = PathBuf::from(env::var("OUT_DIR").unwrap());
     path.pop();
