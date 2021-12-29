@@ -4,19 +4,19 @@
 mod errors;
 
 use errors::{SRT_ERRNO, SRT_ERRNO::*};
+use os_socketaddr::OsSocketAddr;
+use srt_protocol::{options::KeySize, settings::KeySettings};
 
 use std::{
     cell::RefCell,
     cmp::min,
     collections::BTreeMap,
     ffi::CString,
-    fmt,
-    intrinsics::transmute,
-    io,
+    fmt, io,
     mem::{replace, size_of},
     net::SocketAddr,
     os::raw::{c_char, c_int},
-    ptr::NonNull,
+    ptr::{self, NonNull},
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::{
         atomic::{AtomicI32, Ordering},
@@ -26,27 +26,19 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures::{sink::SinkExt, StreamExt};
+use futures::{channel::mpsc, sink::SinkExt, StreamExt};
 use lazy_static::lazy_static;
 use log::{error, warn};
 use srt_tokio::{
-    options::{ListenerOptions, SocketOptions, Validation},
-    SrtIncoming, SrtListener, SrtSocket,
+    options::{ListenerOptions, Passphrase, SocketOptions, StreamId, Validation},
+    SrtListener, SrtSocket,
 };
 use tokio::{runtime::Runtime, task::JoinHandle, time::timeout};
-
-#[cfg(not(target_os = "windows"))]
-use libc::{sockaddr_in, sockaddr_in6, AF_INET, AF_INET6};
-#[cfg(target_os = "windows")]
-use winapi::shared::{
-    ws2def::{AF_INET, AF_INET6, SOCKADDR_IN},
-    ws2ipdef::SOCKADDR_IN6,
-};
 
 pub type SRTSOCKET = i32;
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SRT_SOCKOPT {
     SRTO_MSS = 0,        // the Maximum Transfer Unit
     SRTO_SNDSYN = 1,     // if sending is blocking
@@ -279,23 +271,37 @@ static NEXT_SOCKID: AtomicI32 = AtomicI32::new(1);
 struct ApiOptions {
     snd_syn: bool, // corresponds to SRTO_SNDSYN
     rcv_syn: bool, // corresponds to SRTO_RCVSYN
+    listen_cb: Option<srt_listen_callback_fn>,
+    listen_cb_opaque: *mut (),
 }
+
+// Safety: the pointer to listen_cb_opaque must be threadsafe
+unsafe impl Send for ApiOptions {}
+unsafe impl Sync for ApiOptions {}
 
 impl Default for ApiOptions {
     fn default() -> Self {
         Self {
             snd_syn: true,
             rcv_syn: true,
+            listen_cb: None,
+            listen_cb_opaque: ptr::null_mut(),
         }
     }
 }
 
 enum SocketData {
-    Initialized(SocketOptions, ApiOptions),
+    Initialized(SocketOptions, Option<StreamId>, ApiOptions),
     ConnectingNonBlocking(JoinHandle<()>, ApiOptions),
     Established(SrtSocket, ApiOptions),
-    Listening(SrtListener, Option<SrtIncoming>, ApiOptions),
+    Listening(
+        SrtListener,
+        Option<mpsc::Receiver<(SRTSOCKET, SocketAddr)>>,
+        ApiOptions,
+    ),
     ConnectFailed(io::Error),
+
+    Accepting(Option<KeySettings>),
 
     InvalidIntermediateState,
     Closed,
@@ -305,7 +311,7 @@ impl SocketData {
     fn api_opts(&self) -> Option<&ApiOptions> {
         use SocketData::*;
         match self {
-            Initialized(_, opts)
+            Initialized(_, _, opts)
             | ConnectingNonBlocking(_, opts)
             | Established(_, opts)
             | Listening(_, _, opts) => Some(opts),
@@ -314,7 +320,7 @@ impl SocketData {
     }
 
     fn sock_opts(&self) -> Option<&SocketOptions> {
-        if let SocketData::Initialized(ref opts, _) = self {
+        if let SocketData::Initialized(ref opts, _, _) = self {
             Some(opts)
         } else {
             None
@@ -324,7 +330,7 @@ impl SocketData {
     fn opts_mut(&mut self) -> (Option<&mut ApiOptions>, Option<&mut SocketOptions>) {
         use SocketData::*;
         match self {
-            Initialized(so, ai) => (Some(ai), Some(so)),
+            Initialized(so, _, ai) => (Some(ai), Some(so)),
             ConnectingNonBlocking(_, ai) | Established(_, ai) | Listening(_, _, ai) => {
                 (Some(ai), None)
             }
@@ -335,66 +341,6 @@ impl SocketData {
 
 fn get_sock(sock: SRTSOCKET) -> Option<Arc<Mutex<SocketData>>> {
     SOCKETS.read().unwrap().get(&sock).cloned()
-}
-
-pub fn sockaddr_from_c(addr: &libc::sockaddr, len: c_int) -> Option<SocketAddr> {
-    match i32::from(addr.sa_family) {
-        AF_INET => {
-            #[cfg(not(target_os = "windows"))]
-            {
-                if len as usize != size_of::<sockaddr_in>() {
-                    return None;
-                }
-                let sa_in: &sockaddr_in = unsafe { transmute(addr) };
-                Some(
-                    (
-                        sa_in.sin_addr.s_addr.to_ne_bytes(),
-                        u16::from_be(sa_in.sin_port),
-                    )
-                        .into(),
-                )
-            }
-            #[cfg(target_os = "windows")]
-            {
-                if len as usize != size_of::<SOCKADDR_IN>() {
-                    return None;
-                }
-                let sa_in: &SOCKADDR_IN = unsafe { transmute(addr) };
-                Some(
-                    (
-                        unsafe { sa_in.sin_addr.S_un.S_addr() }.to_ne_bytes(),
-                        u16::from_be(sa_in.sin_port),
-                    )
-                        .into(),
-                )
-            }
-        }
-        AF_INET6 => {
-            #[cfg(not(target_os = "windows"))]
-            {
-                if len as usize != size_of::<sockaddr_in6>() {
-                    return None;
-                }
-                let sa_in: &sockaddr_in6 = unsafe { transmute(addr) };
-                Some((sa_in.sin6_addr.s6_addr, u16::from_be(sa_in.sin6_port)).into())
-            }
-            #[cfg(target_os = "windows")]
-            {
-                if len as usize != size_of::<SOCKADDR_IN6>() {
-                    return None;
-                }
-                let sa_in: &SOCKADDR_IN6 = unsafe { transmute(addr) };
-                Some(
-                    (
-                        *unsafe { sa_in.sin6_addr.u.Byte() },
-                        u16::from_be(sa_in.sin6_port),
-                    )
-                        .into(),
-                )
-            }
-        }
-        _ => None,
-    }
 }
 
 #[no_mangle]
@@ -411,10 +357,21 @@ pub extern "C" fn srt_cleanup() -> c_int {
 }
 
 #[no_mangle]
-pub extern "C" fn srt_bind(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c_int) -> c_int {
-    let sa = match sockaddr_from_c(name, namelen) {
-        None => return set_error_fmt(SRT_ECONNSETUP, "Invalid socket address"),
-        Some(sa) => sa,
+pub extern "C" fn srt_bind(
+    sock: SRTSOCKET,
+    name: Option<&libc::sockaddr>,
+    namelen: c_int,
+) -> c_int {
+    let name = match name {
+        Some(name) => name,
+        None => return set_error_fmt(SRT_EINVPARAM, "Invalid socket address"),
+    };
+    let name = unsafe {
+        OsSocketAddr::from_raw_parts(name as *const libc::sockaddr as *const u8, namelen as usize)
+    };
+    let name = match name.into_addr() {
+        Some(name) => name,
+        None => return set_error(SRT_EINVPARAM),
     };
 
     let sock = match get_sock(sock) {
@@ -423,8 +380,8 @@ pub extern "C" fn srt_bind(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c_in
     };
 
     let mut l = sock.lock().unwrap();
-    if let SocketData::Initialized(ref mut b, _) = *l {
-        b.connect.local = sa;
+    if let SocketData::Initialized(ref mut b, _, _) = *l {
+        b.connect.local = name;
         SRT_SUCCESS
     } else {
         set_error(SRT_ECONNSOCK)
@@ -440,13 +397,13 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
 
     let mut l = sock.lock().unwrap();
     let sd = replace(&mut *l, SocketData::InvalidIntermediateState);
-    if let SocketData::Initialized(so, opts) = sd {
+    if let SocketData::Initialized(so, _, initial_opts) = sd {
         let options = match (ListenerOptions { socket: so }.try_validate()) {
             Ok(options) => options,
             Err(e) => return set_error_fmt(SRT_EINVOP, format_args!("Invalid options: {}", e)),
         };
         let ret = TOKIO_RUNTIME.block_on(SrtListener::bind(options));
-        let (listener, incoming) = match ret {
+        let (listener, mut incoming) = match ret {
             Ok(l) => l,
             Err(e) => {
                 return set_error_fmt(
@@ -455,7 +412,83 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
                 )
             }
         };
-        *l = SocketData::Listening(listener, Some(incoming), opts)
+
+        let (mut s, r) = mpsc::channel(1024);
+        let sock = sock.clone();
+        TOKIO_RUNTIME.spawn(async move {
+            let incoming_stream = incoming.incoming();
+            while let Some(req) = incoming_stream.next().await {
+                let new_sock = insert_socket(SocketData::Accepting(None));
+
+                // get latest opts--callback may be changed at any point
+                let opts = {
+                    let l = sock.lock().unwrap();
+                    *l.api_opts().unwrap()
+                };
+
+                let req = req;
+                let accept = if let Some(cb) = opts.listen_cb {
+                    let streamid_cstr = req
+                        .stream_id()
+                        .map(|id| CString::new(id.to_string()).unwrap());
+                    let streamid_ptr = match &streamid_cstr {
+                        Some(cstr) => cstr.as_ptr(),
+                        None => ptr::null(),
+                    };
+
+                    let mut ret: c_int = 0;
+
+                    let exception_thrown = unsafe {
+                        call_callback_wrap_exception(
+                            cb,
+                            opts.listen_cb_opaque,
+                            new_sock,
+                            5,
+                            OsSocketAddr::from(req.remote()).as_ptr() as *const libc::sockaddr,
+                            streamid_ptr,
+                            &mut ret,
+                        )
+                    };
+
+                    exception_thrown == 0 && ret == 0
+                } else {
+                    true
+                };
+
+                if !accept {
+                    // connection rejected! try again
+                    srt_close(new_sock);
+                    continue;
+                }
+
+                let new_sock_entry = get_sock(new_sock).expect("socket closed in a weird way?");
+                let key_settings = {
+                    let mut l = new_sock_entry.lock().unwrap();
+                    if let SocketData::Accepting(ref mut key_settings) = *l {
+                        key_settings.take()
+                    } else {
+                        // uhh definitely strange
+                        continue;
+                    }
+                };
+
+                let remote = req.remote();
+                let srt_socket = match req.accept(key_settings).await {
+                    Ok(sock) => sock,
+                    Err(_e) => continue, // TODO: remove from sockets
+                };
+
+                {
+                    let mut l = new_sock_entry.lock().unwrap();
+                    *l = SocketData::Established(srt_socket, opts);
+                }
+
+                if s.send((new_sock, remote)).await.is_err() {
+                    break;
+                }
+            }
+        });
+        *l = SocketData::Listening(listener, Some(r), initial_opts)
     } else {
         *l = sd;
         return set_error(SRT_ECONNSOCK);
@@ -571,10 +604,21 @@ pub extern "C" fn srt_epoll_wait(
 }
 
 #[no_mangle]
-pub extern "C" fn srt_connect(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c_int) -> c_int {
-    let sa = match sockaddr_from_c(name, namelen) {
-        None => return set_error_fmt(SRT_ECONNSETUP, "Invalid socket address"),
-        Some(sa) => sa,
+pub extern "C" fn srt_connect(
+    sock: SRTSOCKET,
+    name: Option<&libc::sockaddr>,
+    namelen: c_int,
+) -> c_int {
+    let name = match name {
+        Some(name) => name,
+        None => return set_error_fmt(SRT_EINVPARAM, "Invalid socket address"),
+    };
+    let name = unsafe {
+        OsSocketAddr::from_raw_parts(name as *const libc::sockaddr as *const u8, namelen as usize)
+    };
+    let name = match name.into_addr() {
+        Some(name) => name,
+        None => return set_error(SRT_EINVPARAM),
     };
 
     let sock = match get_sock(sock) {
@@ -584,15 +628,16 @@ pub extern "C" fn srt_connect(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c
 
     let mut l = sock.lock().unwrap();
     let sd = replace(&mut *l, SocketData::InvalidIntermediateState);
-    if let SocketData::Initialized(so, options) = sd {
+    if let SocketData::Initialized(so, streamid, options) = sd {
         let sb = SrtSocket::builder().with(so.clone());
         if options.rcv_syn {
             // blocking mode, wait on oneshot
-            let res = TOKIO_RUNTIME.block_on(async move { sb.call(sa, None).await });
+            let res = TOKIO_RUNTIME
+                .block_on(async { sb.call(name, streamid.as_ref().map(|s| s.as_str())).await });
             match res {
                 Ok(sock) => *l = SocketData::Established(sock, options),
                 Err(e) => {
-                    *l = SocketData::Initialized(so, options);
+                    *l = SocketData::Initialized(so, streamid, options);
                     return set_error_fmt(SRT_ENOSERVER, format_args!("Failed to connect: {}", e));
                 }
             }
@@ -600,7 +645,7 @@ pub extern "C" fn srt_connect(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c
             // nonblocking mode
             let sock_clone = sock.clone();
             let task = TOKIO_RUNTIME.spawn(async move {
-                let res = sb.call(sa, None).await;
+                let res = sb.call(name, None).await;
                 let mut l = sock_clone.lock().unwrap();
                 match res {
                     Ok(s) => *l = SocketData::Established(s, options),
@@ -651,21 +696,19 @@ pub extern "C" fn srt_accept(
         TOKIO_RUNTIME.block_on(async {
             let req = if opts.rcv_syn {
                 // blocking
-                incoming.incoming().next().await
+                incoming.next().await
             } else {
                 // nonblocking--10ms for now but could be shorter potentially
-                match timeout(Duration::from_millis(10), incoming.incoming().next()).await {
+                match timeout(Duration::from_millis(10), incoming.next()).await {
                     Err(_) => return set_error(SRT_EASYNCRCV),
                     Ok(req) => req,
                 }
             };
 
-            let req = match req {
+            let (new_sock, remote) = match req {
                 Some(req) => req,
                 None => return set_error(SRT_ESCLOSED),
             };
-
-            let remote = req.remote();
 
             // put listener back
             {
@@ -675,18 +718,13 @@ pub extern "C" fn srt_accept(
                 }
             }
 
-            // TODO: acceptors
-            let srt_socket = match req.accept(None).await {
-                Ok(sock) => sock,
-                Err(e) => return set_error_fmt(SRT_ESCLOSED, e), // TOOD: is this the right error?
-            };
-
-            if let Some((_addr, _len)) = addr {
-                todo!("{}", remote)
+            if let Some((addr, len)) = addr {
+                let osa = OsSocketAddr::from(remote);
+                *addr = unsafe { *(osa.as_ptr() as *const libc::sockaddr) };
+                *len = osa.len() as c_int;
             }
 
-            // TODO: are options inhereted like this?
-            insert_socket(SocketData::Established(srt_socket, opts))
+            new_sock
         })
     } else {
         set_error(SRT_ENOLISTEN)
@@ -841,6 +879,7 @@ fn insert_socket(data: SocketData) -> SRTSOCKET {
 pub extern "C" fn srt_create_socket() -> SRTSOCKET {
     insert_socket(SocketData::Initialized(
         Default::default(),
+        None,
         Default::default(),
     ))
 }
@@ -940,6 +979,15 @@ unsafe fn extract_bool(val: Option<NonNull<()>>, len: c_int) -> Option<bool> {
     })
 }
 
+unsafe fn extract_str(val: Option<NonNull<()>>, len: c_int) -> Option<String> {
+    if let Some(val) = val {
+        let slice = from_raw_parts(val.as_ptr() as *const u8, len as usize);
+        String::from_utf8(slice.into()).ok()
+    } else {
+        None
+    }
+}
+
 /// # Safety
 /// `optval` must point to a structure of the right type depending on `optname`, according to
 /// [the option documentation](https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md)
@@ -958,6 +1006,39 @@ pub unsafe extern "C" fn srt_setsockflag(
 
     let mut sock = sock.lock().unwrap();
     use SRT_SOCKOPT::*;
+
+    if let SocketData::Accepting(ref mut params) = *sock {
+        match opt {
+            SRTO_PASSPHRASE => {
+                *params = Some(KeySettings {
+                    passphrase: match extract_str(optval, optlen).map(Passphrase::try_from) {
+                        Some(Ok(p)) => p,
+                        Some(Err(_)) | None => return set_error(SRT_EINVPARAM),
+                    },
+                    key_size: params
+                        .as_ref()
+                        .map(|p| p.key_size)
+                        .unwrap_or(KeySize::Unspecified),
+                })
+            }
+            SRTO_RCVLATENCY => {
+                warn!("Unimplemented! This would require a hook where there currently is none!")
+            }
+            _ => unimplemented!("{:?}", opt),
+        }
+        return SRT_SUCCESS;
+    }
+
+    if opt == SRTO_STREAMID {
+        if let SocketData::Initialized(_, ref mut init, _) = *sock {
+            *init = Some(match extract_str(optval, optlen).map(StreamId::try_from) {
+                Some(Ok(sid)) => sid,
+                Some(Err(_)) | None => return set_error(SRT_EINVPARAM),
+            });
+            return SRT_SUCCESS;
+        }
+        return set_error(SRT_ECONNSOCK);
+    }
 
     match (opt, sock.opts_mut()) {
         (SRTO_SENDER, (_, _)) => {}
@@ -985,6 +1066,12 @@ pub unsafe extern "C" fn srt_setsockflag(
             Some(false) => return set_error(SRT_EINVPARAM), // tsbpd=false is not implemented
             None => return set_error(SRT_EINVPARAM),
         },
+        (SRTO_PASSPHRASE, (_, Some(o))) => {
+            o.encryption.passphrase = match extract_str(optval, optlen).map(Passphrase::try_from) {
+                Some(Ok(p)) => Some(p),
+                Some(Err(_)) | None => return set_error(SRT_EINVPARAM),
+            };
+        }
         (o, _) => unimplemented!("{:?}", o),
     }
     SRT_SUCCESS
@@ -1071,13 +1158,41 @@ type srt_listen_callback_fn = extern "C" fn(
     streamid: *const c_char,
 ) -> c_int;
 
+/// # Safety
+/// - `hook_fn` must contain a function pointer of the right signature
+/// - `hook_fn` must be callable from another thread
+/// - `hook_opaque` must live as long as the socket and be passable between threads
 #[no_mangle]
-pub extern "C" fn srt_listen_callback(
-    _lsn: SRTSOCKET,
-    _hook_fn: srt_listen_callback_fn,
-    _hook_opaque: *mut (),
+pub unsafe extern "C" fn srt_listen_callback(
+    sock: SRTSOCKET,
+    hook_fn: srt_listen_callback_fn,
+    hook_opaque: *mut (),
 ) -> c_int {
-    todo!()
+    let sock = match get_sock(sock) {
+        None => return set_error(SRT_EINVSOCK),
+        Some(sock) => sock,
+    };
+    let mut l = sock.lock().unwrap();
+
+    if let (Some(o), _) = l.opts_mut() {
+        o.listen_cb = Some(hook_fn);
+        o.listen_cb_opaque = hook_opaque;
+        SRT_SUCCESS
+    } else {
+        set_error(SRT_ENOCONN) // TODO: which error here?
+    }
+}
+
+extern "C" {
+    fn call_callback_wrap_exception(
+        func: srt_listen_callback_fn,
+        opaq: *mut (),
+        ns: SRTSOCKET,
+        hsversion: c_int,
+        peeraddr: *const libc::sockaddr,
+        streamid: *const c_char,
+        ret: *mut c_int,
+    ) -> c_int;
 }
 
 #[no_mangle]

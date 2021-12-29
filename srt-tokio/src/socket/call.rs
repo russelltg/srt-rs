@@ -55,10 +55,7 @@ pub async fn bind_with(
                 if let Some(packet) = rp {
                     let _ = socket.send(packet).await?;
                 }
-                return Err(io::Error::new(
-                    io::ErrorKind::ConnectionRefused,
-                    Box::new(rr),
-                ));
+                return Err(io::Error::new(io::ErrorKind::ConnectionRefused, rr));
             }
             Connected(p, connection) => {
                 if let Some(packet) = p {

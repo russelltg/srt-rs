@@ -466,7 +466,13 @@ int srt_getsockname(SRTSOCKET _sock, sockaddr *_name, int *_namelen);
 
 int srt_getpeername(SRTSOCKET _sock, sockaddr *_name, int *_namelen);
 
-int srt_listen_callback(SRTSOCKET _lsn, srt_listen_callback_fn _hook_fn, void *_hook_opaque);
+/**
+ * # Safety
+ * - `hook_fn` must contain a function pointer of the right signature
+ * - `hook_fn` must be callable from another thread
+ * - `hook_opaque` must live as long as the socket and be passable between threads
+ */
+int srt_listen_callback(SRTSOCKET sock, srt_listen_callback_fn hook_fn, void *hook_opaque);
 
 int srt_close(SRTSOCKET socknum);
 

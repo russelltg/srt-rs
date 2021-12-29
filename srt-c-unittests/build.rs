@@ -12,6 +12,7 @@ fn main() {
     println!("cargo:rerun-if-changed=tests/test_socket_options.cpp");
 
     cc::Build::new()
+        .cpp(true)
         // disable tests that don't pass yet
         .define("Nonblocking", "DISABLED_Nonblocking")
         .define("TestEnforcedEncryption", "DISABLED_TestEnforcedEncryption")
@@ -20,8 +21,6 @@ fn main() {
         .define("v6_calls_v6_mapped", "DISABLED_v6_calls_v6_mapped")
         .define("v6_calls_v6", "DISABLED_v6_calls_v6")
         .define("v6_calls_v4", "DISABLED_v6_calls_v4")
-        .define("ListenCallback", "DISABLED_ListenCallback")
-        .define("Multiple", "DISABLED_Multiple")
         .define("IPv4_and_IPv6", "DISABLED_IPv4_and_IPv6")
         .define("SameAddr1", "DISABLED_SameAddr1")
         .define("SameAddr2", "DISABLED_SameAddr2")
@@ -49,6 +48,7 @@ fn main() {
         .define("StreamIDFull", "DISABLED_StreamIDFull")
         .define("StreamIDLenListener", "DISABLED_StreamIDLenListener")
         // files
+        .define("SRT_ENABLE_ENCRYPTION", None)
         .file("tests/test_connection_timeout.cpp")
         .file("tests/test_enforced_encryption.cpp")
         .file("tests/test_file_transmission.cpp")
@@ -61,10 +61,8 @@ fn main() {
         .include("../srt-c")
         .compile("units");
 
-    println!("cargo:rustc-link-lib=stdc++");
     println!("cargo:rustc-link-lib=gtest");
     println!("cargo:rustc-link-lib=gtest_main");
-    println!("cargo:rustc-link-lib=m");
 
     let mut path = PathBuf::from(env::var("OUT_DIR").unwrap());
     path.pop();
