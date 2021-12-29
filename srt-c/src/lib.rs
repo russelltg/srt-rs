@@ -423,7 +423,7 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
                 // get latest opts--callback may be changed at any point
                 let opts = {
                     let l = sock.lock().unwrap();
-                    l.api_opts().unwrap().clone()
+                    *l.api_opts().unwrap()
                 };
 
                 let req = req;
@@ -1158,6 +1158,10 @@ type srt_listen_callback_fn = extern "C" fn(
     streamid: *const c_char,
 ) -> c_int;
 
+/// # Safety
+/// - `hook_fn` must contain a function pointer of the right signature
+/// - `hook_fn` must be callable from another thread
+/// - `hook_opaque` must live as long as the socket and be passable between threads
 #[no_mangle]
 pub unsafe extern "C" fn srt_listen_callback(
     sock: SRTSOCKET,
