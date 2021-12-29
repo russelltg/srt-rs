@@ -36,7 +36,7 @@ jobs:
         toolchain: stable
     - uses: Swatinem/rust-cache@v1
     - name: install target
-      run: rustup target add i686-unknown-linux-gnu && sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install gcc-multilib srt-tools:i386 
+      run: rustup target add i686-unknown-linux-gnu && sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install gcc-multilib srt-tools:i386 libstdc++-9-dev:i386
       if: matrix.extra_flags != ''
     - name: install srt+gtest (linux)
       run: sudo apt-get install srt-tools libgtest-dev
