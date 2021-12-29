@@ -8,12 +8,14 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 srt-tokio = {path = "../srt-tokio"}
+srt-protocol = {path = "../srt-protocol"}
 lazy_static = "1"
 libc = "0.2"
 bytes = "1"
 futures = "0.3"
 log = "0.4"
 thiserror = "1"
+os_socketaddr = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3"
@@ -21,3 +23,6 @@ winapi = "0.3"
 [dependencies.tokio]
 version = "1"
 features = ["rt", "rt-multi-thread", "time"]
+
+[build-dependencies]
+cc = "1.0"

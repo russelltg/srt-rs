@@ -74,14 +74,14 @@ impl TryFrom<String> for StreamId {
     }
 }
 
-impl From<&'static str> for StreamId {
-    fn from(value: &'static str) -> Self {
+impl<'a> From<&'a str> for StreamId {
+    fn from(value: &'a str) -> Self {
         Self::try_from(value.to_string()).unwrap()
     }
 }
 
-impl ToString for StreamId {
-    fn to_string(&self) -> String {
-        self.0.clone()
+impl Display for StreamId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }

@@ -86,7 +86,12 @@ pub fn gen_access_control_response(
         (None, None) => None,
         // bad cases
         (Some(_), Some(_)) => unimplemented!("Expected kmreq"),
-        (Some(_), None) | (None, Some(_)) => unimplemented!("Crypto mismatch"),
+        (Some(_), None) => {
+            return GenHsv5Result::Reject(ConnectionReject::Rejecting(
+                CoreRejectReason::Unsecure.into(),
+            ))
+        }
+        (None, Some(_)) => unimplemented!("expected no secrets"),
     };
 
     let outgoing_ext_km = cipher

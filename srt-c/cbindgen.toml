@@ -12,3 +12,4 @@ cpp_compat = true
 
 [export]
 include = ["SRT_TRANSTYPE", "SRT_EPOLL_OPT", "SRT_ERRNO", "SRT_KM_STATE"]
+exclude = ["call_callback_wrap_exception"]

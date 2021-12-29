@@ -165,8 +165,8 @@ impl Validation for Encryption {
 #[derive(Clone, Eq, PartialEq)]
 pub struct Passphrase(String);
 
-impl From<&'static str> for Passphrase {
-    fn from(value: &'static str) -> Self {
+impl<'a> From<&'a str> for Passphrase {
+    fn from(value: &'a str) -> Self {
         Self::try_from(value.to_string()).unwrap()
     }
 }

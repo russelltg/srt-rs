@@ -20,7 +20,6 @@ fn main() {
         .define("v6_calls_v6_mapped", "DISABLED_v6_calls_v6_mapped")
         .define("v6_calls_v6", "DISABLED_v6_calls_v6")
         .define("v6_calls_v4", "DISABLED_v6_calls_v4")
-        .define("ListenCallback", "DISABLED_ListenCallback")
         .define("Multiple", "DISABLED_Multiple")
         .define("IPv4_and_IPv6", "DISABLED_IPv4_and_IPv6")
         .define("SameAddr1", "DISABLED_SameAddr1")
@@ -49,6 +48,7 @@ fn main() {
         .define("StreamIDFull", "DISABLED_StreamIDFull")
         .define("StreamIDLenListener", "DISABLED_StreamIDLenListener")
         // files
+        .define("SRT_ENABLE_ENCRYPTION", None)
         .file("tests/test_connection_timeout.cpp")
         .file("tests/test_enforced_encryption.cpp")
         .file("tests/test_file_transmission.cpp")
