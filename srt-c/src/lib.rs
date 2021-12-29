@@ -585,14 +585,15 @@ pub extern "C" fn srt_connect(sock: SRTSOCKET, name: &libc::sockaddr, namelen: c
     let mut l = sock.lock().unwrap();
     let sd = replace(&mut *l, SocketData::InvalidIntermediateState);
     if let SocketData::Initialized(so, options) = sd {
-        let sb = SrtSocket::builder().with(so);
+        let sb = SrtSocket::builder().with(so.clone());
         if options.rcv_syn {
             // blocking mode, wait on oneshot
             let res = TOKIO_RUNTIME.block_on(async move { sb.call(sa, None).await });
             match res {
                 Ok(sock) => *l = SocketData::Established(sock, options),
                 Err(e) => {
-                    return set_error_fmt(SRT_ENOSERVER, format_args!("Failed to connect: {}", e))
+                    *l = SocketData::Initialized(so, options);
+                    return set_error_fmt(SRT_ENOSERVER, format_args!("Failed to connect: {}", e));
                 }
             }
         } else {
