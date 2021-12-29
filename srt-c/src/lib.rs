@@ -444,7 +444,7 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
                             opts.listen_cb_opaque,
                             new_sock,
                             5,
-                            OsSocketAddr::from(req.remote()).as_ptr(),
+                            OsSocketAddr::from(req.remote()).as_ptr() as *const libc::sockaddr,
                             streamid_ptr,
                             &mut ret,
                         )
@@ -720,7 +720,7 @@ pub extern "C" fn srt_accept(
 
             if let Some((addr, len)) = addr {
                 let osa = OsSocketAddr::from(remote);
-                *addr = unsafe { *osa.as_ptr() };
+                *addr = unsafe { *(osa.as_ptr() as *const libc::sockaddr) };
                 *len = osa.len() as c_int;
             }
 
