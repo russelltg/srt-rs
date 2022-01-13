@@ -105,6 +105,7 @@ mod tests {
     use bytes::Bytes;
     use futures::{channel::oneshot, future::join_all, prelude::*};
     use log::{debug, info};
+    use srt_protocol::settings::AcceptParameters;
 
     use crate::{access::*, SrtSocket};
 

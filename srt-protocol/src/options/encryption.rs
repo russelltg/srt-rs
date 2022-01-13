@@ -231,6 +231,18 @@ impl KeySize {
     }
 }
 
+impl From<KeySize> for usize {
+    fn from(s: KeySize) -> Self {
+        s.as_usize()
+    }
+}
+
+impl From<KeySize> for u32 {
+    fn from(s: KeySize) -> Self {
+        s.as_usize() as u32 // gaurented to fit
+    }
+}
+
 impl TryFrom<u8> for KeySize {
     type Error = OptionsError;
 
