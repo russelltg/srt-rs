@@ -5,7 +5,11 @@ mod errors;
 
 use errors::{SRT_ERRNO, SRT_ERRNO::*};
 use os_socketaddr::OsSocketAddr;
-use srt_protocol::{options::KeySize, settings::AcceptParameters};
+use srt_protocol::{
+    connection::ConnectionSettings,
+    options::{DataRate, KeySize, LiveBandwidthMode, Percent, Sender},
+    settings::AcceptParameters,
+};
 
 use std::{
     cell::RefCell,
@@ -267,7 +271,7 @@ lazy_static! {
 
 static NEXT_SOCKID: AtomicI32 = AtomicI32::new(1);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct ApiOptions {
     snd_syn: bool, // corresponds to SRTO_SNDSYN
     rcv_syn: bool, // corresponds to SRTO_RCVSYN
@@ -290,6 +294,7 @@ impl Default for ApiOptions {
     }
 }
 
+#[derive(Debug)]
 enum SocketData {
     Initialized(SocketOptions, Option<StreamId>, ApiOptions),
     ConnectingNonBlocking(JoinHandle<()>, ApiOptions),
@@ -323,6 +328,14 @@ impl SocketData {
     fn sock_opts(&self) -> Option<&SocketOptions> {
         if let SocketData::Initialized(ref opts, _, _) = self {
             Some(opts)
+        } else {
+            None
+        }
+    }
+
+    fn conn_settings(&self) -> Option<&ConnectionSettings> {
+        if let SocketData::Established(sock, _) = self {
+            Some(sock.settings())
         } else {
             None
         }
@@ -973,6 +986,13 @@ unsafe fn extract_int(val: Option<NonNull<()>>, len: c_int) -> Option<c_int> {
     None
 }
 
+unsafe fn extract_i64(val: Option<NonNull<()>>, len: c_int) -> Option<i64> {
+    if let (Some(ptr), 8) = (val, len) {
+        return Some(*ptr.cast::<i64>().as_ref());
+    }
+    None
+}
+
 unsafe fn extract_bool(val: Option<NonNull<()>>, len: c_int) -> Option<bool> {
     extract_int(val, len).map(|i| match i {
         0 => false,
@@ -1083,6 +1103,32 @@ pub unsafe extern "C" fn srt_setsockflag(
                 Some(Err(_)) | None => return set_error(SRT_EINVPARAM),
             };
         }
+        (SRTO_RCVLATENCY, (_, Some(o))) => {
+            o.receiver.latency =
+                Duration::from_millis(match extract_int(optval, optlen).map(u64::try_from) {
+                    Some(Ok(o)) => o,
+                    Some(Err(_)) | None => return set_error(SRT_EINVPARAM),
+                });
+        }
+        (SRTO_PEERLATENCY, (_, Some(o))) => {
+            o.sender.peer_latency =
+                Duration::from_millis(match extract_int(optval, optlen).map(u64::try_from) {
+                    Some(Ok(o)) => o,
+                    Some(Err(_)) | None => return set_error(SRT_EINVPARAM),
+                });
+        }
+        (SRTO_MININPUTBW, (_, Some(o))) => {
+            o.sender.bandwidth = LiveBandwidthMode::Estimated {
+                expected: match extract_i64(optval, optlen) {
+                    Some(i) => DataRate(i as u64),
+                    None => return set_error(SRT_EINVPARAM),
+                },
+                overhead: match o.sender.bandwidth {
+                    LiveBandwidthMode::Estimated { overhead, .. } => overhead,
+                    _ => Percent(25), // TODO: what should this be
+                },
+            }
+        }
         (o, _) => unimplemented!("{:?}", o),
     }
     SRT_SUCCESS
@@ -1115,8 +1161,10 @@ pub unsafe extern "C" fn srt_getsockflag(
     enum Val<'a> {
         Bool(bool),
         Int(c_int),
+        Int64(i64),
         Str(&'a str),
     }
+    use LiveBandwidthMode::*;
     use Val::*;
     use SRT_SOCKOPT::*;
 
@@ -1131,11 +1179,34 @@ pub unsafe extern "C" fn srt_getsockflag(
             _ => return set_error(SRT_EBOUNDSOCK),
         }
     } else {
-        match (opt, l.api_opts(), l.sock_opts()) {
-            (SRTO_RCVSYN, Some(opts), _) => Bool(opts.rcv_syn),
-            (SRTO_SNDSYN, Some(opts), _) => Bool(opts.snd_syn),
-            (SRTO_CONNTIMEO, _, Some(opts)) => Int(opts.connect.timeout.as_millis() as c_int),
-            _ => unimplemented!("{:?}", opt),
+        match (opt, l.api_opts(), l.sock_opts(), l.conn_settings()) {
+            (SRTO_RCVSYN, Some(opts), _, _) => Bool(opts.rcv_syn),
+            (SRTO_SNDSYN, Some(opts), _, _) => Bool(opts.snd_syn),
+            (SRTO_CONNTIMEO, _, Some(opts), _) => Int(opts.connect.timeout.as_millis() as c_int),
+            (SRTO_RCVLATENCY, _, Some(opts), _) => Int(opts.receiver.latency.as_millis() as c_int),
+            (SRTO_RCVLATENCY, _, _, Some(cs)) => Int(cs.recv_tsbpd_latency.as_millis() as c_int),
+            (SRTO_PEERLATENCY, _, Some(opts), _) => {
+                Int(opts.sender.peer_latency.as_millis() as c_int)
+            }
+            (SRTO_PEERLATENCY, _, _, Some(cs)) => Int(cs.send_tsbpd_latency.as_millis() as c_int),
+            (
+                SRTO_MININPUTBW,
+                _,
+                Some(SocketOptions {
+                    sender: Sender { bandwidth, .. },
+                    ..
+                }),
+                _,
+            )
+            | (SRTO_MININPUTBW, _, _, Some(ConnectionSettings { bandwidth, .. })) => {
+                Int64(match bandwidth {
+                    Max(rate) | Input { rate, .. } | Estimated { expected: rate, .. } => {
+                        rate.0 as i64
+                    }
+                    Unlimited => 0,
+                })
+            }
+            _ => unimplemented!("{:?} {:?}", opt, *l),
         }
     };
 
@@ -1147,10 +1218,18 @@ pub unsafe extern "C" fn srt_getsockflag(
             *optval.cast::<c_int>().as_mut() = if b { 1 } else { 0 };
         }
         Int(i) => {
-            if *optlen != size_of::<c_int>() as c_int {
+            if *optlen < size_of::<c_int>() as c_int {
                 return set_error(SRT_EINVPARAM);
             }
+            *optlen = size_of::<c_int>() as c_int;
             *optval.cast::<c_int>().as_mut() = i;
+        }
+        Int64(i) => {
+            if *optlen < size_of::<i64>() as c_int {
+                return set_error(SRT_EINVPARAM);
+            }
+            *optlen = size_of::<i64>() as c_int;
+            *optval.cast::<i64>().as_mut() = i;
         }
         Str(str) => {
             if *optlen < (str.as_bytes().len() + 1) as c_int {
