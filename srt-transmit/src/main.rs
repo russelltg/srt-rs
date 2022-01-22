@@ -601,16 +601,12 @@ async fn run() -> Result<(), Error> {
         .version("1.0")
         .author("Russell Greene")
         .about("SRT sender and receiver written in rust")
+        .arg(Arg::new("FROM").help("Sets the input url").required(true))
         .arg(
-            Arg::with_name("FROM")
-                .help("Sets the input url")
-                .required(true),
-        )
-        .arg(
-            Arg::with_name("TO")
+            Arg::new("TO")
                 .help("Sets the output url")
                 .required(true)
-                .multiple(true),
+                .multiple_occurrences(true),
         )
         .after_help(AFTER_HELPTEXT)
         .get_matches();
