@@ -24,7 +24,6 @@ use futures::{
     prelude::*,
     ready,
     stream::{self, once, unfold, BoxStream},
-    try_join,
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
@@ -33,6 +32,7 @@ use tokio::{
     net::UdpSocket,
     time::interval,
     select,
+    try_join,
 };
 use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
 
