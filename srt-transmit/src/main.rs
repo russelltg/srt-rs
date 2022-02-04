@@ -580,6 +580,18 @@ impl Sink<Bytes> for MultiSinkFlatten {
     }
 }
 
+// A ZST error which represents a user interrupt via SIGINT.
+#[derive(Debug)]
+struct UserInterruptError;
+
+impl std::fmt::Display for UserInterruptError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        "Interrupted by user via SIGINT.".fmt(f)
+    }
+}
+
+impl std::error::Error for UserInterruptError {}
+
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
@@ -587,7 +599,12 @@ async fn main() {
             "Invalid settings detected: {}\n\nSee srt-transmit --help for more info",
             e
         );
-        exit(1);
+
+        if e.is::<UserInterruptError>() {
+            exit(130); // by convention, 128 + signal where SIGINT = 2
+        } else {
+            exit(1);
+        }
     }
 }
 
