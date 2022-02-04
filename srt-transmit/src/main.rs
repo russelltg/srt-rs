@@ -10,6 +10,7 @@ use std::{
     process::exit,
     task::{Context, Poll},
     time::{Duration, Instant},
+    sync::{Arc, atomic::{AtomicBool, Ordering}},
 };
 
 use anyhow::{anyhow, bail, format_err, Error};
@@ -17,19 +18,22 @@ use bytes::Bytes;
 use clap::{App, Arg};
 use log::info;
 use url::{Host, Url};
+use signal_hook::{flag::register, consts::SIGINT};
 
 use futures::{
     future,
     prelude::*,
     ready,
     stream::{self, once, unfold, BoxStream},
-    try_join,
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     net::TcpListener,
     net::TcpStream,
     net::UdpSocket,
+    time::interval,
+    select,
+    try_join,
 };
 use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
 
@@ -654,14 +658,37 @@ async fn run() -> Result<(), Error> {
 
     let mut sinks = MultiSinkFlatten::new(sink_streams.drain(..));
 
-    // poll sink and stream in parallel, only yielding when there is something ready for the sink and the stream is good.
-    while let (_, Some(stream)) = try_join!(
-        future::poll_fn(|cx| Pin::new(&mut sinks).poll_ready(cx)),
-        stream_stream.try_next()
-    )? {
-        // let a: () = &mut *stream;
-        sinks.send_all(&mut stream.map(Ok)).await?;
-    }
+    // setup SIGINT handling prerequisites
+    let mut sig_intval = interval(Duration::from_millis(500));
+    let sig_flg = Arc::new(AtomicBool::new(false));
+    register(SIGINT, sig_flg.clone()).unwrap();
+
+    // a future that only completes with an error when we get a sigint
+    // the flag is only checked every 500ms as to not hinder performance or spin.
+    let sig_fut = async {
+        while !sig_flg.load(Ordering::Relaxed) {
+            sig_intval.tick().await;
+        }
+        Err(UserInterruptError)
+    };
+
+    // a future that only completes once the transmit has finished or an error occurred.
+    // polls sink and stream in parallel, only yielding when there is something ready for the sink and the stream is good
+    let transmit_fut = async {
+        while let (_, Some(stream)) = try_join!(
+            future::poll_fn(|cx| Pin::new(&mut sinks).poll_ready(cx)),
+            stream_stream.try_next()
+        )? {
+            // let a: () = &mut *stream;
+            sinks.send_all(&mut stream.map(Ok)).await?;
+        }
+        Ok::<(), Error>(())
+    };
+
+    select! {
+        sig_res = sig_fut => sig_res?,
+        transmit_res = transmit_fut => transmit_res?,
+    };
 
     sinks.close().await?;
     Ok(())
