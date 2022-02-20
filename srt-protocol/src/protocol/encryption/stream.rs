@@ -1,6 +1,11 @@
 use std::fmt::Debug;
 
-use aes::{cipher::StreamCipher, Aes128Ctr, Aes192Ctr, Aes256Ctr};
+use aes::cipher::StreamCipher;
+use cipher::KeyIvInit;
+
+type Aes128Ctr = ctr::Ctr64BE<aes::Aes128>;
+type Aes192Ctr = ctr::Ctr64BE<aes::Aes192>;
+type Aes256Ctr = ctr::Ctr64BE<aes::Aes256>;
 
 use crate::{
     packet::*,
@@ -150,7 +155,6 @@ impl StreamEncryptionKeys {
         let sek = self.get_key(sek_selection)?;
         let iv = self.salt.generate_strean_iv_for(seq_number);
 
-        use cipher::NewCipher;
         let nonce = iv.as_bytes();
         use EncryptionKey::*;
         match sek {
@@ -171,7 +175,6 @@ impl StreamEncryptionKeys {
         let sek = self.get_key(sek_selection)?;
         let iv = self.salt.generate_strean_iv_for(seq_number);
 
-        use cipher::NewCipher;
         let nonce = iv.as_bytes();
         use EncryptionKey::*;
         match sek {

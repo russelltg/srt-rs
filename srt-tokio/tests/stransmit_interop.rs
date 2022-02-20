@@ -20,7 +20,11 @@ use libc::sockaddr;
 use libloading::{Library, Symbol};
 use log::{debug, info};
 use srt_protocol::options::PacketCount;
-use tokio::{net::UdpSocket, task::spawn_blocking, time};
+use tokio::{
+    net::UdpSocket,
+    task::spawn_blocking,
+    time::{self, sleep},
+};
 use tokio_util::{codec::BytesCodec, udp::UdpFramed};
 
 use srt_tokio::SrtSocket;
@@ -90,14 +94,13 @@ async fn receiver(
 }
 
 async fn udp_sender(packets: u32, port: u16) -> Result<(), Error> {
-    let mut sock = UdpFramed::new(UdpSocket::bind("127.0.0.1:0").await?, BytesCodec::new());
+    let sock = UdpSocket::bind("127.0.0.1:0").await?;
+    for i in 0..packets {
+        sock.send_to(i.to_string().as_bytes(), ("127.0.0.1", port))
+            .await?;
 
-    let mut stream = counting_stream(packets, Duration::from_millis(1))
-        .map(|b| Ok((b, ([127, 0, 0, 1], port).into())))
-        .boxed();
-
-    sock.send_all(&mut stream).await?;
-    sock.close().await?;
+        sleep(Duration::from_millis(1)).await;
+    }
 
     Ok(())
 }
