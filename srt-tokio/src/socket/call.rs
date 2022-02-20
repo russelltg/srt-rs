@@ -85,7 +85,7 @@ mod test {
         // default-3s
         let start = Instant::now();
         let ret = SrtSocket::builder().call("127.0.0.1:1", None).await;
-        assert_matches!(ret, Err(e) if e.kind() == io::ErrorKind::TimedOut);
+        assert_matches!(ret, Err(e) if e.kind() == io::ErrorKind::TimedOut || e.kind() == io::ErrorKind::ConnectionReset);
         assert!(start.elapsed() > Duration::from_millis(3000));
         assert!(start.elapsed() < Duration::from_millis(3500));
 
