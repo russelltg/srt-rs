@@ -45,6 +45,8 @@ impl Validation for Session {
         use OptionsError::*;
         if self.max_segment_size > PacketSize(1500) {
             Err(MaxSegmentSizeOutOfRange(self.max_segment_size))
+        } else if self.statistics_interval < Duration::from_millis(200) {
+            Err(StatisticsIntervalOutOfRange(self.statistics_interval))
         } else {
             Ok(())
         }
