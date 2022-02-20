@@ -20,6 +20,7 @@ bytes = "1.0"
 anyhow = "1"
 pretty_env_logger = { version = "0.4", default-features = false }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+console-subscriber = { version = "0.1", optional = true }
 
 [dependencies.tokio]
 version = "1"
@@ -37,3 +38,4 @@ tokio-stream = "0.1"
 [features]
 default = []
 log_disable = ["log/max_level_off"]
+

@@ -597,10 +597,15 @@ async fn run() -> Result<(), Error> {
         .format_timestamp_micros()
         .init();
 
-    let matches = Command::new("srt-transmit")
+    let app = Command::new("srt-transmit")
         .version("1.0")
         .author("Russell Greene")
-        .about("SRT sender and receiver written in rust")
+        .about("SRT sender and receiver written in rust");
+
+    #[cfg(feature = "console-subscriber")]
+    let app = app.arg(Arg::new("console").long("console"));
+
+    let matches = app
         .arg(Arg::new("FROM").help("Sets the input url").required(true))
         .arg(
             Arg::new("TO")
@@ -610,6 +615,11 @@ async fn run() -> Result<(), Error> {
         )
         .after_help(AFTER_HELPTEXT)
         .get_matches();
+
+    #[cfg(feature = "console-subscriber")]
+    if matches.is_present("console") {
+        console_subscriber::init();
+    }
 
     // these are required parameters, so unwrapping them is safe
     let from_str = matches.value_of("FROM").unwrap();
