@@ -1,4 +1,4 @@
-use std::{io, io::ErrorKind, net::IpAddr};
+use std::{io, io::ErrorKind, net::IpAddr, time::Duration};
 
 use thiserror::Error;
 
@@ -61,6 +61,9 @@ pub enum OptionsError {
 
     #[error("IP TTL is invalid, must be > 0")]
     InvalidIpTtl,
+
+    #[error("Statistics interval is out of range: {0:?}. The minimum interval is 200ms.")]
+    StatisticsIntervalOutOfRange(Duration),
 }
 
 impl From<OptionsError> for io::Error {
