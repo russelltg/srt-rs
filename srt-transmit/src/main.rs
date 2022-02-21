@@ -8,17 +8,20 @@ use std::{
     path::Path,
     pin::Pin,
     process::exit,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     task::{Context, Poll},
     time::{Duration, Instant},
-    sync::{Arc, atomic::{AtomicBool, Ordering}},
 };
 
 use anyhow::{anyhow, bail, format_err, Error};
 use bytes::Bytes;
 use clap::{App, Arg};
 use log::info;
+use signal_hook::{consts::SIGINT, flag::register};
 use url::{Host, Url};
-use signal_hook::{flag::register, consts::SIGINT};
 
 use futures::{
     future,
@@ -31,8 +34,8 @@ use tokio::{
     net::TcpListener,
     net::TcpStream,
     net::UdpSocket,
-    time::interval,
     select,
+    time::interval,
     try_join,
 };
 use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
