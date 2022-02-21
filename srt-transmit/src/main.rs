@@ -14,7 +14,7 @@ use std::{
 
 use anyhow::{anyhow, bail, format_err, Error};
 use bytes::Bytes;
-use clap::{App, Arg};
+use clap::{Command, Arg};
 use log::info;
 use url::{Host, Url};
 
@@ -597,7 +597,7 @@ async fn run() -> Result<(), Error> {
         .format_timestamp_micros()
         .init();
 
-    let matches = App::new("srt-transmit")
+    let matches = Command::new("srt-transmit")
         .version("1.0")
         .author("Russell Greene")
         .about("SRT sender and receiver written in rust")
