@@ -127,6 +127,8 @@ async fn sigint_termination_idle() {
     let stranmsit_rs = find_stransmit_rs();
     let mut a = Command::new(&stranmsit_rs)
         .args(&["-", "-"])
+        .stdout(Stdio::piped())
+        .stdin(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
