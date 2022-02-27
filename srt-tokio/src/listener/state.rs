@@ -4,9 +4,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures::{channel::mpsc, future::Fuse, prelude::*, select, SinkExt};
+use futures::{channel::mpsc, future::Fuse, prelude::*, select, SinkExt, FutureExt};
 use srt_protocol::{connection::Connection, listener::*, packet::*, settings::ConnInitSettings};
-use tokio::{sync::oneshot, time::sleep_until};
+use tokio::sync::oneshot;
 
 use crate::{net::PacketSocket, watch};
 
@@ -53,12 +53,11 @@ impl SrtListenerState {
     pub async fn run_loop(mut self) {
         use Action::*;
         let mut input = Input::Timer;
+        let mut timer_interval = tokio::time::interval(Duration::from_millis(100));
         let start = Instant::now();
         let elapsed = |now: Instant| TimeSpan::from_interval(start, now);
         loop {
             let now = Instant::now();
-            let timeout = now + Duration::from_millis(100);
-
             log::debug!(
                 "{:?}|listener:{}|input - {:?}",
                 elapsed(now),
@@ -99,7 +98,7 @@ impl SrtListenerState {
                 WaitForInput => select! {
                     packet = self.socket.receive().fuse() => Input::Packet(packet),
                     response = self.response_receiver.next() => Input::AccessResponse(response),
-                    _ = sleep_until(timeout.into()).fuse() => Input::Timer,
+                    _ = timer_interval.tick().fuse() => Input::Timer,
                     _ = &mut self.close_recvr => break,
                 },
                 Close => break,
