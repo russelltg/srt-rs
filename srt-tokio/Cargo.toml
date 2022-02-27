@@ -58,7 +58,7 @@ version = "1"
 
 [dev-dependencies.tokio-util]
 features = ["net", "codec"]
-version = "0.6"
+version = "0.7"
 
 [features]
 default = []

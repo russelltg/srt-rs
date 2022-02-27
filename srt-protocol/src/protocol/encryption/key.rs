@@ -6,6 +6,7 @@ use std::{
 };
 
 use aes::{Aes128, Aes192, Aes256};
+use cipher::KeyInit;
 use hmac::Hmac;
 use rand::{rngs::OsRng, RngCore};
 use sha1::Sha1;
@@ -216,7 +217,6 @@ impl KeyEncryptionKey {
 
     pub fn encrypt_wrapped_keys(&self, keys: &[u8]) -> Vec<u8> {
         let mut encrypted_keys = vec![0; keys.len() + 8];
-        use aes::NewBlockCipher;
         use EncryptionKey::*;
         match &self.0 {
             Bytes16(key) => wrap::aes_wrap(
@@ -245,7 +245,6 @@ impl KeyEncryptionKey {
         &self,
         wrapped_keys: &[u8],
     ) -> Result<Vec<u8>, WrapInitializationVector> {
-        use aes::NewBlockCipher;
         use EncryptionKey::*;
         let mut keys = vec![0; wrapped_keys.len() - 8];
         let mut iv = [0; 8];

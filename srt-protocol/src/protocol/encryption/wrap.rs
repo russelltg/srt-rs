@@ -1,10 +1,10 @@
 //! Aes key wrapping is availble in OpenSSL rust, but it's the only thing we need from openssl...so I just ported OpenSSL's code to Rust
 //! If a third-party library offers, this it would be better...
 
-use aes::{BlockDecrypt, BlockEncrypt};
-use cipher::generic_array::typenum::consts::U16;
-use cipher::generic_array::{ArrayLength, GenericArray};
-use cipher::BlockCipher;
+use cipher::{
+    generic_array::{typenum::consts::U16, ArrayLength, GenericArray},
+    BlockDecrypt, BlockEncrypt,
+};
 
 pub const DEFAULT_IV: [u8; 8] = [0xA6; 8];
 
@@ -46,7 +46,7 @@ pub const DEFAULT_IV: [u8; 8] = [0xA6; 8];
 pub fn aes_wrap<K>(key: &K, iv: Option<&[u8; 8]>, out: &mut [u8], input: &[u8])
 where
     K: BlockEncrypt,
-    <K as BlockCipher>::ParBlocks: ArrayLength<GenericArray<u8, U16>>,
+    K::BlockSize: ArrayLength<GenericArray<u8, U16>>,
 {
     assert_eq!(input.len() & 0x7, 0);
     assert!(input.len() >= 8);
@@ -65,7 +65,7 @@ where
         let mut i = 0;
         while i < input.len() {
             b[8..].copy_from_slice(&r[..8]);
-            key.encrypt_block(GenericArray::from_mut_slice(&mut b[..16]));
+            key.encrypt_block((&mut b[..16]).into());
 
             b[7] ^= (t & 0xff) as u8;
             if t > 0xff {
@@ -118,7 +118,7 @@ where
 pub fn aes_unwrap<K>(key: &K, iv: &mut [u8; 8], out: &mut [u8], input: &[u8])
 where
     K: BlockDecrypt,
-    <K as BlockCipher>::ParBlocks: ArrayLength<GenericArray<u8, U16>>,
+    K::BlockSize: ArrayLength<GenericArray<u8, U16>>,
 {
     assert_eq!(input.len(), out.len() + 8);
     assert_eq!(input.len() & 0x7, 0);
@@ -144,7 +144,7 @@ where
                 b[4] ^= ((t >> 24) & 0xff) as u8;
             }
             b[8..].copy_from_slice(&out[r_offset..r_offset + 8]);
-            key.decrypt_block(GenericArray::from_mut_slice(&mut b[..16]));
+            key.decrypt_block((&mut b[..16]).into());
             out[r_offset..r_offset + 8].copy_from_slice(&b[8..16]);
 
             i += 8;
@@ -156,10 +156,10 @@ where
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use aes::{Aes128, Aes192, Aes256};
+    use cipher::KeyInit;
 
-    use aes::cipher::NewBlockCipher;
-    use aes::*;
+    use super::*;
 
     // these are from https://tools.ietf.org/html/rfc3394#page-8
     #[test]

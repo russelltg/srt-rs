@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures::{channel::mpsc, future::Fuse, prelude::*, select, SinkExt, FutureExt};
+use futures::{channel::mpsc, future::Fuse, prelude::*, select, FutureExt, SinkExt};
 use srt_protocol::{connection::Connection, listener::*, packet::*, settings::ConnInitSettings};
 use tokio::sync::oneshot;
 

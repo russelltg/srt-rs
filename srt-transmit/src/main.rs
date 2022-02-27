@@ -14,7 +14,7 @@ use std::{
 
 use anyhow::{anyhow, bail, format_err, Error};
 use bytes::Bytes;
-use clap::{Command, Arg};
+use clap::{Arg, Command};
 use log::info;
 use url::{Host, Url};
 
