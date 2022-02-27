@@ -12,6 +12,7 @@ use crate::{options::SrtVersion, packet::PacketParseError};
 /// The SRT-specific control packets
 /// These are `Packet::Custom` types
 #[derive(Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum SrtControlPacket {
     /// SRT handshake reject
     /// ID = 0
@@ -56,9 +57,11 @@ pub enum SrtControlPacket {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct FilterSpec(pub BTreeMap<String, String>);
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum GroupType {
     Undefined,
     Broadcast,
@@ -69,6 +72,7 @@ pub enum GroupType {
 }
 
 bitflags! {
+    #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
     pub struct GroupFlags: u8 {
         const MSG_SYNC = 1 << 6;
     }
@@ -100,6 +104,7 @@ bitflags! {
 /// ```
 ///
 #[derive(Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct KeyingMaterialMessage {
     pub pt: PacketType, // TODO: i think this is always KeyingMaterial....
     pub key_flags: KeyFlags,
@@ -149,6 +154,7 @@ impl fmt::Debug for KeyingMaterialMessage {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum Auth {
     None = 0,
 }
@@ -181,6 +187,7 @@ impl TryFrom<u8> for StreamEncapsulation {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 // see htcryp_msg.h:43...
 // 7: Reserved to discriminate MPEG-TS packet (0x47=sync byte).
 pub enum PacketType {
@@ -189,6 +196,7 @@ pub enum PacketType {
 }
 
 bitflags! {
+    #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
     pub struct KeyFlags : u8 {
         const EVEN = 0b01;
         const ODD = 0b10;
@@ -208,6 +216,7 @@ impl TryFrom<u8> for PacketType {
 
 /// from https://github.com/Haivision/srt/blob/2ef4ef003c2006df1458de6d47fbe3d2338edf69/haicrypt/hcrypt_msg.h#L121-L124
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum CipherType {
     None = 0,
     Ecb = 1,
@@ -217,6 +226,7 @@ pub enum CipherType {
 
 /// The SRT handshake object
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct SrtHandshake {
     /// The SRT version
     /// Serialized just as the u32 that SrtVersion serialized to
@@ -237,6 +247,7 @@ pub struct SrtHandshake {
 }
 
 bitflags! {
+    #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
     pub struct SrtShakeFlags: u32 {
         /// Timestamp-based Packet delivery real-time data sender
         const TSBPDSND = 0x1;
@@ -279,12 +290,14 @@ fn le_bytes_to_string(le_bytes: &mut impl Buf) -> Result<String, PacketParseErro
         str_bytes.extend(&le_bytes.get_u32_le().to_be_bytes());
     }
 
-    // make sure to skip padding bytes if any for the last word
-    match le_bytes.get_u32_le().to_be_bytes() {
-        [a, 0, 0, 0] => str_bytes.push(a),
-        [a, b, 0, 0] => str_bytes.extend(&[a, b]),
-        [a, b, c, 0] => str_bytes.extend(&[a, b, c]),
-        [a, b, c, d] => str_bytes.extend(&[a, b, c, d]),
+    if le_bytes.remaining() != 0 {
+        // make sure to skip padding bytes if any for the last word
+        match le_bytes.get_u32_le().to_be_bytes() {
+            [a, 0, 0, 0] => str_bytes.push(a),
+            [a, b, 0, 0] => str_bytes.extend(&[a, b]),
+            [a, b, c, 0] => str_bytes.extend(&[a, b, c]),
+            [a, b, c, d] => str_bytes.extend(&[a, b, c, d]),
+        }
     }
 
     String::from_utf8(str_bytes).map_err(|e| PacketParseError::StreamTypeNotUtf8(e.utf8_error()))
@@ -362,6 +375,9 @@ impl SrtControlPacket {
                 )))
             }
             8 => {
+                if buf.remaining() < 4 {
+                    return Err(PacketParseError::NotEnoughData);
+                }
                 let ty = buf.get_u8().into();
                 let flags = GroupFlags::from_bits_truncate(buf.get_u8());
                 let weight = buf.get_u16_le();

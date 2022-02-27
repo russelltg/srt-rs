@@ -48,6 +48,7 @@ use loss_compression::{compress_loss_list, decompress_loss_list};
 /// ```
 /// (from <https://tools.ietf.org/html/draft-gg-udt-03#page-5>)
 #[derive(Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ControlPacket {
     /// The timestamp, relative to the socket start time (wrapping every 2^32 microseconds)
     pub timestamp: TimeStamp,
@@ -66,6 +67,7 @@ impl ControlPacket {
 /// The different kind of control packets
 #[derive(Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum ControlTypes {
     /// The control packet for initiating connections, type 0x0
     /// Does not use Additional Info
@@ -123,6 +125,7 @@ bitflags! {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct HsV5Info {
     /// the crypto size in bytes, either 0 (no encryption), 16, 24, or 32 (stored /8)
     /// source: https://github.com/Haivision/srt/blob/master/docs/stransmit.md#medium-srt
@@ -143,6 +146,7 @@ pub struct HsV5Info {
 /// HS-version dependenent data
 #[derive(Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum HandshakeVsInfo {
     V4(SocketType),
     V5(HsV5Info),
@@ -181,6 +185,7 @@ pub struct HandshakeControlInfo {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct AckStatistics {
     /// Round trip time+variance
     pub rtt: Rtt,
@@ -195,6 +200,7 @@ pub struct AckStatistics {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Copy, Ord, PartialOrd)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct FullAckSeqNumber(u32);
 
 /// Data included in a ACK packet. [spec](https://datatracker.ietf.org/doc/html/draft-sharabayko-mops-srt-00#section-3.2.3)
@@ -211,6 +217,7 @@ pub struct FullAckSeqNumber(u32);
 /// SeqNumber is the packet sequence number that all packets have been received until (excluding)
 ///
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum Acknowledgement {
     Lite(SeqNumber),
     Small(SeqNumber, AckStatistics),
@@ -218,10 +225,12 @@ pub enum Acknowledgement {
 }
 
 #[derive(Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct CompressedLossList(Vec<u32>);
 
 /// The socket type for a handshake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum SocketType {
     /// A stream socket, 1 when serialized
     Stream = 1,
@@ -243,7 +252,7 @@ pub enum SocketType {
 /// The rendezvous HSv4 (legacy):
 /// --> WAVEAHAND (effective only if peer is also connecting)
 /// <-- CONCLUSION (empty) (consider yourself connected upon reception)
-/// --> AGREEMENT (sent as a response for conclusion, requires no response)
+/// --> AGREEMENT
 ///
 /// The rendezvous HSv5 (using SRT extensions):
 /// --> WAVEAHAND (with cookie)
@@ -252,6 +261,7 @@ pub enum SocketType {
 /// --> CONCLUSION (with response extensions, if RESPONDER)
 /// <-- AGREEMENT (sent exclusively by INITIATOR upon reception of CONCLUSIOn with response extensions)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum ShakeType {
     /// First handshake exchange in client-server connection
     Induction,
@@ -272,6 +282,7 @@ pub enum ShakeType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum CoreRejectReason {
     System = 1001,
     Peer = 1002,
@@ -293,6 +304,7 @@ pub enum CoreRejectReason {
 
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum ServerRejectReason {
     Fallback = 2000,
     KeyNotSup = 2001,
@@ -320,6 +332,7 @@ pub enum ServerRejectReason {
 /// Reject code
 /// *must* be >= 1000
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum RejectReason {
     /// Core reject codes, [1000, 2000)
     Core(CoreRejectReason),
@@ -331,6 +344,26 @@ pub enum RejectReason {
 
     /// User reject code, >3000
     User(i32),
+}
+
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for HandshakeControlInfo {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(HandshakeControlInfo {
+            init_seq_num: SeqNumber::arbitrary(u)?,
+            max_packet_size: PacketSize::arbitrary(u)?,
+            max_flow_size: PacketCount::arbitrary(u)?,
+            shake_type: ShakeType::arbitrary(u)?,
+            socket_id: SocketId::arbitrary(u)?,
+            syn_cookie: i32::arbitrary(u)?,
+            peer_addr: if bool::arbitrary(u)? {
+                Ipv4Addr::arbitrary(u)?.into()
+            } else {
+                Ipv6Addr::arbitrary(u)?.into()
+            },
+            info: HandshakeVsInfo::arbitrary(u)?,
+        })
+    }
 }
 
 impl HandshakeVsInfo {
@@ -633,7 +666,12 @@ impl ControlTypes {
                                             SrtControlPacket::StreamId(stream_id) => {
                                                 sid = Some(stream_id)
                                             }
-                                            _ => unimplemented!("Implement other kinds"),
+                                            _ => {
+                                                // TODO, implement more
+                                                return Err(
+                                                    PacketParseError::BadSrtExtensionMessage,
+                                                );
+                                            }
                                         }
                                     }
                                 }

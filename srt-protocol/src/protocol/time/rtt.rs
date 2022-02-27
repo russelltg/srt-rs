@@ -3,6 +3,7 @@ use std::{convert::TryInto, time::Duration};
 use crate::packet::TimeSpan;
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Rtt {
     mean: TimeSpan,
     variance: TimeSpan,

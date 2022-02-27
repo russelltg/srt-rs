@@ -11,10 +11,12 @@ use std::{
 /// Timestamp in us after creation
 /// These wrap every 2^32 microseconds
 #[derive(Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct TimeStamp(Wrapping<u32>);
 
 /// Signed duration in us, e.g. RTT
 #[derive(Copy, Clone, PartialEq, Eq, Ord, PartialOrd)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct TimeSpan(i32);
 
 impl TimeSpan {

@@ -69,6 +69,7 @@ bitflags! {
     /// FIRST | LAST means it's the only one
     /// FIRST means it's the beginning of a longer message
     /// 0 means it's the middle of a longer message
+    #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
     pub struct PacketLocation: u8 {
         const MIDDLE   = 0b0000_0000;
         const FIRST    = 0b1000_0000;
@@ -78,10 +79,28 @@ bitflags! {
 }
 
 #[derive(Copy, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum DataEncryption {
     None = 0b0000_0000,
     Even = 0b0000_1000,
     Odd = 0b0001_0000,
+}
+
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for DataPacket {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(DataPacket {
+            seq_number: SeqNumber::arbitrary(u)?,
+            message_loc: PacketLocation::arbitrary(u)?,
+            in_order_delivery: bool::arbitrary(u)?,
+            encryption: DataEncryption::arbitrary(u)?,
+            retransmitted: bool::arbitrary(u)?,
+            message_number: MsgNumber::arbitrary(u)?,
+            timestamp: TimeStamp::arbitrary(u)?,
+            dest_sockid: SocketId::arbitrary(u)?,
+            payload: Bytes::new(),
+        })
+    }
 }
 
 impl DataPacket {

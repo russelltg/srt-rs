@@ -154,6 +154,18 @@ macro_rules! modular_num_impls {
                 write!(f, "{}", self.0)
             }
         }
+
+
+        #[cfg(feature = "arbitrary")]
+        impl<'a> ::arbitrary::Arbitrary<'a> for $x {
+            fn arbitrary(u: &mut ::arbitrary::Unstructured<'a>) -> ::arbitrary::Result<Self> {
+                Ok($x::new_truncate(u.int_in_range(0..=($x::MAX-1))?))
+            }
+
+            fn size_hint(_depth: usize) -> (usize, Option<usize>) {
+                (::std::mem::size_of::<$type>(), Some(::std::mem::size_of::<$type>()))
+            }
+        }
     };
 }
 pub use modular_num_impls;

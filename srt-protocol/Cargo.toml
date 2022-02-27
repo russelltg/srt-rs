@@ -9,6 +9,7 @@ name = "srt-protocol"
 publish = false
 repository = "https://github.com/russelltg/srt-rs"
 version = "0.1.0"
+
 [dependencies]
 array-init = "2.0.0"
 arraydeque = "0.4.5"
@@ -26,6 +27,11 @@ take-until = "0.1.0"
 thiserror = "1.0.30"
 url = "=2.1.0" # https://github.com/servo/rust-url/issues/581
 
+[dependencies.arbitrary]
+version = "1"
+optional = true
+features = ["derive"]
+
 [dependencies.aes]
 features = ["ctr"]
 version = "0.7.5"
@@ -37,6 +43,7 @@ version = "0.4.14"
 [dependencies.pbkdf2]
 default-features = false
 version = "0.10.0"
+
 
 [dev-dependencies]
 assert_matches = "1.0.0"

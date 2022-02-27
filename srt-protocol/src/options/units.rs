@@ -24,6 +24,7 @@ impl Div<PacketSize> for ByteCount {
 }
 
 #[derive(Debug, Deref, Display, Into, Add, Sub, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[display(fmt = "{} bytes", "_0")]
 pub struct PacketSize(pub u64);
 
@@ -34,6 +35,7 @@ impl From<PacketSize> for usize {
 }
 
 #[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[display(fmt = "{} packets", "_0")]
 pub struct PacketCount(pub u64);
 
