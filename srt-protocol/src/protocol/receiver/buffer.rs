@@ -468,7 +468,7 @@ impl ReceiveBuffer {
     /// Drops the packets that are deemed to be too late
     /// i.e.: there is a packet after it that is ready to be released
     fn drop_too_late_packets(&mut self, now: Instant) -> Option<MessageError> {
-        let latency_window = self.tsbpd_latency + Duration::from_millis(50);
+        let latency_window = self.tsbpd_latency + Duration::from_millis(20);
         // Not only does it have to be non-none, it also has to be a First (don't drop half messages)
         let (index, seq_number, timestamp) = self
             .buffer
