@@ -4,7 +4,6 @@ mod srt;
 pub use srt::*;
 
 use std::{
-    array::IntoIter,
     convert::TryFrom,
     convert::TryInto,
     fmt::{self, Debug, Display, Formatter},
@@ -1327,11 +1326,12 @@ impl HandshakeControlInfo {
 
         // serialzie extensions
         if let HandshakeVsInfo::V5(hs) = &self.info {
-            for ext in IntoIter::new([
+            for ext in [
                 &hs.ext_hs,
                 &hs.ext_km,
                 &hs.sid.clone().map(SrtControlPacket::StreamId),
-            ])
+            ]
+            .iter()
             .filter_map(|s| s.as_ref())
             {
                 into.put_u16(ext.type_id());

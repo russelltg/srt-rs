@@ -34,7 +34,7 @@ version = "0.4.14"
 
 [dependencies.pbkdf2]
 default-features = false
-version = "0.10.0"
+version = "0.11.0"
 
 [dev-dependencies]
 assert_matches = "1.0.0"
