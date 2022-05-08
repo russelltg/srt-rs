@@ -1284,6 +1284,7 @@ impl Display for ServerRejectReason {
 }
 
 impl HandshakeControlInfo {
+    #[allow(clippy::manual_bits)]
     fn serialized_size(&self) -> usize {
         8 * size_of::<u32>() +  // version/cookie/etc
         size_of::<u128>() + // ip address
