@@ -8,6 +8,10 @@ use std::{
     path::Path,
     pin::Pin,
     process::exit,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     task::{Context, Poll},
     time::{Duration, Instant},
 };
@@ -16,6 +20,7 @@ use anyhow::{anyhow, bail, format_err, Error};
 use bytes::Bytes;
 use clap::{Arg, Command};
 use log::info;
+use signal_hook::{consts::SIGINT, flag::register};
 use url::{Host, Url};
 
 use futures::{
@@ -23,13 +28,15 @@ use futures::{
     prelude::*,
     ready,
     stream::{self, once, unfold, BoxStream},
-    try_join,
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     net::TcpListener,
     net::TcpStream,
     net::UdpSocket,
+    select,
+    time::interval,
+    try_join,
 };
 use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
 
@@ -580,6 +587,18 @@ impl Sink<Bytes> for MultiSinkFlatten {
     }
 }
 
+// A ZST error which represents a user interrupt via SIGINT.
+#[derive(Debug)]
+struct UserInterruptError;
+
+impl std::fmt::Display for UserInterruptError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        "Interrupted by user via SIGINT.".fmt(f)
+    }
+}
+
+impl std::error::Error for UserInterruptError {}
+
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
@@ -587,7 +606,12 @@ async fn main() {
             "Invalid settings detected: {}\n\nSee srt-transmit --help for more info",
             e
         );
-        exit(1);
+
+        if e.is::<UserInterruptError>() {
+            exit(130); // by convention, 128 + signal where SIGINT = 2
+        } else {
+            exit(1);
+        }
     }
 }
 
@@ -637,14 +661,37 @@ async fn run() -> Result<(), Error> {
 
     let mut sinks = MultiSinkFlatten::new(sink_streams.drain(..));
 
-    // poll sink and stream in parallel, only yielding when there is something ready for the sink and the stream is good.
-    while let (_, Some(stream)) = try_join!(
-        future::poll_fn(|cx| Pin::new(&mut sinks).poll_ready(cx)),
-        stream_stream.try_next()
-    )? {
-        // let a: () = &mut *stream;
-        sinks.send_all(&mut stream.map(Ok)).await?;
-    }
+    // setup SIGINT handling prerequisites
+    let mut sig_intval = interval(Duration::from_millis(500));
+    let sig_flg = Arc::new(AtomicBool::new(false));
+    register(SIGINT, sig_flg.clone()).unwrap();
+
+    // a future that only completes with an error when we get a sigint
+    // the flag is only checked every 500ms as to not hinder performance or spin.
+    let sig_fut = async {
+        while !sig_flg.load(Ordering::Relaxed) {
+            sig_intval.tick().await;
+        }
+        Err(UserInterruptError)
+    };
+
+    // a future that only completes once the transmit has finished or an error occurred.
+    // polls sink and stream in parallel, only yielding when there is something ready for the sink and the stream is good
+    let transmit_fut = async {
+        while let (_, Some(stream)) = try_join!(
+            future::poll_fn(|cx| Pin::new(&mut sinks).poll_ready(cx)),
+            stream_stream.try_next()
+        )? {
+            // let a: () = &mut *stream;
+            sinks.send_all(&mut stream.map(Ok)).await?;
+        }
+        Ok::<(), Error>(())
+    };
+
+    select! {
+        sig_res = sig_fut => sig_res?,
+        transmit_res = transmit_fut => transmit_res?,
+    };
 
     sinks.close().await?;
     Ok(())
