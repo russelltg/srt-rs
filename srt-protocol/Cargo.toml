@@ -2,7 +2,7 @@
 authors = ["Russell Greene <russellgreene8@gmail.com>"]
 description = "SRT implementation in Rust"
 documentation = "https://docs.rs/srt-rs"
-edition = "2018"
+edition = "2021"
 homepage = "https://github.com/russelltg/srt-rs"
 license = "Apache-2.0"
 name = "srt-protocol"

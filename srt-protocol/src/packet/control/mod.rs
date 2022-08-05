@@ -1331,8 +1331,7 @@ impl HandshakeControlInfo {
                 &hs.ext_hs,
                 &hs.ext_km,
                 &hs.sid.clone().map(SrtControlPacket::StreamId),
-            ]
-            .iter()
+            ].into_iter()
             .filter_map(|s| s.as_ref())
             {
                 into.put_u16(ext.type_id());
@@ -1369,9 +1368,8 @@ impl AckStatistics {
 mod test {
     use super::*;
 
-    use std::{array::IntoIter, time::Duration};
-    use std::{convert::TryInto, io::Cursor};
-
+    use std::{time::Duration, convert::TryInto, io::Cursor};
+    
     use crate::options::*;
 
     fn ser_des_test(pack: ControlPacket) -> Vec<u8> {
@@ -1576,7 +1574,7 @@ mod test {
             timestamp: TimeStamp::from_micros(100),
             dest_sockid: rand::random(),
             control_type: ControlTypes::Srt(SrtControlPacket::Filter(FilterSpec(
-                IntoIter::new([("hi".to_string(), "bye".to_string())]).collect(),
+                [("hi".to_string(), "bye".to_string())].into_iter().collect(),
             ))),
         });
     }
