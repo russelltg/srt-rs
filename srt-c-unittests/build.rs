@@ -52,8 +52,8 @@ fn main() {
         .include("../srt-c")
         .compile("units");
 
-    println!("cargo:rustc-link-lib=gtest");
     println!("cargo:rustc-link-lib=gtest_main");
+    println!("cargo:rustc-link-lib=gtest");
 
     let mut path = PathBuf::from(env::var("OUT_DIR").unwrap());
     path.pop();
