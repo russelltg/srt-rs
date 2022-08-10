@@ -14,7 +14,6 @@ fn main() {
     cc::Build::new()
         .cpp(true)
         // disable tests that don't pass yet
-        .define("Nonblocking", "DISABLED_Nonblocking")
         .define("TestEnforcedEncryption", "DISABLED_TestEnforcedEncryption")
         .define("FileUpload", "DISABLED_FileUpload")
         .define("v4_calls_v6_mapped", "DISABLED_v4_calls_v6_mapped")

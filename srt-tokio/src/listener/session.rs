@@ -58,8 +58,7 @@ impl ConnectionRequest {
     }
 
     pub async fn reject(self, reason: RejectReason) -> Result<(), std::io::Error> {
-        self
-            .response_sender
+        self.response_sender
             .send(AccessControlResponse::Rejected(reason))
             .await
     }
@@ -104,7 +103,7 @@ impl PendingConnection {
     ) -> Result<OpenConnection, ()> {
         let (packet_sender, socket) = socket.clone_channel(100);
         let (handle, settings) = self.task_factory.spawn_task(socket, connection);
-        let _ = self
+        self
             .settings_sender
             .send((settings, handle))
             .ok()

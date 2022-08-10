@@ -18,6 +18,7 @@ use futures::{
     channel::mpsc::{self, TrySendError},
     prelude::*,
     ready,
+    stream::Peekable,
 };
 use srt_protocol::{
     connection::ConnectionSettings,
@@ -39,7 +40,7 @@ pub use srt_protocol::statistics::SocketStatistics;
 /// defines when the packet will be released on the receiving side, at more or less one latency later.
 #[derive(Debug)]
 pub struct SrtSocket {
-    output_data_receiver: mpsc::Receiver<(Instant, Bytes)>,
+    output_data_receiver: Peekable<mpsc::Receiver<(Instant, Bytes)>>,
     input_data_sender: mpsc::Sender<(Instant, Bytes)>,
     statistics_receiver: watch::Receiver<SocketStatistics>,
     settings: ConnectionSettings,
@@ -97,6 +98,18 @@ impl SrtSocket {
         self.close().await?;
         (&mut self.task).await?;
         Ok(())
+    }
+
+    pub fn split_mut(
+        &mut self,
+    ) -> (
+        Pin<&mut Peekable<impl Stream<Item = (Instant, Bytes)> + Unpin>>,
+        Pin<&mut (impl Sink<(Instant, Bytes)> + Unpin)>,
+    ) {
+        (
+            Pin::new(&mut self.output_data_receiver),
+            Pin::new(&mut self.input_data_sender),
+        )
     }
 }
 
