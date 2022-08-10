@@ -615,7 +615,11 @@ pub extern "C" fn srt_epoll_create() -> c_int {
 /// # Safety
 /// * events must be null or point to a valid combination of `SRT_EPOLL_OPT` flags
 #[no_mangle]
-pub unsafe extern "C" fn srt_epoll_add_usock(eid: c_int, sock: SRTSOCKET, events: *const c_int) -> c_int {
+pub unsafe extern "C" fn srt_epoll_add_usock(
+    eid: c_int,
+    sock: SRTSOCKET,
+    events: *const c_int,
+) -> c_int {
     let epoll = match get_epoll(eid) {
         None => return set_error(SRT_EINVPOLLID),
         Some(sock) => sock,
@@ -686,28 +690,20 @@ pub unsafe extern "C" fn srt_epoll_wait(
     lwnum: *const c_int,
 ) -> c_int {
     let lrfds = if lrfds.is_null() {
-        unsafe { from_raw_parts(NonNull::dangling().as_ptr(), 0) }
+        &[]
     } else {
-        unsafe { from_raw_parts(lrfds, lrnum as usize) }
+        from_raw_parts(lrfds, lrnum as usize)
     };
     let lwfds = if lwfds.is_null() {
-        unsafe { from_raw_parts(NonNull::dangling().as_ptr(), 0) }
+        &[]
     } else {
-        unsafe { from_raw_parts(lwfds, lwnum as usize) }
+        from_raw_parts(lwfds, lwnum as usize)
     };
 
     let tout = msTimeOut.try_into().map(Duration::from_millis);
 
-    let rnum_in = if rnum.is_null() {
-        0
-    } else {
-        unsafe { rnum.read() }
-    };
-    let wnum_in = if wnum.is_null() {
-        0
-    } else {
-        unsafe { wnum.read() }
-    };
+    let rnum_in = if rnum.is_null() { 0 } else { rnum.read() };
+    let wnum_in = if wnum.is_null() { 0 } else { wnum.read() };
 
     if !lrfds.is_empty() || !lwfds.is_empty() {
         todo!("unimplmented: SYSSOCKETs");
@@ -732,8 +728,7 @@ pub unsafe extern "C" fn srt_epoll_wait(
                     match &mut *l {
                         SocketData::Established(sock, _opts) => {
                             let (mut sink, mut stream) = sock.split_mut();
-                            if in_requested && out_requested
-                            {
+                            if in_requested && out_requested {
                                 select! {
                                     _ = poll_fn(|cx| stream.poll_ready_unpin(cx)).fuse() => (),
                                     _ = sink.as_mut().peek() => (),
@@ -785,22 +780,22 @@ pub unsafe extern "C" fn srt_epoll_wait(
 
         if let Ok(((idx, res_w, res_r), _, futs)) = result {
             if res_w && written_wfds < wnum_in {
-                unsafe { writefds.offset(written_wfds as isize).write(l.socks[idx].0) }
+                writefds.offset(written_wfds as isize).write(l.socks[idx].0);
                 written_wfds += 1;
             }
             if res_r && written_rfds < rnum_in {
-                unsafe { readfds.offset(written_rfds as isize).write(l.socks[idx].0) }
+                readfds.offset(written_rfds as isize).write(l.socks[idx].0);
                 written_rfds += 1;
             }
 
             for f in futs {
                 if let Poll::Ready((idx, res_w, res_r)) = poll!(f) {
                     if res_w && written_wfds < wnum_in {
-                        unsafe { writefds.offset(written_wfds as isize).write(l.socks[idx].0) }
+                        writefds.offset(written_wfds as isize).write(l.socks[idx].0);
                         written_wfds += 1;
                     }
                     if res_r && written_rfds < rnum_in {
-                        unsafe { readfds.offset(written_rfds as isize).write(l.socks[idx].0) }
+                        readfds.offset(written_rfds as isize).write(l.socks[idx].0);
                         written_rfds += 1;
                     }
                 }
@@ -809,10 +804,8 @@ pub unsafe extern "C" fn srt_epoll_wait(
             // timeout
         }
 
-        unsafe {
-            rnum.write(written_rfds as c_int);
-            wnum.write(written_wfds as c_int);
-        }
+        rnum.write(written_rfds as c_int);
+        wnum.write(written_wfds as c_int);
 
         (written_wfds + written_rfds) as c_int
     })
@@ -1202,14 +1195,25 @@ unsafe fn extract_i64(val: Option<NonNull<()>>, len: c_int) -> Option<i64> {
 }
 
 unsafe fn extract_bool(val: Option<NonNull<()>>, len: c_int) -> Option<bool> {
-    extract_int(val, len).map(|i| match i {
-        0 => false,
-        1 => true,
-        o => {
-            warn!("Warning: bool should be 1 or 0, not {}. Assuming true", o);
-            true
-        }
-    })
+    match len {
+        4 => extract_int(val, len).map(|i| match i {
+            0 => false,
+            1 => true,
+            o => {
+                warn!("Warning: bool should be 1 or 0, not {}. Assuming true", o);
+                true
+            }
+        }),
+        1 => match *val?.cast::<u8>().as_ref() {
+            0 => Some(false),
+            1 => Some(true),
+            o => {
+                warn!("Warning: bool should be 1 or 0, not {}. Assuming true", o);
+                Some(true)
+            }
+        },
+        _ => None,
+    }
 }
 
 unsafe fn extract_str(val: Option<NonNull<()>>, len: c_int) -> Option<String> {
@@ -1300,10 +1304,15 @@ pub unsafe extern "C" fn srt_setsockflag(
             None => return set_error(SRT_EINVPARAM),
         },
         (SRTO_PASSPHRASE, (_, Some(o))) => {
-            o.encryption.passphrase = match extract_str(optval, optlen).map(Passphrase::try_from) {
-                Some(Ok(p)) => Some(p),
-                Some(Err(_)) | None => return set_error(SRT_EINVPARAM),
-            };
+            let pwd = extract_str(optval, optlen);
+            if let Some("") = pwd.as_deref() {
+                o.encryption.passphrase = None;
+            } else {
+                o.encryption.passphrase = match pwd.map(Passphrase::try_from) {
+                    Some(Ok(p)) => Some(p),
+                    Some(Err(_)) | None => return set_error(SRT_EINVPARAM),
+                };
+            }
         }
         (SRTO_RCVLATENCY, (_, Some(o))) => {
             o.receiver.latency =

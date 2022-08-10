@@ -103,8 +103,7 @@ impl PendingConnection {
     ) -> Result<OpenConnection, ()> {
         let (packet_sender, socket) = socket.clone_channel(100);
         let (handle, settings) = self.task_factory.spawn_task(socket, connection);
-        self
-            .settings_sender
+        self.settings_sender
             .send((settings, handle))
             .ok()
             .ok_or(())?;
