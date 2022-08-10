@@ -11,6 +11,9 @@ fn main() {
     println!("cargo:rerun-if-changed=tests/test_reuseaddr.cpp");
     println!("cargo:rerun-if-changed=tests/test_socket_options.cpp");
 
+    println!("cargo:rustc-link-lib=gtest_main");
+    println!("cargo:rustc-link-lib=gtest");
+
     cc::Build::new()
         .cpp(true)
         // disable tests that don't pass yet
@@ -51,9 +54,6 @@ fn main() {
         .file("tests/test_socket_options.cpp")
         .include("../srt-c")
         .compile("units");
-
-    println!("cargo:rustc-link-lib=gtest_main");
-    println!("cargo:rustc-link-lib=gtest");
 
     let mut path = PathBuf::from(env::var("OUT_DIR").unwrap());
     path.pop();

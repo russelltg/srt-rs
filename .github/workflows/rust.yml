@@ -51,7 +51,7 @@ jobs:
     - name: Run tests
       run: cargo test ${{ matrix.extra_flags }} --verbose
     - name: Run C++ unit tests (linux only)
-      run: cd srt-c-unittests && cargo run
+      run: cd srt-c-unittests && cargo test
       if: matrix.os == 'ubuntu'
       
   clippy:
