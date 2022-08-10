@@ -11,11 +11,12 @@ fn main() {
     println!("cargo:rerun-if-changed=tests/test_reuseaddr.cpp");
     println!("cargo:rerun-if-changed=tests/test_socket_options.cpp");
 
-    println!("cargo:rustc-link-lib=gtest_main");
-    println!("cargo:rustc-link-lib=gtest");
-
+    // gtest depends on stdlib
+    // tests depend on gtest
+    // ensure link order is correct here, which is tests, gtest, stdlib
     cc::Build::new()
         .cpp(true)
+        .cpp_link_stdlib(None)
         // disable tests that don't pass yet
         .define("TestEnforcedEncryption", "DISABLED_TestEnforcedEncryption")
         .define("FileUpload", "DISABLED_FileUpload")
@@ -54,6 +55,18 @@ fn main() {
         .file("tests/test_socket_options.cpp")
         .include("../srt-c")
         .compile("units");
+
+    println!("cargo:rustc-link-lib=gtest_main");
+    println!("cargo:rustc-link-lib=gtest");
+
+    // link stdlib last so both gtest and the unit tests can depend on it
+    match env::var("TARGET").unwrap() {
+        t if t.contains("apple") || t.contains("freebsd") || t.contains("openbsd") => {
+            println!("cargo:rustc-link-lib=c++")
+        }
+        t if t.contains("msvc") => {}
+        _ => println!("cargo:rustc-link-lib=stdc++"),
+    }
 
     let mut path = PathBuf::from(env::var("OUT_DIR").unwrap());
     path.pop();
