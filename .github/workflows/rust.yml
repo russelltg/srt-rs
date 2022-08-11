@@ -51,7 +51,7 @@ jobs:
     - name: Run tests
       run: cargo test ${{ matrix.extra_flags }} --verbose
     - name: Run C++ unit tests (linux only)
-      run: cd srt-c-unittests && cargo run
+      run: cd srt-c-unittests && cargo test
       if: matrix.os == 'ubuntu'
       
   clippy:
@@ -70,7 +70,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: download cbindgen
-      run: wget https://github.com/eqrion/cbindgen/releases/download/v0.20.0/cbindgen && chmod +x ./cbindgen
+      run: wget https://github.com/eqrion/cbindgen/releases/download/v0.24.3/cbindgen && chmod +x ./cbindgen
     - name: generate SRT header
       run: ./cbindgen --config srt-c/cbindgen.toml --crate srt-c   --output srt-c/srtrs_new.h
     - name: Check up to date

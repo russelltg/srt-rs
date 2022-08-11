@@ -93,7 +93,7 @@ impl Add<TimeSpan> for TimeStamp {
 
     fn add(self, rhs: TimeSpan) -> Self::Output {
         if rhs < TimeSpan::ZERO {
-            TimeStamp(self.0 - Wrapping((rhs.0 as i64).abs() as u32))
+            TimeStamp(self.0 - Wrapping(rhs.0.unsigned_abs()))
         } else {
             TimeStamp(self.0 + Wrapping(rhs.0 as u32))
         }
@@ -105,7 +105,7 @@ impl Sub<TimeSpan> for TimeStamp {
 
     fn sub(self, rhs: TimeSpan) -> Self::Output {
         if rhs < TimeSpan::ZERO {
-            TimeStamp(self.0 + Wrapping((rhs.0 as i64).abs() as u32))
+            TimeStamp(self.0 + Wrapping(rhs.0.unsigned_abs()))
         } else {
             TimeStamp(self.0 - Wrapping(rhs.0 as u32))
         }
@@ -230,7 +230,7 @@ impl Add<TimeSpan> for Duration {
         if rhs > TimeSpan::ZERO {
             self + Duration::from_micros(rhs.as_micros() as u64)
         } else {
-            self - Duration::from_micros(rhs.as_micros().abs() as u64)
+            self - Duration::from_micros(u64::from(rhs.as_micros().unsigned_abs()))
         }
     }
 }
@@ -251,7 +251,7 @@ impl Add<TimeSpan> for Instant {
         if micros > 0 {
             self + Duration::from_micros(micros as u64)
         } else {
-            self - Duration::from_micros(micros.abs() as u64)
+            self - Duration::from_micros(micros.unsigned_abs())
         }
     }
 }
@@ -264,7 +264,7 @@ impl Sub<TimeSpan> for Instant {
         if micros > 0 {
             self + Duration::from_micros(micros as u64)
         } else {
-            self - Duration::from_micros(micros.abs() as u64)
+            self - Duration::from_micros(micros.unsigned_abs())
         }
     }
 }

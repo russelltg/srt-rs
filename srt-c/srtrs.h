@@ -247,6 +247,8 @@ typedef enum SRT_TRANSTYPE {
 
 typedef int32_t SRTSOCKET;
 
+typedef int SYSSOCKET;
+
 typedef struct SRT_MSGCTRL {
   int flags;
   int msgttl;
@@ -353,6 +355,10 @@ typedef int (*srt_listen_callback_fn)(void *opaq, SRTSOCKET ns, int, const socka
 
 #define SRT_INVALID_SOCK -1
 
+
+
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -367,22 +373,31 @@ int srt_listen(SRTSOCKET sock, int _backlog);
 
 int srt_epoll_create(void);
 
-int srt_epoll_add_usock(int _eid, SRTSOCKET _sock, const int *_events);
+/**
+ * # Safety
+ * * events must be null or point to a valid combination of `SRT_EPOLL_OPT` flags
+ */
+int srt_epoll_add_usock(int eid, SRTSOCKET sock, const int *events);
 
-int srt_epoll_remove_usock(int _eid, SRTSOCKET _sock);
+int srt_epoll_remove_usock(int eid, SRTSOCKET sock);
 
-int srt_epoll_release(int _eid);
+int srt_epoll_release(int eid);
 
-int srt_epoll_wait(int _eid,
-                   const SRTSOCKET *_readfds,
-                   const int *_rnum,
-                   const SRTSOCKET *_writefds,
-                   const int *_wnum,
-                   int64_t _msTimeOut,
-                   const SRTSOCKET *_lrfds,
-                   const int *_lrnum,
-                   const SRTSOCKET *_lwfds,
-                   const int *_lwnum);
+/**
+ * # Safety
+ * * `(r|w)num` is not null
+ * * `(read|write)fds` points to a valid array of `*(r|w)num` elemens
+ */
+int srt_epoll_wait(int eid,
+                   SRTSOCKET *readfds,
+                   int *rnum,
+                   SRTSOCKET *writefds,
+                   int *wnum,
+                   int64_t msTimeOut,
+                   const SYSSOCKET *lrfds,
+                   const int *lrnum,
+                   const SYSSOCKET *lwfds,
+                   const int *lwnum);
 
 int srt_connect(SRTSOCKET sock, const sockaddr *name, int namelen);
 

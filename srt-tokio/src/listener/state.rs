@@ -119,7 +119,7 @@ impl SrtListenerState {
         let response_sender = self.response_sender.clone();
         let (pending, request) =
             PendingConnection::start_approval(session_id, request, response_sender);
-        let _ = request_sender.send(request).await.ok().ok_or(())?;
+        request_sender.send(request).await.ok().ok_or(())?;
         let _ = self.pending_connections.insert(session_id, pending);
         Ok(())
     }

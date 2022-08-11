@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use bytes::Bytes;
-use futures::{channel::mpsc, prelude::*, select};
+use futures::{channel::mpsc, prelude::*, select, stream::StreamExt};
 use log::{error, trace};
 use srt_protocol::{
     connection::{Action, Connection, ConnectionSettings, DuplexConnection, Input},
@@ -152,7 +152,7 @@ impl SrtSocketFactory {
     pub fn create_socket(self, settings: ConnectionSettings, task: JoinHandle<()>) -> SrtSocket {
         SrtSocket {
             settings,
-            output_data_receiver: self.output_data_receiver,
+            output_data_receiver: self.output_data_receiver.peekable(),
             input_data_sender: self.input_data_sender,
             statistics_receiver: self.statistics_receiver,
             task,
