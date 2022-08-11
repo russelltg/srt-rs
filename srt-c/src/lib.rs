@@ -28,7 +28,7 @@ use std::{
         Arc, Mutex, RwLock,
     },
     task::Poll,
-    time::{Duration, Instant},
+    time::{Duration, Instant}, pin::Pin,
 };
 
 use bytes::Bytes;
@@ -37,7 +37,7 @@ use futures::{
     future::{poll_fn, select_all, Shared},
     poll, select,
     sink::SinkExt,
-    FutureExt, StreamExt,
+    FutureExt, StreamExt, stream::Peekable,
 };
 use lazy_static::lazy_static;
 use log::{error, warn};
@@ -45,7 +45,7 @@ use srt_tokio::{
     options::{ListenerOptions, Passphrase, SocketOptions, StreamId, Validation},
     SrtListener, SrtSocket,
 };
-use tokio::{runtime::Runtime, sync::oneshot, task::JoinHandle, time::timeout};
+use tokio::{runtime::{Runtime, self}, sync::oneshot, task::JoinHandle, time::{timeout, timeout_at}};
 
 pub type SRTSOCKET = i32;
 pub type SYSSOCKET = c_int;
@@ -272,8 +272,10 @@ pub const SRT_ERROR: c_int = -1;
 pub const SRT_LIVE_DEF_PLSIZE: c_int = 1316;
 pub const SRT_INVALID_SOCK: SRTSOCKET = -1;
 
+
 lazy_static! {
-    static ref TOKIO_RUNTIME: Runtime = Runtime::new().unwrap();
+    // xxx: remove
+    static ref TOKIO_RUNTIME: Runtime = runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
     static ref SOCKETS: RwLock<BTreeMap<SRTSOCKET, Arc<Mutex<SocketData>>>> =
         RwLock::new(BTreeMap::new());
 }
@@ -310,7 +312,7 @@ enum SocketData {
     Established(SrtSocket, ApiOptions),
     Listening(
         SrtListener,
-        Option<mpsc::Receiver<(SRTSOCKET, SocketAddr)>>,
+        Option<Peekable<mpsc::Receiver<(SRTSOCKET, SocketAddr)>>>,
         JoinHandle<()>,
         ApiOptions,
     ),
@@ -513,7 +515,7 @@ pub extern "C" fn srt_listen(sock: SRTSOCKET, _backlog: c_int) -> c_int {
                 }
             }
         });
-        *l = SocketData::Listening(listener, Some(r), task, initial_opts)
+        *l = SocketData::Listening(listener, Some(r.peekable()), task, initial_opts)
     } else {
         *l = sd;
         return set_error(SRT_ECONNSOCK);
@@ -700,7 +702,7 @@ pub unsafe extern "C" fn srt_epoll_wait(
         from_raw_parts(lwfds, lwnum as usize)
     };
 
-    let tout = msTimeOut.try_into().map(Duration::from_millis);
+    let deadline = msTimeOut.try_into().map(|ms| Instant::now() + Duration::from_millis(ms));
 
     let rnum_in = if rnum.is_null() { 0 } else { rnum.read() };
     let wnum_in = if wnum.is_null() { 0 } else { wnum.read() };
@@ -721,28 +723,29 @@ pub unsafe extern "C" fn srt_epoll_wait(
                 let sock = get_sock(*sock)?;
 
                 Some(Box::pin(async move {
-                    let mut l = sock.lock().unwrap();
                     let out_requested = flags & SRT_EPOLL_OPT::SRT_EPOLL_OUT as c_int != 0;
                     let in_requested = flags & SRT_EPOLL_OPT::SRT_EPOLL_IN as c_int != 0;
                     let err_requested = flags & SRT_EPOLL_OPT::SRT_EPOLL_ERR as c_int != 0;
+
+                    let mut l = sock.lock().unwrap();
                     match &mut *l {
                         SocketData::Established(sock, _opts) => {
-                            let (mut sink, mut stream) = sock.split_mut();
+                            let (mut stream, mut sink) = sock.split_mut();
                             if in_requested && out_requested {
                                 select! {
-                                    _ = poll_fn(|cx| stream.poll_ready_unpin(cx)).fuse() => (),
-                                    _ = sink.as_mut().peek() => (),
+                                    _ = poll_fn(|cx| sink.poll_ready_unpin(cx)).fuse() => (),
+                                    _ = stream.as_mut().peek() => (),
                                 };
                                 let ready_send =
-                                    poll!(poll_fn(|cx| stream.poll_ready_unpin(cx))).is_ready();
-                                let ready_recv = poll!(sink.peek()).is_ready();
+                                    poll!(poll_fn(|cx| sink.poll_ready_unpin(cx))).is_ready();
+                                let ready_recv = poll!(stream.peek()).is_ready();
 
                                 (idx, ready_send, ready_recv)
-                            } else if flags & SRT_EPOLL_OPT::SRT_EPOLL_IN as c_int != 0 {
-                                sink.peek().await;
+                            } else if in_requested {
+                                stream.peek().await;
                                 (idx, false, true)
-                            } else if flags & SRT_EPOLL_OPT::SRT_EPOLL_OUT as c_int != 0 {
-                                let _ = poll_fn(|cx| stream.poll_ready_unpin(cx)).await;
+                            } else if out_requested {
+                                let _ = poll_fn(|cx| sink.poll_ready_unpin(cx)).await;
                                 (idx, true, false)
                             } else {
                                 (idx, false, false)
@@ -759,7 +762,19 @@ pub unsafe extern "C" fn srt_epoll_wait(
                                 is_error && err_requested,
                             )
                         }
-                        SocketData::Listening(_, _, _, _) => todo!(),
+                        
+                        SocketData::Listening(_, i, _, _) =>  {
+                            if in_requested {
+                                if let Some(recvr) = i {
+                                    Pin::new(recvr).peek().await;
+                                    (idx, false, true)
+                                } else {
+                                    (idx, false, false)
+                                }
+                            } else {
+                                (idx, false, false)
+                            }
+                        },
                         SocketData::Accepting(_) => todo!(),
                         SocketData::ConnectFailed(_)
                         | SocketData::InvalidIntermediateState
@@ -770,38 +785,52 @@ pub unsafe extern "C" fn srt_epoll_wait(
             },
         ));
 
-        let result = match tout {
-            Ok(tout) => timeout(tout, select_fut).await,
-            Err(_) => Ok(select_fut.await),
-        };
 
         let mut written_wfds = 0;
         let mut written_rfds = 0;
 
-        if let Ok(((idx, res_w, res_r), _, futs)) = result {
-            if res_w && written_wfds < wnum_in {
-                writefds.offset(written_wfds as isize).write(l.socks[idx].0);
-                written_wfds += 1;
-            }
-            if res_r && written_rfds < rnum_in {
-                readfds.offset(written_rfds as isize).write(l.socks[idx].0);
-                written_rfds += 1;
-            }
+        let mut result = match deadline {
+            Ok(dl) => timeout_at(dl.into(), select_fut).await,
+            Err(_) => Ok(select_fut.await),
+        };
 
-            for f in futs {
-                if let Poll::Ready((idx, res_w, res_r)) = poll!(f) {
-                    if res_w && written_wfds < wnum_in {
-                        writefds.offset(written_wfds as isize).write(l.socks[idx].0);
-                        written_wfds += 1;
-                    }
-                    if res_r && written_rfds < rnum_in {
-                        readfds.offset(written_rfds as isize).write(l.socks[idx].0);
-                        written_rfds += 1;
+        loop {
+
+            if let Ok(((idx, res_w, res_r), _, mut futs)) = result {
+                if res_w && written_wfds < wnum_in {
+                    writefds.offset(written_wfds as isize).write(l.socks[idx].0);
+                    written_wfds += 1;
+                }
+                if res_r && written_rfds < rnum_in {
+                    readfds.offset(written_rfds as isize).write(l.socks[idx].0);
+                    written_rfds += 1;
+                }
+
+                for f in &mut futs {
+                    if let Poll::Ready((idx, res_w, res_r)) = poll!(f) {
+                        if res_w && written_wfds < wnum_in {
+                            writefds.offset(written_wfds as isize).write(l.socks[idx].0);
+                            written_wfds += 1;
+                        }
+                        if res_r && written_rfds < rnum_in {
+                            readfds.offset(written_rfds as isize).write(l.socks[idx].0);
+                            written_rfds += 1;
+                        }
                     }
                 }
+
+                if written_wfds == 0 && written_rfds == 0 {
+                    result = match deadline {
+                        Ok(dl) => timeout_at(dl.into(), select_all(futs)).await,
+                        Err(_) => Ok(select_all(futs).await),
+                    };
+                } else {
+                    break;
+                }
+            } else {
+                // timeout
+                break
             }
-        } else {
-            // timeout
         }
 
         rnum.write(written_rfds as c_int);
@@ -836,12 +865,19 @@ pub extern "C" fn srt_connect(
 
     let mut l = sock.lock().unwrap();
     let sd = replace(&mut *l, SocketData::InvalidIntermediateState);
+
     if let SocketData::Initialized(so, streamid, options) = sd {
+
+        let sock_clone = sock.clone();
         let sb = SrtSocket::builder().with(so.clone());
         if options.rcv_syn {
+            drop(l); // drop lock to avoid holding lock during blocking call
+
             // blocking mode, wait on oneshot
             let res = TOKIO_RUNTIME
                 .block_on(async { sb.call(name, streamid.as_ref().map(|s| s.as_str())).await });
+
+            let mut l = sock_clone.lock().unwrap();
             match res {
                 Ok(sock) => *l = SocketData::Established(sock, options),
                 Err(e) => {
@@ -851,7 +887,6 @@ pub extern "C" fn srt_connect(
             }
         } else {
             // nonblocking mode
-            let sock_clone = sock.clone();
 
             let (done_s, done_r) = oneshot::channel();
             TOKIO_RUNTIME.spawn(async move {
