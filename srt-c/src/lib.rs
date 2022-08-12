@@ -1028,6 +1028,16 @@ pub unsafe extern "C" fn srt_epoll_wait(
 }
 
 #[no_mangle]
+pub extern "C" fn srt_epoll_uwait(
+    _eid: c_int,
+    _fdsSet: *mut SRT_EPOLL_EVENT,
+    _fdsSize: c_int,
+    _msTimeOut: i64,
+) -> c_int {
+    todo!()
+}
+
+#[no_mangle]
 pub extern "C" fn srt_connect(
     sock: SRTSOCKET,
     name: Option<&libc::sockaddr>,
@@ -1439,6 +1449,8 @@ pub struct SRT_EPOLL_EVENT {
     fd: SRTSOCKET,
     events: c_int,
 }
+
+
 
 unsafe fn extract_int(val: Option<NonNull<()>>, len: c_int) -> Option<c_int> {
     if let (Some(ptr), 4) = (val, len) {

@@ -265,6 +265,11 @@ typedef int32_t SRTSOCKET;
 
 typedef int SYSSOCKET;
 
+typedef struct SRT_EPOLL_EVENT {
+  SRTSOCKET fd;
+  int events;
+} SRT_EPOLL_EVENT;
+
 typedef struct SRT_MSGCTRL {
   /**
    * Left for future
@@ -440,6 +445,8 @@ int srt_epoll_wait(int eid,
                    int *lrnum,
                    SYSSOCKET *lwfds,
                    int *lwnum);
+
+int srt_epoll_uwait(int _eid, struct SRT_EPOLL_EVENT *_fdsSet, int _fdsSize, int64_t _msTimeOut);
 
 int srt_connect(SRTSOCKET sock, const sockaddr *name, int namelen);
 
