@@ -7,7 +7,7 @@ use errors::{SRT_ERRNO, SRT_ERRNO::*};
 use os_socketaddr::OsSocketAddr;
 use srt_protocol::{
     connection::ConnectionSettings,
-    options::{DataRate, KeySize, LiveBandwidthMode, Percent, Sender},
+    options::{DataRate, KeySize, LiveBandwidthMode, Percent, Sender, SrtVersion, PacketSize},
     settings::KeySettings,
 };
 
@@ -16,11 +16,15 @@ use std::{
     cmp::min,
     collections::BTreeMap,
     ffi::CString,
-    fmt,
+    fmt::{self, Debug},
     io::{self, Write},
     mem::{replace, size_of, take},
     net::SocketAddr,
-    os::raw::{c_char, c_int},
+    os::{
+        raw::{c_char, c_int},
+        unix::prelude::AsRawFd,
+    },
+    pin::Pin,
     ptr::{self, NonNull},
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::{
@@ -28,16 +32,17 @@ use std::{
         Arc, Mutex, RwLock,
     },
     task::Poll,
-    time::{Duration, Instant}, pin::Pin,
+    time::{Duration, Instant},
 };
 
 use bytes::Bytes;
 use futures::{
     channel::mpsc,
-    future::{poll_fn, select_all, Shared},
-    poll, select,
+    future::{self, poll_fn, select_all, Ready, Shared},
+    pending, poll, select,
     sink::SinkExt,
-    FutureExt, StreamExt, stream::Peekable,
+    stream::Peekable,
+    FutureExt, StreamExt,
 };
 use lazy_static::lazy_static;
 use log::{error, warn};
@@ -45,7 +50,14 @@ use srt_tokio::{
     options::{ListenerOptions, Passphrase, SocketOptions, StreamId, Validation},
     SrtListener, SrtSocket,
 };
-use tokio::{runtime::{Runtime, self}, sync::oneshot, task::JoinHandle, time::{timeout, timeout_at}};
+use tokio::{
+    io::unix::AsyncFd,
+    pin,
+    runtime::{self, Runtime},
+    sync::oneshot,
+    task::JoinHandle,
+    time::{sleep, timeout, timeout_at},
+};
 
 pub type SRTSOCKET = i32;
 pub type SYSSOCKET = c_int;
@@ -230,16 +242,27 @@ pub struct SRT_TRACEBSTATS {
 #[repr(C)]
 #[repr(C)]
 pub struct SRT_MSGCTRL {
+    /// Left for future
     flags: c_int,
+    /// TTL for a message (millisec), default -1 (no TTL limitation)
     msgttl: c_int,
+    /// Whether a message is allowed to supersede partially lost one. Unused in stream and live mode.
     inorder: c_int,
+    /// 0:mid pkt, 1(01b):end of frame, 2(11b):complete frame, 3(10b): start of frame
     boundary: c_int,
+    /// source time since epoch (usec), 0: use internal time (sender)
     srctime: i64,
+    /// sequence number of the first packet in received message (unused for sending)
     pktseq: i32,
+    /// message number (output value for both sending and receiving)
     msgno: i32,
-    grpdata: *mut (),
+    grpdata: *const (),
     grpdata_size: usize,
 }
+
+// Safety: the pointers are essentially references
+unsafe impl Send for SRT_MSGCTRL {}
+unsafe impl Sync for SRT_MSGCTRL {}
 
 #[repr(C)]
 pub enum SRT_TRANSTYPE {
@@ -272,12 +295,31 @@ pub const SRT_ERROR: c_int = -1;
 pub const SRT_LIVE_DEF_PLSIZE: c_int = 1316;
 pub const SRT_INVALID_SOCK: SRTSOCKET = -1;
 
+// C++11 std::chrono::steady_clock
+pub const SRT_SYNC_CLOCK_STDCXX_STEADY: c_int = 0;
+
+// clock_gettime with CLOCK_MONOTONIC
+pub const SRT_SYNC_CLOCK_GETTIME_MONOTONIC: c_int = 1;
+pub const SRT_SYNC_CLOCK_WINQPC: c_int = 2;
+pub const SRT_SYNC_CLOCK_MACH_ABSTIME: c_int = 3;
+pub const SRT_SYNC_CLOCK_POSIX_GETTIMEOFDAY: c_int = 4;
+pub const SRT_SYNC_CLOCK_AMD64_RDTSC: c_int = 5;
+pub const SRT_SYNC_CLOCK_IA32_RDTSC: c_int = 6;
+pub const SRT_SYNC_CLOCK_IA64_ITC: c_int = 7;
 
 lazy_static! {
     // xxx: remove
-    static ref TOKIO_RUNTIME: Runtime = runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+    static ref TOKIO_RUNTIME: Runtime = {
+        let rt = runtime::Builder::new_multi_thread().worker_threads(3).enable_all().build().unwrap();
+
+        #[cfg(feature = "console-subscriber")]
+        console_subscriber::init();
+        rt
+    };
     static ref SOCKETS: RwLock<BTreeMap<SRTSOCKET, Arc<Mutex<SocketData>>>> =
         RwLock::new(BTreeMap::new());
+
+    static ref BASE_TIME: Instant = Instant::now();
 }
 
 static NEXT_SOCKID: AtomicI32 = AtomicI32::new(1);
@@ -372,6 +414,7 @@ fn get_sock(sock: SRTSOCKET) -> Option<Arc<Mutex<SocketData>>> {
 pub extern "C" fn srt_startup() -> c_int {
     lazy_static::initialize(&TOKIO_RUNTIME);
     lazy_static::initialize(&SOCKETS);
+    lazy_static::initialize(&BASE_TIME);
 
     let _ = pretty_env_logger::try_init();
     SRT_SUCCESS
@@ -381,6 +424,17 @@ pub extern "C" fn srt_startup() -> c_int {
 pub extern "C" fn srt_cleanup() -> c_int {
     SOCKETS.write().unwrap().clear();
     SRT_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn srt_getversion() -> u32 {
+    SrtVersion::CURRENT.to_u32()
+}
+
+#[no_mangle]
+pub extern "C" fn srt_clock_type() -> c_int {
+    // According to Instant's docs, it uses the monotinic clock
+    SRT_SYNC_CLOCK_GETTIME_MONOTONIC
 }
 
 #[no_mangle]
@@ -590,8 +644,22 @@ pub enum SRT_EPOLL_OPT {
 pub const SRT_EPOLL_CONNECT: SRT_EPOLL_OPT = SRT_EPOLL_OPT::SRT_EPOLL_OUT;
 pub const SRT_EPOLL_ACCEPT: SRT_EPOLL_OPT = SRT_EPOLL_OPT::SRT_EPOLL_IN;
 
+enum SrtEpollEntry {
+    Srt(SRTSOCKET, c_int),
+    Sys(AsyncFd<SYSSOCKET>, c_int),
+}
+
+impl SrtEpollEntry {
+    pub(crate) fn id(&self) -> i32 {
+        match self {
+            SrtEpollEntry::Srt(s, _) => *s,
+            SrtEpollEntry::Sys(s, _) => s.as_raw_fd(),
+        }
+    }
+}
+
 struct SrtEpoll {
-    socks: Vec<(SRTSOCKET, c_int)>, // flags
+    socks: Vec<SrtEpollEntry>,
 }
 
 lazy_static! {
@@ -646,7 +714,46 @@ pub unsafe extern "C" fn srt_epoll_add_usock(
     }
 
     let mut l = epoll.lock().unwrap();
-    l.socks.push((sock, flags));
+    l.socks.push(SrtEpollEntry::Srt(sock, flags));
+
+    SRT_SUCCESS
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn srt_epoll_add_ssock(
+    eid: c_int,
+    s: SYSSOCKET,
+    events: *const c_int,
+) -> c_int {
+    let epoll = match get_epoll(eid) {
+        None => return set_error(SRT_EINVPOLLID),
+        Some(sock) => sock,
+    };
+
+    let flags = if events.is_null() {
+        SRT_EPOLL_OPT::SRT_EPOLL_OPT_NONE as i32
+    } else {
+        events.read()
+    };
+
+    if (flags
+        & !(SRT_EPOLL_OPT::SRT_EPOLL_IN as c_int
+            | SRT_EPOLL_OPT::SRT_EPOLL_OUT as c_int
+            | SRT_EPOLL_OPT::SRT_EPOLL_ERR as c_int
+            | SRT_EPOLL_OPT::SRT_EPOLL_UPDATE as c_int
+            | SRT_EPOLL_OPT::SRT_EPOLL_ET as c_int))
+        != 0
+    {
+        // unknown flag
+        return set_error(SRT_EINVPARAM);
+    }
+
+    let mut l = epoll.lock().unwrap();
+
+    TOKIO_RUNTIME.block_on(async {
+        l.socks
+            .push(SrtEpollEntry::Sys(AsyncFd::new(s).unwrap(), flags));
+    });
 
     SRT_SUCCESS
 }
@@ -659,7 +766,11 @@ pub extern "C" fn srt_epoll_remove_usock(eid: c_int, sock: SRTSOCKET) -> c_int {
     };
 
     let mut l = epoll.lock().unwrap();
-    match l.socks.iter().position(|(s, _)| *s == sock) {
+    match l
+        .socks
+        .iter()
+        .position(|s| matches!(s, SrtEpollEntry::Srt(c, _) if *c == sock))
+    {
         Some(p) => l.socks.remove(p),
         None => return set_error(SRT_EINVSOCK),
     };
@@ -668,11 +779,59 @@ pub extern "C" fn srt_epoll_remove_usock(eid: c_int, sock: SRTSOCKET) -> c_int {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn srt_epoll_update_usock(eid: c_int, u: SRTSOCKET, events: *const c_int) -> c_int {
+    if events.is_null() {
+        return set_error(SRT_EINVPARAM);
+    }
+    let epoll = match get_epoll(eid) {
+        None => return set_error(SRT_EINVPOLLID),
+        Some(sock) => sock,
+    };
+
+    let mut l = epoll.lock().unwrap();
+    for s in &mut l.socks {
+        match s {
+            SrtEpollEntry::Srt(sockid, _) if *sockid == u => { *s = SrtEpollEntry::Srt(u, events.read()); return SRT_SUCCESS}
+            _ => {}
+        }
+    }
+
+    set_error(SRT_EINVSOCK)
+}
+
+#[no_mangle]
 pub extern "C" fn srt_epoll_release(eid: c_int) -> c_int {
     if EPOLLS.write().unwrap().remove(&eid).is_none() {
         return set_error(SRT_EINVPOLLID);
     }
     SRT_SUCCESS
+}
+
+#[derive(Eq, PartialEq)]
+enum ReadyPendingError {
+    Ready,
+    Pending,
+    Error,
+}
+
+impl<T, E: Debug> From<Poll<Result<T, E>>> for ReadyPendingError {
+    fn from(s: Poll<Result<T, E>>) -> Self {
+        match s {
+            Poll::Ready(Ok(_)) => ReadyPendingError::Ready,
+            Poll::Ready(Err(e)) => {log::error!("Got poll error: {:?}", e); ReadyPendingError::Error},
+            Poll::Pending => ReadyPendingError::Pending,
+        }
+    }
+}
+
+impl<T> From<Poll<Option<T>>> for ReadyPendingError {
+    fn from(s: Poll<Option<T>>) -> Self {
+        match s {
+            Poll::Ready(Some(_)) => ReadyPendingError::Ready,
+            Poll::Ready(None) => ReadyPendingError::Error,
+            Poll::Pending => ReadyPendingError::Pending,
+        }
+    }
 }
 
 /// # Safety
@@ -686,157 +845,185 @@ pub unsafe extern "C" fn srt_epoll_wait(
     writefds: *mut SRTSOCKET,
     wnum: *mut c_int,
     msTimeOut: i64,
-    lrfds: *const SYSSOCKET,
-    lrnum: *const c_int,
-    lwfds: *const SYSSOCKET,
-    lwnum: *const c_int,
+    lrfds: *mut SYSSOCKET,
+    lrnum: *mut c_int,
+    lwfds: *mut SYSSOCKET,
+    lwnum: *mut c_int,
 ) -> c_int {
-    let lrfds = if lrfds.is_null() {
-        &[]
-    } else {
-        from_raw_parts(lrfds, lrnum as usize)
+    let sleep_fut = async {
+        if let Ok(to) = msTimeOut.try_into() {
+            sleep(Duration::from_millis(to)).await;
+        } else {
+            std::future::pending::<()>().await;
+        }
     };
-    let lwfds = if lwfds.is_null() {
-        &[]
-    } else {
-        from_raw_parts(lwfds, lwnum as usize)
-    };
+    pin!(sleep_fut);
 
-    let deadline = msTimeOut.try_into().map(|ms| Instant::now() + Duration::from_millis(ms));
-
+    // TODO: actually bound check with these
     let rnum_in = if rnum.is_null() { 0 } else { rnum.read() };
     let wnum_in = if wnum.is_null() { 0 } else { wnum.read() };
-
-    if !lrfds.is_empty() || !lwfds.is_empty() {
-        todo!("unimplmented: SYSSOCKETs");
-    }
 
     let epoll = match get_epoll(eid) {
         None => return set_error(SRT_EINVPOLLID),
         Some(sock) => sock,
     };
 
-    let l = epoll.lock().unwrap();
-    TOKIO_RUNTIME.block_on(async {
-        let select_fut = select_all(l.socks.iter().enumerate().filter_map(
-            |(idx, (sock, flags))| {
-                let sock = get_sock(*sock)?;
+    let mut l = epoll.lock().unwrap();
 
-                Some(Box::pin(async move {
+
+    TOKIO_RUNTIME.block_on(async {
+
+        let mut written_wfds = 0;
+        let mut written_rfds = 0;
+        
+        let mut written_lwfds = 0;
+        let mut written_lrfds = 0;
+
+        // hold onto the join handles, or else the waker is destroyed for ConnectingNonBlocking
+        // there may be a better solution to this, idk
+
+        let mut jhs = vec![];
+
+        loop {
+            jhs.clear();
+
+            // sleep
+            if let Poll::Ready(()) = poll!(&mut sleep_fut) {
+                break;
+            }
+
+            // poll all the sockets
+            // NOTE: don't await in this block, we need to not hold `sock_l` when we return pending() (below in the pending!() call)
+            for (idx, epollentry) in l.socks.iter().enumerate() {
+                let socket_poll_res: Option<(usize, ReadyPendingError, ReadyPendingError, c_int)> =
+                    match epollentry {
+                        SrtEpollEntry::Srt(sock, flags) => {
+                            let sock = match get_sock(*sock) {
+                                Some(sock) => sock,
+                                None => continue,
+                            };
+
+                            let mut sock_l = sock.lock().unwrap();
+
+                            match &mut *sock_l {
+                                SocketData::Established(sock, _opts) => {
+                                    let (stream, mut sink) = sock.split_mut();
+
+                                    let ready_recv = poll!(stream.peek()).into();
+                                    let ready_send =
+                                        poll!(poll_fn(|cx| sink.poll_ready_unpin(cx))).into();
+
+                                    Some((idx, ready_recv, ready_send, *flags))
+                                }
+                                SocketData::ConnectingNonBlocking(jh, _) => {
+                                    let mut jh = jh.clone();
+                                    let ready_recv = poll!(&mut jh).into();
+                                    jhs.push(jh);
+                                    Some((idx, ready_recv, ReadyPendingError::Pending, *flags))
+                                }
+
+                                SocketData::Listening(_, i, _, _) => {
+                                    if let Some(recv) = i {
+                                        let ready_recv = poll!(Pin::new(recv).peek()).into();
+                                        Some((idx, ready_recv, ReadyPendingError::Pending, *flags))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                SocketData::ConnectFailed(_) => Some((
+                                    idx,
+                                    ReadyPendingError::Error,
+                                    ReadyPendingError::Pending,
+                                    *flags,
+                                )),
+                                SocketData::Accepting(_) => todo!(),
+                                SocketData::InvalidIntermediateState
+                                | SocketData::Closed
+                                | SocketData::Initialized(_, _, _) => None,
+                            }
+                        }
+                        SrtEpollEntry::Sys(sock, flags) => {
+                            let ready_recv = poll!(poll_fn(|cx|  sock.poll_read_ready(cx))).into();
+                            let ready_send = poll!(poll_fn(|cx|  sock.poll_write_ready(cx))).into();
+
+                            Some((idx, ready_recv, ready_send, *flags))
+                        }
+                    };
+
+                if let Some((idx, read, write, flags)) = socket_poll_res {
                     let out_requested = flags & SRT_EPOLL_OPT::SRT_EPOLL_OUT as c_int != 0;
                     let in_requested = flags & SRT_EPOLL_OPT::SRT_EPOLL_IN as c_int != 0;
                     let err_requested = flags & SRT_EPOLL_OPT::SRT_EPOLL_ERR as c_int != 0;
 
-                    let mut l = sock.lock().unwrap();
-                    match &mut *l {
-                        SocketData::Established(sock, _opts) => {
-                            let (mut stream, mut sink) = sock.split_mut();
-                            if in_requested && out_requested {
-                                select! {
-                                    _ = poll_fn(|cx| sink.poll_ready_unpin(cx)).fuse() => (),
-                                    _ = stream.as_mut().peek() => (),
-                                };
-                                let ready_send =
-                                    poll!(poll_fn(|cx| sink.poll_ready_unpin(cx))).is_ready();
-                                let ready_recv = poll!(stream.peek()).is_ready();
+                    let was_error =
+                        read == ReadyPendingError::Error || write == ReadyPendingError::Error;
 
-                                (idx, ready_send, ready_recv)
-                            } else if in_requested {
-                                stream.peek().await;
-                                (idx, false, true)
-                            } else if out_requested {
-                                let _ = poll_fn(|cx| sink.poll_ready_unpin(cx)).await;
-                                (idx, true, false)
-                            } else {
-                                (idx, false, false)
+                    if (in_requested && read == ReadyPendingError::Ready)
+                        || (err_requested && was_error)
+                    {
+                        match &l.socks[idx] {
+                            SrtEpollEntry::Srt(fd, _) => {
+                                readfds
+                                    .offset(written_rfds as isize)
+                                    .write(*fd);
+                                written_rfds += 1;
+                            }
+                            SrtEpollEntry::Sys(fd, _) => {
+                                lrfds
+                                    .offset(written_lrfds as isize)
+                                    .write(fd.as_raw_fd());
+                                written_lrfds += 1;
                             }
                         }
-                        SocketData::ConnectingNonBlocking(jh, _) => {
-                            let jh = jh.clone();
-                            drop(l); // drop so connect task can complete
-
-                            let is_error = jh.await.is_err();
-                            (
-                                idx,
-                                (!is_error && out_requested) || (is_error && err_requested),
-                                is_error && err_requested,
-                            )
-                        }
-                        
-                        SocketData::Listening(_, i, _, _) =>  {
-                            if in_requested {
-                                if let Some(recvr) = i {
-                                    Pin::new(recvr).peek().await;
-                                    (idx, false, true)
-                                } else {
-                                    (idx, false, false)
-                                }
-                            } else {
-                                (idx, false, false)
-                            }
-                        },
-                        SocketData::Accepting(_) => todo!(),
-                        SocketData::ConnectFailed(_)
-                        | SocketData::InvalidIntermediateState
-                        | SocketData::Closed
-                        | SocketData::Initialized(_, _, _) => (idx, false, false),
                     }
-                }))
-            },
-        ));
 
+                    if (out_requested && write == ReadyPendingError::Ready)
+                        || (err_requested && was_error)
+                    {
+                        match &l.socks[idx] {
+                            SrtEpollEntry::Srt(fd, _) => {
+                                writefds
+                                    .offset(written_wfds as isize)
+                                    .write(*fd);
+                                written_wfds += 1;
+                            }
+                            SrtEpollEntry::Sys(fd, _) => {
+                               lwfds 
+                                    .offset(written_lwfds as isize)
+                                    .write(fd.as_raw_fd());
+                                written_lwfds += 1;
 
-        let mut written_wfds = 0;
-        let mut written_rfds = 0;
-
-        let mut result = match deadline {
-            Ok(dl) => timeout_at(dl.into(), select_fut).await,
-            Err(_) => Ok(select_fut.await),
-        };
-
-        loop {
-
-            if let Ok(((idx, res_w, res_r), _, mut futs)) = result {
-                if res_w && written_wfds < wnum_in {
-                    writefds.offset(written_wfds as isize).write(l.socks[idx].0);
-                    written_wfds += 1;
-                }
-                if res_r && written_rfds < rnum_in {
-                    readfds.offset(written_rfds as isize).write(l.socks[idx].0);
-                    written_rfds += 1;
-                }
-
-                for f in &mut futs {
-                    if let Poll::Ready((idx, res_w, res_r)) = poll!(f) {
-                        if res_w && written_wfds < wnum_in {
-                            writefds.offset(written_wfds as isize).write(l.socks[idx].0);
-                            written_wfds += 1;
-                        }
-                        if res_r && written_rfds < rnum_in {
-                            readfds.offset(written_rfds as isize).write(l.socks[idx].0);
-                            written_rfds += 1;
+                            }
                         }
                     }
                 }
+            }
 
-                if written_wfds == 0 && written_rfds == 0 {
-                    result = match deadline {
-                        Ok(dl) => timeout_at(dl.into(), select_all(futs)).await,
-                        Err(_) => Ok(select_all(futs).await),
-                    };
-                } else {
-                    break;
-                }
+            // if this loop got anything, then go for it
+            // otherwise, return pending
+            if written_rfds == 0 && written_wfds == 0 && written_lrfds == 0 && written_lwfds == 0{
+                pending!();
+                continue;
             } else {
-                // timeout
-                break
+                break;
             }
         }
 
-        rnum.write(written_rfds as c_int);
-        wnum.write(written_wfds as c_int);
+        if !rnum.is_null() {
+            rnum.write(written_rfds as c_int);
+        }
+        if !wnum.is_null() {
+            wnum.write(written_wfds as c_int);
+        }
 
-        (written_wfds + written_rfds) as c_int
+        if !lrnum.is_null() {
+            lrnum.write(written_lrfds as c_int);
+        }
+        if !lwnum.is_null() {
+            lwnum.write(written_lwfds as c_int);
+        }
+
+        (written_wfds + written_rfds + written_lrfds + written_lwfds) as c_int
     })
 }
 
@@ -851,7 +1038,7 @@ pub extern "C" fn srt_connect(
         None => return set_error_fmt(SRT_EINVPARAM, "Invalid socket address"),
     };
     let name = unsafe {
-        OsSocketAddr::from_raw_parts(name as *const libc::sockaddr as *const u8, namelen as usize)
+        OsSocketAddr::from_raw_parts(name as *const libc::sockaddr as *const u8, min(namelen as usize, size_of::<libc::sockaddr_in6>()))
     };
     let name = match name.into_addr() {
         Some(name) => name,
@@ -867,7 +1054,6 @@ pub extern "C" fn srt_connect(
     let sd = replace(&mut *l, SocketData::InvalidIntermediateState);
 
     if let SocketData::Initialized(so, streamid, options) = sd {
-
         let sock_clone = sock.clone();
         let sb = SrtSocket::builder().with(so.clone());
         if options.rcv_syn {
@@ -894,8 +1080,8 @@ pub extern "C" fn srt_connect(
                 let mut l = sock_clone.lock().unwrap();
                 match res {
                     Ok(s) => {
-                        *l = SocketData::Established(s, options);
                         done_s.send(()).expect("socket destroyed while connecting");
+                        *l = SocketData::Established(s, options);
                         // this may need catching
                     }
                     Err(e) => *l = SocketData::ConnectFailed(e),
@@ -1020,13 +1206,19 @@ pub extern "C" fn srt_send(sock: SRTSOCKET, buf: *const c_char, len: c_int) -> c
 
 #[no_mangle]
 pub extern "C" fn srt_sendmsg(
-    _sock: SRTSOCKET,
-    _buf: *const c_char,
-    _len: c_int,
-    _ttl: c_int,
-    _inorder: c_int,
+    sock: SRTSOCKET,
+    buf: *const c_char,
+    len: c_int,
+    ttl: c_int,
+    inorder: c_int,
 ) -> c_int {
-    todo!()
+    let ctrl = SRT_MSGCTRL {
+        msgttl: ttl,
+        inorder,
+        ..srt_msgctrl_default
+    };
+
+    srt_sendmsg2(sock, buf, len, Some(&ctrl))
 }
 
 /// Returns number of bytes written
@@ -1130,6 +1322,19 @@ fn insert_socket(data: SocketData) -> SRTSOCKET {
 }
 
 #[no_mangle]
+pub static srt_msgctrl_default: SRT_MSGCTRL = SRT_MSGCTRL {
+    flags: 0,
+    msgttl: -1, // infinite
+    inorder: 0, // false
+    boundary: 0,
+    srctime: 0,
+    pktseq: -1,
+    msgno: -1,
+    grpdata: ptr::null(),
+    grpdata_size: 0,
+};
+
+#[no_mangle]
 pub extern "C" fn srt_create_socket() -> SRTSOCKET {
     insert_socket(SocketData::Initialized(
         Default::default(),
@@ -1139,8 +1344,21 @@ pub extern "C" fn srt_create_socket() -> SRTSOCKET {
 }
 
 #[no_mangle]
-pub extern "C" fn srt_setloglevel(_ll: c_int) {
-    todo!()
+pub extern "C" fn srt_setloglevel(ll: c_int) {
+    let level = match ll {
+        LOG_EMERG => log::Level::Error,
+        LOG_ALERT => log::Level::Error,
+        LOG_CRIT => log::Level::Error,
+        LOG_ERR => log::Level::Error,
+        LOG_WARNING => log::Level::Warn,
+        LOG_NOTICE => log::Level::Info,
+        LOG_INFO => log::Level::Info,
+        LOG_DEBUG => log::Level::Debug,
+        _ => return, // unknown level
+    };
+
+    // TODO: finish
+    // how does this work???
 }
 
 /// # Safety
@@ -1195,24 +1413,31 @@ pub enum SRT_KM_STATE {
 }
 
 #[no_mangle]
-pub extern "C" fn srt_getsockstate(_sock: SRTSOCKET) -> SRT_SOCKSTATUS {
-    todo!()
+pub extern "C" fn srt_getsockstate(sock: SRTSOCKET) -> SRT_SOCKSTATUS {
+    use SRT_SOCKSTATUS::*;
+
+    let sock = match get_sock(sock) {
+        None => return SRTS_NONEXIST,
+        Some(sock) => sock,
+    };
+
+    let l = sock.lock().unwrap();
+    match *l {
+        SocketData::Initialized(_, _, _) => SRTS_INIT,
+        SocketData::ConnectingNonBlocking(_, _) => SRTS_CONNECTING,
+        SocketData::Established(_, _) => SRTS_CONNECTED,
+        SocketData::Listening(_, _, _, _) => SRTS_LISTENING,
+        SocketData::ConnectFailed(_) => SRTS_BROKEN,
+        SocketData::Accepting(_) => SRTS_LISTENING,
+        SocketData::InvalidIntermediateState => SRTS_BROKEN,
+        SocketData::Closed => SRTS_CLOSED,
+    }
 }
 
 #[repr(C)]
 pub struct SRT_EPOLL_EVENT {
     fd: SRTSOCKET,
     events: c_int,
-}
-
-#[no_mangle]
-pub extern "C" fn srt_epoll_uwait(
-    _eid: c_int,
-    _fdsSet: *mut SRT_EPOLL_EVENT,
-    _fdsSize: c_int,
-    _msTimeOut: i64,
-) -> c_int {
-    todo!()
 }
 
 unsafe fn extract_int(val: Option<NonNull<()>>, len: c_int) -> Option<c_int> {
@@ -1373,6 +1598,12 @@ pub unsafe extern "C" fn srt_setsockflag(
                     LiveBandwidthMode::Estimated { overhead, .. } => overhead,
                     _ => Percent(25), // TODO: what should this be
                 },
+            }
+        }
+        (SRTO_PAYLOADSIZE, (_, Some(o))) => {
+            o.sender.max_payload_size = match extract_int(optval, optlen).map(u64::try_from)  {
+                Some(Ok(mps)) => PacketSize(mps),
+                _ => return set_error(SRT_EINVPARAM),
             }
         }
         (o, _) => unimplemented!("{:?}", o),
@@ -1539,6 +1770,11 @@ pub unsafe extern "C" fn srt_listen_callback(
     } else {
         set_error(SRT_ENOCONN) // TODO: which error here?
     }
+}
+
+#[no_mangle]
+pub extern "C" fn srt_time_now() -> i64 {
+    (Instant::now() - *BASE_TIME).as_micros().try_into().expect("did not expect program to run for 2^63 us")
 }
 
 extern "C" {

@@ -10,7 +10,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Instant,
+    time::Instant, fmt::Debug,
 };
 
 use bytes::Bytes;
@@ -104,7 +104,7 @@ impl SrtSocket {
         &mut self,
     ) -> (
         Pin<&mut Peekable<impl Stream<Item = (Instant, Bytes)> + Unpin>>,
-        Pin<&mut (impl Sink<(Instant, Bytes)> + Unpin)>,
+        Pin<&mut (impl Sink<(Instant, Bytes), Error=impl Debug> + Unpin)>,
     ) {
         (
             Pin::new(&mut self.output_data_receiver),

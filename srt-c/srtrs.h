@@ -58,6 +58,22 @@
 
 #define SRT_LIVE_DEF_PLSIZE 1316
 
+#define SRT_SYNC_CLOCK_STDCXX_STEADY 0
+
+#define SRT_SYNC_CLOCK_GETTIME_MONOTONIC 1
+
+#define SRT_SYNC_CLOCK_WINQPC 2
+
+#define SRT_SYNC_CLOCK_MACH_ABSTIME 3
+
+#define SRT_SYNC_CLOCK_POSIX_GETTIMEOFDAY 4
+
+#define SRT_SYNC_CLOCK_AMD64_RDTSC 5
+
+#define SRT_SYNC_CLOCK_IA32_RDTSC 6
+
+#define SRT_SYNC_CLOCK_IA64_ITC 7
+
 typedef enum SRT_EPOLL_OPT {
   SRT_EPOLL_OPT_NONE = 0,
   /**
@@ -250,14 +266,35 @@ typedef int32_t SRTSOCKET;
 typedef int SYSSOCKET;
 
 typedef struct SRT_MSGCTRL {
+  /**
+   * Left for future
+   */
   int flags;
+  /**
+   * TTL for a message (millisec), default -1 (no TTL limitation)
+   */
   int msgttl;
+  /**
+   * Whether a message is allowed to supersede partially lost one. Unused in stream and live mode.
+   */
   int inorder;
+  /**
+   * 0:mid pkt, 1(01b):end of frame, 2(11b):complete frame, 3(10b): start of frame
+   */
   int boundary;
+  /**
+   * source time since epoch (usec), 0: use internal time (sender)
+   */
   int64_t srctime;
+  /**
+   * sequence number of the first packet in received message (unused for sending)
+   */
   int32_t pktseq;
+  /**
+   * message number (output value for both sending and receiving)
+   */
   int32_t msgno;
-  void *grpdata;
+  const void *grpdata;
   uintptr_t grpdata_size;
 } SRT_MSGCTRL;
 
@@ -346,11 +383,6 @@ typedef struct SRT_TRACEBSTATS {
   uint64_t byteRecvUnique;
 } SRT_TRACEBSTATS;
 
-typedef struct SRT_EPOLL_EVENT {
-  SRTSOCKET fd;
-  int events;
-} SRT_EPOLL_EVENT;
-
 typedef int (*srt_listen_callback_fn)(void *opaq, SRTSOCKET ns, int, const sockaddr *peeraddr, const char *streamid);
 
 #define SRT_INVALID_SOCK -1
@@ -363,9 +395,15 @@ typedef int (*srt_listen_callback_fn)(void *opaq, SRTSOCKET ns, int, const socka
 extern "C" {
 #endif // __cplusplus
 
+extern const struct SRT_MSGCTRL srt_msgctrl_default;
+
 int srt_startup(void);
 
 int srt_cleanup(void);
+
+uint32_t srt_getversion(void);
+
+int srt_clock_type(void);
 
 int srt_bind(SRTSOCKET sock, const sockaddr *name, int namelen);
 
@@ -379,7 +417,11 @@ int srt_epoll_create(void);
  */
 int srt_epoll_add_usock(int eid, SRTSOCKET sock, const int *events);
 
+int srt_epoll_add_ssock(int eid, SYSSOCKET s, const int *events);
+
 int srt_epoll_remove_usock(int eid, SRTSOCKET sock);
+
+int srt_epoll_update_usock(int eid, SRTSOCKET u, const int *events);
 
 int srt_epoll_release(int eid);
 
@@ -394,10 +436,10 @@ int srt_epoll_wait(int eid,
                    SRTSOCKET *writefds,
                    int *wnum,
                    int64_t msTimeOut,
-                   const SYSSOCKET *lrfds,
-                   const int *lrnum,
-                   const SYSSOCKET *lwfds,
-                   const int *lwnum);
+                   SYSSOCKET *lrfds,
+                   int *lrnum,
+                   SYSSOCKET *lwfds,
+                   int *lwnum);
 
 int srt_connect(SRTSOCKET sock, const sockaddr *name, int namelen);
 
@@ -409,7 +451,7 @@ const char *srt_getlasterror_str(void);
 
 int srt_send(SRTSOCKET sock, const char *buf, int len);
 
-int srt_sendmsg(SRTSOCKET _sock, const char *_buf, int _len, int _ttl, int _inorder);
+int srt_sendmsg(SRTSOCKET sock, const char *buf, int len, int ttl, int inorder);
 
 /**
  * Returns number of bytes written
@@ -427,7 +469,7 @@ int srt_bstats(SRTSOCKET _sock, struct SRT_TRACEBSTATS *_perf, int _clear);
 
 SRTSOCKET srt_create_socket(void);
 
-void srt_setloglevel(int _ll);
+void srt_setloglevel(int ll);
 
 /**
  * # Safety
@@ -452,9 +494,7 @@ int srt_getsockopt(SRTSOCKET sock,
                    void *optval,
                    int *optlen);
 
-enum SRT_SOCKSTATUS srt_getsockstate(SRTSOCKET _sock);
-
-int srt_epoll_uwait(int _eid, struct SRT_EPOLL_EVENT *_fdsSet, int _fdsSize, int64_t _msTimeOut);
+enum SRT_SOCKSTATUS srt_getsockstate(SRTSOCKET sock);
 
 /**
  * # Safety
@@ -488,6 +528,8 @@ int srt_getpeername(SRTSOCKET _sock, sockaddr *_name, int *_namelen);
  * - `hook_opaque` must live as long as the socket and be passable between threads
  */
 int srt_listen_callback(SRTSOCKET sock, srt_listen_callback_fn hook_fn, void *hook_opaque);
+
+int64_t srt_time_now(void);
 
 int srt_close(SRTSOCKET socknum);
 
