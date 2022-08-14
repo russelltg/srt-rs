@@ -74,61 +74,17 @@
 
 #define SRT_SYNC_CLOCK_IA64_ITC 7
 
-typedef enum SRT_EPOLL_OPT {
-  SRT_EPOLL_OPT_NONE = 0,
-  /**
-   * Ready for 'recv' operation:
-   *
-   * - For stream mode it means that at least 1 byte is available.
-   * In this mode the buffer may extract only a part of the packet,
-   * leaving next data possible for extraction later.
-   *
-   * - For message mode it means that there is at least one packet
-   * available (this may change in future, as it is desired that
-   * one full message should only wake up, not single packet of a
-   * not yet extractable message).
-   *
-   * - For live mode it means that there's at least one packet
-   * ready to play.
-   *
-   * - For listener sockets, this means that there is a new connection
-   * waiting for pickup through the `srt_accept()` call, that is,
-   * the next call to `srt_accept()` will succeed without blocking
-   * (see an alias SRT_EPOLL_ACCEPT below).
-   */
-  SRT_EPOLL_IN = 1,
-  /**
-   * Ready for 'send' operation.
-   *
-   * - For stream mode it means that there's a free space in the
-   * sender buffer for at least 1 byte of data. The next send
-   * operation will only allow to send as much data as it is free
-   * space in the buffer.
-   *
-   * - For message mode it means that there's a free space for at
-   * least one UDP packet. The edge-triggered mode can be used to
-   * pick up updates as the free space in the sender buffer grows.
-   *
-   * - For live mode it means that there's a free space for at least
-   * one UDP packet. On the other hand, no readiness for OUT usually
-   * means an extraordinary congestion on the link, meaning also that
-   * you should immediately slow down the sending rate or you may get
-   * a connection break soon.
-   *
-   * - For non-blocking sockets used with `srt_connect*` operation,
-   * this flag simply means that the connection was established.
-   */
-  SRT_EPOLL_OUT = 4,
-  /**
-   * The socket has encountered an error in the last operation
-   * and the next operation on that socket will end up with error.
-   * You can retry the operation, but getting the error from it
-   * is certain, so you may as well close the socket.
-   */
-  SRT_EPOLL_ERR = 8,
-  SRT_EPOLL_UPDATE = 16,
-  SRT_EPOLL_ET = (1 << 31),
-} SRT_EPOLL_OPT;
+#define SRT_EPOLL_OPT_NONE 0
+
+#define SRT_EPOLL_IN 1
+
+#define SRT_EPOLL_OUT 4
+
+#define SRT_EPOLL_ERR 8
+
+#define SRT_EPOLL_UPDATE 16
+
+#define SRT_EPOLL_ET (1 << 31)
 
 typedef enum SRT_ERRNO {
   SRT_EUNKNOWN = -1,
@@ -261,9 +217,12 @@ typedef enum SRT_TRANSTYPE {
   SRTT_INVALID,
 } SRT_TRANSTYPE;
 
-typedef int32_t SRTSOCKET;
+typedef int32_t CSrtSocket;
+#define CSrtSocket_INVALID -1
 
-typedef int SYSSOCKET;
+typedef CSrtSocket SRTSOCKET;
+
+typedef BorrowedFd SYSSOCKET;
 
 typedef struct SRT_EPOLL_EVENT {
   SRTSOCKET fd;
@@ -390,11 +349,9 @@ typedef struct SRT_TRACEBSTATS {
 
 typedef int (*srt_listen_callback_fn)(void *opaq, SRTSOCKET ns, int, const sockaddr *peeraddr, const char *streamid);
 
-#define SRT_INVALID_SOCK -1
+typedef int SRT_EPOLL_OPT;
 
-
-
-
+#define SRT_INVALID_SOCK CSrtSocket_INVALID
 
 #ifdef __cplusplus
 extern "C" {
@@ -416,10 +373,6 @@ int srt_listen(SRTSOCKET sock, int _backlog);
 
 int srt_epoll_create(void);
 
-/**
- * # Safety
- * * events must be null or point to a valid combination of `SRT_EPOLL_OPT` flags
- */
 int srt_epoll_add_usock(int eid, SRTSOCKET sock, const int *events);
 
 int srt_epoll_add_ssock(int eid, SYSSOCKET s, const int *events);

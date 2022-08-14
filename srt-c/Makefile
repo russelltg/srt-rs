@@ -12,7 +12,7 @@ clean:
 $(LIBSRT): src/lib.rs
 	cargo build --package srt-c --lib
 
-$(SRT_H): cbindgen.toml src/lib.rs
+$(SRT_H): cbindgen.toml src/lib.rs src/epoll.rs src/errors.rs src/socket.rs
 	cbindgen --config cbindgen.toml --crate srt-c --output srtrs.h
 
 examples/test-c-client: examples/test-c-client.cpp $(SRT_H) $(LIBSRT)

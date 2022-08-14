@@ -4,7 +4,7 @@ use std::{
     fmt::{Debug, Display, Formatter},
     io::{self, ErrorKind},
     ops::Deref,
-    string::FromUtf8Error,
+    string::FromUtf8Error, str::FromStr,
 };
 
 // SRTO_STREAMID
@@ -74,9 +74,11 @@ impl TryFrom<String> for StreamId {
     }
 }
 
-impl<'a> From<&'a str> for StreamId {
-    fn from(value: &'a str) -> Self {
-        Self::try_from(value.to_string()).unwrap()
+impl FromStr for StreamId {
+    type Err = StreamIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(s.to_string())
     }
 }
 

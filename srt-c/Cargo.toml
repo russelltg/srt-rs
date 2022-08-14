@@ -17,6 +17,7 @@ log = "0.4"
 thiserror = "1"
 os_socketaddr = "0.2"
 pretty_env_logger = "0.4"
+bitflags = "1"
 console-subscriber = { version = "0.1", optional = true }
 
 [target.'cfg(windows)'.dependencies]

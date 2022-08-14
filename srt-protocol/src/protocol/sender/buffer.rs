@@ -353,7 +353,7 @@ pub struct AckAction {
     pub send_ack2: Option<FullAckSeqNumber>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Loss {
     Added,
     Dropped,
@@ -415,7 +415,7 @@ where
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SenderAction {
     Send(DataPacket),
     // Retransmission from RTO

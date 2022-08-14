@@ -141,7 +141,7 @@ mod tests {
                 match selection {
                     Select::Connection(Some(request)) => {
                         let stream_id = request.stream_id().unwrap();
-                        if stream_id.eq(&"reject".into()) {
+                        if stream_id.eq(&"reject".parse().unwrap()) {
                             request.reject(RejectReason::User(42)).await.unwrap();
                         } else {
                             let mut sender = request.accept(None).await.unwrap();
@@ -229,7 +229,7 @@ mod tests {
                 match selection {
                     Select::Connection(Some(request)) => {
                         let stream_id = request.stream_id().expect("stream_id");
-                        if stream_id.eq(&"reject".into()) {
+                        if stream_id.eq(&"reject".parse().unwrap()) {
                             request
                                 .reject(RejectReason::User(42))
                                 .await
