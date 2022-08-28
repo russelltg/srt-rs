@@ -1,5 +1,7 @@
 use std::time::{Duration, Instant};
 
+use log::info;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum Status {
     Open(Duration),
@@ -40,6 +42,7 @@ impl ConnectionStatus {
     pub fn on_data_stream_closed(&mut self, now: Instant) {
         use Status::*;
         if let Open(timeout) = self.sender {
+            info!("data stream closed, sender is in shutdown");
             self.sender = Shutdown(now + timeout);
         }
     }
@@ -47,6 +50,7 @@ impl ConnectionStatus {
     pub fn on_socket_closed(&mut self, now: Instant) {
         use Status::*;
         if let Open(timeout) = self.receiver {
+            info!("socket closed, receiver is draining");
             self.receiver = Drain(now + timeout);
         }
     }
@@ -54,6 +58,7 @@ impl ConnectionStatus {
     pub fn on_peer_idle_timeout(&mut self, now: Instant) {
         use Status::*;
         if let Open(timeout) = self.receiver {
+            info!("peer idle timeout, receiver is draining");
             self.receiver = Drain(now + timeout);
         }
     }
@@ -75,16 +80,19 @@ impl ConnectionStatus {
         use Status::*;
         let result = match self.sender {
             Shutdown(timeout) if send_buffer_flushed && output_empty || now > timeout => {
+                info!("sender Shutdown -> Drain");
                 self.sender = Drain(timeout);
                 true
             }
             Drain(timeout) if send_buffer_flushed && output_empty || now > timeout => {
+                info!("sender Drain -> Closed");
                 self.sender = Closed;
                 false
             }
             _ => false,
         };
         if matches!(self.sender, Closed) && receive_buffer_flushed && output_empty {
+            info!("sender closed and receiver flushed, socket is closed");
             self.connection = Closed;
         }
         result
@@ -97,15 +105,17 @@ impl ConnectionStatus {
     ) -> bool {
         use Status::*;
         match self.receiver {
-            Shutdown(timeout) | Drain(timeout) if now > timeout => {
-                self.receiver = Closed;
-                self.connection = Closed;
-                true
-            }
             Shutdown(_) | Drain(_) if receive_buffer_flushed => {
                 self.receiver = Closed;
                 self.connection = Closed;
+                info!("reciever closed and flushed, connection is closed");
                 false
+            }
+            Shutdown(timeout) | Drain(timeout) if now > timeout => {
+                self.receiver = Closed;
+                self.connection = Closed;
+                info!("reciever timed out flushing, connection is closed");
+                true
             }
             _ => false,
         }

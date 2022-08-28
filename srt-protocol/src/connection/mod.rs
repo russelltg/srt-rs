@@ -293,7 +293,7 @@ impl DuplexConnection {
     }
 
     fn handle_data_stream_close(&mut self, now: Instant) {
-        self.debug(now, "closed data", &());
+        self.info(now, "closed data", &());
         self.status.on_data_stream_closed(now);
     }
 

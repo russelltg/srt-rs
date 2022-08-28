@@ -5,9 +5,10 @@ use std::pin::Pin;
 use std::task::Poll;
 use std::time::Duration;
 
-use futures::future::poll_fn;
+use futures::future::{poll_fn, Ready};
 use futures::{pending, poll, SinkExt};
 use tokio::io::unix::AsyncFd;
+use tokio::io::Interest;
 use tokio::pin;
 use tokio::time::sleep;
 
@@ -16,6 +17,7 @@ use crate::socket::{CSrtSocket, SocketData};
 use crate::{get_sock, SrtError};
 use crate::{SYSSOCKET, TOKIO_RUNTIME};
 
+#[derive(Debug)]
 enum SrtEpollEntry {
     Srt(CSrtSocket, EpollFlags),
     Sys(AsyncFd<SYSSOCKET>, EpollFlags),
@@ -50,7 +52,10 @@ impl<T> From<Poll<Option<T>>> for ReadyPendingError {
     fn from(s: Poll<Option<T>>) -> Self {
         match s {
             Poll::Ready(Some(_)) => ReadyPendingError::Ready,
-            Poll::Ready(None) => ReadyPendingError::Error,
+            Poll::Ready(None) => {
+                log::error!("got eos!");
+                ReadyPendingError::Error
+            }
             Poll::Pending => ReadyPendingError::Pending,
         }
     }
@@ -82,8 +87,8 @@ bitflags::bitflags! {
         /// waiting for pickup through the `srt_accept()` call, that is,
         /// the next call to `srt_accept()` will succeed without blocking
         /// (see an alias SRT_EPOLL_ACCEPT below).
-        const SRT_EPOLL_IN = 0x1;
-        const SRT_EPOLL_ACCEPT = EpollFlags::SRT_EPOLL_IN.bits();
+        const IN = 0x1;
+        const ACCEPT = EpollFlags::IN.bits();
 
         /// Ready for 'send' operation.
         ///
@@ -104,17 +109,31 @@ bitflags::bitflags! {
         ///
         /// - For non-blocking sockets used with `srt_connect*` operation,
         /// this flag simply means that the connection was established.
-        const SRT_EPOLL_OUT = 0x4;
-        const SRT_EPOLL_CONNECT = EpollFlags::SRT_EPOLL_OUT.bits();
+        const OUT = 0x4;
+        const CONNECT = EpollFlags::OUT.bits();
 
         /// The socket has encountered an error in the last operation
         /// and the next operation on that socket will end up with error.
         /// You can retry the operation, but getting the error from it
         /// is certain, so you may as well close the socket.
-        const SRT_EPOLL_ERR = 0x8;
+        const ERR = 0x8;
 
         const SRT_EPOLL_UPDATE = 0x10;
         const SRT_EPOLL_ET = 1 << 31;
+    }
+}
+
+impl EpollFlags {
+    fn to_interest(&self) -> Interest {
+        match (
+            self.contains(EpollFlags::IN),
+            self.contains(EpollFlags::OUT),
+        ) {
+            (true, true) => Interest::READABLE | Interest::WRITABLE,
+            (true, false) => Interest::READABLE,
+            (false, true) => Interest::WRITABLE,
+            (false, false) => panic!("interest must be either writable or readable"),
+        }
     }
 }
 
@@ -125,8 +144,10 @@ impl SrtEpoll {
 
     pub fn add_sys(&mut self, s: SYSSOCKET, flags: EpollFlags) {
         TOKIO_RUNTIME.block_on(async {
-            self.socks
-                .push(SrtEpollEntry::Sys(AsyncFd::new(s).unwrap(), flags));
+            self.socks.push(SrtEpollEntry::Sys(
+                AsyncFd::with_interest(s, flags.to_interest()).unwrap(),
+                flags,
+            ));
         });
     }
 
@@ -189,11 +210,6 @@ impl SrtEpoll {
             loop {
                 jhs.clear();
 
-                // sleep
-                if let Poll::Ready(()) = poll!(&mut sleep_fut) {
-                    break;
-                }
-
                 // poll all the sockets
                 // NOTE: don't await in this block, we need to not hold `sock_l` when we return pending() (below in the pending!() call)
                 for (idx, epollentry) in self.socks.iter().enumerate() {
@@ -215,21 +231,38 @@ impl SrtEpoll {
                                 SocketData::Established(sock, _opts) => {
                                     let (stream, mut sink) = sock.split_mut();
 
-                                    let ready_recv = poll!(stream.peek()).into();
-                                    let ready_send =
-                                        poll!(poll_fn(|cx| sink.poll_ready_unpin(cx))).into();
+                                    let ready_recv = if flags.contains(EpollFlags::IN) {
+                                        poll!(stream.peek()).into()
+                                    } else {
+                                        ReadyPendingError::Pending
+                                    };
+                                    let ready_send = if flags.contains(EpollFlags::OUT) {
+                                        poll!(poll_fn(|cx| sink.poll_ready_unpin(cx))).into()
+                                    } else {
+                                        ReadyPendingError::Pending
+                                    };
 
                                     Some((idx, ready_recv, ready_send, *flags))
                                 }
                                 SocketData::ConnectingNonBlocking(jh, _) => {
                                     let mut jh = jh.clone();
-                                    let ready_send = poll!(&mut jh).into();
-                                    jhs.push(jh);
+
+                                    let ready_send = if flags.contains(EpollFlags::CONNECT) {
+                                        let ready_send = poll!(&mut jh).into();
+                                        jhs.push(jh);
+                                        ready_send
+                                    } else {
+                                        ReadyPendingError::Pending
+                                    };
                                     Some((idx, ReadyPendingError::Pending, ready_send, *flags))
                                 }
                                 SocketData::Listening(_, i, _, _) => {
                                     if let Some(recv) = i {
-                                        let ready_recv = poll!(Pin::new(recv).peek()).into();
+                                        let ready_recv = if flags.contains(EpollFlags::ACCEPT) {
+                                            poll!(Pin::new(recv).peek()).into()
+                                        } else {
+                                            ReadyPendingError::Pending
+                                        };
                                         Some((idx, ready_recv, ReadyPendingError::Pending, *flags))
                                     } else {
                                         None
@@ -237,7 +270,7 @@ impl SrtEpoll {
                                 }
                                 SocketData::ConnectFailed(_) => Some((
                                     idx,
-                                    ReadyPendingError::Error,
+                                    if flags.contains(EpollFlags::ERR) { ReadyPendingError::Error } else { ReadyPendingError::Pending },
                                     ReadyPendingError::Pending,
                                     *flags,
                                 )),
@@ -248,17 +281,35 @@ impl SrtEpoll {
                             }
                         }
                         SrtEpollEntry::Sys(sock, flags) => {
-                            let ready_recv = poll!(poll_fn(|cx| sock.poll_read_ready(cx))).into();
-                            let ready_send = poll!(poll_fn(|cx| sock.poll_write_ready(cx))).into();
+                            let ready_recv = if flags.contains(EpollFlags::IN) {
+                                poll!(poll_fn(|cx| sock.poll_read_ready(cx)))
+                                    .map_ok(|mut r| {
+                                        r.clear_ready();
+                                        r
+                                    })
+                                    .into()
+                            } else {
+                                ReadyPendingError::Pending
+                            };
+                            let ready_send = if flags.contains(EpollFlags::OUT) {
+                                poll!(poll_fn(|cx| sock.poll_write_ready(cx)))
+                                    .map_ok(|mut r| {
+                                        r.clear_ready();
+                                        r
+                                    })
+                                    .into()
+                            } else {
+                                ReadyPendingError::Pending
+                            };
 
                             Some((idx, ready_recv, ready_send, *flags))
                         }
                     };
 
                     if let Some((idx, read, write, flags)) = socket_poll_res {
-                        let out_requested = flags.contains(EpollFlags::SRT_EPOLL_OUT);
-                        let in_requested = flags.contains(EpollFlags::SRT_EPOLL_IN);
-                        let err_requested = flags.contains(EpollFlags::SRT_EPOLL_ERR);
+                        let out_requested = flags.contains(EpollFlags::OUT);
+                        let in_requested = flags.contains(EpollFlags::IN);
+                        let err_requested = flags.contains(EpollFlags::ERR);
 
                         let was_error =
                             read == ReadyPendingError::Error || write == ReadyPendingError::Error;
@@ -293,6 +344,11 @@ impl SrtEpoll {
                             }
                         }
                     }
+                }
+
+                // see if timeout has been reached
+                if let Poll::Ready(()) = poll!(&mut sleep_fut) {
+                    break;
                 }
 
                 // if this loop got anything, then go for it
