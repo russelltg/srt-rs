@@ -523,7 +523,7 @@ impl SocketData {
             }
         } else {
             *l = sd; // restore state
-            return Err(SRT_ECONNSOCK.into());
+            Err(SRT_ECONNSOCK.into())
         }
     }
 

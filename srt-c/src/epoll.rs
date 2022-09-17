@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::task::Poll;
 use std::time::Duration;
 
-use futures::future::{poll_fn, Ready};
+use futures::future::poll_fn;
 use futures::{pending, poll, SinkExt};
 use tokio::io::unix::AsyncFd;
 use tokio::io::Interest;
@@ -124,7 +124,7 @@ bitflags::bitflags! {
 }
 
 impl EpollFlags {
-    fn to_interest(&self) -> Interest {
+    fn to_interest(self) -> Interest {
         match (
             self.contains(EpollFlags::IN),
             self.contains(EpollFlags::OUT),
