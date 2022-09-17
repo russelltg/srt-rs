@@ -8,7 +8,7 @@ mod socket;
 use epoll::EpollFlags;
 use errors::{SRT_ERRNO, SRT_ERRNO::*};
 use os_socketaddr::OsSocketAddr;
-use socket::{SocketData, CSrtSocket};
+use socket::{CSrtSocket, SocketData};
 use srt_protocol::options::SrtVersion;
 
 use std::{
@@ -19,7 +19,10 @@ use std::{
     fmt::{Debug, Display},
     io::Write,
     mem::{size_of, take, MaybeUninit},
-    os::{raw::{c_char, c_int}, unix::prelude::BorrowedFd},
+    os::{
+        raw::{c_char, c_int},
+        unix::prelude::BorrowedFd,
+    },
     ptr::{self, NonNull},
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::{
@@ -446,7 +449,7 @@ pub extern "C" fn srt_epoll_add_usock(
 
     let flags = match events.copied().and_then(EpollFlags::from_bits) {
         Some(flags) => flags,
-        None => return set_error(SRT_EINVPARAM.into())
+        None => return set_error(SRT_EINVPARAM.into()),
     };
 
     let mut l = epoll.lock().unwrap();
@@ -455,11 +458,7 @@ pub extern "C" fn srt_epoll_add_usock(
 }
 
 #[no_mangle]
-pub extern "C" fn srt_epoll_add_ssock(
-    eid: c_int,
-    s: SYSSOCKET,
-    events: Option<&c_int>
-) -> c_int {
+pub extern "C" fn srt_epoll_add_ssock(eid: c_int, s: SYSSOCKET, events: Option<&c_int>) -> c_int {
     let epoll = match get_epoll(eid) {
         None => return set_error(SRT_EINVPOLLID.into()),
         Some(sock) => sock,
@@ -467,7 +466,7 @@ pub extern "C" fn srt_epoll_add_ssock(
 
     let flags = match events.copied().and_then(EpollFlags::from_bits) {
         Some(flags) => flags,
-        None => return set_error(SRT_EINVPARAM.into())
+        None => return set_error(SRT_EINVPARAM.into()),
     };
 
     let mut l = epoll.lock().unwrap();
@@ -500,7 +499,7 @@ pub extern "C" fn srt_epoll_update_usock(
 
     let flags = match events.copied().and_then(EpollFlags::from_bits) {
         Some(flags) => flags,
-        None => return set_error(SRT_EINVPARAM.into())
+        None => return set_error(SRT_EINVPARAM.into()),
     };
 
     let mut l = epoll.lock().unwrap();
@@ -539,7 +538,10 @@ pub unsafe extern "C" fn srt_epoll_wait(
     let mut l = epoll.lock().unwrap();
 
     let srt_read = if !readfds.is_null() && rnum.is_some() {
-        from_raw_parts_mut(readfds as *mut MaybeUninit<CSrtSocket>, *rnum.as_deref().unwrap() as usize)
+        from_raw_parts_mut(
+            readfds as *mut MaybeUninit<CSrtSocket>,
+            *rnum.as_deref().unwrap() as usize,
+        )
     } else {
         &mut []
     };
@@ -553,13 +555,19 @@ pub unsafe extern "C" fn srt_epoll_wait(
     };
 
     let sys_read = if !lrfds.is_null() && lrnum.is_some() {
-        from_raw_parts_mut(lrfds as *mut MaybeUninit<SYSSOCKET>, *lrnum.as_deref().unwrap() as usize)
+        from_raw_parts_mut(
+            lrfds as *mut MaybeUninit<SYSSOCKET>,
+            *lrnum.as_deref().unwrap() as usize,
+        )
     } else {
         &mut []
     };
 
     let sys_write = if !lwfds.is_null() && lwnum.is_some() {
-        from_raw_parts_mut(lwfds as *mut MaybeUninit<SYSSOCKET>, *lwnum.as_deref().unwrap() as usize)
+        from_raw_parts_mut(
+            lwfds as *mut MaybeUninit<SYSSOCKET>,
+            *lwnum.as_deref().unwrap() as usize,
+        )
     } else {
         &mut []
     };

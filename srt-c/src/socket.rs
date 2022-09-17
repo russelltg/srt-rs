@@ -10,10 +10,13 @@ use std::{
         atomic::{AtomicI32, Ordering},
         Arc, Mutex, MutexGuard,
     },
-    time::Duration, task::Poll,
+    task::Poll,
+    time::Duration,
 };
 
-use futures::{channel::mpsc, future::Shared, stream::Peekable, FutureExt, SinkExt, StreamExt, poll};
+use futures::{
+    channel::mpsc, future::Shared, poll, stream::Peekable, FutureExt, SinkExt, StreamExt,
+};
 use log::warn;
 use os_socketaddr::OsSocketAddr;
 use srt_protocol::{
@@ -25,12 +28,13 @@ use srt_protocol::{
     settings::{KeySettings, KeySize, Passphrase},
 };
 use srt_tokio::{SrtListener, SrtSocket};
-use tokio::{sync::oneshot, task::JoinHandle, };
+use tokio::{sync::oneshot, task::JoinHandle};
 
 use crate::{
     call_callback_wrap_exception,
     errors::SRT_ERRNO::{self, *},
-    get_sock, insert_socket, srt_close, SrtError, SRT_SOCKOPT, TOKIO_RUNTIME, srt_listen_callback_fn,
+    get_sock, insert_socket, srt_close, srt_listen_callback_fn, SrtError, SRT_SOCKOPT,
+    TOKIO_RUNTIME,
 };
 
 static NEXT_SOCKID: AtomicI32 = AtomicI32::new(1);
@@ -38,8 +42,6 @@ static NEXT_SOCKID: AtomicI32 = AtomicI32::new(1);
 #[repr(transparent)]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct CSrtSocket(i32);
-
-
 
 #[derive(Debug)]
 pub enum SocketData {
@@ -59,7 +61,6 @@ pub enum SocketData {
     InvalidIntermediateState,
     Closed,
 }
-
 
 #[derive(Clone, Copy, Debug)]
 pub struct ApiOptions {
@@ -221,7 +222,10 @@ impl SocketData {
             }
             (SRTO_TSBPDMODE, _) => {
                 if !extract_bool(optval, optlen)? {
-                    return Err(SrtError::new(SRT_EINVOP, "tsbpd mode is required in srt-rs")); // tsbpd=false is not implemented
+                    return Err(SrtError::new(
+                        SRT_EINVOP,
+                        "tsbpd mode is required in srt-rs",
+                    )); // tsbpd=false is not implemented
                 }
             }
             (SRTO_PASSPHRASE, (_, Some(o))) => {
@@ -521,7 +525,6 @@ impl SocketData {
             *l = sd; // restore state
             return Err(SRT_ECONNSOCK.into());
         }
-
     }
 
     pub fn accept(
@@ -529,19 +532,26 @@ impl SocketData {
         handle: Arc<Mutex<SocketData>>,
     ) -> Result<(CSrtSocket, SocketAddr), SrtError> {
         if let SocketData::Listening(ref _listener, ref mut incoming, ref _jh, opts) = *l {
-            let mut incoming = incoming.take().ok_or_else(|| SrtError::new(SRT_EINVOP, "accept can only be called from one thread at a time")) ?;
+            let mut incoming = incoming.take().ok_or_else(|| {
+                SrtError::new(
+                    SRT_EINVOP,
+                    "accept can only be called from one thread at a time",
+                )
+            })?;
 
             drop(l); // release mutex so other calls don't block
-            let (new_sock, addr) = TOKIO_RUNTIME.block_on(async {
-                if opts.rcv_syn {
-                    Ok(incoming.next().await)
-                } else {
-                    match poll!(incoming.next()) {
-                        Poll::Pending => Err(SRT_EASYNCFAIL),
-                        Poll::Ready(r) => Ok(r),
+            let (new_sock, addr) = TOKIO_RUNTIME
+                .block_on(async {
+                    if opts.rcv_syn {
+                        Ok(incoming.next().await)
+                    } else {
+                        match poll!(incoming.next()) {
+                            Poll::Pending => Err(SRT_EASYNCFAIL),
+                            Poll::Ready(r) => Ok(r),
+                        }
                     }
-                }
-            })?.ok_or_else(|| SrtError::new(SRT_ESCLOSED, "accepting socket closed"))?;
+                })?
+                .ok_or_else(|| SrtError::new(SRT_ESCLOSED, "accepting socket closed"))?;
 
             // put listener back
             {
@@ -556,18 +566,18 @@ impl SocketData {
         }
     }
 
-    pub unsafe fn listen_callback(&mut self,
+    pub unsafe fn listen_callback(
+        &mut self,
         hook_fn: srt_listen_callback_fn,
         hook_opaque: *mut (),
     ) -> Result<(), SrtError> {
-
-    if let (Some(o), _) = self.opts_mut() {
-        o.listen_cb = Some(hook_fn);
-        o.listen_cb_opaque = hook_opaque;
-        Ok(())
-    } else {
-        Err(SRT_ENOCONN.into()) // TODO: which error here?
-    }
+        if let (Some(o), _) = self.opts_mut() {
+            o.listen_cb = Some(hook_fn);
+            o.listen_cb_opaque = hook_opaque;
+            Ok(())
+        } else {
+            Err(SRT_ENOCONN.into()) // TODO: which error here?
+        }
     }
 }
 

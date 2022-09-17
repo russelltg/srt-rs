@@ -4,7 +4,8 @@ use std::{
     fmt::{Debug, Display, Formatter},
     io::{self, ErrorKind},
     ops::Deref,
-    string::FromUtf8Error, str::FromStr,
+    str::FromStr,
+    string::FromUtf8Error,
 };
 
 // SRTO_STREAMID

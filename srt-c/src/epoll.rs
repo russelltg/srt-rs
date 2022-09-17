@@ -270,7 +270,11 @@ impl SrtEpoll {
                                 }
                                 SocketData::ConnectFailed(_) => Some((
                                     idx,
-                                    if flags.contains(EpollFlags::ERR) { ReadyPendingError::Error } else { ReadyPendingError::Pending },
+                                    if flags.contains(EpollFlags::ERR) {
+                                        ReadyPendingError::Error
+                                    } else {
+                                        ReadyPendingError::Pending
+                                    },
                                     ReadyPendingError::Pending,
                                     *flags,
                                 )),
