@@ -14,7 +14,7 @@ use std::{
 
 use anyhow::{anyhow, bail, format_err, Error};
 use bytes::Bytes;
-use clap::{Arg, Command};
+use clap::{Arg, Command, ArgAction};
 use log::info;
 use url::{Host, Url};
 
@@ -611,7 +611,7 @@ async fn run() -> Result<(), Error> {
             Arg::new("TO")
                 .help("Sets the output url")
                 .required(true)
-                .multiple_occurrences(true),
+                .action(ArgAction::Append)
         )
         .after_help(AFTER_HELPTEXT)
         .get_matches();
@@ -622,13 +622,13 @@ async fn run() -> Result<(), Error> {
     }
 
     // these are required parameters, so unwrapping them is safe
-    let from_str = matches.value_of("FROM").unwrap();
+    let from_str: &String = matches.get_one("FROM").unwrap();
     let input_url = match Url::parse(from_str) {
         Err(_) => DataType::File(Path::new(from_str)),
         Ok(url) => DataType::Url(url),
     };
-    let to_strs = matches.values_of("TO").unwrap();
-    let output_urls_iter = to_strs.map(|to_str| match Url::parse(to_str) {
+    let to_strs = matches.get_many("TO").unwrap();
+    let output_urls_iter = to_strs.map(|to_str: &String| match Url::parse(to_str) {
         Err(_) => DataType::File(Path::new(to_str)),
         Ok(url) => DataType::Url(url),
     });
