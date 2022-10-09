@@ -43,7 +43,9 @@ use tokio::{
 
 use crate::epoll::SrtEpoll;
 
-pub type SYSSOCKET = BorrowedFd<'static>;
+// NOTE: would love for this to be BorrowedFd,
+// but cbindgen can't see its definition :(
+pub type SYSSOCKET = c_int;
 pub type SRTSOCKET = CSrtSocket;
 
 pub type srt_listen_callback_fn = extern "C" fn(

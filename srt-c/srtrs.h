@@ -222,7 +222,7 @@ typedef int32_t CSrtSocket;
 
 typedef CSrtSocket SRTSOCKET;
 
-typedef BorrowedFd SYSSOCKET;
+typedef int SYSSOCKET;
 
 typedef struct SRT_EPOLL_EVENT {
   SRTSOCKET fd;
