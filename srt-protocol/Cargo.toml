@@ -20,11 +20,12 @@ hex = "0.4.3"
 hmac = "0.12.0"
 keyed_priority_queue = "0.4.1"
 rand = "0.8.4"
+regex = "1.7.0"
 sha-1 = "0.10.0"
 streaming-stats = "0.2.3"
 take-until = "0.1.0"
 thiserror = "1.0.30"
-url = "=2.1.0" # https://github.com/servo/rust-url/issues/581
+url = "2.3.1" # https://github.com/servo/rust-url/issues/581
 aes = "0.8"
 ctr = "0.9"
 
