@@ -32,9 +32,8 @@ async fn main() -> anyhow::Result<()> {
         path: &str,
         elementary_streams: &[CodecParameters],
     ) -> Result<Muxer<File>, Error> {
-        let output_format = OutputFormat::find_by_name("dash").ok_or_else(|| {
-            Error::new(format!("unable to guess output format for file: {path}"))
-        })?;
+        let output_format = OutputFormat::find_by_name("dash")
+            .ok_or_else(|| Error::new(format!("unable to guess output format for file: {path}")))?;
 
         let output = File::create(path)
             .map_err(|err| Error::new(format!("unable to create output file {path}: {err}")))?;
@@ -194,9 +193,7 @@ async fn main() -> anyhow::Result<()> {
                 );
                 println!("New client connected: {client_desc}");
                 let count = handle_socket(socket, tx).await?;
-                println!(
-                    "Client {client_desc} disconnected, received {count:?} packets"
-                );
+                println!("Client {client_desc} disconnected, received {count:?} packets");
                 Ok::<_, anyhow::Error>(())
             };
             let (r1, r2) = tokio::join!(f1, f2);
