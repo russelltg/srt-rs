@@ -1,6 +1,6 @@
-use std::{cmp::Ordering, net::SocketAddr, time::Instant};
+use std::{cmp::Ordering, net::SocketAddr, time::Instant, io::ErrorKind};
 
-use log::debug;
+use log::{debug, info};
 
 use ConnectError::*;
 use ConnectionResult::*;
@@ -503,6 +503,10 @@ impl Rendezvous {
                     (FineResponder(conn), _) => self.handle_fine_responder(&packet, conn),
                     (_, Err(e)) => NotHandled(e),
                 }
+            }
+            Err(Io(error)) if error.kind() == ErrorKind::ConnectionReset => {
+                info!("ConnectionReset received, rendezvous peer may not have opened the port yet...");
+                NoAction
             }
             Err(Io(error)) => Failure(error),
             Err(Parse(e)) => NotHandled(ConnectError::ParseFailed(e)),

@@ -176,7 +176,7 @@ fn ui_test(flags: &[&str], expected: &str) {
             child.stderr.unwrap().read_to_string(&mut captured).unwrap();
 
             // windows puts stranmsit-rs.exe instead of stranmsit-rs, this isn't a real failure so just remove all .exe
-            let captured = captured.trim().replace(".exe", "");
+            let captured = captured.trim().replace(".exe", "").replace("\r\n", "\n");
 
             assert_eq!(captured, expected);
             return;

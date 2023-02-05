@@ -95,9 +95,6 @@ mod test {
     async fn conntimeo() {
         let _ = pretty_env_logger::try_init();
 
-        // bind a socket because otherwise on windows this will fail immediately with "ConnectionReset"
-        let _sock = UdpSocket::bind("127.0.0.1:11111").await.unwrap();
-
         // default-3s
         let start = Instant::now();
         let ret = SrtSocket::builder().call("127.0.0.1:11111", None).await;
