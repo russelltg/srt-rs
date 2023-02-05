@@ -12,9 +12,9 @@ use tokio::io::Interest;
 use tokio::pin;
 use tokio::time::sleep;
 
+use crate::c_api::{get_sock, SrtError, SYSSOCKET, TOKIO_RUNTIME};
 use crate::errors::SRT_ERRNO::*;
 use crate::socket::{CSrtSocket, SocketData};
-use crate::c_api::{get_sock, SrtError,SYSSOCKET, TOKIO_RUNTIME };
 
 #[derive(Debug)]
 enum SrtEpollEntry {

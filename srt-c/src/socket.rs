@@ -3,6 +3,7 @@ use std::{
     io,
     mem::{self, replace, size_of},
     net::SocketAddr,
+    os::raw::c_char,
     os::raw::c_int,
     ptr::{self, NonNull},
     slice,
@@ -10,7 +11,6 @@ use std::{
         atomic::{AtomicI32, Ordering},
         Arc, Mutex, MutexGuard,
     },
-    os::raw::c_char,
     task::Poll,
     time::Duration,
 };
@@ -32,8 +32,7 @@ use srt_tokio::{SrtListener, SrtSocket};
 use tokio::{sync::oneshot, task::JoinHandle};
 
 use crate::c_api::{
-    SRTSOCKET,
-    get_sock, insert_socket, srt_close, srt_listen_callback_fn, SrtError, SRT_SOCKOPT,
+    get_sock, insert_socket, srt_close, srt_listen_callback_fn, SrtError, SRTSOCKET, SRT_SOCKOPT,
     TOKIO_RUNTIME,
 };
 use crate::errors::SRT_ERRNO::{self, *};

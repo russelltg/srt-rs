@@ -1051,7 +1051,6 @@ pub extern "C" fn srt_time_now() -> i64 {
         .expect("did not expect program to run for 2^63 us")
 }
 
-
 #[no_mangle]
 pub extern "C" fn srt_close(socknum: SRTSOCKET) -> c_int {
     let sock = match get_sock(socknum) {
