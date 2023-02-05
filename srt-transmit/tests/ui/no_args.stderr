@@ -1,7 +1,7 @@
-error: The following required arguments were not provided:
+error: the following required arguments were not provided:
   <FROM>
   <TO>...
 
 Usage: srt-transmit <FROM> <TO>...
 
-For more information try '--help'
+For more information, try '--help'.
