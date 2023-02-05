@@ -160,7 +160,7 @@ async fn test_send(
 }
 
 fn ui_test(flags: &[&str], expected: &str) {
-    let expected = expected.trim();
+    let expected = expected.trim().replace("\r\n", "\n");
     let mut child = std::process::Command::new(find_stransmit_rs())
         .args(flags)
         .stderr(Stdio::piped())
