@@ -272,12 +272,12 @@ pub struct SRT_MSGCTRL {
 unsafe impl Send for SRT_MSGCTRL {}
 unsafe impl Sync for SRT_MSGCTRL {}
 
-#[repr(C)]
-pub enum SRT_TRANSTYPE {
-    SRTT_LIVE,
-    SRTT_FILE,
-    SRTT_INVALID,
-}
+// #[repr(C)]
+// pub enum SRT_TRANSTYPE {
+//     SRTT_LIVE,
+//     SRTT_FILE,
+//     SRTT_INVALID,
+// }
 
 /// system is unstable
 pub const LOG_EMERG: c_int = 0;
