@@ -20,9 +20,6 @@ pretty_env_logger = "0.4"
 bitflags = "1"
 console-subscriber = { version = "0.1", optional = true }
 
-[target.'cfg(windows)'.dependencies]
-winapi = "0.3"
-
 [dependencies.tokio]
 version = "1"
 features = ["rt", "rt-multi-thread", "time"]
@@ -31,4 +28,4 @@ features = ["rt", "rt-multi-thread", "time"]
 cc = "1.0"
 
 [features]
-default = ['console-subscriber']
+default = []

@@ -14,8 +14,7 @@ use tokio::time::sleep;
 
 use crate::errors::SRT_ERRNO::*;
 use crate::socket::{CSrtSocket, SocketData};
-use crate::{get_sock, SrtError};
-use crate::{SYSSOCKET, TOKIO_RUNTIME};
+use crate::c_api::{get_sock, SrtError,SYSSOCKET, TOKIO_RUNTIME };
 
 #[derive(Debug)]
 enum SrtEpollEntry {

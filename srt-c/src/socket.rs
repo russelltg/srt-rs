@@ -10,6 +10,7 @@ use std::{
         atomic::{AtomicI32, Ordering},
         Arc, Mutex, MutexGuard,
     },
+    os::raw::c_char,
     task::Poll,
     time::Duration,
 };
@@ -30,14 +31,26 @@ use srt_protocol::{
 use srt_tokio::{SrtListener, SrtSocket};
 use tokio::{sync::oneshot, task::JoinHandle};
 
-use crate::{
-    call_callback_wrap_exception,
-    errors::SRT_ERRNO::{self, *},
+use crate::c_api::{
+    SRTSOCKET,
     get_sock, insert_socket, srt_close, srt_listen_callback_fn, SrtError, SRT_SOCKOPT,
     TOKIO_RUNTIME,
 };
+use crate::errors::SRT_ERRNO::{self, *};
 
 static NEXT_SOCKID: AtomicI32 = AtomicI32::new(1);
+
+extern "C" {
+    pub fn call_callback_wrap_exception(
+        func: srt_listen_callback_fn,
+        opaq: *mut (),
+        ns: SRTSOCKET,
+        hsversion: c_int,
+        peeraddr: *const libc::sockaddr,
+        streamid: *const c_char,
+        ret: *mut c_int,
+    ) -> c_int;
+}
 
 #[repr(transparent)]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
