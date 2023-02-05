@@ -72,12 +72,7 @@ impl BufferPacket {
     }
 
     pub fn is_first(&self) -> bool {
-        match self {
-            BufferPacket::Received(data) if data.message_loc.contains(PacketLocation::FIRST) => {
-                true
-            }
-            _ => false,
-        }
+        matches!(self, BufferPacket::Received(data) if data.message_loc.contains(PacketLocation::FIRST))
     }
 
     fn lost_or_dropped(&self) -> Option<SeqNumber> {

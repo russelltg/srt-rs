@@ -258,8 +258,8 @@ async fn make_srt_input(
         .boxed())
 }
 
-fn resolve_input<'a>(
-    input_url: DataType<'a>,
+fn resolve_input(
+    input_url: DataType,
 ) -> Result<BoxStream<'static, Result<BoxStream<'static, Bytes>, Error>>, Error> {
     Ok(match input_url {
         DataType::Url(input_url) => {
@@ -583,9 +583,7 @@ impl Sink<Bytes> for MultiSinkFlatten {
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
-        eprintln!(
-            "Invalid settings detected: {e}\n\nSee srt-transmit --help for more info"
-        );
+        eprintln!("Invalid settings detected: {e}\n\nSee srt-transmit --help for more info");
         exit(1);
     }
 }
