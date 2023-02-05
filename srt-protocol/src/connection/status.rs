@@ -105,7 +105,7 @@ impl ConnectionStatus {
         &mut self,
         now: Instant,
         receive_buffer_flushed: bool,
-        log_sockid: SocketId
+        log_sockid: SocketId,
     ) -> bool {
         use Status::*;
         match self.receiver {

@@ -1,6 +1,7 @@
 use std::{
     convert::{TryFrom, TryInto},
-    io, time::Instant,
+    io,
+    time::Instant,
 };
 
 use assert_matches::assert_matches;
