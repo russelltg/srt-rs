@@ -582,7 +582,7 @@ fn make_sockaddr(port: u16) -> sockaddr {
 
 fn open_libsrt() -> Option<Library> {
     #[cfg(target_os = "linux")]
-    let possible_names = ["libsrt.so", "libsrt.so.1"];
+    let possible_names = ["libsrt-gnutls.so.1.4", "libsrt.so", "libsrt.so.1"];
 
     #[cfg(target_os = "windows")]
     let possible_names = ["srt.dll"];
