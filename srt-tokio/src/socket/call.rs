@@ -32,6 +32,7 @@ pub async fn bind_with(
     );
 
     let start_time = Instant::now();
+
     loop {
         if start_time.elapsed() > options.socket.connect.timeout {
             return Err(io::Error::new(io::ErrorKind::TimedOut, ""));

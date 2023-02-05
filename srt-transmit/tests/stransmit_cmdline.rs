@@ -16,6 +16,8 @@ use anyhow::Error;
 
 use futures::{stream, FutureExt, SinkExt, StreamExt, TryStreamExt};
 
+use pretty_assertions::assert_eq;
+
 use bytes::{Bytes, BytesMut};
 
 #[cfg(target_os = "windows")]
@@ -158,7 +160,8 @@ async fn test_send(
     wait_for(a, b, &failure_str).await
 }
 
-fn ui_test(flags: &[&str], stderr: &str) {
+fn ui_test(flags: &[&str], expected: &str) {
+    let expected = expected.trim();
     let mut child = std::process::Command::new(find_stransmit_rs())
         .args(flags)
         .stderr(Stdio::piped())
@@ -170,29 +173,13 @@ fn ui_test(flags: &[&str], stderr: &str) {
         if let Some(status) = child.try_wait().unwrap() {
             assert!(!status.success(), "failure test succeeded, it should fail");
 
-            let mut string = String::new();
-            child.stderr.unwrap().read_to_string(&mut string).unwrap();
-
-            assert_eq!(
-                string.lines().count(),
-                stderr.lines().count(),
-                "Line counnt differed. \nExpected: \n{}\nActual:\n{}",
-                string,
-                stderr
-            );
+            let mut captured = String::new();
+            child.stderr.unwrap().read_to_string(&mut captured).unwrap();
 
             // windows puts stranmsit-rs.exe instead of stranmsit-rs, this isn't a real failure so just remove all .exe
-            let string = string.replace(".exe", "");
+            let captured = captured.trim().replace(".exe", "");
 
-            for (i, (a, b)) in string.lines().zip(stderr.lines()).enumerate() {
-                let (a, b) = (a.trim(), b.trim());
-                if a != b {
-                    panic!(
-                        "Line {} differed. Expected: {:?}\nActual:   {:?}\n",
-                        i, a, b
-                    );
-                }
-            }
+            assert_eq!(captured, expected);
             return;
         }
         thread::sleep(Duration::from_millis(10));

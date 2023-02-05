@@ -14,7 +14,7 @@ use std::{
 
 use anyhow::{anyhow, bail, format_err, Error};
 use bytes::Bytes;
-use clap::{Arg, Command, ArgAction};
+use clap::{Arg, ArgAction, Command};
 use log::info;
 use url::{Host, Url};
 
@@ -611,7 +611,7 @@ async fn run() -> Result<(), Error> {
             Arg::new("TO")
                 .help("Sets the output url")
                 .required(true)
-                .action(ArgAction::Append)
+                .action(ArgAction::Append),
         )
         .after_help(AFTER_HELPTEXT)
         .get_matches();
