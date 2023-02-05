@@ -19,10 +19,7 @@ use std::{
     fmt::{Debug, Display},
     io::Write,
     mem::{size_of, take, MaybeUninit},
-    os::{
-        raw::{c_char, c_int},
-        unix::prelude::BorrowedFd,
-    },
+    os::raw::{c_char, c_int},
     ptr::{self, NonNull},
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::{
@@ -377,9 +374,7 @@ pub extern "C" fn srt_bind(
         Some(name) => name,
         None => return set_error(SrtError::new(SRT_EINVPARAM, "Invalid socket address")),
     };
-    let name = unsafe {
-        OsSocketAddr::from_raw_parts(name as *const libc::sockaddr as *const u8, namelen as usize)
-    };
+    let name = unsafe { OsSocketAddr::copy_from_raw(name, namelen.try_into().unwrap()) };
     let name = match name.into_addr() {
         Some(name) => name,
         None => return set_error(SRT_EINVPARAM.into()),
@@ -620,9 +615,12 @@ pub extern "C" fn srt_connect(
         None => return set_error(SrtError::new(SRT_EINVPARAM, "Invalid socket address")),
     };
     let name = unsafe {
-        OsSocketAddr::from_raw_parts(
-            name as *const libc::sockaddr as *const u8,
-            min(namelen as usize, size_of::<libc::sockaddr_in6>()),
+        OsSocketAddr::copy_from_raw(
+            name,
+            min(
+                namelen.try_into().unwrap(),
+                size_of::<libc::sockaddr_in6>() as u32,
+            ),
         )
     };
     let name = match name.into_addr() {
@@ -1084,7 +1082,7 @@ pub extern "C" fn srt_close(socknum: SRTSOCKET) -> c_int {
             if let Err(e) = res {
                 retcode = set_error(SrtError::new(
                     SRT_EINVOP,
-                    format_args!("Failed to close socket: {}", e),
+                    format_args!("Failed to close socket: {e}"),
                 ));
             }
             *l = SocketData::Closed

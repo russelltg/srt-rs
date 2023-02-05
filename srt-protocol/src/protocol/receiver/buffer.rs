@@ -934,7 +934,7 @@ mod receive_buffer {
                 delay: TimeSpan::from_millis(5)
             })
         );
-        assert_eq!(buf.next_ack_dsn(), init_seq_num + 3, "{:?}", buf);
+        assert_eq!(buf.next_ack_dsn(), init_seq_num + 3, "{buf:?}");
 
         // 2 ms buffer release tolerance, we are ok with releasing them 2ms late
         let now = now + tsbpd + Duration::from_millis(5);

@@ -28,7 +28,7 @@ impl Rtt {
         );
         self.variance = TimeSpan::from_micros(
             ((self.variance.as_micros() as i64 * 3
-                + (self.mean.as_micros() as i64 - rtt.as_micros() as i64).abs() as i64)
+                + (self.mean.as_micros() as i64 - rtt.as_micros() as i64).abs())
                 / 4) as i32,
         );
     }

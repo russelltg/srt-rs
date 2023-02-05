@@ -373,7 +373,7 @@ impl SocketData {
                     return Err(SRT_EINVPARAM.into());
                 }
                 let optval =
-                    slice::from_raw_parts_mut(optval.cast::<u8>().as_mut(), optval_len as usize);
+                    slice::from_raw_parts_mut(optval.cast::<u8>().as_mut(), optval_len);
                 optval[..str.as_bytes().len()].copy_from_slice(str.as_bytes());
                 optval[str.as_bytes().len()] = 0; // null terminator
                 Ok(str.as_bytes().len())

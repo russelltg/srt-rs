@@ -584,8 +584,7 @@ impl Sink<Bytes> for MultiSinkFlatten {
 async fn main() {
     if let Err(e) = run().await {
         eprintln!(
-            "Invalid settings detected: {}\n\nSee srt-transmit --help for more info",
-            e
+            "Invalid settings detected: {e}\n\nSee srt-transmit --help for more info"
         );
         exit(1);
     }

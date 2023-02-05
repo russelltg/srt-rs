@@ -139,8 +139,8 @@ impl From<ControlPacket> for Packet {
 impl Debug for Packet {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         match self {
-            Packet::Data(dp) => write!(f, "{:?}", dp),
-            Packet::Control(cp) => write!(f, "{:?}", cp),
+            Packet::Data(dp) => write!(f, "{dp:?}"),
+            Packet::Control(cp) => write!(f, "{cp:?}"),
         }
     }
 }

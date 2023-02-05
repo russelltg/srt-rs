@@ -601,7 +601,7 @@ fn open_libsrt() -> Option<Library> {
     for name in &possible_names {
         match unsafe { Library::new(*name) } {
             Ok(lib) => return Some(lib),
-            Err(e) => println!("Failed to load from {}: {}", name, e),
+            Err(e) => println!("Failed to load from {name}: {e}"),
         }
     }
     None
@@ -618,7 +618,7 @@ struct HaiSettings {
 lazy_static::lazy_static! {
     static ref LIBSRT: Library = open_libsrt().unwrap();
     static ref SRT: HaivisionSrt<'static> = unsafe {
-        let srt = HaivisionSrt::new(&*LIBSRT);
+        let srt = HaivisionSrt::new(&LIBSRT);
         (srt.startup)();
         (srt.setloglevel)(LOG_DEBUG);
         srt

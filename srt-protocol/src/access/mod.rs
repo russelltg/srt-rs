@@ -57,11 +57,11 @@ impl Display for AccessControlList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut iter = self.0.iter().fuse();
         if let Some(item) = iter.next() {
-            write!(f, "#!::{}", item)?;
+            write!(f, "#!::{item}")?;
         }
 
         for item in iter {
-            write!(f, ",{}", item)?;
+            write!(f, ",{item}")?;
         }
         Ok(())
     }
@@ -177,8 +177,8 @@ impl From<StandardAccessControlEntry> for AccessControlEntry {
             StandardAccessControlEntry::ResourceName(rn) => AccessControlEntry::new("r", rn),
             StandardAccessControlEntry::HostName(hn) => AccessControlEntry::new("h", hn),
             StandardAccessControlEntry::SessionId(sid) => AccessControlEntry::new("s", sid),
-            StandardAccessControlEntry::Type(ty) => AccessControlEntry::new("t", format!("{}", ty)),
-            StandardAccessControlEntry::Mode(m) => AccessControlEntry::new("m", format!("{}", m)),
+            StandardAccessControlEntry::Type(ty) => AccessControlEntry::new("t", format!("{ty}")),
+            StandardAccessControlEntry::Mode(m) => AccessControlEntry::new("m", format!("{m}")),
         }
     }
 }
@@ -219,6 +219,6 @@ mod tests {
             ])
         );
 
-        assert_eq!(ace_str, format!("{}", ace))
+        assert_eq!(ace_str, format!("{ace}"))
     }
 }

@@ -27,7 +27,7 @@ fn not_enough_latency() {
 }
 
 fn do_not_enough_latency(seed: u64, packets: usize) {
-    println!("not_enough_latency seed is {}", seed);
+    println!("not_enough_latency seed is {seed}");
 
     let _ = pretty_env_logger::try_init();
 
@@ -83,7 +83,7 @@ fn do_not_enough_latency(seed: u64, packets: usize) {
 
                 let id = str::from_utf8(&by).unwrap().parse().unwrap();
 
-                assert!(id > last_data, "Received {} after {}", id, last_data);
+                assert!(id > last_data, "Received {id} after {last_data}");
 
                 if last_data + 1 != id {
                     info!("Packets [{}, {}) dropped", last_data + 1, id);
@@ -132,8 +132,6 @@ fn do_not_enough_latency(seed: u64, packets: usize) {
     );
     assert!(
         total_recvd <= packets,
-        "received all ({}) packets, expected < {}",
-        total_recvd,
-        packets
+        "received all ({total_recvd}) packets, expected < {packets}"
     );
 }

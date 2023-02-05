@@ -310,7 +310,7 @@ fn string_to_le_bytes(str: &str, into: &mut impl BufMut) {
 impl Display for FilterSpec {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         for (i, (k, v)) in self.0.iter().enumerate() {
-            write!(f, "{}:{}", k, v)?;
+            write!(f, "{k}:{v}")?;
             if i != self.0.len() - 1 {
                 write!(f, ",")?;
             }
@@ -398,7 +398,7 @@ impl SrtControlPacket {
                 k.serialize(into);
             }
             Filter(filter) => {
-                string_to_le_bytes(&format!("{}", filter), into);
+                string_to_le_bytes(&format!("{filter}"), into);
             }
             Group { ty, flags, weight } => {
                 into.put_u8((*ty).into());
@@ -427,7 +427,7 @@ impl SrtControlPacket {
             Congestion(str) | StreamId(str) => ((str.len() + 3) / 4) as u16, // round up to nearest multiple of 4
             // 1 32-bit word packed with type, flags, and weight
             Group { .. } => 1,
-            Filter(filter) => ((format!("{}", filter).len() + 3) / 4) as u16, // TODO: not optimial performace, but probably okay
+            Filter(filter) => ((format!("{filter}").len() + 3) / 4) as u16, // TODO: not optimial performace, but probably okay
             _ => unimplemented!("{:?}", self),
         }
     }
@@ -645,15 +645,15 @@ impl fmt::Debug for SrtControlPacket {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SrtControlPacket::Reject => write!(f, "reject"),
-            SrtControlPacket::HandshakeRequest(req) => write!(f, "hsreq={:?}", req),
-            SrtControlPacket::HandshakeResponse(resp) => write!(f, "hsresp={:?}", resp),
-            SrtControlPacket::KeyRefreshRequest(req) => write!(f, "kmreq={:?}", req),
-            SrtControlPacket::KeyRefreshResponse(resp) => write!(f, "kmresp={:?}", resp),
-            SrtControlPacket::StreamId(sid) => write!(f, "streamid={}", sid),
-            SrtControlPacket::Congestion(ctype) => write!(f, "congestion={}", ctype),
-            SrtControlPacket::Filter(filter) => write!(f, "filter={:?}", filter),
+            SrtControlPacket::HandshakeRequest(req) => write!(f, "hsreq={req:?}"),
+            SrtControlPacket::HandshakeResponse(resp) => write!(f, "hsresp={resp:?}"),
+            SrtControlPacket::KeyRefreshRequest(req) => write!(f, "kmreq={req:?}"),
+            SrtControlPacket::KeyRefreshResponse(resp) => write!(f, "kmresp={resp:?}"),
+            SrtControlPacket::StreamId(sid) => write!(f, "streamid={sid}"),
+            SrtControlPacket::Congestion(ctype) => write!(f, "congestion={ctype}"),
+            SrtControlPacket::Filter(filter) => write!(f, "filter={filter:?}"),
             SrtControlPacket::Group { ty, flags, weight } => {
-                write!(f, "group=({:?}, {:?}, {:?})", ty, flags, weight)
+                write!(f, "group=({ty:?}, {flags:?}, {weight:?})")
             }
         }
     }
@@ -732,6 +732,6 @@ mod tests {
             wrapped_keys: wrapped[..].into(),
         };
 
-        assert_eq!(format!("{:?}", km), "KeyingMaterialMessage { pt: KeyingMaterial, key_flags: EVEN, keki: 0, cipher: Ctr, auth: None }")
+        assert_eq!(format!("{km:?}"), "KeyingMaterialMessage { pt: KeyingMaterial, key_flags: EVEN, keki: 0, cipher: Ctr, auth: None }")
     }
 }

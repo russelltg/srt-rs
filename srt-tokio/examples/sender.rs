@@ -11,7 +11,7 @@ async fn main() -> Result<(), Error> {
     let mut srt_socket = SrtSocket::builder().listen_on(":3333").await?;
 
     let mut stream = stream::unfold(0, |count| async move {
-        print!("\rSent {:?} packets", count);
+        print!("\rSent {count:?} packets");
         sleep(Duration::from_millis(10)).await;
         Some((Ok((Instant::now(), Bytes::from(vec![0; 8000]))), count + 1))
     })

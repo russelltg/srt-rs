@@ -39,8 +39,7 @@ fn find_stransmit_rs() -> PathBuf {
 
     assert!(
         stransmit_rs_path.exists(),
-        "Could not find stransmit at {:?}",
-        stransmit_rs_path
+        "Could not find stransmit at {stransmit_rs_path:?}"
     );
 
     stransmit_rs_path
@@ -72,7 +71,7 @@ impl Decoder for ChunkDecoder {
 }
 
 async fn build_receiver_socket(udp_out: u16, ident: i32) -> Result<UdpFramed<ChunkDecoder>, Error> {
-    let len = format!("asdf{}", ident).len();
+    let len = format!("asdf{ident}").len();
     Ok(UdpFramed::new(
         UdpSocket::bind(&SocketAddr::new("127.0.0.1".parse()?, udp_out)).await?,
         ChunkDecoder::new(len),
@@ -88,7 +87,7 @@ async fn udp_receiver_sock(sock: &mut UdpFramed<ChunkDecoder>, ident: i32) -> Re
     let receive_data = async move {
         let mut i = 0;
         while let Some((pack, _)) = sock.try_next().await.unwrap() {
-            assert_eq!(&pack, &format!("asdf{}", ident));
+            assert_eq!(&pack, &format!("asdf{ident}"));
 
             // once we get 20, that's good enough for validity
             i += 1;
@@ -110,7 +109,7 @@ async fn udp_sender(udp_in: u16, ident: i32) -> Result<(), Error> {
         tokio_stream::StreamExt::throttle(stream::iter(0..100), Duration::from_millis(100))
             .map(|_| {
                 Ok((
-                    Bytes::from(format!("asdf{}", ident)),
+                    Bytes::from(format!("asdf{ident}")),
                     SocketAddr::new("127.0.0.1".parse().unwrap(), udp_in),
                 ))
             })
@@ -384,7 +383,7 @@ mod stransmit_rs_snd_rcv {
         let srs_path = find_stransmit_rs();
 
         let mut a = Command::new(&srs_path)
-            .args(&["udp://:2037", "srt://127.0.0.1:2038?autoreconnect"])
+            .args(["udp://:2037", "srt://127.0.0.1:2038?autoreconnect"])
             .spawn()
             .unwrap();
 

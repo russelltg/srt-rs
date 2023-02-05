@@ -81,7 +81,7 @@ async fn streamid() -> io::Result<()> {
         join_handles.push(tokio::spawn(async move {
             let stream_id = AccessControlList(vec![
                 StandardAccessControlEntry::UserName("russell".into()).into(),
-                StandardAccessControlEntry::ResourceName(format!("{}", i)).into(),
+                StandardAccessControlEntry::ResourceName(format!("{i}")).into(),
             ])
             .to_string();
 

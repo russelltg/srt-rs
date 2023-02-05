@@ -9,7 +9,7 @@ async fn main() -> Result<(), Error> {
 
     while let Some((_instant, _bytes)) = srt_socket.try_next().await? {
         count += 1;
-        print!("\rReceived {:?} packets", count);
+        print!("\rReceived {count:?} packets");
     }
 
     println!("\nConnection closed");

@@ -80,7 +80,7 @@ mod timebase {
             let instant = if adjustment > 0 {
                 now + Duration::from_micros(adjustment as u64) + expected_offset
             } else {
-                now - Duration::from_micros(-adjustment as u64) + expected_offset
+                now.checked_sub(Duration::from_micros(-adjustment as u64)).unwrap() + expected_offset
             };
 
             let ts = timebase.timestamp_from(instant);
