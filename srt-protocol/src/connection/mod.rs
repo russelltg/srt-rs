@@ -112,7 +112,7 @@ impl DuplexConnection {
             settings: settings.clone(),
             handshake: connection.handshake,
             output: Output::new(&settings),
-            status: ConnectionStatus::new(settings.send_tsbpd_latency),
+            status: ConnectionStatus::new(settings.send_tsbpd_latency * 2), // the timeout should be larger than latency as otherwise packets that have just arrived definitely have a change to flush
             timers: Timers::new(settings.socket_start_time, settings.statistics_interval),
             stats: SocketStatistics::new(),
             receiver: Receiver::new(settings.clone()),
@@ -250,10 +250,11 @@ impl DuplexConnection {
             self.sender().on_snd_event(now, elapsed_periods)
         }
 
-        if self
-            .status
-            .check_receive_close_timeout(now, self.receiver.is_flushed())
-        {
+        if self.status.check_receive_close_timeout(
+            now,
+            self.receiver.is_flushed(),
+            self.settings.local_sockid,
+        ) {
             self.receiver().on_close_timeout(now);
         }
         if self.status.check_sender_shutdown(
@@ -343,7 +344,9 @@ impl DuplexConnection {
             // receiver-responsible
             Ack2(seq_num) => self.receiver().handle_ack2_packet(now, seq_num),
             // both
-            Shutdown => self.status.handle_shutdown_packet(now),
+            Shutdown => self
+                .status
+                .handle_shutdown_packet(now, self.settings.local_sockid),
             // neither--this exists just to keep the connection alive
             KeepAlive => {}
             // TODO: case UMSG_CGWARNING: // 100 - Delay Warning

@@ -2,6 +2,8 @@ use std::time::{Duration, Instant};
 
 use log::info;
 
+use crate::settings::SocketId;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum Status {
     Open(Duration),
@@ -63,9 +65,10 @@ impl ConnectionStatus {
         }
     }
 
-    pub fn handle_shutdown_packet(&mut self, now: Instant) {
+    pub fn handle_shutdown_packet(&mut self, now: Instant, log_sockid: SocketId) {
         use Status::*;
         if let Open(timeout) = self.receiver {
+            info!("{log_sockid:?} received shutdown packet, draining for {timeout:?}");
             self.receiver = Drain(now + timeout);
         }
     }
@@ -102,19 +105,20 @@ impl ConnectionStatus {
         &mut self,
         now: Instant,
         receive_buffer_flushed: bool,
+        log_sockid: SocketId
     ) -> bool {
         use Status::*;
         match self.receiver {
             Shutdown(_) | Drain(_) if receive_buffer_flushed => {
                 self.receiver = Closed;
                 self.connection = Closed;
-                info!("reciever closed and flushed, connection is closed");
+                info!("{log_sockid:?} reciever closed and flushed, connection is closed");
                 false
             }
             Shutdown(timeout) | Drain(timeout) if now > timeout => {
                 self.receiver = Closed;
                 self.connection = Closed;
-                info!("reciever timed out flushing, connection is closed");
+                info!("{log_sockid:?} reciever timed out flushing ({:?} too late), connection is closed", now - timeout);
                 true
             }
             _ => false,
