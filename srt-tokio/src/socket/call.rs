@@ -4,7 +4,7 @@ use std::{
 };
 
 use futures::{prelude::*, select};
-use log::{debug, warn, trace, info};
+use log::{debug, info, trace, warn};
 use tokio::time::interval;
 
 use srt_protocol::{
