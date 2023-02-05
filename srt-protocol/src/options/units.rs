@@ -73,10 +73,9 @@ impl Mul<Duration> for DataRate {
     type Output = ByteCount;
 
     fn mul(self, rhs: Duration) -> Self::Output {
-        let bytes_nearest_second = self.0 * rhs.as_secs() as u64;
-        let bytes_scaled_for_micros =
-            (self.0 as usize).saturating_mul(rhs.subsec_micros() as usize);
-        let bytes_remaining_micros = (bytes_scaled_for_micros / 1_000_000) as u64;
+        let bytes_nearest_second = self.0 * rhs.as_secs();
+        let bytes_scaled_for_micros = self.0.saturating_mul(u64::from(rhs.subsec_micros()));
+        let bytes_remaining_micros = bytes_scaled_for_micros / 1_000_000;
         ByteCount(bytes_nearest_second + bytes_remaining_micros)
     }
 }
