@@ -4,10 +4,10 @@ use std::{
     time::Instant,
 };
 
+use log::info;
 use ConnectError::*;
 use ConnectState::*;
 use ConnectionResult::*;
-use log::info;
 
 use crate::{
     connection::Connection, packet::*, protocol::handshake::Handshake, settings::ConnInitSettings,

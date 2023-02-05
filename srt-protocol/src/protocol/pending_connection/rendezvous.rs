@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, net::SocketAddr, time::Instant, io::ErrorKind};
+use std::{cmp::Ordering, io::ErrorKind, net::SocketAddr, time::Instant};
 
 use log::{debug, info};
 
@@ -505,7 +505,9 @@ impl Rendezvous {
                 }
             }
             Err(Io(error)) if error.kind() == ErrorKind::ConnectionReset => {
-                info!("ConnectionReset received, rendezvous peer may not have opened the port yet...");
+                info!(
+                    "ConnectionReset received, rendezvous peer may not have opened the port yet..."
+                );
                 NoAction
             }
             Err(Io(error)) => Failure(error),
