@@ -84,14 +84,12 @@ impl fmt::Display for ConnectError {
             ConclusionExpected(got) => {
                 write!(f, "Expected Conclusion (-1) packet, found: {got:?}")
             }
-            UnsupportedProtocolVersion(got) => write!(
-                f,
-                "Unsupported protocol version, expected: v5 found v{got}"
-            ),
-            InvalidHandshakeCookie(expected, got) => write!(
-                f,
-                "Received invalid cookie, expected {expected}, got {got}"
-            ),
+            UnsupportedProtocolVersion(got) => {
+                write!(f, "Unsupported protocol version, expected: v5 found v{got}")
+            }
+            InvalidHandshakeCookie(expected, got) => {
+                write!(f, "Received invalid cookie, expected {expected}, got {got}")
+            }
             RendezvousExpected(got) => write!(f, "Expected rendezvous packet, got {got:?}"),
             CookiesMatched(cookie) => write!(
                 f,

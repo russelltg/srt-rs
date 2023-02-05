@@ -251,7 +251,8 @@ impl Add<TimeSpan> for Instant {
         if micros > 0 {
             self + Duration::from_micros(micros as u64)
         } else {
-            self.checked_sub(Duration::from_micros(micros.unsigned_abs())).unwrap()
+            self.checked_sub(Duration::from_micros(micros.unsigned_abs()))
+                .unwrap()
         }
     }
 }
@@ -264,7 +265,8 @@ impl Sub<TimeSpan> for Instant {
         if micros > 0 {
             self + Duration::from_micros(micros as u64)
         } else {
-            self.checked_sub(Duration::from_micros(micros.unsigned_abs())).unwrap()
+            self.checked_sub(Duration::from_micros(micros.unsigned_abs()))
+                .unwrap()
         }
     }
 }
