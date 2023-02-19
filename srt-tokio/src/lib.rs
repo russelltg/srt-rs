@@ -54,6 +54,7 @@ mod watch;
 
 pub use srt_protocol::access;
 pub use srt_protocol::options;
+pub use net::bind_socket;
 
 pub use crate::{
     listener::{ConnectionRequest, ListenerStatistics, SrtIncoming, SrtListener},

@@ -280,7 +280,8 @@ impl SrtEpoll {
                                 SocketData::Accepting(_) => todo!(),
                                 SocketData::InvalidIntermediateState
                                 | SocketData::Closed
-                                | SocketData::Initialized(_, _, _) => None,
+                                | SocketData::Initialized(_, _, _)
+                                | SocketData::Bound(_, _, _, _) => None,
                             }
                         }
                         SrtEpollEntry::Sys(sock, flags) => {

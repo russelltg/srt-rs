@@ -29,7 +29,7 @@ use srt_protocol::{
     settings::{KeySettings, KeySize, Passphrase},
 };
 use srt_tokio::{SrtListener, SrtSocket};
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::{net::UdpSocket, sync::oneshot, task::JoinHandle};
 
 use crate::c_api::{
     get_sock, insert_socket, srt_close, srt_listen_callback_fn, SrtError, SRTSOCKET, SRT_SOCKOPT,
@@ -58,6 +58,7 @@ pub struct CSrtSocket(i32);
 #[derive(Debug)]
 pub enum SocketData {
     Initialized(SocketOptions, Option<StreamId>, ApiOptions),
+    Bound(SocketOptions, UdpSocket, Option<StreamId>, ApiOptions),
     ConnectingNonBlocking(Shared<tokio::sync::oneshot::Receiver<()>>, ApiOptions),
     Established(SrtSocket, ApiOptions),
     Listening(
@@ -138,6 +139,7 @@ impl SocketData {
         use SocketData::*;
         match self {
             Initialized(_, _, opts)
+            | Bound(_, _, _, opts)
             | ConnectingNonBlocking(_, opts)
             | Established(_, opts)
             | Listening(_, _, _, opts) => Some(opts),
@@ -164,7 +166,7 @@ impl SocketData {
     fn opts_mut(&mut self) -> (Option<&mut ApiOptions>, Option<&mut SocketOptions>) {
         use SocketData::*;
         match self {
-            Initialized(so, _, ai) => (Some(ai), Some(so)),
+            Initialized(so, _, ai) | Bound(so, _, _, ai) => (Some(ai), Some(so)),
             ConnectingNonBlocking(_, ai) | Established(_, ai) | Listening(_, _, _, ai) => {
                 (Some(ai), None)
             }
@@ -394,12 +396,12 @@ impl SocketData {
 
     pub fn listen(&mut self, sock: Arc<Mutex<SocketData>>) -> Result<(), SrtError> {
         let sd = replace(self, SocketData::InvalidIntermediateState);
-        if let SocketData::Initialized(so, _, initial_opts) = sd {
+        if let SocketData::Bound(so, socket, _, initial_opts) = sd {
             let options = ListenerOptions { socket: so }
                 .try_validate()
                 .map_err(|e| SrtError::new(SRT_EINVOP, e))?;
             let (listener, mut incoming) = TOKIO_RUNTIME
-                .block_on(SrtListener::bind(options))
+                .block_on(SrtListener::bind_with_socket(options, socket))
                 .map_err(|e| SrtError::new(SRT_EINVOP, e))?;
 
             let (mut s, r) = mpsc::channel(1024);
