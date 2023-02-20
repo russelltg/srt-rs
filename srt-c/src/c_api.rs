@@ -802,7 +802,12 @@ pub extern "C" fn srt_recvmsg(sock: SRTSOCKET, buf: *mut c_char, len: c_int) -> 
 }
 
 #[no_mangle]
-pub extern "C" fn srt_recvmsg2(sock: SRTSOCKET, buf: *mut c_char, len: c_int, mctrl: *mut SRT_MSGCTRL) -> c_int {
+pub extern "C" fn srt_recvmsg2(
+    sock: SRTSOCKET,
+    buf: *mut c_char,
+    len: c_int,
+    mctrl: *mut SRT_MSGCTRL,
+) -> c_int {
     let sock = match get_sock(sock) {
         None => return set_error(SRT_EINVSOCK.into()),
         Some(sock) => sock,

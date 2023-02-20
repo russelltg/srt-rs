@@ -1,4 +1,5 @@
 use std::{
+    cmp::min,
     ffi::CString,
     io,
     mem::{self, replace, size_of},
@@ -12,13 +13,13 @@ use std::{
         Arc, Mutex, MutexGuard,
     },
     task::Poll,
-    time::Duration, cmp::min,
+    time::Duration,
 };
 
 use futures::{
     channel::mpsc, future::Shared, poll, stream::Peekable, FutureExt, SinkExt, StreamExt,
 };
-use log::{warn, error};
+use log::{error, warn};
 use os_socketaddr::OsSocketAddr;
 use srt_protocol::{
     connection::ConnectionSettings,
@@ -32,8 +33,8 @@ use srt_tokio::{SrtListener, SrtSocket};
 use tokio::{net::UdpSocket, sync::oneshot, task::JoinHandle, time::timeout};
 
 use crate::c_api::{
-    get_sock, insert_socket, srt_close, srt_listen_callback_fn, SrtError, SRTSOCKET, SRT_SOCKOPT,
-    TOKIO_RUNTIME, SRT_MSGCTRL,
+    get_sock, insert_socket, srt_close, srt_listen_callback_fn, SrtError, SRTSOCKET, SRT_MSGCTRL,
+    SRT_SOCKOPT, TOKIO_RUNTIME,
 };
 use crate::errors::SRT_ERRNO::{self, *};
 
@@ -579,7 +580,11 @@ impl SocketData {
         }
     }
 
-    pub fn recv(mut l: MutexGuard<SocketData>, bytes: &mut [u8], mctrl: Option<&mut SRT_MSGCTRL>) -> Result<usize, SrtError> {
+    pub fn recv(
+        mut l: MutexGuard<SocketData>,
+        bytes: &mut [u8],
+        mctrl: Option<&mut SRT_MSGCTRL>,
+    ) -> Result<usize, SrtError> {
         if let SocketData::Established(ref mut sock, opts) = *l {
             TOKIO_RUNTIME.block_on(async {
                 let d = if opts.rcv_syn {
