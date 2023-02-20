@@ -4,6 +4,8 @@ pragma_once = true
 after_includes = """
 #if defined __linux__ || defined __APPLE__
     #include <sys/socket.h>
+    #include <arpa/inet.h>
+    #include <netinet/in.h>
 #elif defined _WIN32 || defined WIN32
     #include <winsock2.h>
 #endif
@@ -11,5 +13,5 @@ after_includes = """
 cpp_compat = true
 
 [export]
-include = ["SRT_TRANSTYPE", "SRT_EPOLL_OPT", "SRT_ERRNO", "SRT_KM_STATE"]
+include = ["SRT_TRANSTYPE", "SRT_EPOLL_OPT", "SRT_ERRNO", "SRT_KM_STATE", "SRT_REJECT_REASON"]
 exclude = ["call_callback_wrap_exception"]

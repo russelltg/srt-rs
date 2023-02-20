@@ -12,13 +12,13 @@ use std::{
         Arc, Mutex, MutexGuard,
     },
     task::Poll,
-    time::Duration,
+    time::Duration, cmp::min,
 };
 
 use futures::{
     channel::mpsc, future::Shared, poll, stream::Peekable, FutureExt, SinkExt, StreamExt,
 };
-use log::warn;
+use log::{warn, error};
 use os_socketaddr::OsSocketAddr;
 use srt_protocol::{
     connection::ConnectionSettings,
@@ -29,11 +29,11 @@ use srt_protocol::{
     settings::{KeySettings, KeySize, Passphrase},
 };
 use srt_tokio::{SrtListener, SrtSocket};
-use tokio::{net::UdpSocket, sync::oneshot, task::JoinHandle};
+use tokio::{net::UdpSocket, sync::oneshot, task::JoinHandle, time::timeout};
 
 use crate::c_api::{
     get_sock, insert_socket, srt_close, srt_listen_callback_fn, SrtError, SRTSOCKET, SRT_SOCKOPT,
-    TOKIO_RUNTIME,
+    TOKIO_RUNTIME, SRT_MSGCTRL,
 };
 use crate::errors::SRT_ERRNO::{self, *};
 
@@ -576,6 +576,39 @@ impl SocketData {
             Ok((new_sock, addr))
         } else {
             Err(SRT_ENOLISTEN.into())
+        }
+    }
+
+    pub fn recv(mut l: MutexGuard<SocketData>, bytes: &mut [u8], mctrl: Option<&mut SRT_MSGCTRL>) -> Result<usize, SrtError> {
+        if let SocketData::Established(ref mut sock, opts) = *l {
+            TOKIO_RUNTIME.block_on(async {
+                let d = if opts.rcv_syn {
+                    // block
+                    sock.next().await
+                } else {
+                    // nonblock
+                    match timeout(Duration::from_millis(10), sock.next()).await {
+                        Err(_) => return Err(SRT_EASYNCRCV.into()),
+                        Ok(d) => d,
+                    }
+                };
+
+                let (_, recvd) = match d {
+                    Some(Ok(d)) => d,
+                    Some(Err(e)) => return Err(SrtError::new(SRT_ECONNLOST, e)), // TODO: not sure which error exactly here
+                    None => return Err(SRT_ECONNLOST.into()),
+                };
+
+                if bytes.len() < recvd.len() {
+                    error!("Receive buffer was not large enough, truncating...");
+                }
+
+                let bytes_to_write = min(bytes.len(), recvd.len());
+                bytes[..bytes_to_write].copy_from_slice(&recvd[..bytes_to_write]);
+                Ok(bytes_to_write)
+            })
+        } else {
+            Err(SRT_ENOCONN.into())
         }
     }
 
