@@ -5,6 +5,7 @@ use crate::epoll::EpollFlags;
 use crate::errors::{SRT_ERRNO, SRT_ERRNO::*};
 use crate::socket::{CSrtSocket, SocketData};
 
+use std::mem;
 use std::{
     cell::RefCell,
     cmp::min,
@@ -22,6 +23,8 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+use srt_tokio::bind_socket;
 
 use tokio::{
     runtime::{self, Runtime},
@@ -381,14 +384,33 @@ pub extern "C" fn srt_bind(
         None => return set_error(SRT_EINVSOCK.into()),
         Some(sock) => sock,
     };
+    let (mut opts, sid, aopts) = {
+        let mut l = sock.lock().unwrap();
+        match mem::replace(&mut *l, SocketData::InvalidIntermediateState) {
+            SocketData::Initialized(opts, sid, aopts) => (opts, sid, aopts),
+            other => {
+                *l = other;
+                return set_error(SRT_ECONNSOCK.into());
+            }
+        }
+    };
+
+    opts.connect.local = name;
+
+    let socket = TOKIO_RUNTIME.block_on(async {
+        bind_socket(&opts)
+            .await
+            .map_err(|e| SrtError::new(SRT_EBINDCONFLICT, format!("{}", e)))
+    });
+
+    let socket = match socket {
+        Ok(socket) => socket,
+        Err(e) => return set_error(e),
+    };
 
     let mut l = sock.lock().unwrap();
-    if let SocketData::Initialized(ref mut b, _, _) = *l {
-        b.connect.local = name;
-        SRT_SUCCESS
-    } else {
-        set_error(SRT_ECONNSOCK.into())
-    }
+    *l = SocketData::Bound(opts, socket, sid, aopts);
+    SRT_SUCCESS
 }
 
 #[no_mangle]
@@ -935,6 +957,7 @@ pub extern "C" fn srt_getsockstate(sock: SRTSOCKET) -> SRT_SOCKSTATUS {
     let l = sock.lock().unwrap();
     match *l {
         SocketData::Initialized(_, _, _) => SRTS_INIT,
+        SocketData::Bound(_, _, _, _) => SRTS_INIT, // TODO: not sure if this is correct
         SocketData::ConnectingNonBlocking(_, _) => SRTS_CONNECTING,
         SocketData::Established(_, _) => SRTS_CONNECTED,
         SocketData::Listening(_, _, _, _) => SRTS_LISTENING,
