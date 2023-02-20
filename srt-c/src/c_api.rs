@@ -398,7 +398,9 @@ pub extern "C" fn srt_bind(
     opts.connect.local = name;
 
     let socket = TOKIO_RUNTIME.block_on(async {
-        bind_socket(&opts).await.map_err(|e| SrtError::new(SRT_EBINDCONFLICT, format!("{}", e)))
+        bind_socket(&opts)
+            .await
+            .map_err(|e| SrtError::new(SRT_EBINDCONFLICT, format!("{}", e)))
     });
 
     let socket = match socket {
