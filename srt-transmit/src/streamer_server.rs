@@ -127,7 +127,7 @@ mod tests {
             while end > Instant::now() {
                 count += 1;
                 server
-                    .send((Instant::now(), Bytes::from(format!("asdf {}", count))))
+                    .send((Instant::now(), Bytes::from(format!("asdf {count}"))))
                     .await
                     .unwrap();
                 sleep(Duration::from_millis(10)).await;

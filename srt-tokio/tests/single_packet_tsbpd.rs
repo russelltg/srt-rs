@@ -38,8 +38,7 @@ async fn single_packet_tsbpd() {
         let delay_ms = start.elapsed().as_millis();
         assert!(
             delay_ms < 5500 && delay_ms > 4900,
-            "Was not around 5s later, was {}ms",
-            delay_ms
+            "Was not around 5s later, was {delay_ms}ms"
         );
 
         assert_eq!(&packet, "Hello World!");
@@ -47,8 +46,7 @@ async fn single_packet_tsbpd() {
         let expected_displacement = TimeSpan::from_micros(5000);
         let displacement = TimeSpan::from_interval(start, time);
         assert!(displacement < expected_displacement,
-            "TsbPd time calculated for the packet should be close to `start` time\nExpected: < {:?}\nActual: {:?}\n",
-            expected_displacement, displacement);
+            "TsbPd time calculated for the packet should be close to `start` time\nExpected: < {expected_displacement:?}\nActual: {displacement:?}\n");
 
         // the recvr should return None now
         assert!(recvr.next().await.is_none());

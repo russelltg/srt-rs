@@ -67,7 +67,7 @@ impl fmt::Display for SrtVersion {
 
 impl fmt::Debug for SrtVersion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self)
+        write!(f, "{self}")
     }
 }
 

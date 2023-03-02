@@ -37,8 +37,7 @@ impl Display for StreamIdError {
             FromUtf8(error) => Display::fmt(error, f),
             Length(len) => write!(
                 f,
-                "StreamId value length of {} exceeded the limit of 512 bytes",
-                len
+                "StreamId value length of {len} exceeded the limit of 512 bytes"
             ),
         }
     }

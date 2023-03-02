@@ -92,8 +92,7 @@ fn do_lossy_test(seed: u64, count: usize) {
                 let diff_ms = (now - ts).as_millis();
                 assert!(
                     700 < diff_ms && diff_ms < 1300,
-                    "Latency not in tolerance zone: {}ms",
-                    diff_ms
+                    "Latency not in tolerance zone: {diff_ms}ms"
                 );
 
                 let actual: i32 = str::from_utf8(&payload[..]).unwrap().parse().unwrap();
@@ -136,7 +135,7 @@ fn do_lossy_test(seed: u64, count: usize) {
     info!("Received: {}", received);
 
     assert_ne!(received, 0);
-    assert!(dropped < 15, "Expected less than 15 drops, got {}", dropped);
+    assert!(dropped < 15, "Expected less than 15 drops, got {dropped}");
 }
 
 #[test]
@@ -152,7 +151,7 @@ fn high_bandwidth_deterministic() {
 }
 
 fn do_high_bandwidth_deterministic(seed: u64, count: usize) {
-    println!("Seed is: {}, count is: {}", seed, count);
+    println!("Seed is: {seed}, count is: {count}");
 
     let start = Instant::now();
 

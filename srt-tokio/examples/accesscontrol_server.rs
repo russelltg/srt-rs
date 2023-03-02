@@ -45,7 +45,7 @@ async fn main() -> io::Result<()> {
                 let mut stream = stream::iter(
                     Some(Ok((
                         Instant::now(),
-                        Bytes::from(format!("Hello admin!! Your SID is {:?}", stream_id)),
+                        Bytes::from(format!("Hello admin!! Your SID is {stream_id:?}")),
                     )))
                     .into_iter(),
                 );

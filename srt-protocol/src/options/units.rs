@@ -6,7 +6,7 @@ use std::{
 use derive_more::*;
 
 #[derive(Debug, Deref, Display, Into, Mul, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt = "{} bytes", "_0")]
+#[display(fmt = "{_0} bytes")]
 pub struct ByteCount(pub u64);
 
 impl From<ByteCount> for usize {
@@ -24,7 +24,7 @@ impl Div<PacketSize> for ByteCount {
 }
 
 #[derive(Debug, Deref, Display, Into, Add, Sub, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt = "{} bytes", "_0")]
+#[display(fmt = "{_0} bytes")]
 pub struct PacketSize(pub u64);
 
 impl From<PacketSize> for usize {
@@ -34,7 +34,7 @@ impl From<PacketSize> for usize {
 }
 
 #[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt = "{} packets", "_0")]
+#[display(fmt = "{_0} packets")]
 pub struct PacketCount(pub u64);
 
 impl From<PacketCount> for usize {
@@ -66,17 +66,16 @@ impl PacketCount {
 }
 
 #[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt = "{} bytes/s", "_0")]
+#[display(fmt = "{_0} bytes/s")]
 pub struct DataRate(pub u64);
 
 impl Mul<Duration> for DataRate {
     type Output = ByteCount;
 
     fn mul(self, rhs: Duration) -> Self::Output {
-        let bytes_nearest_second = self.0 * rhs.as_secs() as u64;
-        let bytes_scaled_for_micros =
-            (self.0 as usize).saturating_mul(rhs.subsec_micros() as usize);
-        let bytes_remaining_micros = (bytes_scaled_for_micros / 1_000_000) as u64;
+        let bytes_nearest_second = self.0 * rhs.as_secs();
+        let bytes_scaled_for_micros = self.0.saturating_mul(u64::from(rhs.subsec_micros()));
+        let bytes_remaining_micros = bytes_scaled_for_micros / 1_000_000;
         ByteCount(bytes_nearest_second + bytes_remaining_micros)
     }
 }
@@ -96,14 +95,14 @@ impl DataRate {
 }
 
 #[derive(Debug, Deref, Display, Into, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt = "{} packets/s", "_0")]
+#[display(fmt = "{_0} packets/s")]
 pub struct PacketRate(pub u64);
 
 impl Mul<Duration> for PacketRate {
     type Output = PacketCount;
 
     fn mul(self, rhs: Duration) -> Self::Output {
-        let packets_nearest_second = self.0 * rhs.as_secs() as u64;
+        let packets_nearest_second = self.0 * rhs.as_secs();
         let packets_scaled_for_micros =
             (self.0 as usize).saturating_mul(rhs.subsec_micros() as usize);
         let packets_remaining_micros = (packets_scaled_for_micros / 1_000_000) as u64;
@@ -153,7 +152,7 @@ impl PacketPeriod {
         if packet_size.0 > 0 {
             let period = packet_size.0 * 1_000_000 / data_rate.0;
             if period > 0 {
-                return Some(Duration::from_micros(period as u64));
+                return Some(Duration::from_micros(period));
             }
         }
         None
@@ -161,7 +160,7 @@ impl PacketPeriod {
 }
 
 #[derive(Debug, Deref, Display, Into, Add, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[display(fmt = "{}%", "_0")]
+#[display(fmt = "{_0}%")]
 pub struct Percent(pub u64);
 
 impl Mul<DataRate> for Percent {

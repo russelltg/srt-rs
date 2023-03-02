@@ -32,12 +32,11 @@ async fn main() -> anyhow::Result<()> {
         path: &str,
         elementary_streams: &[CodecParameters],
     ) -> Result<Muxer<File>, Error> {
-        let output_format = OutputFormat::find_by_name("dash").ok_or_else(|| {
-            Error::new(format!("unable to guess output format for file: {}", path))
-        })?;
+        let output_format = OutputFormat::find_by_name("dash")
+            .ok_or_else(|| Error::new(format!("unable to guess output format for file: {path}")))?;
 
         let output = File::create(path)
-            .map_err(|err| Error::new(format!("unable to create output file {}: {}", path, err)))?;
+            .map_err(|err| Error::new(format!("unable to create output file {path}: {err}")))?;
 
         let io = IO::from_seekable_write_stream(output);
 
@@ -106,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
         for (index, stream) in demuxer.streams().iter().enumerate() {
             let params = stream.codec_parameters();
 
-            println!("Stream #{}:", index);
+            println!("Stream #{index}:");
             println!("  duration: {:?}", stream.duration().as_f64());
             let tb = stream.time_base();
             println!("  time base: {} / {}", tb.num(), tb.den());
@@ -148,7 +147,7 @@ async fn main() -> anyhow::Result<()> {
 
         while let Some(packet) = demuxer.take()? {
             if let Err(e) = muxer.push(packet) {
-                println!("Err: {}", e);
+                println!("Err: {e}");
             }
         }
 
@@ -192,21 +191,18 @@ async fn main() -> anyhow::Result<()> {
                     socket_id,
                     socket.settings().stream_id,
                 );
-                println!("New client connected: {}", client_desc);
+                println!("New client connected: {client_desc}");
                 let count = handle_socket(socket, tx).await?;
-                println!(
-                    "Client {} disconnected, received {:?} packets",
-                    client_desc, count
-                );
+                println!("Client {client_desc} disconnected, received {count:?} packets");
                 Ok::<_, anyhow::Error>(())
             };
             let (r1, r2) = tokio::join!(f1, f2);
 
             if let Err(e) = r1 {
-                println!("Error in input handler: {}", e);
+                println!("Error in input handler: {e}");
             }
             if let Err(e) = r2 {
-                println!("Error in socket handler: {}", e);
+                println!("Error in socket handler: {e}");
             }
         });
     }

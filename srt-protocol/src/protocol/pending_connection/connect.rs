@@ -4,6 +4,7 @@ use std::{
     time::Instant,
 };
 
+use log::info;
 use ConnectError::*;
 use ConnectState::*;
 use ConnectionResult::*;
@@ -179,6 +180,10 @@ impl Connect {
                 (_, Packet::Data(data)) => NotHandled(ControlExpected(data)),
                 (_, _) => NoAction,
             },
+            Err(Io(error)) if error.kind() == ErrorKind::ConnectionReset => {
+                info!("ConnectionReset received, listener may not have opened the port yet...");
+                NoAction
+            }
             Err(Io(error)) => Failure(error),
             Err(Parse(PacketParseError::BadConnectionType(c))) => Failure(std::io::Error::new(
                 ErrorKind::ConnectionReset,

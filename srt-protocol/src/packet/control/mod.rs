@@ -607,7 +607,7 @@ impl ControlTypes {
                                         if !extensions.contains(ExtFlags::HS) {
                                             warn!("Handshake contains handshake extension type {} without HSREQ flag!", pack_type);
                                         }
-                                        if ext_hs != None {
+                                        if ext_hs.is_some() {
                                             warn!("Handshake contains multiple handshake extensions, only the last will be applied!");
                                         }
                                         ext_hs =
@@ -617,7 +617,7 @@ impl ControlTypes {
                                         if !extensions.contains(ExtFlags::KM) {
                                             warn!("Handshake contains key material extension type {} without KMREQ flag!", pack_type);
                                         }
-                                        if ext_km != None {
+                                        if ext_km.is_some() {
                                             warn!("Handshake contains multiple key material extensions, only the last will be applied!");
                                         }
                                         ext_km =
@@ -764,7 +764,7 @@ impl ControlTypes {
                 let end = SeqNumber::new_truncate(buf.get_u32());
 
                 Ok(ControlTypes::DropRequest {
-                    msg_to_drop: MsgNumber::new_truncate(extra_info as u32), // cast is safe, just reinterpret
+                    msg_to_drop: MsgNumber::new_truncate(extra_info), // cast is safe, just reinterpret
                     range: RangeInclusive::new(start, end),
                 })
             }
@@ -863,20 +863,20 @@ impl ControlTypes {
 impl Debug for ControlTypes {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         match self {
-            ControlTypes::Handshake(hs) => write!(f, "{:?}", hs),
+            ControlTypes::Handshake(hs) => write!(f, "{hs:?}"),
             ControlTypes::KeepAlive => write!(f, "KeepAlive"),
-            ControlTypes::Ack(aci) => write!(f, "{:?}", aci),
+            ControlTypes::Ack(aci) => write!(f, "{aci:?}"),
             ControlTypes::Nak(nak) => {
-                write!(f, "Nak({:?})", nak) // TODO could be better, show ranges
+                write!(f, "Nak({nak:?})") // TODO could be better, show ranges
             }
             ControlTypes::CongestionWarning => write!(f, "CongestionWarning"),
             ControlTypes::Shutdown => write!(f, "Shutdown"),
             ControlTypes::Ack2(ackno) => write!(f, "Ack2({})", ackno.0),
             ControlTypes::DropRequest { msg_to_drop, range } => {
-                write!(f, "DropReq(msg={} {:?})", msg_to_drop, range)
+                write!(f, "DropReq(msg={msg_to_drop} {range:?})")
             }
-            ControlTypes::PeerError(e) => write!(f, "PeerError({})", e),
-            ControlTypes::Srt(srt) => write!(f, "{:?}", srt),
+            ControlTypes::PeerError(e) => write!(f, "PeerError({e})"),
+            ControlTypes::Srt(srt) => write!(f, "{srt:?}"),
         }
     }
 }
@@ -943,7 +943,7 @@ impl Debug for CompressedLossList {
                 let b = iter.next().expect("Unterminated list");
                 write!(f, "{}..={},", a & 0x7fffffff, b)?;
             } else {
-                write!(f, "{},", a)?;
+                write!(f, "{a},")?;
             }
         }
         Ok(())
@@ -1060,17 +1060,17 @@ impl Debug for HandshakeControlInfo {
 impl Debug for HandshakeVsInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            HandshakeVsInfo::V4(stype) => write!(f, "UDT: {:?}", stype),
+            HandshakeVsInfo::V4(stype) => write!(f, "UDT: {stype:?}"),
             HandshakeVsInfo::V5(hs) => {
                 write!(f, "SRT: crypto={:?}", hs.crypto_size)?;
                 if let Some(pack) = &hs.ext_hs {
-                    write!(f, " hs={:?}", pack)?;
+                    write!(f, " hs={pack:?}")?;
                 }
                 if let Some(pack) = &hs.ext_km {
-                    write!(f, " km={:?}", pack)?;
+                    write!(f, " km={pack:?}")?;
                 }
                 if let Some(sid) = &hs.sid {
-                    write!(f, " sid={:?}", sid)?;
+                    write!(f, " sid={sid:?}")?;
                 }
                 Ok(())
             }
@@ -1139,11 +1139,11 @@ impl From<RejectReason> for i32 {
 impl Display for RejectReason {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            RejectReason::Core(c) => write!(f, "{}", c),
-            RejectReason::CoreUnrecognized(c) => write!(f, "Unrecognized core error: {}", c),
-            RejectReason::Server(s) => write!(f, "{}", s),
-            RejectReason::ServerUnrecognized(s) => write!(f, "Unrecognized server error: {}", s),
-            RejectReason::User(u) => write!(f, "User error: {}", u),
+            RejectReason::Core(c) => write!(f, "{c}"),
+            RejectReason::CoreUnrecognized(c) => write!(f, "Unrecognized core error: {c}"),
+            RejectReason::Server(s) => write!(f, "{s}"),
+            RejectReason::ServerUnrecognized(s) => write!(f, "Unrecognized server error: {s}"),
+            RejectReason::User(u) => write!(f, "User error: {u}"),
         }
     }
 }
@@ -1384,8 +1384,7 @@ mod test {
         assert_eq!(
             pack.wire_size(),
             buf.len() + 28,
-            "Packet {:?} wrong wire size",
-            pack
+            "Packet {pack:?} wrong wire size"
         ); // 28 is is IP+UDP buffer
 
         buf

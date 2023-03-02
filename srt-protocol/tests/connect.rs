@@ -204,7 +204,7 @@ fn lossy_connect() {
 
     for _ in 0..100 {
         let seed = rand::random();
-        println!("Connect seed is {}", seed);
+        println!("Connect seed is {seed}");
         do_lossy_connect(seed);
     }
 }
@@ -278,7 +278,7 @@ fn lossy_rendezvous() {
 }
 
 fn do_lossy_rendezvous(seed: u64) {
-    println!("Rendezvous seed is {}", seed);
+    println!("Rendezvous seed is {seed}");
 
     let a_sa: SocketAddr = ([127, 0, 0, 1], 2222).into();
     let b_sa: SocketAddr = ([127, 0, 0, 1], 2224).into();

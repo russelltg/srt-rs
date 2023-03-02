@@ -12,10 +12,9 @@ use tokio::io::Interest;
 use tokio::pin;
 use tokio::time::sleep;
 
+use crate::c_api::{get_sock, SrtError, SYSSOCKET, TOKIO_RUNTIME};
 use crate::errors::SRT_ERRNO::*;
 use crate::socket::{CSrtSocket, SocketData};
-use crate::{get_sock, SrtError};
-use crate::{SYSSOCKET, TOKIO_RUNTIME};
 
 #[derive(Debug)]
 enum SrtEpollEntry {
@@ -281,7 +280,8 @@ impl SrtEpoll {
                                 SocketData::Accepting(_) => todo!(),
                                 SocketData::InvalidIntermediateState
                                 | SocketData::Closed
-                                | SocketData::Initialized(_, _, _) => None,
+                                | SocketData::Initialized(_, _, _)
+                                | SocketData::Bound(_, _, _, _) => None,
                             }
                         }
                         SrtEpollEntry::Sys(sock, flags) => {

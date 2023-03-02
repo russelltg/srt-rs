@@ -315,7 +315,7 @@ mod test {
         assert_eq!(kek.0.as_bytes(), expected_kek);
 
         // ensure that secrets don't make it into any logs
-        assert_eq!(format!("{:?}", kek), "KeyEncryptionKey::Bytes16");
+        assert_eq!(format!("{kek:?}"), "KeyEncryptionKey::Bytes16");
         assert_eq!(format!("{:?}", kek.deref()), "EncryptionKey::Bytes16");
 
         assert_ne!(Salt::new_random(), Salt::new_random());
@@ -336,11 +336,11 @@ mod test {
         assert_eq!(iv, expected_iv);
 
         assert_eq!(
-            format!("{:?}", iv),
+            format!("{iv:?}"),
             "StreamIV(0x87647F8A2361FB1A9E6907AF1B810000)"
         );
         assert_eq!(
-            format!("{:?}", salt),
+            format!("{salt:?}"),
             "Salt(0x87647F8A2361FB1A9E692DE576985949)"
         );
 

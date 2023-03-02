@@ -29,8 +29,7 @@ fn find_stransmit_rs() -> PathBuf {
 
     assert!(
         stransmit_rs_path.exists(),
-        "Could not find stransmit at {:?}",
-        stransmit_rs_path
+        "Could not find stransmit at {stransmit_rs_path:?}"
     );
 
     stransmit_rs_path
@@ -44,7 +43,7 @@ async fn receiver_timeout() {
 
     let stranmsit_rs = find_stransmit_rs();
     let mut a = Command::new(&stranmsit_rs)
-        .args(&["-", "srt://:1878"])
+        .args(["-", "srt://:1878"])
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();
@@ -75,7 +74,7 @@ async fn sender_timeout() {
 
     let stranmsit_rs = find_stransmit_rs();
     let mut a = Command::new(&stranmsit_rs)
-        .args(&["srt://localhost:1879", "-"])
+        .args(["srt://localhost:1879", "-"])
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();

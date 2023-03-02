@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
     for (index, stream) in demuxer.streams().iter().enumerate() {
         let params = stream.codec_parameters();
 
-        println!("Stream #{}:", index);
+        println!("Stream #{index}:");
         println!("  duration: {}", stream.duration().as_f64().unwrap_or(0f64));
 
         if let Some(params) = params.as_audio_codec_parameters() {

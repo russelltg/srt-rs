@@ -228,7 +228,7 @@ mod sender_congestion_control {
         );
         let snd_period = control.on_input(start + micros(100_000), PacketCount(0), ByteCount(0));
 
-        let expected_snd_period = (mean_packet_size * 10 * 100_000) / expected_data_rate as u64;
+        let expected_snd_period = (mean_packet_size * 10 * 100_000) / expected_data_rate;
 
         assert_eq!(snd_period, Some(micros(expected_snd_period)));
     }

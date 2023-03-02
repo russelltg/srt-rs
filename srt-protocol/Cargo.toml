@@ -9,6 +9,7 @@ name = "srt-protocol"
 publish = false
 repository = "https://github.com/russelltg/srt-rs"
 version = "0.1.0"
+
 [dependencies]
 array-init = "2.0.0"
 arraydeque = "0.4.5"

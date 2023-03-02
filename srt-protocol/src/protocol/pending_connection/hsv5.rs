@@ -125,7 +125,7 @@ pub fn gen_access_control_response(
         ConnectionSettings {
             remote: from,
             rtt,
-            socket_start_time: now - rtt / 2, // initiate happened 0.5RTT ago
+            socket_start_time: now.checked_sub(rtt / 2).unwrap(), // initiate happened 0.5RTT ago
             remote_sockid: with_hsv5.socket_id,
             init_seq_num: with_hsv5.init_seq_num,
             cipher,

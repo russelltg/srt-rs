@@ -14,7 +14,7 @@ use std::{
 
 use anyhow::{anyhow, bail, format_err, Error};
 use bytes::Bytes;
-use clap::{Arg, Command, ArgAction};
+use clap::{Arg, ArgAction, Command};
 use log::info;
 use url::{Host, Url};
 
@@ -258,8 +258,8 @@ async fn make_srt_input(
         .boxed())
 }
 
-fn resolve_input<'a>(
-    input_url: DataType<'a>,
+fn resolve_input(
+    input_url: DataType,
 ) -> Result<BoxStream<'static, Result<BoxStream<'static, Bytes>, Error>>, Error> {
     Ok(match input_url {
         DataType::Url(input_url) => {
@@ -583,10 +583,7 @@ impl Sink<Bytes> for MultiSinkFlatten {
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
-        eprintln!(
-            "Invalid settings detected: {}\n\nSee srt-transmit --help for more info",
-            e
-        );
+        eprintln!("Invalid settings detected: {e}\n\nSee srt-transmit --help for more info");
         exit(1);
     }
 }
@@ -611,7 +608,7 @@ async fn run() -> Result<(), Error> {
             Arg::new("TO")
                 .help("Sets the output url")
                 .required(true)
-                .action(ArgAction::Append)
+                .action(ArgAction::Append),
         )
         .after_help(AFTER_HELPTEXT)
         .get_matches();

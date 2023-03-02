@@ -4,6 +4,7 @@ use std::{
     time::Instant,
 };
 
+use assert_matches::assert_matches;
 use bytes::Bytes;
 use futures::{future::try_join_all, stream, SinkExt, StreamExt};
 use log::info;
@@ -56,18 +57,18 @@ async fn streamid() -> io::Result<()> {
     let (mut server, mut incoming) = SrtListener::builder().bind(2000).await.unwrap();
     let listener = tokio::spawn(async move {
         while let Some(request) = incoming.incoming().next().await {
-            let mut sender = match accept(request.stream_id()) {
-                Ok(mut ap) => request.accept(ap.take_key_settings()).await.unwrap(),
-                Err(rr) => {
-                    request.reject(rr).await.unwrap();
-                    continue;
-                }
-            };
-
-            let mut stream =
-                stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());
-
             tokio::spawn(async move {
+                let mut sender = match accept(request.stream_id()) {
+                    Ok(mut ap) => request.accept(ap.take_key_settings()).await.unwrap(),
+                    Err(rr) => {
+                        request.reject(rr).await.unwrap();
+                        return;
+                    }
+                };
+
+                let mut stream =
+                    stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());
+
                 sender.send_all(&mut stream).await.unwrap();
                 sender.close().await.unwrap();
                 info!("Sender finished");
@@ -81,7 +82,7 @@ async fn streamid() -> io::Result<()> {
         join_handles.push(tokio::spawn(async move {
             let stream_id = AccessControlList(vec![
                 StandardAccessControlEntry::UserName("russell".into()).into(),
-                StandardAccessControlEntry::ResourceName(format!("{}", i)).into(),
+                StandardAccessControlEntry::ResourceName(format!("{i}")).into(),
             ])
             .to_string();
 
@@ -98,19 +99,18 @@ async fn streamid() -> io::Result<()> {
                         ServerRejectReason::BadRequest.into()
                     )))
                 );
-                return;
+            } else {
+                let mut recvr = recvr.unwrap();
+
+                info!("Created connection");
+
+                let first = recvr.next().await;
+                assert_matches!(first, Some(Ok((_, b))) if b == "asdf", "sockid={:?}", recvr.settings().local_sockid);
+                let second = recvr.next().await;
+                assert_matches!(second, None);
+
+                info!("Connection done");
             }
-
-            let mut recvr = recvr.unwrap();
-
-            info!("Created connection");
-
-            let first = recvr.next().await;
-            assert_eq!(first.unwrap().unwrap().1, "asdf");
-            let second = recvr.next().await;
-            assert!(second.is_none());
-
-            info!("Connection done");
         }));
     }
 

@@ -279,7 +279,7 @@ mod tests {
         for i in 0..count {
             let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
             assert_eq!(km, None);
-            assert_eq!(packet.encryption, DataEncryption::Even, "{:?}", i);
+            assert_eq!(packet.encryption, DataEncryption::Even, "{i:?}");
         }
 
         let (_, first_packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
@@ -294,7 +294,7 @@ mod tests {
 
         for i in 0..settings.key_refresh.pre_announcement_period() {
             let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
-            assert_eq!(km, None, "{:?}", i);
+            assert_eq!(km, None, "{i:?}");
             assert_eq!(packet.encryption, DataEncryption::Even);
         }
 

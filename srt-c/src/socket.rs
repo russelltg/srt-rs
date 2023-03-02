@@ -3,6 +3,7 @@ use std::{
     io,
     mem::{self, replace, size_of},
     net::SocketAddr,
+    os::raw::c_char,
     os::raw::c_int,
     ptr::{self, NonNull},
     slice,
@@ -28,16 +29,27 @@ use srt_protocol::{
     settings::{KeySettings, KeySize, Passphrase},
 };
 use srt_tokio::{SrtListener, SrtSocket};
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::{net::UdpSocket, sync::oneshot, task::JoinHandle};
 
-use crate::{
-    call_callback_wrap_exception,
-    errors::SRT_ERRNO::{self, *},
-    get_sock, insert_socket, srt_close, srt_listen_callback_fn, SrtError, SRT_SOCKOPT,
+use crate::c_api::{
+    get_sock, insert_socket, srt_close, srt_listen_callback_fn, SrtError, SRTSOCKET, SRT_SOCKOPT,
     TOKIO_RUNTIME,
 };
+use crate::errors::SRT_ERRNO::{self, *};
 
 static NEXT_SOCKID: AtomicI32 = AtomicI32::new(1);
+
+extern "C" {
+    pub fn call_callback_wrap_exception(
+        func: srt_listen_callback_fn,
+        opaq: *mut (),
+        ns: SRTSOCKET,
+        hsversion: c_int,
+        peeraddr: *const libc::sockaddr,
+        streamid: *const c_char,
+        ret: *mut c_int,
+    ) -> c_int;
+}
 
 #[repr(transparent)]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
@@ -46,6 +58,7 @@ pub struct CSrtSocket(i32);
 #[derive(Debug)]
 pub enum SocketData {
     Initialized(SocketOptions, Option<StreamId>, ApiOptions),
+    Bound(SocketOptions, UdpSocket, Option<StreamId>, ApiOptions),
     ConnectingNonBlocking(Shared<tokio::sync::oneshot::Receiver<()>>, ApiOptions),
     Established(SrtSocket, ApiOptions),
     Listening(
@@ -126,6 +139,7 @@ impl SocketData {
         use SocketData::*;
         match self {
             Initialized(_, _, opts)
+            | Bound(_, _, _, opts)
             | ConnectingNonBlocking(_, opts)
             | Established(_, opts)
             | Listening(_, _, _, opts) => Some(opts),
@@ -152,7 +166,7 @@ impl SocketData {
     fn opts_mut(&mut self) -> (Option<&mut ApiOptions>, Option<&mut SocketOptions>) {
         use SocketData::*;
         match self {
-            Initialized(so, _, ai) => (Some(ai), Some(so)),
+            Initialized(so, _, ai) | Bound(so, _, _, ai) => (Some(ai), Some(so)),
             ConnectingNonBlocking(_, ai) | Established(_, ai) | Listening(_, _, _, ai) => {
                 (Some(ai), None)
             }
@@ -372,8 +386,7 @@ impl SocketData {
                 if optval_len < (str.as_bytes().len() + 1) {
                     return Err(SRT_EINVPARAM.into());
                 }
-                let optval =
-                    slice::from_raw_parts_mut(optval.cast::<u8>().as_mut(), optval_len as usize);
+                let optval = slice::from_raw_parts_mut(optval.cast::<u8>().as_mut(), optval_len);
                 optval[..str.as_bytes().len()].copy_from_slice(str.as_bytes());
                 optval[str.as_bytes().len()] = 0; // null terminator
                 Ok(str.as_bytes().len())
@@ -383,12 +396,12 @@ impl SocketData {
 
     pub fn listen(&mut self, sock: Arc<Mutex<SocketData>>) -> Result<(), SrtError> {
         let sd = replace(self, SocketData::InvalidIntermediateState);
-        if let SocketData::Initialized(so, _, initial_opts) = sd {
+        if let SocketData::Bound(so, socket, _, initial_opts) = sd {
             let options = ListenerOptions { socket: so }
                 .try_validate()
                 .map_err(|e| SrtError::new(SRT_EINVOP, e))?;
             let (listener, mut incoming) = TOKIO_RUNTIME
-                .block_on(SrtListener::bind(options))
+                .block_on(SrtListener::bind_with_socket(options, socket))
                 .map_err(|e| SrtError::new(SRT_EINVOP, e))?;
 
             let (mut s, r) = mpsc::channel(1024);

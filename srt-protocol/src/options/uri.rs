@@ -294,7 +294,7 @@ impl SrtUri {
                     socket.sender.drop_delay = Duration::from_millis(value);
                 }
                 "streamid" => {
-                    stream_id = Some(value.to_owned());
+                    stream_id = Some(value);
                 }
                 "tlpktdrop" => unimplemented!(),
                 "transtype" => return Err(UnimplementedParameter("transtype")),

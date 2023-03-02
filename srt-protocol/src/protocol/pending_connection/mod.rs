@@ -72,34 +72,28 @@ impl fmt::Display for ConnectError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use ConnectError::*;
         match self {
-            ControlExpected(pack) => write!(f, "Expected Control packet, found {:?}", pack),
-            HandshakeExpected(got) => write!(f, "Expected Handshake packet, found: {:?}", got),
-            InductionExpected(got) => write!(f, "Expected Induction (1) packet, found: {:?}", got),
-            WavehandExpected(got) => write!(f, "Expected Waveahand (0) packet, found: {:?}", got),
-            AgreementExpected(got) => write!(f, "Expected Agreement (-2) packet, found: {:?}", got),
+            ControlExpected(pack) => write!(f, "Expected Control packet, found {pack:?}"),
+            HandshakeExpected(got) => write!(f, "Expected Handshake packet, found: {got:?}"),
+            InductionExpected(got) => write!(f, "Expected Induction (1) packet, found: {got:?}"),
+            WavehandExpected(got) => write!(f, "Expected Waveahand (0) packet, found: {got:?}"),
+            AgreementExpected(got) => write!(f, "Expected Agreement (-2) packet, found: {got:?}"),
             UnexpectedHost(host, got) => write!(
                 f,
-                "Expected packets from different host, expected: {} found: {}",
-                host, got
+                "Expected packets from different host, expected: {host} found: {got}"
             ),
             ConclusionExpected(got) => {
-                write!(f, "Expected Conclusion (-1) packet, found: {:?}", got)
+                write!(f, "Expected Conclusion (-1) packet, found: {got:?}")
             }
-            UnsupportedProtocolVersion(got) => write!(
-                f,
-                "Unsupported protocol version, expected: v5 found v{0}",
-                got
-            ),
-            InvalidHandshakeCookie(expected, got) => write!(
-                f,
-                "Received invalid cookie, expected {}, got {}",
-                expected, got
-            ),
-            RendezvousExpected(got) => write!(f, "Expected rendezvous packet, got {:?}", got),
+            UnsupportedProtocolVersion(got) => {
+                write!(f, "Unsupported protocol version, expected: v5 found v{got}")
+            }
+            InvalidHandshakeCookie(expected, got) => {
+                write!(f, "Received invalid cookie, expected {expected}, got {got}")
+            }
+            RendezvousExpected(got) => write!(f, "Expected rendezvous packet, got {got:?}"),
             CookiesMatched(cookie) => write!(
                 f,
-                "Cookies matched, waiting for a new cookie to resolve contest. Cookie: {}",
-                cookie
+                "Cookies matched, waiting for a new cookie to resolve contest. Cookie: {cookie}"
             ),
             ExpectedHsReq => write!(
                 f,
@@ -113,7 +107,7 @@ impl fmt::Display for ConnectError {
             ExpectedNoExtFlags => {
                 write!(f, "Initiator did not expect handshake flags, but got some")
             }
-            ParseFailed(e) => write!(f, "Failed to parse packet: {}", e),
+            ParseFailed(e) => write!(f, "Failed to parse packet: {e}"),
             ExpectedAccessControlResponse => write!(
                 f,
                 "Expected an access control response but instead received a packet from the peer"
@@ -128,8 +122,8 @@ impl fmt::Display for ConnectionReject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use ConnectionReject::*;
         match self {
-            Rejecting(rr) => write!(f, "Local server rejected remote: {}", rr),
-            Rejected(rr) => write!(f, "Remote rejected connection: {}", rr),
+            Rejecting(rr) => write!(f, "Local server rejected remote: {rr}"),
+            Rejected(rr) => write!(f, "Remote rejected connection: {rr}"),
         }
     }
 }

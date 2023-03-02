@@ -174,7 +174,7 @@ mod tests {
                     assert!(result.is_err());
                     debug!("Rejected: {}", i);
                 } else {
-                    let stream_id = format!("{}", i).to_string();
+                    let stream_id = format!("{i}").to_string();
                     let mut receiver = SrtSocket::builder()
                         .call(address, Some(&stream_id))
                         .await
@@ -265,7 +265,7 @@ mod tests {
                     assert!(result.is_err());
                     info!("Rejected: {}", i);
                 } else {
-                    let stream_id = format!("{}", i).to_string();
+                    let stream_id = format!("{i}").to_string();
                     let mut receiver = SrtSocket::builder()
                         .encryption(0, "super secret passcode")
                         .call(address, Some(&stream_id))
