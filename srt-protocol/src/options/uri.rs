@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use regex::Regex;
 use thiserror::Error;
 use url::{Host, ParseError, Url};
 
@@ -31,6 +32,23 @@ pub enum SrtUriError {
     UnimplementedParameter(&'static str),
 }
 
+pub fn url_parse(s: &str, mode_listener: bool) -> Result<Url, ParseError> {
+    let re = Regex::new(r"([a-z]{3})://:([0-9]*)\??(.*)").unwrap();
+    if re.is_match(s) {
+        let caps = re.captures(s).unwrap();
+        let protocol = caps.get(1).map_or("", |m| m.as_str());
+        let port = caps.get(2).map_or("", |m| m.as_str());
+        let options = caps.get(3).map_or("", |m| m.as_str());
+        let listener = if mode_listener { "mode=listener&" } else { "" };
+        Url::parse(&format!(
+            "{}://0.0.0.0:{}?{}{}",
+            protocol, port, listener, options
+        ))
+    } else {
+        Url::parse(s)
+    }
+}
+
 impl TryFrom<Url> for SrtUri {
     type Error = SrtUriError;
 
@@ -44,8 +62,9 @@ impl TryFrom<Url> for SrtUri {
             (Unspecified, None, Some(port), None) => {
                 Ok(SrtUri(ListenerOptions::with(port, socket)?.into()))
             }
-            (Unspecified, None, Some(port), Some(host))
-            | (Listener, Some(host), Some(port), None) => Ok(SrtUri(
+            (Unspecified, None, Some(port), Some(host)) // DEPRECATED
+            | (Listener, Some(host), Some(port), None)
+            | (Listener, Some(_), Some(port), Some(host)) => Ok(SrtUri(
                 ListenerOptions::with(SocketAddress { host, port }, socket)?.into(),
             )),
             (Unspecified, Some(host), Some(port), adapter @ None)
@@ -73,8 +92,7 @@ impl TryFrom<Url> for SrtUri {
                 }
                 Ok(SrtUri(RendezvousOptions::with(remote, socket)?.into()))
             }
-            (Listener, Some(_), Some(_), Some(_))
-            | (Caller, Some(_), None, _)
+            (Caller, Some(_), None, _)
             | (Rendezvous, Some(_), None, _)
             | (Unspecified, None, None, _)
             | (Unspecified, Some(_), None, _)
@@ -92,7 +110,7 @@ impl FromStr for SrtUri {
     type Err = SrtUriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Url::parse(s)?.try_into()
+        url_parse(s, true)?.try_into()
     }
 }
 
@@ -444,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_bandiwdth() {
+    fn parse_bandwidth() {
         let mut socket = SocketOptions::default();
         socket.sender.bandwidth = LiveBandwidthMode::Max(DataRate(10_000_000));
 

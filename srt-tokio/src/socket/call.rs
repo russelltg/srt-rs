@@ -89,7 +89,6 @@ mod test {
 
     use crate::SrtSocket;
     use assert_matches::assert_matches;
-    use tokio::net::UdpSocket;
 
     #[tokio::test]
     async fn conntimeo() {
