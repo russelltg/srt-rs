@@ -33,6 +33,7 @@ pub use socket::*;
 pub use srt_version::*;
 pub use stream_id::*;
 pub use units::*;
+pub use uri::url_parse;
 pub use validation::*;
 
 // see https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md

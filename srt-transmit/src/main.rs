@@ -34,7 +34,9 @@ use tokio::{
 use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
 
 use srt_tokio::{
-    options::{BindOptions, CallerOptions, ListenerOptions, RendezvousOptions, SocketOptions},
+    options::{
+        url_parse, BindOptions, CallerOptions, ListenerOptions, RendezvousOptions, SocketOptions,
+    },
     SrtSocket,
 };
 
@@ -132,7 +134,7 @@ fn local_port_addr(url: &Url, kind: &str) -> Result<(u16, Option<SocketAddr>), E
     Ok(match url.host() {
         // no host means bind to the port specified
         None => (port, None),
-        Some(Host::Domain(d)) if d.is_empty() => (port, None),
+        Some(Host::Domain(d)) if d == "0.0.0.0" => (port, None),
 
         // if host is specified, bind to 0
         Some(Host::Domain(d)) => (
@@ -620,12 +622,12 @@ async fn run() -> Result<(), Error> {
 
     // these are required parameters, so unwrapping them is safe
     let from_str: &String = matches.get_one("FROM").unwrap();
-    let input_url = match Url::parse(from_str) {
+    let input_url = match url_parse(from_str, false) {
         Err(_) => DataType::File(Path::new(from_str)),
         Ok(url) => DataType::Url(url),
     };
     let to_strs = matches.get_many("TO").unwrap();
-    let output_urls_iter = to_strs.map(|to_str: &String| match Url::parse(to_str) {
+    let output_urls_iter = to_strs.map(|to_str: &String| match url_parse(to_str, false) {
         Err(_) => DataType::File(Path::new(to_str)),
         Ok(url) => DataType::Url(url),
     });

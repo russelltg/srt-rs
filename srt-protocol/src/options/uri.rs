@@ -32,6 +32,23 @@ pub enum SrtUriError {
     UnimplementedParameter(&'static str),
 }
 
+pub fn url_parse(s: &str, mode_listener: bool) -> Result<Url, ParseError> {
+    let re = Regex::new(r"([a-z]{3})://:([0-9]*)\??(.*)").unwrap();
+    if re.is_match(s) {
+        let caps = re.captures(s).unwrap();
+        let protocol = caps.get(1).map_or("", |m| m.as_str());
+        let port = caps.get(2).map_or("", |m| m.as_str());
+        let options = caps.get(3).map_or("", |m| m.as_str());
+        let listener = if mode_listener { "mode=listener&" } else { "" };
+        Url::parse(&format!(
+            "{}://0.0.0.0:{}?{}{}",
+            protocol, port, listener, options
+        ))
+    } else {
+        Url::parse(s)
+    }
+}
+
 impl TryFrom<Url> for SrtUri {
     type Error = SrtUriError;
 
@@ -93,20 +110,7 @@ impl FromStr for SrtUri {
     type Err = SrtUriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let re = Regex::new(r"([a-z]{3})://:([0-9]*)\??(.*)").unwrap();
-        if re.is_match(s) {
-            let caps = re.captures(s).unwrap();
-            let protocol = caps.get(1).map_or("", |m| m.as_str());
-            let port = caps.get(2).map_or("", |m| m.as_str());
-            let options = caps.get(3).map_or("", |m| m.as_str());
-            Url::parse(&format!(
-                "{}://0.0.0.0:{}?mode=listener&{}",
-                protocol, port, options
-            ))?
-            .try_into()
-        } else {
-            Url::parse(s)?.try_into()
-        }
+        url_parse(s, true)?.try_into()
     }
 }
 
