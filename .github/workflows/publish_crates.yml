@@ -1,0 +1,66 @@
+name: publish-crates
+run-name: srt-rs is publishing its crates
+
+on:
+  release:
+    types: [ published ] 
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+    publish-c:
+        name: Publish srt-c
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v3
+          - uses: actions-rs/toolchain@v1
+            with:
+                toolchain: stable
+                override: true
+          - name: Publish srt-protocol to crates.io
+            run: cargo publish --manifest-path ./srt-c --token ${CRATES_TOKEN}
+            env:
+              CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+              
+    publish-protocol:
+        name: Publish srt-protocol
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v3
+          - uses: actions-rs/toolchain@v1
+            with:
+                toolchain: stable
+                override: true
+          - name: Publish srt-protocol to crates.io
+            run: cargo publish --manifest-path ./srt-protocol --token ${CRATES_TOKEN}
+            env:
+              CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+   
+    publish-tokio:
+        name: Publish srt-tokio
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v3
+          - uses: actions-rs/toolchain@v1
+            with:
+              toolchain: stable
+              override: true
+          - name: Publish srt-tokio to crates.io
+            run: cargo publish --manifest-path ./srt-tokio --token ${CRATES_TOKEN}
+            env: 
+              CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+              
+    publish-transmit:
+        name: Publish srt-transmit
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v3
+          - uses: actions-rs/toolchain@v1
+            with:
+              toolchain: stable
+              override: true
+          - name: Publish srt-transmit to crates.io
+            run: cargo publish --manifest-path ./srt-transmit --token ${CRATES_TOKEN}
+            env: 
+              CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
