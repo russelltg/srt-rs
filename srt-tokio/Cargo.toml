@@ -13,7 +13,7 @@ version = "0.1.0"
 [dependencies]
 bytes = "1"
 rand = "0.8"
-socket2 = "0.4"
+socket2 = "0.5"
 
 [dependencies.ac-ffmpeg]
 optional = true
