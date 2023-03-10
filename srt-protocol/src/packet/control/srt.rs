@@ -276,15 +276,15 @@ fn le_bytes_to_string(le_bytes: &mut impl Buf) -> Result<String, PacketParseErro
     let mut str_bytes = Vec::with_capacity(le_bytes.remaining());
 
     while le_bytes.remaining() > 4 {
-        str_bytes.extend(&le_bytes.get_u32_le().to_be_bytes());
+        str_bytes.extend(le_bytes.get_u32_le().to_be_bytes());
     }
 
     // make sure to skip padding bytes if any for the last word
     match le_bytes.get_u32_le().to_be_bytes() {
         [a, 0, 0, 0] => str_bytes.push(a),
-        [a, b, 0, 0] => str_bytes.extend(&[a, b]),
-        [a, b, c, 0] => str_bytes.extend(&[a, b, c]),
-        [a, b, c, d] => str_bytes.extend(&[a, b, c, d]),
+        [a, b, 0, 0] => str_bytes.extend([a, b]),
+        [a, b, c, 0] => str_bytes.extend([a, b, c]),
+        [a, b, c, d] => str_bytes.extend([a, b, c, d]),
     }
 
     String::from_utf8(str_bytes).map_err(|e| PacketParseError::StreamTypeNotUtf8(e.utf8_error()))

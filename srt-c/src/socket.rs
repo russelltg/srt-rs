@@ -365,7 +365,7 @@ impl SocketData {
                 if optval_len != size_of::<c_int>() {
                     return Err(SRT_EINVPARAM.into());
                 }
-                *optval.cast::<c_int>().as_mut() = if b { 1 } else { 0 };
+                *optval.cast::<c_int>().as_mut() = i32::from(b);
                 Ok(size_of::<c_int>())
             }
             Int(i) => {

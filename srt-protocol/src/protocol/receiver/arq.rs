@@ -29,7 +29,7 @@ pub struct ArrivalSpeed {
     ///
     /// Instead of arrival time we store packet arrival intervals and data size
     /// in the PKT History Window.
-    packet_history_window: ArrayDeque<[(TimeSpan, u64); 16], Wrapping>,
+    packet_history_window: ArrayDeque<(TimeSpan, u64), 16, Wrapping>,
     last_arrival_time: Option<Instant>,
 }
 
@@ -71,7 +71,7 @@ impl ArrivalSpeed {
 
         // In these 16 values, remove those either greater than AI*8 or
         // less than AI/8.
-        let filtered: ArrayDeque<[_; 16]> = window
+        let filtered: ArrayDeque<_, 16> = window
             .iter()
             .filter(|(interval, _)| *interval / 8 < ai && *interval > ai / 8)
             .collect();
@@ -106,7 +106,7 @@ pub struct LinkCapacityEstimate {
     /// https://tools.ietf.org/html/draft-gg-udt-03#page-12
     /// Packet Pair Window: A circular array that records the time
     /// interval between each probing packet pair.
-    packet_pair_window: ArrayDeque<[TimeSpan; 16], Wrapping>,
+    packet_pair_window: ArrayDeque<TimeSpan, 16, Wrapping>,
     /// The timestamp of the probe time
     /// Used to calculate duration between packets
     probe_time: Option<Instant>,
