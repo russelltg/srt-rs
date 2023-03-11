@@ -22,6 +22,7 @@ jobs:
             run: cargo publish --manifest-path ./srt-c/Cargo.toml --token ${CRATES_TOKEN}
             env:
               CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        needs: [ publish-tokio ]
               
     publish-protocol:
         name: Publish srt-protocol
@@ -50,6 +51,7 @@ jobs:
             run: cargo publish --manifest-path ./srt-tokio/Cargo.toml --token ${CRATES_TOKEN}
             env: 
               CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        needs: [ publish-protocol ]
               
     publish-transmit:
         name: Publish srt-transmit
@@ -64,3 +66,4 @@ jobs:
             run: cargo publish --manifest-path ./srt-transmit/Cargo.toml --token ${CRATES_TOKEN}
             env: 
               CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        needs: [ publish-tokio ]
