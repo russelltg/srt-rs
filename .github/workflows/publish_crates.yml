@@ -19,7 +19,7 @@ jobs:
                 toolchain: stable
                 override: true
           - name: Publish srt-protocol to crates.io
-            run: cargo publish --manifest-path ./srt-c --token ${CRATES_TOKEN}
+            run: cargo publish --manifest-path ./srt-c/Cargo.toml --token ${CRATES_TOKEN}
             env:
               CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
               
@@ -33,7 +33,7 @@ jobs:
                 toolchain: stable
                 override: true
           - name: Publish srt-protocol to crates.io
-            run: cargo publish --manifest-path ./srt-protocol --token ${CRATES_TOKEN}
+            run: cargo publish --manifest-path ./srt-protocol/Cargo.toml --token ${CRATES_TOKEN}
             env:
               CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
    
@@ -47,7 +47,7 @@ jobs:
               toolchain: stable
               override: true
           - name: Publish srt-tokio to crates.io
-            run: cargo publish --manifest-path ./srt-tokio --token ${CRATES_TOKEN}
+            run: cargo publish --manifest-path ./srt-tokio/Cargo.toml --token ${CRATES_TOKEN}
             env: 
               CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
               
@@ -61,6 +61,6 @@ jobs:
               toolchain: stable
               override: true
           - name: Publish srt-transmit to crates.io
-            run: cargo publish --manifest-path ./srt-transmit --token ${CRATES_TOKEN}
+            run: cargo publish --manifest-path ./srt-transmit/Cargo.toml --token ${CRATES_TOKEN}
             env: 
               CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
