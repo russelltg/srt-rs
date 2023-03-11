@@ -177,6 +177,8 @@ impl SrtEpoll {
         Err(SRT_EINVSOCK.into())
     }
 
+    // the await can't block because it's just a poll!() one, which technically uses await to be able to insert the context.
+    #[allow(clippy::await_holding_lock)]
     pub fn wait(
         &mut self,
         srt_read: &mut [MaybeUninit<CSrtSocket>],
@@ -218,7 +220,9 @@ impl SrtEpoll {
                         ReadyPendingError,
                         EpollFlags,
                     )> = match epollentry {
-                        SrtEpollEntry::Srt(sock, flags) => {
+                        SrtEpollEntry::Srt(sock, flags) => 
+                        
+                        {
                             let sock = match get_sock(*sock) {
                                 Some(sock) => sock,
                                 None => continue,
