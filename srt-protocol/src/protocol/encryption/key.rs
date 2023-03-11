@@ -195,7 +195,7 @@ impl KeyEncryptionKey {
                 &salt[salt.len() - salt_len..], // last salt_len bytes
                 ROUNDS,
                 &mut *key,
-            );
+            ).unwrap();
         }
 
         fn new_key<const N: usize>(passphrase: &Passphrase, salt: &Salt) -> [u8; N] {

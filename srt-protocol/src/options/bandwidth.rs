@@ -5,7 +5,7 @@ use super::*;
 ///
 /// Note that Maximum Bandwidth, Input Rate, and Input Rate Estimate are bytes per second
 /// and Overhead is a percentage.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub enum LiveBandwidthMode {
     /// Set the maximum bandwidth explicitly.
     ///
@@ -61,11 +61,7 @@ pub enum LiveBandwidthMode {
         overhead: Percent,  // m_iOverheadBW
         expected: DataRate, // SRTO_MININPUTBW
     },
+    #[default]
     Unlimited,
 }
 
-impl Default for LiveBandwidthMode {
-    fn default() -> Self {
-        LiveBandwidthMode::Unlimited
-    }
-}

@@ -201,8 +201,9 @@ impl Debug for Passphrase {
 }
 
 // https://github.com/Haivision/srt/blob/master/docs/API/API-socket-options.md#srto_pbkeylen
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 pub enum KeySize {
+    #[default]
     Unspecified,
     AES128,
     AES192,
@@ -243,12 +244,6 @@ impl TryFrom<u8> for KeySize {
             32 => Ok(AES256),
             value => Err(OptionsError::InvalidKeySize(value)),
         }
-    }
-}
-
-impl Default for KeySize {
-    fn default() -> Self {
-        KeySize::Unspecified
     }
 }
 
