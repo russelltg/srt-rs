@@ -12,7 +12,7 @@ publish = true
 
 [dependencies]
 bus = "2"
-srt-tokio = { path = "../srt-tokio"}
+srt-tokio = { version = "0.4.0", path = "../srt-tokio"}
 clap = { version = "4", features = ["std"]}
 log = { version = "0.4", default-features = false }
 url = "2.3.1" # https://github.com/servo/rust-url/issues/581
