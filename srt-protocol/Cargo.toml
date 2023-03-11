@@ -6,7 +6,7 @@ edition = "2021"
 homepage = "https://github.com/russelltg/srt-rs"
 license = "Apache-2.0"
 name = "srt-protocol"
-publish = false
+publish = true
 repository = "https://github.com/russelltg/srt-rs"
 version = "0.4.0"
 

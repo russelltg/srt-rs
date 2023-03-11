@@ -8,7 +8,7 @@ documentation = "https://docs.rs/srt-rs"
 homepage = "https://github.com/russelltg/srt-rs"
 repository = "https://github.com/russelltg/srt-rs"
 edition = "2021"
-publish = false
+publish = true
 
 [dependencies]
 bus = "2"
