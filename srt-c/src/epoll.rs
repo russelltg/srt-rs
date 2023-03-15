@@ -220,9 +220,7 @@ impl SrtEpoll {
                         ReadyPendingError,
                         EpollFlags,
                     )> = match epollentry {
-                        SrtEpollEntry::Srt(sock, flags) => 
-                        
-                        {
+                        SrtEpollEntry::Srt(sock, flags) => {
                             let sock = match get_sock(*sock) {
                                 Some(sock) => sock,
                                 None => continue,
