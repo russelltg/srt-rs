@@ -735,6 +735,6 @@ mod tests {
             wrapped_keys: wrapped[..].into(),
         };
 
-        assert_eq!(format!("{km:?}"), "KeyingMaterialMessage { pt: KeyingMaterial, key_flags: EVEN, keki: 0, cipher: Ctr, auth: None }")
+        assert_eq!(format!("{km:?}"), "KeyingMaterialMessage { pt: KeyingMaterial, key_flags: KeyFlags(EVEN), keki: 0, cipher: Ctr, auth: None }")
     }
 }
