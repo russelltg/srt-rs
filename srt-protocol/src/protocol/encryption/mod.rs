@@ -342,7 +342,6 @@ mod tests {
         let mut km_resp = None;
         let count = (0..settings.key_refresh.period() - 10_000)
             // let count = (0..settings.key_refresh.period())
-            .into_iter()
             .filter_map(|_| {
                 let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
                 if let Some(km) = &km {
@@ -360,7 +359,6 @@ mod tests {
 
         let count = (0..10_000
             + (settings.key_refresh.period() - settings.key_refresh.pre_announcement_period()))
-            .into_iter()
             .filter_map(|_| {
                 let (_, packet, km) = encryption.encrypt(original_packet.clone()).unwrap();
                 km.map(|k| (packet.encryption, k))
