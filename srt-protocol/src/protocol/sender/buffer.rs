@@ -67,6 +67,13 @@ impl SendBuffer {
         let result = if self.buffer.len() < self.max_buffer_size {
             Ok(())
         } else if let Some(entry) = self.buffer.pop_front() {
+            self.buffer_len_bytes -= entry.packet.wire_size();
+
+            // remove packet from lost list if we are dropping it
+            if self.lost_list.first() == Some(&entry.packet.seq_number) {
+                self.pop_lost_list();
+            }
+
             Err((PacketCount(1), ByteCount(entry.packet.wire_size() as u64)))
         } else {
             Ok(())
@@ -145,10 +152,8 @@ impl SendBuffer {
         }
 
         while self.front_packet().filter(|f| *f < ack_number).is_some() {
-            let p = self.pop_front();
-            self.buffer_len_bytes = self
-                .buffer_len_bytes
-                .saturating_sub(p.unwrap().packet.wire_size());
+            let p = self.pop_front().unwrap();
+            self.buffer_len_bytes = self.buffer_len_bytes.saturating_sub(p.packet.wire_size());
 
             received += 1;
         }
@@ -196,10 +201,12 @@ impl SendBuffer {
 
     fn send_next_lost_packet(&mut self, ts_now: TimeStamp) -> Option<DataPacket> {
         let seq = self.pop_lost_list()?;
-        let packet = self
+        match self
             .send_packet(ts_now, seq)
-            .expect("Packet in loss list was not in buffer!");
-        Some(packet)
+        {
+            Some(packet) => Some(packet),
+            None => panic!("Packet in loss list was not in buffer! seq={} front_packet={:?} buffer.len={} back_packet={:?}", seq, self.front_packet(), self.buffer.len(), self.buffer.back().map(|b| b.packet.seq_number)),
+        }
     }
 
     fn send_next_rto_packet(&mut self, ts_now: TimeStamp) -> Option<DataPacket> {
@@ -309,12 +316,9 @@ impl SendBuffer {
         Some(next)
     }
 
+    // find the first item that has a sequence number less than seq_num in the loss list
     fn peek_next_lost(&self, seq_num: SeqNumber) -> Option<SeqNumber> {
-        self.lost_list
-            .iter()
-            .filter(|first| *(*first) < seq_num)
-            .copied()
-            .next()
+        self.lost_list.range(..seq_num).copied().next()
     }
 
     fn pop_front(&mut self) -> Option<SendBufferEntry> {
@@ -974,5 +978,28 @@ mod test {
             buffer.push_data(overflow_packet),
             Err((PacketCount(1), ByteCount(expected_dropped_bytes)))
         );
+    }
+
+    #[test]
+    fn loss_then_fill_buffer() {
+        let now = TimeStamp::MIN;
+        let mut buffer = SendBuffer::new(&new_settings());
+
+        for n in 0..=2 {
+            assert_matches!(buffer.push_data(test_data_packet(n, false)), Ok(_));
+        }
+
+        let _ = buffer.next_snd_actions(now, 3, false).count();
+        let _ = buffer
+            .add_to_loss_list([SeqNumber(1)].iter().collect())
+            .count();
+
+        for n in 3..=8195 {
+            assert_matches!(buffer.push_data(test_data_packet(n, false)), Ok(_));
+        }
+        assert_matches!(buffer.push_data(test_data_packet(8296, false)), Err(_));
+        assert_matches!(buffer.push_data(test_data_packet(8297, false)), Err(_));
+
+        buffer.send_next_lost_packet(now);
     }
 }
