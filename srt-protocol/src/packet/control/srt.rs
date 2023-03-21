@@ -69,6 +69,7 @@ pub enum GroupType {
 }
 
 bitflags! {
+    #[derive(Clone, Copy, Eq, PartialEq, Debug)]
     pub struct GroupFlags: u8 {
         const MSG_SYNC = 1 << 6;
     }
@@ -189,6 +190,7 @@ pub enum PacketType {
 }
 
 bitflags! {
+    #[derive(Clone, Copy, Eq, PartialEq, Debug)]
     pub struct KeyFlags : u8 {
         const EVEN = 0b01;
         const ODD = 0b10;
@@ -237,6 +239,7 @@ pub struct SrtHandshake {
 }
 
 bitflags! {
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct SrtShakeFlags: u32 {
         /// Timestamp-based Packet delivery real-time data sender
         const TSBPDSND = 0x1;
@@ -264,7 +267,7 @@ bitflags! {
         const PACKET_FILTER = 0x80;
 
         // currently implemented flags
-        const SUPPORTED = Self::TSBPDSND.bits | Self::TSBPDRCV.bits | Self::HAICRYPT.bits | Self::REXMITFLG.bits;
+        const SUPPORTED = Self::TSBPDSND.bits() | Self::TSBPDRCV.bits() | Self::HAICRYPT.bits() | Self::REXMITFLG.bits();
     }
 }
 
@@ -556,7 +559,7 @@ impl KeyingMaterialMessage {
         // get the size of the packet to make sure that there is enough space
 
         // salt + keys (there's a 1 for each in key flags, it's already been anded with 0b11 so max is 2), wrap data is 8 long
-        if buf.remaining() < salt_len + key_len * (key_flags.bits.count_ones() as usize) + 8 {
+        if buf.remaining() < salt_len + key_len * (key_flags.bits().count_ones() as usize) + 8 {
             return Err(PacketParseError::NotEnoughData);
         }
 
@@ -573,7 +576,7 @@ impl KeyingMaterialMessage {
         // then key[s]
         let mut wrapped_keys = vec![];
 
-        for _ in 0..(key_len * key_flags.bits.count_ones() as usize + 8) / 4 {
+        for _ in 0..(key_len * key_flags.bits().count_ones() as usize + 8) / 4 {
             wrapped_keys.extend_from_slice(&buf.get_u32().to_be_bytes()[..]);
         }
 
@@ -601,7 +604,7 @@ impl KeyingMaterialMessage {
         into.put_u16(Self::SIGN);
 
         // rightmost bit of KF is even, other is odd
-        into.put_u8(self.key_flags.bits);
+        into.put_u8(self.key_flags.bits());
 
         // second 32-bit word: keki
         into.put_u32(self.keki);
@@ -625,7 +628,7 @@ impl KeyingMaterialMessage {
         into.put_u8((self.salt.len() / 4) as u8);
 
         // this unwrap is okay because we already panic above if both are None
-        let key_len = (self.wrapped_keys.len() - 8) / self.key_flags.bits.count_ones() as usize;
+        let key_len = (self.wrapped_keys.len() - 8) / self.key_flags.bits().count_ones() as usize;
         into.put_u8((key_len / 4) as u8);
 
         // put the salt then key[s]
@@ -732,6 +735,6 @@ mod tests {
             wrapped_keys: wrapped[..].into(),
         };
 
-        assert_eq!(format!("{km:?}"), "KeyingMaterialMessage { pt: KeyingMaterial, key_flags: EVEN, keki: 0, cipher: Ctr, auth: None }")
+        assert_eq!(format!("{km:?}"), "KeyingMaterialMessage { pt: KeyingMaterial, key_flags: KeyFlags(EVEN), keki: 0, cipher: Ctr, auth: None }")
     }
 }

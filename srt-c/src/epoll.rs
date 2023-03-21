@@ -61,7 +61,7 @@ impl<T> From<Poll<Option<T>>> for ReadyPendingError {
 }
 
 bitflags::bitflags! {
-
+    #[derive(Debug, Copy, Clone)]
     pub struct EpollFlags: c_int {
         const SRT_EPOLL_OPT_NONE = 0x0; // fallback
 

@@ -69,11 +69,12 @@ bitflags! {
     /// FIRST | LAST means it's the only one
     /// FIRST means it's the beginning of a longer message
     /// 0 means it's the middle of a longer message
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub struct PacketLocation: u8 {
         const MIDDLE   = 0b0000_0000;
         const FIRST    = 0b1000_0000;
         const LAST     = 0b0100_0000;
-        const ONLY = Self::FIRST.bits | Self::LAST.bits;
+        const ONLY = Self::FIRST.bits() | Self::LAST.bits();
     }
 }
 
