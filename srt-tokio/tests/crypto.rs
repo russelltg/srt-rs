@@ -52,6 +52,10 @@ async fn crypto_exchange() {
 #[tokio::test]
 async fn key_size_mismatch() {
     test_crypto(32, 16).await;
+    sleep(Duration::from_millis(100)).await;
+    test_crypto(32, 0).await;
+    sleep(Duration::from_millis(100)).await;
+    test_crypto(0, 32).await;
 }
 
 // TODO: bad password
