@@ -6,8 +6,6 @@ use std::{
     time::Instant,
 };
 
-use log::warn;
-
 use crate::{connection::ConnectionSettings, options::*, packet::*, settings::*};
 
 use super::{ConnectError, ConnectionReject};
@@ -70,7 +68,7 @@ pub fn gen_access_control_response(
     let cipher = match (&settings.key_settings, &incoming.ext_km) {
         // ok, both sides have crypto
         (Some(key_settings), Some(SrtControlPacket::KeyRefreshRequest(km))) => {
-            if key_settings.key_size.as_usize() != incoming.crypto_size as usize {
+            if key_settings.key_size.as_usize() != incoming.key_size as usize {
                 unimplemented!("Key size mismatch");
             }
 
@@ -110,7 +108,7 @@ pub fn gen_access_control_response(
 
     GenHsv5Result::Accept(
         HandshakeVsInfo::V5(HsV5Info {
-            crypto_size: cipher
+            key_size: cipher
                 .as_ref()
                 .map(|c| c.key_settings.key_size)
                 .unwrap_or(KeySize::Unspecified),
@@ -181,7 +179,7 @@ pub fn start_hsv5_initiation(
 
     (
         HandshakeVsInfo::V5(HsV5Info {
-            crypto_size: self_crypto_size,
+            key_size: self_crypto_size,
             ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                 version: SrtVersion::CURRENT,
                 flags: SrtShakeFlags::SUPPORTED,

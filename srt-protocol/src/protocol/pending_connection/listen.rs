@@ -368,7 +368,7 @@ mod test {
             syn_cookie: gen_cookie(&conn_addr()),
             peer_addr: IpAddr::from([127, 0, 0, 1]),
             info: HandshakeVsInfo::V5(HsV5Info {
-                crypto_size: 0,
+                key_size: KeySize::Unspecified,
                 ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                     version: SrtVersion::CURRENT,
                     flags: SrtShakeFlags::SUPPORTED,

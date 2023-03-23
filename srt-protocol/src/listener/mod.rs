@@ -175,7 +175,7 @@ mod test {
 
     use rand::random;
 
-    use crate::options::{PacketCount, PacketSize, SrtVersion};
+    use crate::options::{KeySize, PacketCount, PacketSize, SrtVersion};
 
     use super::*;
 
@@ -206,7 +206,7 @@ mod test {
             syn_cookie: crate::protocol::pending_connection::cookie::gen_cookie(&conn_addr()),
             peer_addr: IpAddr::from([127, 0, 0, 1]),
             info: HandshakeVsInfo::V5(HsV5Info {
-                crypto_size: 0,
+                key_size: KeySize::Unspecified,
                 ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                     version: SrtVersion::CURRENT,
                     flags: SrtShakeFlags::SUPPORTED,
