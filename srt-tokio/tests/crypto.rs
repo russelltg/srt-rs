@@ -8,7 +8,7 @@ use log::info;
 
 use tokio::{spawn, time::sleep};
 
-async fn test_crypto(size: u8) {
+async fn test_crypto(size: u16) {
     let sender = SrtSocket::builder()
         .encryption(size, "password123")
         .listen_on(":2000");

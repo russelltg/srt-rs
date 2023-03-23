@@ -12,7 +12,7 @@ pub enum OptionsError {
     #[error("Invalid password length: {0}. The password must be minimum 10 and maximum 79 characters long.")]
     PassphraseLength(usize),
     #[error("Invalid encryption key size: {0}. Valid sizes are 16, 24, or 32 bytes.")]
-    InvalidKeySize(u8),
+    InvalidKeySize(u16),
 
     #[error("MMS out of range: {0}. The maximum size of a UDP packet is 1500 bytes.")]
     MaxSegmentSizeOutOfRange(PacketSize),

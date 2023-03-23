@@ -98,7 +98,7 @@ impl SrtSocketBuilder {
     ///
     /// # Panics:
     /// * size is not 0, 16, 24, or 32.
-    pub fn encryption(mut self, key_size: u8, passphrase: impl Into<String>) -> Self {
+    pub fn encryption(mut self, key_size: u16, passphrase: impl Into<String>) -> Self {
         self.0.encryption.key_size = key_size.try_into().unwrap();
         self.0.encryption.passphrase = Some(passphrase.into().try_into().unwrap());
 

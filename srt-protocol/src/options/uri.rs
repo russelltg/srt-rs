@@ -268,7 +268,7 @@ impl SrtUri {
                     socket.sender.max_payload_size = PacketSize(value);
                 }
                 "pbkeylen" => {
-                    let value = u8::try_from(Self::parse_int_param("pbkeylen", value)?)
+                    let value = u16::try_from(Self::parse_int_param("pbkeylen", value)?)
                         .map_err(|e| InvalidIntParameter("pbkeylen", e.to_string()))?;
                     socket.encryption.key_size = value.try_into()?;
                 }

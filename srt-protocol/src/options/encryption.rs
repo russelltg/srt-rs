@@ -232,10 +232,10 @@ impl KeySize {
     }
 }
 
-impl TryFrom<u8> for KeySize {
+impl TryFrom<u16> for KeySize {
     type Error = OptionsError;
 
-    fn try_from(value: u8) -> Result<Self, OptionsError> {
+    fn try_from(value: u16) -> Result<Self, OptionsError> {
         use KeySize::*;
         match value {
             0 => Ok(Unspecified),
