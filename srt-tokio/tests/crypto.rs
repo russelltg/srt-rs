@@ -1,7 +1,11 @@
-use std::time::{Duration, Instant};
+use std::{
+    io,
+    time::{Duration, Instant},
+};
 
 use srt_tokio::SrtSocket;
 
+use assert_matches::assert_matches;
 use bytes::Bytes;
 use futures::{SinkExt, TryStreamExt};
 use log::info;
@@ -49,5 +53,27 @@ async fn crypto_exchange() {
     test_crypto(32).await;
 }
 
-// TODO: bad password
+#[tokio::test]
+async fn bad_password() {
+    let sender = SrtSocket::builder()
+        .encryption(16, "password1234")
+        .listen_on(":2000");
+
+    let recvr = SrtSocket::builder()
+        .encryption(16, "password123")
+        .call("127.0.0.1:2000", None);
+
+    let recv_fut = spawn(async move {
+        recvr.await.unwrap();
+    });
+
+    let res = sender.await;
+    assert_matches!(res, Err(e) if e.kind() == io::ErrorKind::ConnectionRefused);
+
+    assert_matches!(
+        tokio::time::timeout(Duration::from_millis(100), recv_fut).await,
+        Err(_)
+    );
+}
+
 // TODO: mismatch
