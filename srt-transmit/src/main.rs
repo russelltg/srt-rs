@@ -107,7 +107,7 @@ where
                 options.encryption.passphrase = Some(v.to_string().try_into()?);
             }
             "pbkeylen" => {
-                let size: u8 = v
+                let size: u16 = v
                     .parse()
                     .map_err(|e| anyhow!("Failed to parse key length: {}", e))?;
                 options.encryption.key_size = size.try_into()?;

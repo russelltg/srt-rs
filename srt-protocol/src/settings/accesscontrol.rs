@@ -11,7 +11,7 @@ impl AcceptParameters {
         AcceptParameters { key_settings: None }
     }
 
-    pub fn set_key_settings(&mut self, passphrase: impl Into<String>, size: u8) -> &mut Self {
+    pub fn set_key_settings(&mut self, passphrase: impl Into<String>, size: u16) -> &mut Self {
         self.key_settings = Some(KeySettings {
             key_size: size.try_into().unwrap(),
             passphrase: passphrase.into().try_into().unwrap(),

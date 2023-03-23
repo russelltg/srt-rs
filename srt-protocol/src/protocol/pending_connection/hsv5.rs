@@ -6,6 +6,8 @@ use std::{
     time::Instant,
 };
 
+use log::warn;
+
 use crate::{connection::ConnectionSettings, options::*, packet::*, settings::*};
 
 use super::{ConnectError, ConnectionReject};
@@ -66,7 +68,7 @@ pub fn gen_access_control_response(
 
     // crypto
     let cipher = match (&settings.key_settings, &incoming.ext_km) {
-        // ok, both sizes have crypto
+        // ok, both sides have crypto
         (Some(key_settings), Some(SrtControlPacket::KeyRefreshRequest(km))) => {
             if key_settings.key_size.as_usize() != incoming.crypto_size as usize {
                 unimplemented!("Key size mismatch");
@@ -110,8 +112,8 @@ pub fn gen_access_control_response(
         HandshakeVsInfo::V5(HsV5Info {
             crypto_size: cipher
                 .as_ref()
-                .map(|c| c.key_settings.key_size.as_usize())
-                .unwrap_or(0) as u8,
+                .map(|c| c.key_settings.key_size)
+                .unwrap_or(KeySize::Unspecified),
             ext_hs: Some(SrtControlPacket::HandshakeResponse(SrtHandshake {
                 version: SrtVersion::CURRENT,
                 flags: SrtShakeFlags::SUPPORTED,
@@ -160,8 +162,8 @@ pub fn start_hsv5_initiation(
     let self_crypto_size = settings
         .key_settings
         .as_ref()
-        .map(|key_settings| key_settings.key_size.as_usize() as u8)
-        .unwrap_or(0);
+        .map(|key_settings| key_settings.key_size)
+        .unwrap_or(KeySize::Unspecified);
 
     // if peer_crypto_size != self_crypto_size {
     //     unimplemented!("Unimplemted crypto mismatch!");

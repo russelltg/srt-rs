@@ -18,7 +18,7 @@ use bytes::{Buf, BufMut};
 use log::warn;
 
 use crate::{
-    options::{PacketCount, PacketSize},
+    options::{KeySize, PacketCount, PacketSize},
     protocol::time::Rtt,
 };
 
@@ -125,7 +125,7 @@ bitflags! {
 pub struct HsV5Info {
     /// the crypto size in bytes, either 0 (no encryption), 16, 24, or 32 (stored /8)
     /// source: https://github.com/Haivision/srt/blob/master/docs/stransmit.md#medium-srt
-    pub crypto_size: u8,
+    pub crypto_size: KeySize,
 
     /// The extension HSReq/HSResp
     pub ext_hs: Option<SrtControlPacket>,
@@ -360,7 +360,7 @@ impl HandshakeVsInfo {
                 }
                 // take the crypto size, get rid of the frist three (guaranteed zero) bits, then shift it into the
                 // most significant 2-byte word
-                (u32::from(hs.crypto_size) >> 3 << 16)
+                (u32::from(hs.crypto_size.as_raw()) >> 3 << 16)
                     // when this is an induction packet, includ the magic code instead of flags
                     | if shake_type == ShakeType::Induction {
                     u32::from(SRT_MAGIC_CODE)
@@ -553,14 +553,14 @@ impl ControlTypes {
                     }),
                     5 => {
                         // make sure crypto size is of a valid variant
-                        let crypto_size = match crypto_size {
-                            0 | 16 | 24 | 32 => crypto_size as u8,
-                            c => {
+                        let crypto_size = match KeySize::try_from(crypto_size) {
+                            Ok(size) => size,
+                            Err(_) => {
                                 warn!(
                                     "Unrecognized crypto key length: {}, disabling encryption. Should be 0, 16, 24, or 32 bytes.",
-                                    c
+                                   crypto_size
                                 );
-                                0
+                                KeySize::Unspecified
                             }
                         };
 
@@ -1413,7 +1413,7 @@ mod test {
                 syn_cookie: 0,
                 peer_addr: "127.0.0.1".parse().unwrap(),
                 info: HandshakeVsInfo::V5(HsV5Info {
-                    crypto_size: 0, // TODO: implement
+                    crypto_size: KeySize::Unspecified, // TODO: implement
                     ext_hs: Some(SrtControlPacket::HandshakeResponse(SrtHandshake {
                         version: SrtVersion::CURRENT,
                         flags: SrtShakeFlags::NAKREPORT | SrtShakeFlags::TSBPDSND,
@@ -1473,7 +1473,7 @@ mod test {
                 syn_cookie: 0,
                 peer_addr: [127, 0, 0, 1].into(),
                 info: HandshakeVsInfo::V5(HsV5Info {
-                    crypto_size: 16,
+                    crypto_size: KeySize::Unspecified,
                     ext_km: None,
                     ext_hs: None,
                     ext_group: None,
@@ -1497,7 +1497,7 @@ mod test {
                 syn_cookie: 0,
                 peer_addr: [127, 0, 0, 1].into(),
                 info: HandshakeVsInfo::V5(HsV5Info {
-                    crypto_size: 0,
+                    crypto_size: KeySize::Unspecified,
                     ext_km: None,
                     ext_hs: None,
                     ext_group: None,
@@ -1648,7 +1648,7 @@ mod test {
                     syn_cookie: -471_595_555,
                     peer_addr: "127.0.0.1".parse().unwrap(),
                     info: HandshakeVsInfo::V5(HsV5Info {
-                        crypto_size: 0,
+                        crypto_size: KeySize::Unspecified,
                         ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                             version: SrtVersion::new(1, 3, 1),
                             flags: SrtShakeFlags::TSBPDSND
@@ -1694,7 +1694,7 @@ mod test {
                     syn_cookie: 559_217_622,
                     peer_addr: "127.0.0.1".parse().unwrap(),
                     info: HandshakeVsInfo::V5(HsV5Info {
-                        crypto_size: 0,
+                        crypto_size: KeySize::Unspecified,
                         ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                             version: SrtVersion::new(1, 4, 1),
                             flags: SrtShakeFlags::TSBPDSND
@@ -1742,7 +1742,7 @@ mod test {
                     syn_cookie: 1_561_775_338,
                     peer_addr: "127.0.0.1".parse().unwrap(),
                     info: HandshakeVsInfo::V5(HsV5Info {
-                        crypto_size: 0,
+                        crypto_size: KeySize::Unspecified,
                         ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                             version: SrtVersion::new(1, 3, 1),
                             flags: SrtShakeFlags::TSBPDSND
@@ -1836,7 +1836,7 @@ mod test {
                 syn_cookie: 0xda7ee4e7u32 as i32,
                 peer_addr: [127, 0, 0, 1].into(),
                 info: HandshakeVsInfo::V5(HsV5Info {
-                    crypto_size: 32,
+                    crypto_size: KeySize::AES256,
                     ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                         version: SrtVersion::new(1, 4, 2),
                         flags: SrtShakeFlags::TSBPDSND
