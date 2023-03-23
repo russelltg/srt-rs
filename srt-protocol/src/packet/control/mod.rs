@@ -1473,7 +1473,7 @@ mod test {
                 syn_cookie: 0,
                 peer_addr: [127, 0, 0, 1].into(),
                 info: HandshakeVsInfo::V5(HsV5Info {
-                    key_size: KeySize::Unspecified,
+                    key_size: KeySize::AES128,
                     ext_km: None,
                     ext_hs: None,
                     ext_group: None,

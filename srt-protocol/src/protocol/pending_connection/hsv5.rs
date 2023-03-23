@@ -68,7 +68,7 @@ pub fn gen_access_control_response(
     let cipher = match (&settings.key_settings, &incoming.ext_km) {
         // ok, both sides have crypto
         (Some(key_settings), Some(SrtControlPacket::KeyRefreshRequest(km))) => {
-            if key_settings.key_size.as_usize() != incoming.key_size as usize {
+            if key_settings.key_size != incoming.key_size {
                 unimplemented!("Key size mismatch");
             }
 
