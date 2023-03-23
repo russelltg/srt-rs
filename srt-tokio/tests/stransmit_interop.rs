@@ -14,6 +14,7 @@ use std::{
 };
 
 use anyhow::Error;
+use assert_matches::assert_matches;
 use bytes::Bytes;
 use futures::{future::try_join, join, stream, SinkExt, Stream, StreamExt};
 use libc::sockaddr;
@@ -498,6 +499,61 @@ async fn bidirectional_interop_encrypt_rekey() -> Result<(), Error> {
     });
 
     try_join(srt_rs_side, jh).await.unwrap();
+
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(not(target_os = "windows"))]
+async fn bad_password_rust_caller() -> Result<(), Error> {
+    let _ = pretty_env_logger::try_init();
+
+    const PACKETS: u32 = 1_000;
+
+    let mut child = allow_not_found!(Command::new("srt-live-transmit")
+        .arg("udp://:2818")
+        .arg("srt://:2819?passphrase=password1234&pbkeylen=16")
+        .arg("-a:no")
+        .arg("-loglevel:debug")
+        .spawn());
+
+    assert_matches!(SrtSocket::builder()
+        .encryption(16, "password123")
+        .call("127.0.0.1:2819", None)
+        .await, Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused);
+
+    child.kill().unwrap();
+
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(not(target_os = "windows"))]
+async fn bad_password_rust_listener() -> Result<(), Error> {
+    use tokio::time::timeout;
+
+    let _ = pretty_env_logger::try_init();
+
+    const PACKETS: u32 = 1_000;
+
+    let mut child = allow_not_found!(Command::new("srt-live-transmit")
+        .arg("udp://:2820")
+        .arg("srt://127.0.0.1:2821?passphrase=password1234&pbkeylen=16")
+        .arg("-a:no")
+        .arg("-loglevel:debug")
+        .spawn());
+
+    let listener_fut = tokio::spawn(async move {
+        SrtSocket::builder()
+            .encryption(16, "password123")
+            .local_port(2821)
+            .listen()
+            .await.unwrap()
+    });
+
+    sleep(Duration::from_millis(100)).await;
+    assert!(child.try_wait().unwrap().unwrap().success()); // currently, srt-live-tranmsit exits successfully when a bad password is encountered
+    assert_matches!(timeout(Duration::from_millis(100), listener_fut).await, Err(_)); // listener still waiting
 
     Ok(())
 }
