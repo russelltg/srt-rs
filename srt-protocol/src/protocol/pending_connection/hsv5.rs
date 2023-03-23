@@ -6,6 +6,8 @@ use std::{
     time::Instant,
 };
 
+use log::warn;
+
 use crate::{connection::ConnectionSettings, options::*, packet::*, settings::*};
 
 use super::{ConnectError, ConnectionReject};
@@ -69,7 +71,7 @@ pub fn gen_access_control_response(
         // ok, both sides have crypto
         (Some(key_settings), Some(SrtControlPacket::KeyRefreshRequest(km))) => {
             if key_settings.key_size != incoming.key_size {
-                warn!("Key size mismatch: caller requested {:?}, listener was configured with {:?}. Selecting {:?}", incoming.key_size, key_settings.key_size, incoming.key_size)
+                warn!("Key size mismatch: caller requested {:?}, listener was configured with {:?}. Selecting {:?}", incoming.key_size, key_settings.key_size, incoming.key_size);
                 key_settings.key_size = incoming.key_size;
             }
 

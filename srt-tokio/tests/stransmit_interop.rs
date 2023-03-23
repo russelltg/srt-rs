@@ -567,7 +567,7 @@ async fn key_size_mismatch_rust_listener() -> Result<(), Error> {
         Ok(())
     };
 
-    try_join(sendr, udp_recvr(PACKETS, 2814)).await.unwrap();
+    try_join(sendr, udp_recvr(PACKETS, 2817)).await.unwrap();
 
     child.wait().unwrap();
 
