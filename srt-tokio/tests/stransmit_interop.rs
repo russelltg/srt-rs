@@ -79,7 +79,7 @@ async fn receiver(
 
         i += 1;
 
-        info!("Got pack!");
+        info!("Got pack {i}!");
 
         // stransmit does not totally care if it sends 100% of it's packets
         // (which is prob fair), just make sure that we got at least 2/3s of it
@@ -498,6 +498,78 @@ async fn bidirectional_interop_encrypt_rekey() -> Result<(), Error> {
     });
 
     try_join(srt_rs_side, jh).await.unwrap();
+
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(not(target_os = "windows"))]
+async fn key_size_mismatch_rust_caller() -> Result<(), Error> {
+    let _ = pretty_env_logger::try_init();
+
+    const PACKETS: u32 = 1_000;
+
+    let mut child = allow_not_found!(Command::new("srt-live-transmit")
+        .arg("udp://:2814")
+        .arg("srt://:2815?passphrase=password123&pbkeylen=24")
+        .arg("-a:no")
+        .arg("-loglevel:debug")
+        .spawn());
+
+    let recvr_fut = async move {
+        let recv = SrtSocket::builder()
+            .encryption(16, "password123")
+            .call("127.0.0.1:2815", None)
+            .await
+            .unwrap();
+
+        try_join(
+            receiver(PACKETS, recv.map(|f| f.unwrap().1)),
+            udp_sender(PACKETS, 2814),
+        )
+        .await
+        .unwrap();
+    };
+
+    recvr_fut.await;
+    child.wait().unwrap();
+
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(not(target_os = "windows"))]
+async fn key_size_mismatch_rust_listener() -> Result<(), Error> {
+    let _ = pretty_env_logger::try_init();
+
+    const PACKETS: u32 = 1_000;
+
+    let mut child = allow_not_found!(Command::new("srt-live-transmit")
+        .arg("srt://127.0.0.1:2816?passphrase=password123&pbkeylen=24")
+        .arg("udp://:2817")
+        .arg("-a:no")
+        .arg("-loglevel:debug")
+        .spawn());
+
+    let sendr = async move {
+        let mut sender = SrtSocket::builder()
+            .encryption(16, "password123")
+            .local_port(2816)
+            .listen()
+            .await
+            .unwrap();
+
+        let mut stream =
+            counting_stream(PACKETS, Duration::from_millis(1)).map(|b| Ok((Instant::now(), b)));
+        sender.send_all(&mut stream).await.unwrap();
+        sender.close().await.unwrap();
+
+        Ok(())
+    };
+
+    try_join(sendr, udp_recvr(PACKETS, 2814)).await.unwrap();
+
+    child.wait().unwrap();
 
     Ok(())
 }

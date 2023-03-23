@@ -8,13 +8,13 @@ use log::info;
 
 use tokio::{spawn, time::sleep};
 
-async fn test_crypto(size: u16) {
+async fn test_crypto(size_listen: u16, size_call: u16) {
     let sender = SrtSocket::builder()
-        .encryption(size, "password123")
+        .encryption(size_listen, "password123")
         .listen_on(":2000");
 
     let recvr = SrtSocket::builder()
-        .encryption(size, "password123")
+        .encryption(size_call, "password123")
         .call("127.0.0.1:2000", None);
 
     let t = spawn(async move {
@@ -42,12 +42,16 @@ async fn test_crypto(size: u16) {
 async fn crypto_exchange() {
     let _ = pretty_env_logger::try_init();
 
-    test_crypto(16).await;
+    test_crypto(16, 16).await;
     sleep(Duration::from_millis(100)).await;
-    test_crypto(24).await;
+    test_crypto(24, 24).await;
     sleep(Duration::from_millis(100)).await;
-    test_crypto(32).await;
+    test_crypto(32, 32).await;
+}
+
+#[tokio::test]
+async fn key_size_mismatch() {
+    test_crypto(32, 16).await;
 }
 
 // TODO: bad password
-// TODO: mismatch
