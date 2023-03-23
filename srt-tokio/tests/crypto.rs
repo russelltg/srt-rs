@@ -55,23 +55,23 @@ async fn crypto_exchange() {
 
 #[tokio::test]
 async fn bad_password() {
-    let sender = SrtSocket::builder()
+    let listener = SrtSocket::builder()
         .encryption(16, "password1234")
         .listen_on(":2000");
 
-    let recvr = SrtSocket::builder()
+    let caller = SrtSocket::builder()
         .encryption(16, "password123")
         .call("127.0.0.1:2000", None);
 
-    let recv_fut = spawn(async move {
-        recvr.await.unwrap();
+    let listener_fut = spawn(async move {
+        listener.await.unwrap();
     });
 
-    let res = sender.await;
+    let res = caller.await;
     assert_matches!(res, Err(e) if e.kind() == io::ErrorKind::ConnectionRefused);
 
     assert_matches!(
-        tokio::time::timeout(Duration::from_millis(100), recv_fut).await,
+        tokio::time::timeout(Duration::from_millis(100), listener_fut).await,
         Err(_)
     );
 }
