@@ -18,32 +18,40 @@ pub async fn bind_with(
     let init_settings: ConnInitSettings = options.socket.clone().into();
     let socket_id = init_settings.local_sockid;
 
-    let mut listen = Listen::new(init_settings, false);
-    loop {
-        let packet = socket.receive().await;
-        debug!("{:?}:listen  - {:?}", socket_id, packet);
+    'outer: loop {
+        let mut listen = Listen::new(init_settings.clone(), false);
+        loop {
+            let packet = socket.receive().await;
+            debug!("{:?}:listen  - {:?}", socket_id, packet);
 
-        let result = listen.handle_packet(Instant::now(), packet);
-        debug!("{:?}:listen  - {:?}", socket_id, result);
+            let result = listen.handle_packet(Instant::now(), packet);
+            debug!("{:?}:listen  - {:?}", socket_id, result);
 
-        use ConnectionResult::*;
-        match result {
-            SendPacket(packet) => {
-                let _ = socket.send(packet).await?;
-            }
-            NotHandled(e) => {
-                warn!("{:?}", e);
-            }
-            Reject(_, _) => todo!(),
-            Connected(p, connection) => {
-                if let Some(packet) = p {
+            use ConnectionResult::*;
+            match result {
+                SendPacket(packet) => {
                     let _ = socket.send(packet).await?;
                 }
-                return Ok((socket, connection));
+                NotHandled(e) => {
+                    warn!("{:?}", e);
+                }
+                Reject(packet, rej) => {
+                    warn!("Remote was rejected: {rej}, trying again");
+                    if let Some(packet) = packet {
+                        let _ = socket.send(packet).await?;
+                    }
+                    continue 'outer;
+                }
+                Connected(p, connection) => {
+                    if let Some(packet) = p {
+                        let _ = socket.send(packet).await?;
+                    }
+                    return Ok((socket, connection));
+                }
+                NoAction => {}
+                RequestAccess(_) => {}
+                Failure(error) => return Err(error),
             }
-            NoAction => {}
-            RequestAccess(_) => {}
-            Failure(error) => return Err(error),
         }
     }
 }
