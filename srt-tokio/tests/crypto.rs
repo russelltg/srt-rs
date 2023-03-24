@@ -12,14 +12,16 @@ use log::info;
 
 use tokio::{spawn, time::sleep};
 
-async fn test_crypto(size: u16) {
+async fn test_crypto(size: u16, port: u16) {
     let sender = SrtSocket::builder()
         .encryption(size, "password123")
-        .listen_on(":2000");
+        .listen_on(port);
+
+    let connect_addr = format!("127.0.0.1:{port}");
 
     let recvr = SrtSocket::builder()
         .encryption(size, "password123")
-        .call("127.0.0.1:2000", None);
+        .call(connect_addr.as_str(), None);
 
     let t = spawn(async move {
         let mut sender = sender.await.unwrap();
@@ -46,22 +48,22 @@ async fn test_crypto(size: u16) {
 async fn crypto_exchange() {
     let _ = pretty_env_logger::try_init();
 
-    test_crypto(16).await;
+    test_crypto(16, 2000).await;
     sleep(Duration::from_millis(100)).await;
-    test_crypto(24).await;
+    test_crypto(24, 2001).await;
     sleep(Duration::from_millis(100)).await;
-    test_crypto(32).await;
+    test_crypto(32, 2002).await;
 }
 
 #[tokio::test]
 async fn bad_password() {
     let listener = SrtSocket::builder()
         .encryption(16, "password1234")
-        .listen_on(":2000");
+        .listen_on(":2003");
 
     let caller = SrtSocket::builder()
         .encryption(16, "password123")
-        .call("127.0.0.1:2000", None);
+        .call("127.0.0.1:2003", None);
 
     let listener_fut = spawn(async move {
         listener.await.unwrap();

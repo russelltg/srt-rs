@@ -548,12 +548,16 @@ async fn bad_password_rust_listener() -> Result<(), Error> {
             .encryption(16, "password123")
             .local_port(2821)
             .listen()
-            .await.unwrap()
+            .await
+            .unwrap()
     });
 
     sleep(Duration::from_millis(100)).await;
     assert!(child.try_wait().unwrap().unwrap().success()); // currently, srt-live-tranmsit exits successfully when a bad password is encountered
-    assert_matches!(timeout(Duration::from_millis(100), listener_fut).await, Err(_)); // listener still waiting
+    assert_matches!(
+        timeout(Duration::from_millis(100), listener_fut).await,
+        Err(_)
+    ); // listener still waiting
 
     Ok(())
 }
