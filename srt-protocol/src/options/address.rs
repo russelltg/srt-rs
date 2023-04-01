@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     convert::{TryFrom, TryInto},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     num::ParseIntError,
@@ -15,6 +16,22 @@ use url::Host;
 pub struct SocketAddress {
     pub host: SocketHost,
     pub port: u16,
+}
+
+impl<'a> TryFrom<Cow<'a, str>> for SocketAddress {
+    type Error = SocketAddressParseError;
+
+    fn try_from(value: Cow<'a, str>) -> Result<Self, Self::Error> {
+        TryFrom::try_from(value.as_ref())
+    }
+}
+
+impl TryFrom<String> for SocketAddress {
+    type Error = SocketAddressParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        TryFrom::try_from(value.as_ref())
+    }
 }
 
 impl TryFrom<&str> for SocketAddress {
