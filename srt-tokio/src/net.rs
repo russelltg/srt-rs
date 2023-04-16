@@ -150,3 +150,22 @@ impl Display for PacketStreamClosedError {
 }
 
 impl error::Error for PacketStreamClosedError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[tokio::test]
+    async fn resolve_dns() {
+        let socket_address = SocketAddress {
+            host: SocketHost::Domain("localhost".to_string()),
+            port: 3000,
+        };
+        let remote_host = lookup_remote_host(&socket_address).await.unwrap();
+        assert_eq!(
+            remote_host,
+            SocketAddr::new(V4(Ipv4Addr::new(127, 0, 0, 1)), 3000)
+        );
+    }
+}
