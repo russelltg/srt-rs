@@ -19,7 +19,7 @@ futures = "0.3"
 log = "0.4"
 thiserror = "1"
 os_socketaddr = "0.2.4"
-pretty_env_logger = "0.4"
+pretty_env_logger = "0.5"
 bitflags = "2"
 console-subscriber = { version = "0.1", optional = true }
 
