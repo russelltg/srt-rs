@@ -592,6 +592,7 @@ async fn main() {
 
 async fn run() -> Result<(), Error> {
     pretty_env_logger::formatted_builder()
+        .parse_default_env()
         // .format(|buf, record| writeln!(buf, "{} [{}] {}", record.args()))
         .format_timestamp_micros()
         .init();
