@@ -18,7 +18,7 @@ log = { version = "0.4", default-features = false }
 url = "2.3.1" # https://github.com/servo/rust-url/issues/581
 bytes = "1.0"
 anyhow = "1"
-pretty_env_logger = { version = "0.4", default-features = false }
+pretty_env_logger = { version = "0.5", default-features = false }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 console-subscriber = { version = "0.1", optional = true }
 
