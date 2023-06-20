@@ -30,6 +30,7 @@ use tokio::{
     net::TcpListener,
     net::TcpStream,
     net::UdpSocket,
+    spawn,
 };
 use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
 
@@ -118,7 +119,7 @@ where
                 options.encryption.key_size = size.try_into()?;
                 key = true;
             }
-            "rendezvous" | "multiplex" | "autoreconnect" => (),
+            "rendezvous" | "multiplex" | "autoreconnect" | "stats" => (),
             unrecog => bail!("Unrecgonized parameter '{}' for srt", unrecog),
         }
     }
@@ -246,6 +247,22 @@ fn parse_rendezvous(input_url: &Url) -> Option<Cow<str>> {
     rendezvous_v
 }
 
+fn start_stat_task_if_requested(socket: &mut SrtSocket, url: &Url) -> Result<(), Error> {
+    if let Some((_, val)) = url.query_pairs().find(|(a, _)| a == "stats") {
+        if !val.is_empty() {
+            bail!("value {val} assigned to `stats`. Do not assign a value to stats");
+        }
+
+        let mut stat = socket.statistics().clone();
+        spawn(async move {
+            while let Some(s) = stat.next().await {
+                println!("{:?}", s);
+            }
+        });
+    }
+    Ok(())
+}
+
 async fn make_srt_input(
     input_url: Url,
     input_addr: Option<SocketAddr>,
@@ -258,11 +275,9 @@ async fn make_srt_input(
         bail!("multiplex is not a valid option for input urls");
     }
 
-    Ok(SrtSocket::bind(bind_options?)
-        .await?
-        .map(Result::unwrap)
-        .map(|(_, b)| b)
-        .boxed())
+    let mut srt_socket = SrtSocket::bind(bind_options?).await?;
+    start_stat_task_if_requested(&mut srt_socket, &input_url)?;
+    Ok(srt_socket.map(Result::unwrap).map(|(_, b)| b).boxed())
 }
 
 fn resolve_input(
@@ -393,10 +408,13 @@ async fn make_srt_ouput(
             .await?
             .with(|b| future::ok((Instant::now(), b)))
             .boxed_sink()),
-        None => Ok(SrtSocket::bind(bind_options)
-            .await?
-            .with(|b| future::ok((Instant::now(), b)))
-            .boxed_sink()),
+        None => {
+            let mut srt_socket = SrtSocket::bind(bind_options).await?;
+            start_stat_task_if_requested(&mut srt_socket, &output_url)?;
+            Ok(srt_socket
+                .with(|b| future::ok((Instant::now(), b)))
+                .boxed_sink())
+        }
     }
 }
 
