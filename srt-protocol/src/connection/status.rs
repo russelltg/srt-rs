@@ -6,9 +6,9 @@ use crate::settings::SocketId;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum Status {
-    Open(Duration),
-    Shutdown(Instant),
-    Drain(Instant),
+    Open(Duration), // (flush_timeout)
+    Shutdown(Instant), // (flush_deadline)
+    Drain(Instant), // (drain_deadline)
     Closed,
 }
 
@@ -20,11 +20,11 @@ pub struct ConnectionStatus {
 }
 
 impl ConnectionStatus {
-    pub fn new(timeout: Duration) -> Self {
+    pub fn new(flush_timeout: Duration) -> Self {
         Self {
-            connection: Status::Open(timeout),
-            receiver: Status::Open(timeout),
-            sender: Status::Open(timeout),
+            connection: Status::Open(flush_timeout),
+            receiver: Status::Open(flush_timeout),
+            sender: Status::Open(flush_timeout),
         }
     }
 

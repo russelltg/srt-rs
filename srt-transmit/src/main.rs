@@ -83,15 +83,20 @@ where
     for (k, v) in args {
         match &*k {
             "latency_ms" => {
-                let latency = Duration::from_millis(match v.parse() {
-                    Ok(i) => i,
-                    Err(e) => bail!(
-                        "Failed to parse latency_ms parameter to input as integer: {}",
-                        e
-                    ),
-                });
+                let latency = Duration::from_secs_f64(
+                    v.parse::<f64>()
+                        .map_err(|e| format_err!("Failed to parse latency_ms: {e}"))?
+                        / 1e3,
+                );
                 options.sender.peer_latency = latency;
                 options.receiver.latency = latency;
+            }
+            "peeridletimeout_ms" => {
+                options.session.peer_idle_timeout = Duration::from_secs_f64(
+                    v.parse::<f64>()
+                        .map_err(|e| format_err!("Failed to parse peeridletimeout_ms: {e}"))?
+                        / 1e3,
+                )
             }
             "interface" => {
                 options.connect.local.set_ip(match v.parse() {

@@ -13,6 +13,7 @@ pub struct ConnInitSettings {
     pub key_refresh: KeyMaterialRefreshSettings,
     pub send_latency: Duration,
     pub recv_latency: Duration,
+    pub peer_idle_timeout: Duration,
     pub bandwidth: options::LiveBandwidthMode,
     pub statistics_interval: Duration,
 
@@ -58,6 +59,7 @@ impl From<options::SocketOptions> for ConnInitSettings {
             .unwrap(),
             send_latency: options.sender.peer_latency,
             recv_latency: options.receiver.latency,
+            peer_idle_timeout: options.session.peer_idle_timeout,
             bandwidth: options.sender.bandwidth,
             statistics_interval: options.session.statistics_interval,
             recv_buffer_size: options.receiver.buffer_size
