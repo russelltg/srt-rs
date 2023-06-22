@@ -14,7 +14,7 @@ use std::{
     time::Instant,
 };
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use futures::{
     channel::mpsc::{self, TrySendError},
     prelude::*,
@@ -25,7 +25,11 @@ use srt_protocol::{
     connection::ConnectionSettings,
     options::{OptionsError, OptionsOf, SocketOptions, Validation},
 };
-use tokio::{net::UdpSocket, task::JoinHandle};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::UdpSocket,
+    task::JoinHandle,
+};
 
 use super::{net::*, options::BindOptions, watch};
 
@@ -96,7 +100,7 @@ impl SrtSocket {
     }
 
     pub async fn close_and_finish(&mut self) -> Result<(), io::Error> {
-        self.close().await?;
+        futures::SinkExt::close(self).await?;
         (&mut self.task).await?;
         Ok(())
     }
@@ -155,5 +159,55 @@ impl Sink<(Instant, Bytes)> for SrtSocket {
         Pin::new(&mut self.input_data_sender)
             .poll_close(cx)
             .map_err(|e| io::Error::new(io::ErrorKind::NotConnected, e))
+    }
+}
+
+impl AsyncRead for SrtSocket {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match self.poll_next(cx) {
+            Poll::Ready(Some(Ok((_instant, data)))) => {
+                buf.put_slice(&data);
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Err(e)),
+            Poll::Ready(None) => Poll::Ready(Ok(())),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl AsyncWrite for SrtSocket {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let mut write_buf = BytesMut::new();
+        write_buf.put_slice(&buf);
+        match self.as_mut().poll_ready(cx) {
+            Poll::Ready(Ok(())) => {
+                match self
+                    .as_mut()
+                    .start_send((Instant::now(), write_buf.freeze()))
+                {
+                    Ok(_) => Poll::Ready(Ok(buf.len())),
+                    Err(e) => Poll::Ready(Err(e)),
+                }
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        futures::Sink::poll_flush(self, cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        futures::Sink::poll_close(self, cx)
     }
 }
