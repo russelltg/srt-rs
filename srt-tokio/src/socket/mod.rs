@@ -100,7 +100,7 @@ impl SrtSocket {
     }
 
     pub async fn close_and_finish(&mut self) -> Result<(), io::Error> {
-        futures::SinkExt::close(self).await?;
+        self.close().await?;
         (&mut self.task).await?;
         Ok(())
     }
