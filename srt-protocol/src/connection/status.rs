@@ -6,9 +6,9 @@ use crate::settings::SocketId;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum Status {
-    Open(Duration), // (flush_timeout)
+    Open(Duration),    // (flush_timeout)
     Shutdown(Instant), // (flush_deadline)
-    Drain(Instant), // (drain_deadline)
+    Drain(Instant),    // (drain_deadline)
     Closed,
 }
 

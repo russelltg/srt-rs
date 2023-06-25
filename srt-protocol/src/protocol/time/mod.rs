@@ -273,7 +273,7 @@ mod tests {
     fn next_timer() {
         let ms = TimeSpan::from_millis;
         let start = Instant::now();
-        let mut timers = Timers::new(start, Duration::MAX, ms(5_000));
+        let mut timers = Timers::new(start, Duration::MAX, Duration::from_millis(5_000));
 
         // next timer should be ack, 10ms
         let now = start;

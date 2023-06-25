@@ -116,7 +116,11 @@ impl DuplexConnection {
             handshake: connection.handshake,
             output: Output::new(&settings),
             status: ConnectionStatus::new(settings.send_tsbpd_latency * 2), // the timeout should be larger than latency as otherwise packets that have just arrived definitely have a change to flush
-            timers: Timers::new(settings.socket_start_time, settings.statistics_interval, settings.peer_idle_timeout),
+            timers: Timers::new(
+                settings.socket_start_time,
+                settings.statistics_interval,
+                settings.peer_idle_timeout,
+            ),
             stats: SocketStatistics::new(),
             receiver: Receiver::new(settings.clone()),
             sender: Sender::new(settings),
