@@ -14,7 +14,6 @@ version = "0.4.1"
 bytes = "1"
 rand = "0.8"
 socket2 = "0.5"
-trust-dns-resolver = "0.22.0"
 
 [dependencies.ac-ffmpeg]
 optional = true

@@ -3,10 +3,7 @@ use std::{
     error,
     fmt::{Debug, Display, Formatter},
     io::{self, Cursor, ErrorKind},
-    net::{
-        IpAddr::{V4, V6},
-        SocketAddr,
-    },
+    net::SocketAddr,
     sync::Arc,
 };
 
@@ -15,8 +12,7 @@ use futures::channel::mpsc::Receiver;
 use futures::{channel::mpsc, prelude::*};
 use socket2::{Domain, Protocol, Socket, Type};
 use srt_protocol::packet::{Packet, ReceivePacketResult};
-use tokio::net::UdpSocket;
-use trust_dns_resolver::TokioAsyncResolver;
+use tokio::net::{lookup_host, UdpSocket};
 
 use crate::options::*;
 
@@ -45,22 +41,12 @@ pub async fn bind_socket(options: &SocketOptions) -> Result<UdpSocket, io::Error
 pub async fn lookup_remote_host(remote: &SocketAddress) -> Result<SocketAddr, io::Error> {
     use SocketHost::*;
     let mut remote_address = match &remote.host {
-        Domain(domain) => {
-            let resolver = TokioAsyncResolver::tokio_from_system_conf().map_err(|e| {
-                io::Error::new(
-                    ErrorKind::NotFound,
-                    format!("Cannot load DNS resolver from system configuration: {}", e),
-                )
-            })?;
-            let response = resolver.lookup_ip(domain).await?;
-            let address = response.iter().next().ok_or_else(|| {
+        Domain(domain) => lookup_host(format!("{domain}:0"))
+            .await?
+            .next()
+            .ok_or_else(|| {
                 io::Error::new(ErrorKind::NotFound, OptionsError::InvalidRemoteAddress)
-            })?;
-            match address {
-                V4(ipv4) => SocketAddr::new((ipv4).into(), 0),
-                V6(ipv6) => SocketAddr::new((ipv6).into(), 0),
-            }
-        }
+            })?,
         Ipv4(ipv4) => SocketAddr::new((*ipv4).into(), 0),
         Ipv6(ipv6) => SocketAddr::new((*ipv6).into(), 0),
     };
@@ -154,7 +140,7 @@ impl error::Error for PacketStreamClosedError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::Ipv4Addr;
+    use assert_matches::assert_matches;
 
     #[tokio::test]
     async fn resolve_dns() {
@@ -163,9 +149,9 @@ mod tests {
             port: 3000,
         };
         let remote_host = lookup_remote_host(&socket_address).await.unwrap();
-        assert_eq!(
-            remote_host,
-            SocketAddr::new(V4(Ipv4Addr::new(127, 0, 0, 1)), 3000)
+        assert_matches!(
+            remote_host.to_string().as_str(),
+            "127.0.0.1:3000" | "[::1]:3000"
         );
     }
 }
