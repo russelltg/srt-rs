@@ -140,6 +140,7 @@ pub fn gen_access_control_response(
             send_buffer_size: settings.send_buffer_size,
             statistics_interval: settings.statistics_interval,
             peer_idle_timeout: settings.peer_idle_timeout,
+            too_late_packet_drop: settings.too_late_packet_drop,
         },
     )
 }
@@ -240,6 +241,7 @@ impl StartedInitiator {
             send_buffer_size: self.settings.send_buffer_size,
             statistics_interval: self.settings.statistics_interval,
             peer_idle_timeout: self.settings.peer_idle_timeout,
+            too_late_packet_drop: self.settings.too_late_packet_drop,
         })
     }
 }

@@ -71,6 +71,7 @@ impl Receiver {
             arq: AutomaticRepeatRequestAlgorithm::new(
                 settings.socket_start_time,
                 settings.recv_tsbpd_latency,
+                settings.too_late_packet_drop,
                 settings.init_seq_num,
                 settings.recv_buffer_size,
             ),
