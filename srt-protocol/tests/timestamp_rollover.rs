@@ -47,6 +47,7 @@ fn timestamp_rollover() {
         send_buffer_size: PacketCount(8192),
         statistics_interval: Duration::from_secs(1),
         peer_idle_timeout: Duration::from_secs(5),
+        too_late_packet_drop: true,
     };
 
     let s2 = ConnectionSettings {
@@ -68,6 +69,7 @@ fn timestamp_rollover() {
         send_buffer_size: PacketCount(8192),
         statistics_interval: Duration::from_secs(1),
         peer_idle_timeout: Duration::from_secs(5),
+        too_late_packet_drop: true,
     };
 
     const PACKET_RATE: u32 = 10; // 10 packet/s

@@ -62,6 +62,11 @@ pub struct ConnectionSettings {
     pub send_tsbpd_latency: Duration,
     pub recv_tsbpd_latency: Duration,
 
+    /// The Too-Late Packet Drop (TLPKTDROP) mechanism allows the sender to
+    /// drop packets that have no chance to be delivered in time, and allows
+    /// the receiver to skip missing packets that have not been delivered in time
+    pub too_late_packet_drop: bool,
+
     pub peer_idle_timeout: Duration,
 
     /// Size of the receive buffer, in packets
@@ -484,6 +489,7 @@ mod duplex_connection {
                 bandwidth: LiveBandwidthMode::Unlimited,
                 statistics_interval: Duration::from_secs(10),
                 peer_idle_timeout: Duration::from_secs(5),
+                too_late_packet_drop: true,
             },
             handshake: crate::protocol::handshake::Handshake::Connector,
         }

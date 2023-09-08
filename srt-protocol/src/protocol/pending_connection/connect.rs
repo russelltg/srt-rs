@@ -302,6 +302,7 @@ mod test {
                 max_packet_size: options::PacketSize(1500),
                 max_flow_size: options::PacketCount(8192),
                 peer_idle_timeout: Duration::from_secs(5),
+                too_late_packet_drop: true,
             },
             sid,
             random(),

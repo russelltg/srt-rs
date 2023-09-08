@@ -16,7 +16,7 @@ pub struct ConnInitSettings {
     pub peer_idle_timeout: Duration,
     pub bandwidth: options::LiveBandwidthMode,
     pub statistics_interval: Duration,
-
+    pub too_late_packet_drop: bool,
     /// Receive buffer size in packets
     pub recv_buffer_size: options::PacketCount,
     /// Size of the send buffer, in packets
@@ -68,6 +68,7 @@ impl From<options::SocketOptions> for ConnInitSettings {
                 / (options.session.max_segment_size - Packet::HEADER_SIZE),
             max_packet_size: options.sender.max_payload_size,
             max_flow_size: options.sender.flow_control_window_size,
+            too_late_packet_drop: options.receiver.too_late_packet_drop,
         }
     }
 }
