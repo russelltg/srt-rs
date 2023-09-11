@@ -264,16 +264,7 @@ impl ReceiveBuffer {
     ) -> Result<Option<(Instant, Bytes)>, MessageError> {
         let timestamp = match self.front_ts() {
             Some(timestamp) => timestamp,
-            None => {
-                if self.too_late_packet_drop {
-                    return match self.drop_too_late_packets(now) {
-                        Some(error) => Err(error),
-                        None => Ok(None),
-                    };
-                } else {
-                    return Ok(None);
-                }
-            }
+            None => return self.drop_too_late_packets(now),
         };
 
         let sent_time = self.remote_clock.instant_from(timestamp);
@@ -283,16 +274,7 @@ impl ReceiveBuffer {
 
         let packet_count = match self.next_message_packet_count() {
             Some(packet_count) => packet_count,
-            None => {
-                if self.too_late_packet_drop {
-                    return match self.drop_too_late_packets(now) {
-                        Some(error) => Err(error),
-                        None => Ok(None),
-                    };
-                } else {
-                    return Ok(None);
-                }
-            }
+            None => return self.drop_too_late_packets(now),
         };
 
         self.seqno0 += u32::try_from(packet_count).unwrap();
@@ -473,10 +455,17 @@ impl ReceiveBuffer {
 
     /// Drops the packets that are deemed to be too late
     /// i.e.: there is a packet after it that is ready to be released
-    fn drop_too_late_packets(&mut self, now: Instant) -> Option<MessageError> {
+    fn drop_too_late_packets(
+        &mut self,
+        now: Instant,
+    ) -> Result<Option<(Instant, Bytes)>, MessageError> {
+        if self.too_late_packet_drop {
+            return Ok(None);
+        }
+
         let latency_window = self.tsbpd_latency + Duration::from_millis(5);
         // Not only does it have to be non-none, it also has to be a First (don't drop half messages)
-        let (index, seq_number, timestamp) = self
+        let dropped_messages = self
             .buffer
             .iter()
             .enumerate()
@@ -487,7 +476,12 @@ impl ReceiveBuffer {
                 p.data_packet()
                     .map(|d| (i, d.seq_number, self.remote_clock.instant_from(d.timestamp)))
             })
-            .filter(|(_, _, timestamp)| now >= *timestamp + latency_window)?;
+            .filter(|(_, _, timestamp)| now >= *timestamp + latency_window);
+
+        let (index, seq_number, timestamp) = match dropped_messages {
+            Some(d) => d,
+            None => return Ok(None),
+        };
 
         let delay = TimeSpan::from_interval(timestamp + self.tsbpd_latency, now);
         let drop_count = self.buffer.drain(0..index).count();
@@ -495,7 +489,7 @@ impl ReceiveBuffer {
         self.seqno0 = seq_number;
         self.recalculate_lrsn(0);
 
-        Some(MessageError {
+        Err(MessageError {
             too_late_packets: seq_number - drop_count as u32..seq_number,
             delay,
         })
