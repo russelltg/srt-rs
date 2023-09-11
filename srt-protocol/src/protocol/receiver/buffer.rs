@@ -963,6 +963,68 @@ mod receive_buffer {
     }
 
     #[test]
+    fn not_dropping_too_late_packets() {
+        let _ = pretty_env_logger::try_init();
+
+        let tsbpd = Duration::from_secs(2);
+        let start = Instant::now();
+        let init_seq_num = SeqNumber(5);
+
+        let mut buf = ReceiveBuffer::new(start, tsbpd, false, init_seq_num, PacketCount(8192));
+
+        let now = start;
+        let _ = buf.push_packet(
+            now,
+            DataPacket {
+                seq_number: init_seq_num + 1,
+                message_loc: PacketLocation::FIRST,
+                payload: b"hello"[..].into(),
+                ..basic_pack()
+            },
+        );
+        let _ = buf.push_packet(
+            now,
+            DataPacket {
+                seq_number: init_seq_num + 2,
+                message_loc: PacketLocation::MIDDLE,
+                payload: b"hello"[..].into(),
+                ..basic_pack()
+            },
+        );
+        assert_eq!(buf.pop_next_message(now), Ok(None));
+        assert_eq!(buf.next_ack_dsn(), init_seq_num);
+
+        let now = now + tsbpd;
+        let _ = buf.push_packet(
+            now,
+            DataPacket {
+                timestamp: TimeStamp::MIN + tsbpd,
+                seq_number: init_seq_num + 5,
+                message_loc: PacketLocation::ONLY,
+                payload: b"yas"[..].into(),
+                ..basic_pack()
+            },
+        );
+        assert_eq!(buf.pop_next_message(now), Ok(None));
+        assert_eq!(buf.next_ack_dsn(), init_seq_num);
+
+        // 2 ms buffer release tolerance, we are ok with releasing them 2ms late
+        let now = now + Duration::from_millis(5);
+        // it should not drop packets
+        assert_eq!(buf.pop_next_message(now), Ok(None));
+        assert_eq!(buf.next_ack_dsn(), init_seq_num, "{buf:?}");
+
+        // 2 ms buffer release tolerance, we are ok with releasing them 2ms late
+        let now = now + tsbpd + Duration::from_millis(5);
+        // it should not drop packets
+        assert_eq!(buf.pop_next_message(now), Ok(None));
+        assert_eq!(buf.next_ack_dsn(), init_seq_num);
+
+        assert_eq!(buf.pop_next_message(now), Ok(None));
+        assert_eq!(buf.next_ack_dsn(), init_seq_num);
+    }
+
+    #[test]
     fn drop_message() {
         let tsbpd = Duration::from_secs(2);
         let start = Instant::now();
