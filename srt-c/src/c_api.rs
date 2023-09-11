@@ -684,7 +684,7 @@ pub extern "C" fn srt_accept(
         Ok((sock, remote)) => {
             if let Some((addr, len)) = addr {
                 let osa = OsSocketAddr::from(remote);
-                *addr = unsafe { *(osa.as_ptr() as *const libc::sockaddr) };
+                *addr = unsafe { *(osa.as_ptr()) };
                 *len = osa.len() as c_int;
             }
             sock

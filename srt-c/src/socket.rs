@@ -434,7 +434,7 @@ impl SocketData {
                                 opts.listen_cb_opaque,
                                 new_sock,
                                 5,
-                                OsSocketAddr::from(req.remote()).as_ptr() as *const libc::sockaddr,
+                                OsSocketAddr::from(req.remote()).as_ptr(),
                                 streamid_ptr,
                                 &mut ret,
                             )
