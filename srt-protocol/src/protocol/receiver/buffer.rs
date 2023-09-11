@@ -459,7 +459,7 @@ impl ReceiveBuffer {
         &mut self,
         now: Instant,
     ) -> Result<Option<(Instant, Bytes)>, MessageError> {
-        if self.too_late_packet_drop {
+        if !self.too_late_packet_drop {
             return Ok(None);
         }
 
