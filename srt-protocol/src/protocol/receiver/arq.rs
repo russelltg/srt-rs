@@ -400,7 +400,7 @@ mod automatic_repeat_request_algorithm {
         assert_eq!(
             arq.pop_next_message(start + Duration::from_secs(10)),
             Err(MessageError {
-                too_late_packets: SeqNumber(5)..SeqNumber(8),
+                too_late_packets: SeqNumber(5)..SeqNumber(9),
                 delay: TimeSpan::from_millis(8_000)
             })
         );
@@ -622,7 +622,7 @@ mod automatic_repeat_request_algorithm {
         assert_eq!(
             arq.pop_next_message(now),
             Err(MessageError {
-                too_late_packets: SeqNumber(5)..SeqNumber(9),
+                too_late_packets: SeqNumber(5)..SeqNumber(10),
                 delay: TimeSpan::from_millis(10)
             })
         );
