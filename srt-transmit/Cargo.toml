@@ -1,6 +1,6 @@
 [package]
 name = "srt-transmit"
-version = "0.4.2"
+version = "0.4.3"
 authors = ["Russell Greene <russellgreene8@gmail.com>"]
 description = "SRT implementation in Rust"
 license = "Apache-2.0"
@@ -12,7 +12,7 @@ publish = true
 
 [dependencies]
 bus = "2"
-srt-tokio = { version = "0.4.2", path = "../srt-tokio"}
+srt-tokio = { version = "0.4.3", path = "../srt-tokio"}
 clap = { version = "4", features = ["std"]}
 log = { version = "0.4", default-features = false }
 url = "2.3.1" # https://github.com/servo/rust-url/issues/581
