@@ -167,6 +167,8 @@ pub struct MessageError {
 #[derive(Debug)]
 pub struct ReceiveBuffer {
     tsbpd_latency: Duration,
+    /// Adds an extra delay to the TSBPD threshold for dropping too late packets
+    tsbpd_tolerance: Duration,
 
     // Sequence number that all packets up to have been received + 1
     lrsn: SeqNumber,
@@ -190,6 +192,8 @@ impl ReceiveBuffer {
     ) -> Self {
         Self {
             tsbpd_latency,
+            // TODO: perhaps make this configurable
+            tsbpd_tolerance: Duration::from_millis(5),
             too_late_packet_drop,
             lrsn: init_seq_num,
             seqno0: init_seq_num,
@@ -473,7 +477,7 @@ impl ReceiveBuffer {
             })
         });
 
-        let tsbpd_threshold = now - self.tsbpd_latency - Duration::from_millis(5);
+        let tsbpd_threshold = now - self.tsbpd_latency - self.tsbpd_tolerance;
         let too_late_packets = data_packets.take_while(|packet| {
             packet.map_or(true, |(_, packet_time, message_loc)| {
                 packet_time <= tsbpd_threshold || !message_loc.contains(PacketLocation::FIRST)
@@ -896,7 +900,6 @@ mod receive_buffer {
         assert_eq!(buf.next_ack_dsn(), init_seq_num);
 
         let now = now + tsbpd;
-        let expected_release_time = now;
         let _ = buf.push_packet(
             now,
             DataPacket {
