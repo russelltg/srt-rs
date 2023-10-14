@@ -140,7 +140,7 @@ fn local_port_addr(url: &Url, kind: &str) -> Result<(u16, Option<SocketAddr>), E
     Ok(match url.host() {
         // no host means bind to the port specified
         None => (port, None),
-        Some(Host::Domain(d)) if d == "0.0.0.0" => (port, None),
+        Some(Host::Domain("0.0.0.0")) => (port, None),
 
         // if host is specified, bind to 0
         Some(Host::Domain(d)) => (
