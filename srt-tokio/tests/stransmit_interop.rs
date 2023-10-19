@@ -537,8 +537,8 @@ async fn bad_password_rust_listener() -> Result<(), Error> {
     const PACKETS: u32 = 1_000;
 
     let mut child = allow_not_found!(Command::new("srt-live-transmit")
-        .arg("udp://:2829")
-        .arg("srt://127.0.0.1:2828?passphrase=password1234&pbkeylen=16")
+        .arg("udp://:2820")
+        .arg("srt://127.0.0.1:2821?passphrase=password1234&pbkeylen=16")
         .arg("-a:no")
         .arg("-loglevel:debug")
         .spawn());
@@ -546,7 +546,7 @@ async fn bad_password_rust_listener() -> Result<(), Error> {
     let listener_fut = tokio::spawn(async move {
         SrtSocket::builder()
             .encryption(16, "password123")
-            .local_port(2828)
+            .local_port(2821)
             .listen()
             .await
             .unwrap()
