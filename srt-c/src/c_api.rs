@@ -2,7 +2,7 @@
 #![allow(non_camel_case_types)]
 
 use crate::epoll::EpollFlags;
-use crate::errors::{SRT_ERRNO, SRT_ERRNO::*};
+use crate::errors::{SRT_ERRNO, SRT_ERRNO::*, SRT_REJECT_REASON};
 use crate::socket::{CSrtSocket, SocketData};
 
 use std::mem;
@@ -793,49 +793,42 @@ pub extern "C" fn srt_sendmsg2(
 /// Returns the number of bytes read
 #[no_mangle]
 pub extern "C" fn srt_recv(sock: SRTSOCKET, buf: *mut c_char, len: c_int) -> c_int {
+    srt_recvmsg2(sock, buf, len, ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "C" fn srt_recvmsg(sock: SRTSOCKET, buf: *mut c_char, len: c_int) -> c_int {
+    srt_recvmsg2(sock, buf, len, ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "C" fn srt_recvmsg2(
+    sock: SRTSOCKET,
+    buf: *mut c_char,
+    len: c_int,
+    mctrl: *mut SRT_MSGCTRL,
+) -> c_int {
     let sock = match get_sock(sock) {
         None => return set_error(SRT_EINVSOCK.into()),
         Some(sock) => sock,
     };
 
+    let mctrl = if mctrl.is_null() {
+        None
+    } else {
+        Some(unsafe { &mut *mctrl })
+    };
+
     let bytes = unsafe { from_raw_parts_mut(buf as *mut u8, len as usize) };
 
-    let mut l = sock.lock().unwrap();
-    if let SocketData::Established(ref mut sock, opts) = *l {
-        TOKIO_RUNTIME.block_on(async {
-            let d = if opts.rcv_syn {
-                // block
-                sock.next().await
-            } else {
-                // nonblock
-                match timeout(Duration::from_millis(10), sock.next()).await {
-                    Err(_) => return set_error(SRT_EASYNCRCV.into()),
-                    Ok(d) => d,
-                }
-            };
-
-            let (_, recvd) = match d {
-                Some(Ok(d)) => d,
-                Some(Err(e)) => return set_error(SrtError::new(SRT_ECONNLOST, e)), // TODO: not sure which error exactly here
-                None => return set_error(SRT_ECONNLOST.into()),
-            };
-
-            if bytes.len() < recvd.len() {
-                error!("Receive buffer was not large enough, truncating...");
-            }
-
-            let bytes_to_write = min(bytes.len(), recvd.len());
-            bytes[..bytes_to_write].copy_from_slice(&recvd[..bytes_to_write]);
-            bytes_to_write as c_int
-        })
-    } else {
-        set_error(SRT_ENOCONN.into())
+    let l = sock.lock().unwrap();
+    match SocketData::recv(l, bytes, mctrl) {
+        Ok(bytes) => bytes.try_into().unwrap(),
+        Err(e) => {
+            set_error(e);
+            SRT_ERROR
+        }
     }
-}
-
-#[no_mangle]
-pub extern "C" fn srt_recvmsg(sock: SRTSOCKET, buf: *mut c_char, len: c_int) -> c_int {
-    srt_recv(sock, buf, len)
 }
 
 #[no_mangle]
@@ -892,6 +885,16 @@ pub extern "C" fn srt_setloglevel(ll: c_int) {
 
     // TODO: finish
     // how does this work???
+}
+
+#[no_mangle]
+pub extern "C" fn srt_getrejectreason(sock: SRTSOCKET) -> SRT_REJECT_REASON {
+    todo!()
+}
+
+#[no_mangle]
+pub extern "C" fn srt_setrejectreason(sock: SRTSOCKET, value: SRT_REJECT_REASON) {
+    todo!()
 }
 
 /// # Safety
