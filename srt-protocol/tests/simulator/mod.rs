@@ -22,13 +22,13 @@ struct SentPacket(Instant, (Packet, SocketAddr));
 
 impl PartialOrd for SentPacket {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.0.cmp(&other.0).reverse()) // reverse to make it a min-heap
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for SentPacket {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap()
+        self.0.cmp(&other.0).reverse() // reverse to make it a min-heap
     }
 }
 
@@ -44,13 +44,13 @@ impl Eq for ScheduledInput {}
 
 impl PartialOrd for ScheduledInput {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.0.cmp(&other.0).reverse()) // reverse to make it a min-heap
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for ScheduledInput {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap()
+        self.0.cmp(&other.0).reverse() // reverse to make it a min-heap
     }
 }
 

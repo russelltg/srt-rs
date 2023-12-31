@@ -1,5 +1,4 @@
 use std::{
-    convert::{TryFrom, TryInto},
     io,
     time::Instant,
 };
@@ -128,7 +127,7 @@ async fn set_password() {
 
     let listener = tokio::spawn(async move {
         while let Some(request) = incoming.incoming().next().await {
-            let passphrase = request.stream_id().unwrap().as_str().try_into().unwrap();
+            let passphrase = request.stream_id().unwrap().as_str().into();
 
             if let Ok(mut sender) = request
                 .accept(Some(KeySettings {

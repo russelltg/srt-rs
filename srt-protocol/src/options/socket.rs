@@ -99,7 +99,6 @@ impl OptionsOf<Receiver> for SocketOptions {
 
 #[cfg(test)]
 mod test {
-    use std::convert::TryInto;
     use std::time::Duration;
 
     use super::*;
@@ -119,7 +118,7 @@ mod test {
             })?
             .with(Encryption {
                 key_size: KeySize::AES192,
-                passphrase: "this is a passphrase".try_into().ok(),
+                passphrase: Some("this is a passphrase".into()),
                 ..Default::default()
             })?
             .with(Sender {
@@ -142,7 +141,7 @@ mod test {
             },
             encryption: Encryption {
                 key_size: KeySize::AES192,
-                passphrase: "this is a passphrase".try_into().ok(),
+                passphrase: Some("this is a passphrase".into()),
                 ..Default::default()
             },
             sender: Sender {

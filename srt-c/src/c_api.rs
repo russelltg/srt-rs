@@ -776,7 +776,7 @@ pub extern "C" fn srt_sendmsg2(
                 .try_send(
                     Instant::now(),
                     Bytes::copy_from_slice(unsafe {
-                        from_raw_parts(buf as *const u8, len as usize)
+                        from_raw_parts(buf, len as usize)
                     }),
                 )
                 .is_err()
@@ -798,7 +798,7 @@ pub extern "C" fn srt_recv(sock: SRTSOCKET, buf: *mut c_char, len: c_int) -> c_i
         Some(sock) => sock,
     };
 
-    let bytes = unsafe { from_raw_parts_mut(buf as *mut u8, len as usize) };
+    let bytes = unsafe { from_raw_parts_mut(buf, len as usize) };
 
     let mut l = sock.lock().unwrap();
     if let SocketData::Established(ref mut sock, opts) = *l {
