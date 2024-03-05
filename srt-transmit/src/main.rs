@@ -30,6 +30,7 @@ use tokio::{
     net::TcpListener,
     net::TcpStream,
     net::UdpSocket,
+    sync::mpsc::channel,
     spawn,
 };
 use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
@@ -620,6 +621,9 @@ async fn run() -> Result<(), Error> {
         .format_timestamp_micros()
         .init();
 
+    let (ctrlc_tx, ctrlc_rx) = channel(1);
+    ctrlc::set_handler(move || ctrlc_tx.blocking_send(()).unwrap());
+
     let app = Command::new("srt-transmit")
         .version("1.0")
         .author("Russell Greene")
@@ -680,5 +684,38 @@ async fn run() -> Result<(), Error> {
     }
 
     sinks.close().await?;
+
+    // let mut connect_send = async move {
+    //     // poll sink and stream in parallel, only yielding when there is something ready for the sink and the stream is good.
+    //     while let (_, Some(stream)) = try_join!(
+    //         future::poll_fn(|cx| Pin::new(&mut sinks).poll_ready(cx)),
+    //         stream_stream.try_next()
+    //     )? {
+    //         // let a: () = &mut *stream;
+    //         sinks.send_all(&mut stream.map(Ok)).await?;
+    //     }
+
+    //     Ok::<_, Error>(sinks)
+    // }
+    // .boxed()
+    // .fuse();
+
+    // let ctrlc_count = select! {
+    //     res = connect_send => res.map(|_| 0)?,
+    //     // _ = ctrlc_rx.next() => 1,
+    // };
+
+    // // cancel close on second ctrl+c
+    // // let 2x_ctrlc = async move {
+    // //     for _ in ctrlc_count..2 {
+    // //         ctrlc_rx.next().await;
+    // //     }
+    // // };
+
+    // select! {
+    //     e = sinks.close() => e?,
+    //     // _ = 2x_ctrlc => (),
+    // };
+
     Ok(())
 }
