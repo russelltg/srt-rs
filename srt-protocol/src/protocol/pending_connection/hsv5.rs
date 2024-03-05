@@ -6,6 +6,8 @@ use std::{
     time::Instant,
 };
 
+use log::warn;
+
 use crate::{connection::ConnectionSettings, options::*, packet::*, settings::*};
 
 use super::{ConnectError, ConnectionReject};
@@ -65,11 +67,12 @@ pub fn gen_access_control_response(
     };
 
     // crypto
-    let cipher = match (&settings.key_settings, &incoming.ext_km) {
+    let cipher = match (&mut settings.key_settings, &incoming.ext_km) {
         // ok, both sides have crypto
         (Some(key_settings), Some(SrtControlPacket::KeyRefreshRequest(km))) => {
             if key_settings.key_size != incoming.key_size {
-                unimplemented!("Key size mismatch");
+                warn!("Key size mismatch: caller requested {:?}, listener was configured with {:?}. Selecting {:?}", incoming.key_size, key_settings.key_size, incoming.key_size);
+                key_settings.key_size = incoming.key_size;
             }
 
             let cipher = match CipherSettings::new(key_settings, &settings.key_refresh, km) {
