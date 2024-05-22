@@ -189,8 +189,8 @@ async fn key_size() {
 
     let listener = tokio::spawn(async move {
         while let Some(request) = incoming.incoming().next().await {
+            let key_size = request.key_size();
             let passphrase = request.stream_id().unwrap().as_str().into();
-            let key_size = request.key_size().clone();
 
             if let Ok(mut sender) = request
                 .accept(Some(KeySettings {
