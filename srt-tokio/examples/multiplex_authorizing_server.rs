@@ -13,7 +13,7 @@ use std::time::Instant;
 async fn main() -> io::Result<()> {
     let _ = pretty_env_logger::try_init();
 
-    let (_server, mut incoming) = SrtListener::builder().bind(3333).await.unwrap();
+    let (_server, mut incoming) = SrtListener::builder().bind(333).await.unwrap();
 
     while let Some(request) = incoming.incoming().next().await {
         tokio::spawn(async move { handle_request(request).await });
@@ -25,7 +25,7 @@ async fn main() -> io::Result<()> {
 async fn handle_request(request: ConnectionRequest) {
     info!("received connection request");
 
-    if *request.key_size() != KeySize::AES256 {
+    if request.key_size() != KeySize::AES256 {
         info!("rejecting, key size is not AES256");
         request
             .reject(RejectReason::Server(ServerRejectReason::BadRequest))
