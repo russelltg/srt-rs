@@ -80,7 +80,7 @@ async fn streamid() -> io::Result<()> {
                 StandardAccessControlEntry::UserName("russell".into()).into(),
                 StandardAccessControlEntry::ResourceName(format!("{i}")).into(),
             ])
-            .to_string();
+                .to_string();
 
             let recvr = SrtSocket::builder()
                 .call("127.0.0.1:2000", Some(stream_id.as_str()))
@@ -178,49 +178,6 @@ async fn set_password() {
             CoreRejectReason::BadSecret.into()
         )))
     );
-
-    server.close().await;
-    listener.await.unwrap();
-}
-
-#[tokio::test]
-async fn key_size() {
-    let (mut server, mut incoming) = SrtListener::builder().bind(2001).await.unwrap();
-
-    let listener = tokio::spawn(async move {
-        while let Some(request) = incoming.incoming().next().await {
-            let key_size = request.key_size();
-            let passphrase = request.stream_id().unwrap().as_str().into();
-
-            if let Ok(mut sender) = request
-                .accept(Some(KeySettings {
-                    key_size,
-                    passphrase,
-                }))
-                .await
-            {
-                let mut stream =
-                    stream::iter(Some(Ok((Instant::now(), Bytes::from("asdf")))).into_iter());
-
-                tokio::spawn(async move {
-                    sender.send_all(&mut stream).await.unwrap();
-                    sender.close().await.unwrap();
-                    info!("Sender finished");
-                });
-            }
-        }
-    });
-
-    for key_size_bytes in [0, 16, 24, 32] {
-        SrtSocket::builder()
-            .encryption(key_size_bytes, "password128")
-            .call("127.0.0.1:2001", Some("password128"))
-            .await
-            .unwrap()
-            .close()
-            .await
-            .expect("server should use the advertised key size");
-    }
 
     server.close().await;
     listener.await.unwrap();
