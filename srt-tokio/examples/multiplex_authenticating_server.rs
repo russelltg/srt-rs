@@ -36,7 +36,7 @@ async fn handle_request(request: ConnectionRequest) {
 
     let key_settings = KeySettings {
         key_size: KeySize::AES256,
-        passphrase: Passphrase::try_from("password128").unwrap(),
+        passphrase: Passphrase::from("password128"),
     };
     let mut sender = request.accept(Some(key_settings)).await.unwrap();
     let mut stream = stream::iter(
