@@ -1,7 +1,4 @@
-use std::{
-    io,
-    time::Instant,
-};
+use std::{io, time::Instant};
 
 use assert_matches::assert_matches;
 use bytes::Bytes;
