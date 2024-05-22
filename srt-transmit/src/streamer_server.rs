@@ -15,6 +15,9 @@ use srt_tokio::{
     SrtIncoming, SrtListener, SrtSocket,
 };
 
+// Even though it is never directly used, oneshot::Sender<()> is not dead code. It is used to
+// ensures the run_receive_loop task terminates when the StreamerServer is dropped
+#[allow(dead_code)]
 pub struct StreamerServer(broadcast::Sender<(Instant, Bytes)>, oneshot::Sender<()>);
 
 impl StreamerServer {
