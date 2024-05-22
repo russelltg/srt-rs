@@ -40,7 +40,11 @@ async fn handle_request(request: ConnectionRequest) {
     };
     let mut sender = request.accept(Some(key_settings)).await.unwrap();
     let mut stream = stream::iter(
-        Some(Ok((Instant::now(), Bytes::from("Hello authenticated user!!")))).into_iter(),
+        Some(Ok((
+            Instant::now(),
+            Bytes::from("Hello authenticated user!!"),
+        )))
+        .into_iter(),
     );
 
     sender.send_all(&mut stream).await.unwrap();
