@@ -40,6 +40,9 @@ impl ConnectionRequest {
     pub fn stream_id(&self) -> Option<&StreamId> {
         self.request.stream_id.as_ref()
     }
+    pub fn key_size(&self) -> &KeySize {
+        &self.request.key_size
+    }
 
     pub async fn accept(
         self,
