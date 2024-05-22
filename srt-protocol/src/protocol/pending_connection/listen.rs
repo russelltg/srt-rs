@@ -237,6 +237,7 @@ impl Listen {
         // TODO: handle StreamId parsing error
         let stream_id = incoming.sid.clone().and_then(|s| s.try_into().ok());
         let remote_socket_id = shake.socket_id;
+        let key_size = incoming.key_size.clone();
 
         self.state = AccessControlRequested(state, timestamp, shake, incoming);
 
@@ -245,6 +246,7 @@ impl Listen {
             remote,
             remote_socket_id,
             stream_id,
+            key_size,
         })
     }
 
