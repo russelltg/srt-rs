@@ -79,8 +79,7 @@ async fn streamid() -> io::Result<()> {
             let stream_id = AccessControlList(vec![
                 StandardAccessControlEntry::UserName("russell".into()).into(),
                 StandardAccessControlEntry::ResourceName(format!("{i}")).into(),
-            ])
-                .to_string();
+            ]).to_string();
 
             let recvr = SrtSocket::builder()
                 .call("127.0.0.1:2000", Some(stream_id.as_str()))

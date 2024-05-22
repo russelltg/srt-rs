@@ -581,11 +581,11 @@ mod test {
             Ok((build_hs_pack(test_induction()), conn_addr())),
         );
 
-        let send_key_size = KeySize::AES256;
+        let hs_key_size = KeySize::AES256;
 
         let shake = HandshakeControlInfo {
             info: HandshakeVsInfo::V5(HsV5Info {
-                key_size: send_key_size,
+                key_size: hs_key_size,
                 ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
                     version: SrtVersion::CURRENT,
                     flags: SrtShakeFlags::SUPPORTED,
