@@ -611,6 +611,6 @@ mod test {
             panic!("expected a ConnectionResult::RequestAccess");
         };
 
-        assert_eq!(request_access.key_size, send_key_size);
+        assert_eq!(request_access.key_size, hs_key_size);
     }
 }
