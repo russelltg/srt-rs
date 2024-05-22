@@ -13,7 +13,7 @@ use std::time::Instant;
 async fn main() -> io::Result<()> {
     let _ = pretty_env_logger::try_init();
 
-    let (_server, mut incoming) = SrtListener::builder().bind(333).await.unwrap();
+    let (_server, mut incoming) = SrtListener::builder().bind(3333).await.unwrap();
 
     while let Some(request) = incoming.incoming().next().await {
         tokio::spawn(async move { handle_request(request).await });
@@ -40,7 +40,7 @@ async fn handle_request(request: ConnectionRequest) {
     };
     let mut sender = request.accept(Some(key_settings)).await.unwrap();
     let mut stream = stream::iter(
-        Some(Ok((Instant::now(), Bytes::from("Hello authorized user!!")))).into_iter(),
+        Some(Ok((Instant::now(), Bytes::from("Hello authenticated user!!")))).into_iter(),
     );
 
     sender.send_all(&mut stream).await.unwrap();
