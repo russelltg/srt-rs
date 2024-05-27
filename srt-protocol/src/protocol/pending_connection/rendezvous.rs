@@ -166,12 +166,12 @@ impl Rendezvous {
     // }
 
     fn make_rejection(
-        &self,
+        &mut self,
         response_to: &HandshakeControlInfo,
         timestamp: TimeStamp,
         r: ConnectionReject,
     ) -> ConnectionResult {
-        ConnectionResult::Reject(
+        Reject(
             Some((
                 ControlPacket {
                     timestamp,
