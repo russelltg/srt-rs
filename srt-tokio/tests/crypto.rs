@@ -101,5 +101,3 @@ async fn bad_password_rendezvous() {
 
     assert_matches!(result, Err(e) if e.kind() == io::ErrorKind::ConnectionRefused);
 }
-
-// TODO: mismatch
