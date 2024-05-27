@@ -174,6 +174,7 @@ impl AutomaticRepeatRequestAlgorithm {
     pub fn new(
         socket_start_time: Instant,
         tsbpd_latency: Duration,
+        too_late_packet_drop: bool,
         init_seq_num: SeqNumber,
         buffer_size_packets: PacketCount,
     ) -> Self {
@@ -183,6 +184,7 @@ impl AutomaticRepeatRequestAlgorithm {
             receive_buffer: ReceiveBuffer::new(
                 socket_start_time,
                 tsbpd_latency,
+                too_late_packet_drop,
                 init_seq_num,
                 buffer_size_packets,
             ),
@@ -353,6 +355,7 @@ mod automatic_repeat_request_algorithm {
         let mut arq = AutomaticRepeatRequestAlgorithm::new(
             start,
             Duration::from_secs(2),
+            true,
             init_seq_num,
             PacketCount(8192),
         );
@@ -397,7 +400,7 @@ mod automatic_repeat_request_algorithm {
         assert_eq!(
             arq.pop_next_message(start + Duration::from_secs(10)),
             Err(MessageError {
-                too_late_packets: SeqNumber(5)..SeqNumber(8),
+                too_late_packets: SeqNumber(5)..SeqNumber(9),
                 delay: TimeSpan::from_millis(8_000)
             })
         );
@@ -410,6 +413,7 @@ mod automatic_repeat_request_algorithm {
         let mut arq = AutomaticRepeatRequestAlgorithm::new(
             start,
             Duration::from_secs(2),
+            true,
             init_seq_num,
             PacketCount(8192),
         );
@@ -478,6 +482,7 @@ mod automatic_repeat_request_algorithm {
         let mut arq = AutomaticRepeatRequestAlgorithm::new(
             start,
             Duration::from_secs(2),
+            true,
             init_seq_num,
             PacketCount(8192),
         );
@@ -520,6 +525,7 @@ mod automatic_repeat_request_algorithm {
         let mut arq = AutomaticRepeatRequestAlgorithm::new(
             start,
             Duration::from_secs(1),
+            true,
             init_seq_num,
             PacketCount(8192),
         );
@@ -571,6 +577,7 @@ mod automatic_repeat_request_algorithm {
         let mut arq = AutomaticRepeatRequestAlgorithm::new(
             start,
             tsbpd_latency,
+            true,
             init_seq_num,
             PacketCount(8192),
         );
@@ -615,7 +622,7 @@ mod automatic_repeat_request_algorithm {
         assert_eq!(
             arq.pop_next_message(now),
             Err(MessageError {
-                too_late_packets: SeqNumber(5)..SeqNumber(9),
+                too_late_packets: SeqNumber(5)..SeqNumber(10),
                 delay: TimeSpan::from_millis(10)
             })
         );

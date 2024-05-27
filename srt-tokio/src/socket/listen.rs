@@ -34,7 +34,12 @@ pub async fn bind_with(
             NotHandled(e) => {
                 warn!("{:?}", e);
             }
-            Reject(_, _) => todo!(),
+            Reject(packet, e) => {
+                warn!("{:?}", e);
+                if let Some(packet) = packet {
+                    let _ = socket.send(packet).await?;
+                }
+            }
             Connected(p, connection) => {
                 if let Some(packet) = p {
                     let _ = socket.send(packet).await?;

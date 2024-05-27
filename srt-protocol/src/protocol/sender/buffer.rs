@@ -594,6 +594,8 @@ mod test {
             recv_buffer_size: PacketCount(8196),
             send_buffer_size: PacketCount(8196),
             statistics_interval: Duration::from_secs(10),
+            peer_idle_timeout: Duration::from_secs(5),
+            too_late_packet_drop: true,
         }
     }
 

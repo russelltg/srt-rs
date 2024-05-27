@@ -96,7 +96,7 @@ impl Listen {
     }
 
     pub fn handle_timer(&self, _now: Instant) -> ConnectionResult {
-        ConnectionResult::NoAction
+        NoAction
     }
 
     fn handle_control_packets(
@@ -237,6 +237,7 @@ impl Listen {
         // TODO: handle StreamId parsing error
         let stream_id = incoming.sid.clone().and_then(|s| s.try_into().ok());
         let remote_socket_id = shake.socket_id;
+        let key_size = incoming.key_size;
 
         self.state = AccessControlRequested(state, timestamp, shake, incoming);
 
@@ -245,6 +246,7 @@ impl Listen {
             remote,
             remote_socket_id,
             stream_id,
+            key_size,
         })
     }
 
@@ -297,13 +299,14 @@ impl Listen {
     }
 
     fn make_rejection(
-        &self,
+        &mut self,
         response_to: &HandshakeControlInfo,
         from: SocketAddr,
         timestamp: TimeStamp,
         r: ConnectionReject,
     ) -> ConnectionResult {
-        ConnectionResult::Reject(
+        self.state = InductionWait;
+        Reject(
             Some((
                 ControlPacket {
                     timestamp,
@@ -568,5 +571,47 @@ mod test {
                 ConnectionReject::Rejecting(RejectReason::Server(ServerRejectReason::Overload)),
             )
         );
+    }
+
+    #[test]
+    fn advertise_key_size() {
+        let mut l = Listen::new(ConnInitSettings::default(), true);
+
+        l.handle_packet(
+            Instant::now(),
+            Ok((build_hs_pack(test_induction()), conn_addr())),
+        );
+
+        let hs_key_size = KeySize::AES256;
+
+        let shake = HandshakeControlInfo {
+            info: HandshakeVsInfo::V5(HsV5Info {
+                key_size: hs_key_size,
+                ext_hs: Some(SrtControlPacket::HandshakeRequest(SrtHandshake {
+                    version: SrtVersion::CURRENT,
+                    flags: SrtShakeFlags::SUPPORTED,
+                    send_latency: Duration::from_secs(1),
+                    recv_latency: Duration::from_secs(2),
+                })),
+                ext_km: None,
+                ext_group: None,
+                sid: None,
+            }),
+            ..test_conclusion()
+        };
+
+        let hs_packet = Packet::Control(ControlPacket {
+            timestamp: TimeStamp::from_micros(0),
+            dest_sockid: random(),
+            control_type: ControlTypes::Handshake(shake),
+        });
+
+        let RequestAccess(request_access) =
+            l.handle_packet(Instant::now(), Ok((hs_packet, conn_addr())))
+        else {
+            panic!("expected a ConnectionResult::RequestAccess");
+        };
+
+        assert_eq!(request_access.key_size, hs_key_size);
     }
 }

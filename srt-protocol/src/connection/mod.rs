@@ -62,6 +62,13 @@ pub struct ConnectionSettings {
     pub send_tsbpd_latency: Duration,
     pub recv_tsbpd_latency: Duration,
 
+    /// The Too-Late Packet Drop (TLPKTDROP) mechanism allows the sender to
+    /// drop packets that have no chance to be delivered in time, and allows
+    /// the receiver to skip missing packets that have not been delivered in time
+    pub too_late_packet_drop: bool,
+
+    pub peer_idle_timeout: Duration,
+
     /// Size of the receive buffer, in packets
     pub recv_buffer_size: PacketCount,
     /// Size of the send buffer, in packets
@@ -108,12 +115,17 @@ pub enum Input {
 impl DuplexConnection {
     pub fn new(connection: Connection) -> DuplexConnection {
         let settings = connection.settings;
+
         DuplexConnection {
             settings: settings.clone(),
             handshake: connection.handshake,
             output: Output::new(&settings),
             status: ConnectionStatus::new(settings.send_tsbpd_latency * 2), // the timeout should be larger than latency as otherwise packets that have just arrived definitely have a change to flush
-            timers: Timers::new(settings.socket_start_time, settings.statistics_interval),
+            timers: Timers::new(
+                settings.socket_start_time,
+                settings.statistics_interval,
+                settings.peer_idle_timeout,
+            ),
             stats: SocketStatistics::new(),
             receiver: Receiver::new(settings.clone()),
             sender: Sender::new(settings),
@@ -164,35 +176,34 @@ impl DuplexConnection {
     }
 
     pub fn next_packet(&mut self, now: Instant) -> Option<(Packet, SocketAddr)> {
-        self.output.pop_packet().map(|p| {
-            self.stats.tx_all_packets += 1;
-            self.stats.tx_all_bytes += u64::try_from(p.wire_size()).unwrap();
+        let p = self.output.pop_packet()?;
+        self.stats.tx_all_packets += 1;
+        self.stats.tx_all_bytes += u64::try_from(p.wire_size()).unwrap();
 
-            // payload length + (20 bytes IPv4 + 8 bytes UDP + 16 bytes SRT)
-            match &p {
-                Packet::Data(d) => {
-                    self.stats.tx_data += 1;
-                    self.stats.tx_bytes += u64::try_from(d.wire_size()).unwrap();
-                }
-                Packet::Control(c) => match c.control_type {
-                    ControlTypes::Ack(ref a) => {
-                        self.stats.tx_ack += 1;
-                        if matches!(a, Acknowledgement::Lite(_)) {
-                            self.stats.tx_light_ack += 1;
-                        }
-                    }
-                    ControlTypes::Nak(_) => {
-                        self.stats.tx_nak += 1;
-                    }
-                    ControlTypes::Ack2(_) => {
-                        self.stats.tx_ack2 += 1;
-                    }
-                    _ => {}
-                },
+        // payload length + (20 bytes IPv4 + 8 bytes UDP + 16 bytes SRT)
+        match &p {
+            Packet::Data(d) => {
+                self.stats.tx_data += 1;
+                self.stats.tx_bytes += u64::try_from(d.wire_size()).unwrap();
             }
-            self.debug(now, "send", &p);
-            (p, self.settings.remote)
-        })
+            Packet::Control(c) => match c.control_type {
+                ControlTypes::Ack(ref a) => {
+                    self.stats.tx_ack += 1;
+                    if matches!(a, Acknowledgement::Lite(_)) {
+                        self.stats.tx_light_ack += 1;
+                    }
+                }
+                ControlTypes::Nak(_) => {
+                    self.stats.tx_nak += 1;
+                }
+                ControlTypes::Ack2(_) => {
+                    self.stats.tx_ack2 += 1;
+                }
+                _ => {}
+            },
+        }
+        self.debug(now, "send", &p);
+        Some((p, self.settings.remote))
     }
 
     pub fn next_data(&mut self, now: Instant) -> Option<(Instant, Bytes)> {
@@ -477,6 +488,8 @@ mod duplex_connection {
                 stream_id: None,
                 bandwidth: LiveBandwidthMode::Unlimited,
                 statistics_interval: Duration::from_secs(10),
+                peer_idle_timeout: Duration::from_secs(5),
+                too_late_packet_drop: true,
             },
             handshake: crate::protocol::handshake::Handshake::Connector,
         }

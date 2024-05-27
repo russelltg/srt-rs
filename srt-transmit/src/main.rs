@@ -30,6 +30,7 @@ use tokio::{
     net::TcpListener,
     net::TcpStream,
     net::UdpSocket,
+    spawn,
 };
 use tokio_util::{codec::BytesCodec, codec::Framed, codec::FramedWrite, udp::UdpFramed};
 
@@ -83,15 +84,20 @@ where
     for (k, v) in args {
         match &*k {
             "latency_ms" => {
-                let latency = Duration::from_millis(match v.parse() {
-                    Ok(i) => i,
-                    Err(e) => bail!(
-                        "Failed to parse latency_ms parameter to input as integer: {}",
-                        e
-                    ),
-                });
+                let latency = Duration::from_secs_f64(
+                    v.parse::<f64>()
+                        .map_err(|e| format_err!("Failed to parse latency_ms: {e}"))?
+                        / 1e3,
+                );
                 options.sender.peer_latency = latency;
                 options.receiver.latency = latency;
+            }
+            "peeridletimeout_ms" => {
+                options.session.peer_idle_timeout = Duration::from_secs_f64(
+                    v.parse::<f64>()
+                        .map_err(|e| format_err!("Failed to parse peeridletimeout_ms: {e}"))?
+                        / 1e3,
+                )
             }
             "interface" => {
                 options.connect.local.set_ip(match v.parse() {
@@ -113,7 +119,7 @@ where
                 options.encryption.key_size = size.try_into()?;
                 key = true;
             }
-            "rendezvous" | "multiplex" | "autoreconnect" => (),
+            "rendezvous" | "multiplex" | "autoreconnect" | "stats" => (),
             unrecog => bail!("Unrecgonized parameter '{}' for srt", unrecog),
         }
     }
@@ -134,7 +140,7 @@ fn local_port_addr(url: &Url, kind: &str) -> Result<(u16, Option<SocketAddr>), E
     Ok(match url.host() {
         // no host means bind to the port specified
         None => (port, None),
-        Some(Host::Domain(d)) if d == "0.0.0.0" => (port, None),
+        Some(Host::Domain("0.0.0.0")) => (port, None),
 
         // if host is specified, bind to 0
         Some(Host::Domain(d)) => (
@@ -241,6 +247,22 @@ fn parse_rendezvous(input_url: &Url) -> Option<Cow<str>> {
     rendezvous_v
 }
 
+fn start_stat_task_if_requested(socket: &mut SrtSocket, url: &Url) -> Result<(), Error> {
+    if let Some((_, val)) = url.query_pairs().find(|(a, _)| a == "stats") {
+        if !val.is_empty() {
+            bail!("value {val} assigned to `stats`. Do not assign a value to stats");
+        }
+
+        let mut stat = socket.statistics().clone();
+        spawn(async move {
+            while let Some(s) = stat.next().await {
+                println!("{:?}", s);
+            }
+        });
+    }
+    Ok(())
+}
+
 async fn make_srt_input(
     input_url: Url,
     input_addr: Option<SocketAddr>,
@@ -253,11 +275,9 @@ async fn make_srt_input(
         bail!("multiplex is not a valid option for input urls");
     }
 
-    Ok(SrtSocket::bind(bind_options?)
-        .await?
-        .map(Result::unwrap)
-        .map(|(_, b)| b)
-        .boxed())
+    let mut srt_socket = SrtSocket::bind(bind_options?).await?;
+    start_stat_task_if_requested(&mut srt_socket, &input_url)?;
+    Ok(srt_socket.map(Result::unwrap).map(|(_, b)| b).boxed())
 }
 
 fn resolve_input(
@@ -388,10 +408,13 @@ async fn make_srt_ouput(
             .await?
             .with(|b| future::ok((Instant::now(), b)))
             .boxed_sink()),
-        None => Ok(SrtSocket::bind(bind_options)
-            .await?
-            .with(|b| future::ok((Instant::now(), b)))
-            .boxed_sink()),
+        None => {
+            let mut srt_socket = SrtSocket::bind(bind_options).await?;
+            start_stat_task_if_requested(&mut srt_socket, &output_url)?;
+            Ok(srt_socket
+                .with(|b| future::ok((Instant::now(), b)))
+                .boxed_sink())
+        }
     }
 }
 
@@ -592,6 +615,7 @@ async fn main() {
 
 async fn run() -> Result<(), Error> {
     pretty_env_logger::formatted_builder()
+        .parse_default_env()
         // .format(|buf, record| writeln!(buf, "{} [{}] {}", record.args()))
         .format_timestamp_micros()
         .init();

@@ -684,7 +684,7 @@ pub extern "C" fn srt_accept(
         Ok((sock, remote)) => {
             if let Some((addr, len)) = addr {
                 let osa = OsSocketAddr::from(remote);
-                *addr = unsafe { *(osa.as_ptr() as *const libc::sockaddr) };
+                *addr = unsafe { *(osa.as_ptr()) };
                 *len = osa.len() as c_int;
             }
             sock
@@ -719,7 +719,7 @@ fn handle_result(res: Result<(), SrtError>) -> c_int {
 
 thread_local! {
     pub static LAST_ERROR_STR: RefCell<CString> = RefCell::new(CString::new("(no error set on this thread)").unwrap());
-    pub static LAST_ERROR: RefCell<SRT_ERRNO> = RefCell::new(SRT_ERRNO::SRT_SUCCESS);
+    pub static LAST_ERROR: RefCell<SRT_ERRNO> = const { RefCell::new(SRT_ERRNO::SRT_SUCCESS) };
 }
 
 #[no_mangle]

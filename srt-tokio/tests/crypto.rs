@@ -1,12 +1,15 @@
-use std::time::{Duration, Instant};
+use std::{
+    io,
+    time::{Duration, Instant},
+};
 
 use srt_tokio::SrtSocket;
 
+use assert_matches::assert_matches;
 use bytes::Bytes;
 use futures::{SinkExt, TryStreamExt};
 use log::info;
-
-use tokio::{spawn, time::sleep};
+use tokio::{select, spawn, time::sleep};
 
 async fn test_crypto(size_listen: u16, size_call: u16, port: u16) {
     let sender = SrtSocket::builder()
@@ -56,4 +59,47 @@ async fn key_size_mismatch() {
     test_crypto(0, 32, 2005).await;
 }
 
-// TODO: bad password
+#[tokio::test]
+async fn bad_password_listen() {
+    let listener = SrtSocket::builder()
+        .encryption(16, "password1234")
+        .listen_on(":3000");
+
+    let caller = SrtSocket::builder()
+        .encryption(16, "password123")
+        .call("127.0.0.1:3000", None);
+
+    let listener_fut = spawn(async move {
+        listener.await.unwrap();
+    });
+
+    let res = caller.await;
+    assert_matches!(res, Err(e) if e.kind() == io::ErrorKind::ConnectionRefused);
+
+    assert_matches!(
+        tokio::time::timeout(Duration::from_millis(100), listener_fut).await,
+        Err(_)
+    );
+}
+
+#[tokio::test]
+async fn bad_password_rendezvous() {
+    let a = SrtSocket::builder()
+        .local_port(5301)
+        .encryption(16, "password1234")
+        .rendezvous("127.0.0.1:5300");
+
+    let b = SrtSocket::builder()
+        .encryption(16, "password123")
+        .local_port(5300)
+        .rendezvous("127.0.0.1:5301");
+
+    let result = select!(
+        r = a => r,
+        r = b => r
+    );
+
+    assert_matches!(result, Err(e) if e.kind() == io::ErrorKind::ConnectionRefused);
+}
+
+// TODO: mismatch

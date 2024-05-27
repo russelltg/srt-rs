@@ -13,9 +13,10 @@ pub struct ConnInitSettings {
     pub key_refresh: KeyMaterialRefreshSettings,
     pub send_latency: Duration,
     pub recv_latency: Duration,
+    pub peer_idle_timeout: Duration,
     pub bandwidth: options::LiveBandwidthMode,
     pub statistics_interval: Duration,
-
+    pub too_late_packet_drop: bool,
     /// Receive buffer size in packets
     pub recv_buffer_size: options::PacketCount,
     /// Size of the send buffer, in packets
@@ -58,6 +59,7 @@ impl From<options::SocketOptions> for ConnInitSettings {
             .unwrap(),
             send_latency: options.sender.peer_latency,
             recv_latency: options.receiver.latency,
+            peer_idle_timeout: options.session.peer_idle_timeout,
             bandwidth: options.sender.bandwidth,
             statistics_interval: options.session.statistics_interval,
             recv_buffer_size: options.receiver.buffer_size
@@ -66,6 +68,7 @@ impl From<options::SocketOptions> for ConnInitSettings {
                 / (options.session.max_segment_size - Packet::HEADER_SIZE),
             max_packet_size: options.sender.max_payload_size,
             max_flow_size: options.sender.flow_control_window_size,
+            too_late_packet_drop: options.receiver.too_late_packet_drop,
         }
     }
 }

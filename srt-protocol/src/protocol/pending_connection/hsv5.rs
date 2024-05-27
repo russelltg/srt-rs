@@ -142,6 +142,8 @@ pub fn gen_access_control_response(
             recv_buffer_size: settings.recv_buffer_size,
             send_buffer_size: settings.send_buffer_size,
             statistics_interval: settings.statistics_interval,
+            peer_idle_timeout: settings.peer_idle_timeout,
+            too_late_packet_drop: settings.too_late_packet_drop,
         },
     )
 }
@@ -241,6 +243,8 @@ impl StartedInitiator {
             recv_buffer_size: self.settings.recv_buffer_size,
             send_buffer_size: self.settings.send_buffer_size,
             statistics_interval: self.settings.statistics_interval,
+            peer_idle_timeout: self.settings.peer_idle_timeout,
+            too_late_packet_drop: self.settings.too_late_packet_drop,
         })
     }
 }

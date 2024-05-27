@@ -82,6 +82,8 @@ Supported protocols:
     * pbkeylen                the key length to use for encryption. Defaults to 0, unless passphrse is passed,
                                in which case 16 is the default. Must be 16, 24, or 32
     * autoreconnect              should the socket reconnect after connection is broken. Default is false, specify for true
+    * peeridletimeout_ms      how long to wait from last contact with the peer to shutdown, in milliseconds. Default is 5000 ms
+    * stats                   print basic stats every second
 
  FILE - save or send a file
     example:

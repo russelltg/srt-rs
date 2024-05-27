@@ -1,6 +1,6 @@
 [package]
 name = "srt-c"
-version = "0.4.0"
+version = "0.4.3"
 edition = "2021"
 publish = true
 description = "API compatabile libsrt reimplementation using srt-tokio"
@@ -10,8 +10,8 @@ license = "Apache-2.0"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-srt-tokio = {version = "0.4.0", path = "../srt-tokio"}
-srt-protocol = {version = "0.4.0", path = "../srt-protocol"}
+srt-tokio = {version = "0.4.3", path = "../srt-tokio"}
+srt-protocol = {version = "0.4.3", path = "../srt-protocol"}
 lazy_static = "1"
 libc = "0.2"
 bytes = "1"
@@ -19,9 +19,9 @@ futures = "0.3"
 log = "0.4"
 thiserror = "1"
 os_socketaddr = "0.2.4"
-pretty_env_logger = "0.4"
+pretty_env_logger = "0.5"
 bitflags = "2"
-console-subscriber = { version = "0.1", optional = true }
+console-subscriber = { version = "0.2", optional = true }
 
 [dependencies.tokio]
 version = "1"

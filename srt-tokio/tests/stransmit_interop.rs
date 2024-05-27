@@ -631,7 +631,7 @@ fn make_sockaddr(port: u16) -> sockaddr {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
 fn make_sockaddr(port: u16) -> sockaddr {
     use libc::{in_addr, sockaddr_in, AF_INET};
     unsafe {
@@ -653,7 +653,7 @@ fn make_sockaddr(port: u16) -> sockaddr {
 }
 
 fn open_libsrt() -> Option<Library> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let possible_names = ["libsrt-gnutls.so.1.4", "libsrt.so", "libsrt.so.1"];
 
     #[cfg(target_os = "windows")]

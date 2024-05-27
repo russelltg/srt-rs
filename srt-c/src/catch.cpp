@@ -1,7 +1,9 @@
-#if defined __linux__ || defined __APPLE__
+#if defined __linux__ || defined __APPLE__ || defined __FreeBSD__
 #include <sys/socket.h>
 #elif defined _WIN32 || defined WIN32
 #include <winsock2.h>
+#else
+#error "Unsupported platform"
 #endif
 
 using SRTSOCKET = int;

@@ -12,7 +12,7 @@ use futures::channel::mpsc::Receiver;
 use futures::{channel::mpsc, prelude::*};
 use socket2::{Domain, Protocol, Socket, Type};
 use srt_protocol::packet::{Packet, ReceivePacketResult};
-use tokio::net::UdpSocket;
+use tokio::net::{lookup_host, UdpSocket};
 
 use crate::options::*;
 
@@ -41,7 +41,7 @@ pub async fn bind_socket(options: &SocketOptions) -> Result<UdpSocket, io::Error
 pub async fn lookup_remote_host(remote: &SocketAddress) -> Result<SocketAddr, io::Error> {
     use SocketHost::*;
     let mut remote_address = match &remote.host {
-        Domain(domain) => tokio::net::lookup_host(domain)
+        Domain(domain) => lookup_host(format!("{domain}:0"))
             .await?
             .next()
             .ok_or_else(|| {
@@ -136,3 +136,22 @@ impl Display for PacketStreamClosedError {
 }
 
 impl error::Error for PacketStreamClosedError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assert_matches::assert_matches;
+
+    #[tokio::test]
+    async fn resolve_dns() {
+        let socket_address = SocketAddress {
+            host: SocketHost::Domain("localhost".to_string()),
+            port: 3000,
+        };
+        let remote_host = lookup_remote_host(&socket_address).await.unwrap();
+        assert_matches!(
+            remote_host.to_string().as_str(),
+            "127.0.0.1:3000" | "[::1]:3000"
+        );
+    }
+}

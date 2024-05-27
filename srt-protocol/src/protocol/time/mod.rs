@@ -47,7 +47,7 @@ impl Timers {
     pub const SYN: Duration = Duration::from_millis(10);
     const EXP_MAX: u32 = 16;
 
-    pub fn new(now: Instant, statistics_interval: Duration) -> Self {
+    pub fn new(now: Instant, statistics_interval: Duration, peer_idle_timeout: Duration) -> Self {
         let (ack, nak, exp) = Self::calculate_periods(1, &Rtt::default());
         Self {
             snd: Timer::new(now, Duration::from_millis(1)),
@@ -55,7 +55,7 @@ impl Timers {
             nak: Timer::new(now, nak),
             exp: Timer::new(now, exp),
             exp_count: 1,
-            peer_idle: Timer::new(now, Duration::from_secs(5)),
+            peer_idle: Timer::new(now, peer_idle_timeout),
             // this isn't in the spec, but it's in the reference implementation
             // https://github.com/Haivision/srt/blob/1d7b391905d7e344d80b86b39ac5c90fda8764a9/srtcore/core.cpp#L10610-L10614
             statistics: Timer::new(now, statistics_interval),
@@ -171,7 +171,7 @@ mod tests {
             prop_assume!((rtt_mean + 4 * rtt_variance) / 2 > ms(20));
 
             let start = Instant::now();
-            let mut timers = Timers::new(start, ms(10_000));
+            let mut timers = Timers::new(start, ms(10_000), ms(5_000));
 
             timers.update_rtt(&rtt);
 
@@ -199,7 +199,7 @@ mod tests {
             prop_assume!(4 * rtt_mean + rtt_variance + syn > ms(300));
 
             let start = Instant::now();
-            let mut timers = Timers::new(start, ms(10_000));
+            let mut timers = Timers::new(start, ms(10_000), ms(5_000));
 
             timers.update_rtt(&rtt);
 
@@ -229,7 +229,7 @@ mod tests {
             prop_assume!((rtt_mean + 4 * rtt_variance) / 2 <= ms(20));
 
             let start = Instant::now();
-            let mut timers = Timers::new(start, ms(10_000));
+            let mut timers = Timers::new(start, ms(10_000), ms(5_000));
 
             timers.update_rtt(&rtt);
 
@@ -257,7 +257,7 @@ mod tests {
             prop_assume!(4 * rtt_mean + rtt_variance + syn <= ms(300));
 
             let start = Instant::now();
-            let mut timers = Timers::new(start, ms(10_000));
+            let mut timers = Timers::new(start, ms(10_000), ms(5_000));
 
             timers.update_rtt(&rtt);
 
@@ -273,7 +273,7 @@ mod tests {
     fn next_timer() {
         let ms = TimeSpan::from_millis;
         let start = Instant::now();
-        let mut timers = Timers::new(start, Duration::MAX);
+        let mut timers = Timers::new(start, Duration::MAX, Duration::from_millis(5_000));
 
         // next timer should be ack, 10ms
         let now = start;

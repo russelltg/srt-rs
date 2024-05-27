@@ -7,6 +7,7 @@ pub(crate) mod cookie;
 
 use std::{error::Error, fmt, io, net::SocketAddr};
 
+use crate::options::KeySize;
 use crate::{connection::Connection, options::StreamId, packet::*, settings::KeySettings};
 
 #[non_exhaustive]
@@ -38,6 +39,7 @@ pub struct AccessControlRequest {
     pub remote: SocketAddr,
     pub remote_socket_id: SocketId,
     pub stream_id: Option<StreamId>,
+    pub key_size: KeySize,
 }
 
 #[derive(Debug, Eq, PartialEq)]

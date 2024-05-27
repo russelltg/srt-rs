@@ -43,19 +43,19 @@ impl SrtVersion {
 
 impl PartialOrd for SrtVersion {
     fn partial_cmp(&self, other: &SrtVersion) -> Option<Ordering> {
-        Some(match self.major.cmp(&other.major) {
-            Ordering::Equal => match self.minor.cmp(&other.minor) {
-                Ordering::Equal => self.patch.cmp(&other.patch),
-                o => o,
-            },
-            o => o,
-        })
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for SrtVersion {
     fn cmp(&self, other: &SrtVersion) -> Ordering {
-        self.partial_cmp(other).unwrap() // this cannot fail
+        match self.major.cmp(&other.major) {
+            Ordering::Equal => match self.minor.cmp(&other.minor) {
+                Ordering::Equal => self.patch.cmp(&other.patch),
+                o => o,
+            },
+            o => o,
+        }
     }
 }
 

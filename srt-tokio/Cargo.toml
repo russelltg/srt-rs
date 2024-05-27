@@ -8,7 +8,7 @@ license = "Apache-2.0"
 name = "srt-tokio"
 publish = true
 repository = "https://github.com/russelltg/srt-rs"
-version = "0.4.1"
+version = "0.4.3"
 
 [dependencies]
 bytes = "1"
@@ -29,7 +29,7 @@ default-features = false
 version = "0.4"
 
 [dependencies.srt-protocol]
-version = "0.4.0"
+version = "0.4.3"
 path = "../srt-protocol"
 
 [dependencies.tokio]
@@ -44,14 +44,14 @@ version = "0.1"
 anyhow = "1"
 lazy_static = "1"
 libc = "0.2"
-libloading = "0.7"
+libloading = "0.8"
 rand = "0.8"
 rand_distr = "0.4"
 assert_matches = "1.0.0"
 
 [dev-dependencies.pretty_env_logger]
 default-features = false
-version = "0.4"
+version = "0.5"
 
 [dev-dependencies.tokio]
 features = ["rt-multi-thread"]

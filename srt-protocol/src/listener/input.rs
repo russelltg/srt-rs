@@ -50,7 +50,6 @@ pub struct NextInputContext(Option<ResultOf>);
 
 impl NextInputContext {
     pub fn for_action(action: &Action) -> Self {
-        use crate::listener::Action::{Close, WaitForInput};
         use Action::*;
         let context = match action {
             SendPacket((_, address)) => Some(ResultOf::SendPacket(*address)),

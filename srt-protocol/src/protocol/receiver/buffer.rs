@@ -7,7 +7,6 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use take_until::TakeUntilExt;
 
 use crate::{options::PacketCount, packet::*};
 
@@ -168,6 +167,8 @@ pub struct MessageError {
 #[derive(Debug)]
 pub struct ReceiveBuffer {
     tsbpd_latency: Duration,
+    /// Adds an extra delay to the TSBPD threshold for dropping too late packets
+    tsbpd_tolerance: Duration,
 
     // Sequence number that all packets up to have been received + 1
     lrsn: SeqNumber,
@@ -175,6 +176,7 @@ pub struct ReceiveBuffer {
     // first sequence number in the list
     seqno0: SeqNumber,
 
+    too_late_packet_drop: bool,
     remote_clock: SynchronizedRemoteClock,
     buffer: VecDeque<BufferPacket>,
     max_buffer_size: PacketCount,
@@ -184,11 +186,15 @@ impl ReceiveBuffer {
     pub fn new(
         socket_start_time: Instant,
         tsbpd_latency: Duration,
+        too_late_packet_drop: bool,
         init_seq_num: SeqNumber,
         max_buffer_size: PacketCount,
     ) -> Self {
         Self {
             tsbpd_latency,
+            // TODO: perhaps make this configurable
+            tsbpd_tolerance: Duration::from_millis(5),
+            too_late_packet_drop,
             lrsn: init_seq_num,
             seqno0: init_seq_num,
             remote_clock: SynchronizedRemoteClock::new(socket_start_time),
@@ -201,6 +207,7 @@ impl ReceiveBuffer {
         self.buffer.is_empty()
     }
 
+    /// Data Sequence Number of the packet following the last acknowledged packet
     pub fn next_ack_dsn(&self) -> SeqNumber {
         self.lrsn
     }
@@ -261,12 +268,7 @@ impl ReceiveBuffer {
     ) -> Result<Option<(Instant, Bytes)>, MessageError> {
         let timestamp = match self.front_ts() {
             Some(timestamp) => timestamp,
-            None => {
-                return match self.drop_too_late_packets(now) {
-                    Some(error) => Err(error),
-                    None => Ok(None),
-                }
-            }
+            None => return self.drop_too_late_packets(now),
         };
 
         let sent_time = self.remote_clock.instant_from(timestamp);
@@ -276,12 +278,7 @@ impl ReceiveBuffer {
 
         let packet_count = match self.next_message_packet_count() {
             Some(packet_count) => packet_count,
-            None => {
-                return match self.drop_too_late_packets(now) {
-                    Some(error) => Err(error),
-                    None => Ok(None),
-                }
-            }
+            None => return self.drop_too_late_packets(now),
         };
 
         self.seqno0 += u32::try_from(packet_count).unwrap();
@@ -462,31 +459,55 @@ impl ReceiveBuffer {
 
     /// Drops the packets that are deemed to be too late
     /// i.e.: there is a packet after it that is ready to be released
-    fn drop_too_late_packets(&mut self, now: Instant) -> Option<MessageError> {
-        let latency_window = self.tsbpd_latency + Duration::from_millis(5);
-        // Not only does it have to be non-none, it also has to be a First (don't drop half messages)
-        let (index, seq_number, timestamp) = self
-            .buffer
-            .iter()
-            .enumerate()
-            .skip(1)
-            .take_until(|(_, p)| p.is_first())
-            .last()
-            .and_then(|(i, p)| {
-                p.data_packet()
-                    .map(|d| (i, d.seq_number, self.remote_clock.instant_from(d.timestamp)))
+    fn drop_too_late_packets(
+        &mut self,
+        now: Instant,
+    ) -> Result<Option<(Instant, Bytes)>, MessageError> {
+        if !self.too_late_packet_drop {
+            return Ok(None);
+        }
+
+        let data_packets = self.buffer.iter().map(|packet| {
+            packet.data_packet().map(|data| {
+                (
+                    data.seq_number,
+                    self.remote_clock.instant_from(data.timestamp),
+                    data.message_loc,
+                )
             })
-            .filter(|(_, _, timestamp)| now >= *timestamp + latency_window)?;
+        });
 
-        let delay = TimeSpan::from_interval(timestamp + self.tsbpd_latency, now);
-        let drop_count = self.buffer.drain(0..index).count();
+        let tsbpd_threshold = now - self.tsbpd_latency - self.tsbpd_tolerance;
+        let too_late_packets = data_packets.take_while(|packet| {
+            packet.map_or(true, |(_, packet_time, message_loc)| {
+                packet_time <= tsbpd_threshold || !message_loc.contains(PacketLocation::FIRST)
+            })
+        });
 
-        self.seqno0 = seq_number;
+        let dropped_packets = too_late_packets.fold(None, |last, packet| match (last, packet) {
+            (None, Some((seq_number, packet_time, _))) => Some((seq_number, packet_time)),
+            (Some((_, first_packet_time)), Some((seq_number, _, _))) => {
+                Some((seq_number, first_packet_time))
+            }
+            (last, _) => last,
+        });
+
+        let (last_seq_number, first_packet_time) = match dropped_packets {
+            Some(packets) => packets,
+            None => return Ok(None),
+        };
+
+        let begin_packet = self.seqno0;
+        let end_packet = last_seq_number + 1;
+        let drop_count = end_packet.saturating_sub(begin_packet);
+
+        self.seqno0 = end_packet;
+        self.buffer.drain(0..drop_count);
         self.recalculate_lrsn(0);
 
-        Some(MessageError {
-            too_late_packets: seq_number - drop_count as u32..seq_number,
-            delay,
+        Err(MessageError {
+            delay: TimeSpan::from_interval(first_packet_time + self.tsbpd_latency, now),
+            too_late_packets: begin_packet..end_packet,
         })
     }
 
@@ -517,6 +538,8 @@ impl ReceiveBuffer {
 
 #[cfg(test)]
 mod receive_buffer {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     use DataPacketAction::*;
@@ -532,7 +555,7 @@ mod receive_buffer {
             message_number: MsgNumber(0),
             timestamp: TimeStamp::from_micros(0),
             dest_sockid: SocketId(4),
-            payload: Bytes::new(),
+            payload: b"basic payload"[..].into(),
         }
     }
 
@@ -542,7 +565,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(3);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
+        let mut buf = ReceiveBuffer::new(start, tsbpd, true, init_seq_num, PacketCount(8192));
 
         assert_eq!(buf.next_ack_dsn(), init_seq_num);
         assert_eq!(buf.next_message_release_time(), None);
@@ -555,7 +578,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
+        let mut buf = ReceiveBuffer::new(start, tsbpd, true, init_seq_num, PacketCount(8192));
 
         assert_eq!(
             buf.push_packet(
@@ -573,16 +596,16 @@ mod receive_buffer {
         );
         assert_eq!(buf.next_ack_dsn(), init_seq_num + 1);
         assert_eq!(buf.next_message_release_time(), Some(start + tsbpd));
-        assert_eq!(buf.pop_next_message(start + tsbpd * 2), Ok(None));
+        assert_eq!(buf.pop_next_message(start + tsbpd), Ok(None));
     }
 
     #[test]
     fn multi_packet_message_lost_last_packet() {
         let tsbpd = Duration::from_secs(2);
         let start = Instant::now();
-        let init_seq_num = SeqNumber(5);
+        let init_seq_num = SeqNumber(0);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
+        let mut buf = ReceiveBuffer::new(start, tsbpd, true, init_seq_num, PacketCount(8192));
 
         assert_eq!(
             buf.push_packet(
@@ -600,7 +623,7 @@ mod receive_buffer {
         );
         assert_eq!(buf.next_ack_dsn(), init_seq_num + 1);
         assert_eq!(buf.next_message_release_time(), Some(start + tsbpd));
-        assert_eq!(buf.pop_next_message(start + tsbpd * 2), Ok(None));
+        assert_eq!(buf.pop_next_message(start + tsbpd), Ok(None));
 
         // 1 lost packet
         assert_eq!(
@@ -612,14 +635,14 @@ mod receive_buffer {
                     ..basic_pack()
                 }
             ),
-            Ok(ReceivedWithLoss([SeqNumber(6)].iter().collect()))
+            Ok(ReceivedWithLoss([init_seq_num + 1].iter().collect()))
         );
         assert_eq!(buf.next_ack_dsn(), init_seq_num + 1);
         assert_eq!(buf.next_message_release_time(), Some(start + tsbpd));
         assert_eq!(
             buf.pop_next_message(start + tsbpd * 2),
             Err(MessageError {
-                too_late_packets: SeqNumber(5)..SeqNumber(7),
+                too_late_packets: SeqNumber(0)..SeqNumber(3),
                 delay: TimeSpan::from_millis(2_000)
             })
         );
@@ -631,7 +654,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
+        let mut buf = ReceiveBuffer::new(start, tsbpd, true, init_seq_num, PacketCount(8192));
 
         assert_eq!(
             buf.push_packet(
@@ -649,7 +672,8 @@ mod receive_buffer {
         );
         assert_eq!(buf.next_ack_dsn(), init_seq_num + 1);
         assert_eq!(buf.next_message_release_time(), Some(start + tsbpd));
-        assert_eq!(buf.pop_next_message(start + tsbpd * 2), Ok(None));
+        assert_eq!(buf.pop_next_message(start + tsbpd), Ok(None));
+        assert_eq!(buf.pop_next_message(start + tsbpd), Ok(None));
 
         assert_eq!(
             buf.push_packet(
@@ -676,7 +700,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
+        let mut buf = ReceiveBuffer::new(start, tsbpd, true, init_seq_num, PacketCount(8192));
 
         assert_eq!(
             buf.push_packet(
@@ -717,36 +741,12 @@ mod receive_buffer {
     }
 
     #[test]
-    fn push_packet_with_loss_empty_buffer() {
-        let tsbpd = Duration::from_secs(2);
-        let start = Instant::now();
-        let init_seq_num = SeqNumber(5);
-
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
-        assert_eq!(
-            buf.push_packet(
-                start,
-                DataPacket {
-                    seq_number: init_seq_num + 2,
-                    message_loc: PacketLocation::MIDDLE,
-                    payload: b"hello"[..].into(),
-                    ..basic_pack()
-                }
-            ),
-            Ok(ReceivedWithLoss((init_seq_num..init_seq_num + 2).into()))
-        );
-        assert_eq!(buf.next_ack_dsn(), init_seq_num);
-        assert_eq!(buf.next_message_release_time(), None);
-        assert_eq!(buf.pop_next_message(start + tsbpd), Ok(None));
-    }
-
-    #[test]
     fn push_packet_multi_packet_message_ready() {
         let tsbpd = Duration::from_secs(2);
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
+        let mut buf = ReceiveBuffer::new(start, tsbpd, true, init_seq_num, PacketCount(8192));
         assert_eq!(
             buf.push_packet(
                 start,
@@ -810,7 +810,7 @@ mod receive_buffer {
         let init_seq_num = SeqNumber(5);
         let mean_rtt = TimeSpan::from_micros(10_000);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
+        let mut buf = ReceiveBuffer::new(start, tsbpd, true, init_seq_num, PacketCount(8192));
 
         assert_eq!(buf.prepare_loss_list(start, mean_rtt), None);
 
@@ -873,13 +873,71 @@ mod receive_buffer {
 
     #[test]
     fn drop_too_late_packets() {
+        // packets:
+        //  (0) missing
+        //  (1) late
+        //  (0) missing
+        //  (2) on time
+
+        let _ = pretty_env_logger::try_init();
+
+        let tsbpd = Duration::from_secs(2);
+        let start = Instant::now();
+        let init_seq_num = SeqNumber(0);
+
+        let mut buf = ReceiveBuffer::new(start, tsbpd, true, init_seq_num, PacketCount(8192));
+
+        let now = start;
+        let _ = buf.push_packet(
+            now,
+            DataPacket {
+                seq_number: init_seq_num + 1,
+                message_loc: PacketLocation::FIRST,
+                ..basic_pack()
+            },
+        );
+        assert_eq!(buf.pop_next_message(now), Ok(None));
+        assert_eq!(buf.next_ack_dsn(), init_seq_num);
+
+        let now = now + tsbpd;
+        let _ = buf.push_packet(
+            now,
+            DataPacket {
+                timestamp: TimeStamp::MIN + tsbpd,
+                seq_number: init_seq_num + 3,
+                payload: b"test"[..].into(),
+                ..basic_pack()
+            },
+        );
+        assert_eq!(buf.pop_next_message(now), Ok(None));
+        assert_eq!(buf.next_ack_dsn(), init_seq_num);
+
+        // 5 ms buffer release tolerance, we are ok with releasing them 5ms late
+        let now = now + Duration::from_millis(5);
+        // it should drop all packets before and including the last late packet
+        assert_eq!(
+            buf.pop_next_message(now),
+            Err(MessageError {
+                too_late_packets: SeqNumber(0)..SeqNumber(2),
+                delay: TimeSpan::from_millis(5)
+            })
+        );
+        assert_eq!(buf.next_ack_dsn(), SeqNumber(2));
+
+        // it should continue to wait for any remaining missing packets
+        assert_eq!(buf.pop_next_message(now), Ok(None));
+        assert_eq!(buf.next_ack_dsn(), SeqNumber(2));
+    }
+
+    #[test]
+    fn not_dropping_too_late_packets() {
         let _ = pretty_env_logger::try_init();
 
         let tsbpd = Duration::from_secs(2);
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
+        let mut buf = ReceiveBuffer::new(start, tsbpd, false, init_seq_num, PacketCount(8192));
 
         let now = start;
         let _ = buf.push_packet(
@@ -904,7 +962,6 @@ mod receive_buffer {
         assert_eq!(buf.next_ack_dsn(), init_seq_num);
 
         let now = now + tsbpd;
-        let expected_release_time = now;
         let _ = buf.push_packet(
             now,
             DataPacket {
@@ -920,35 +977,18 @@ mod receive_buffer {
 
         // 2 ms buffer release tolerance, we are ok with releasing them 2ms late
         let now = now + Duration::from_millis(5);
-        // it should drop all missing packets up to the next viable message
-        // and begin to ack all viable packets
-        assert_eq!(
-            buf.pop_next_message(now),
-            Err(MessageError {
-                too_late_packets: SeqNumber(5)..SeqNumber(6),
-                delay: TimeSpan::from_millis(5)
-            })
-        );
-        assert_eq!(buf.next_ack_dsn(), init_seq_num + 3, "{buf:?}");
+        // it should not drop packets
+        assert_eq!(buf.pop_next_message(now), Ok(None));
+        assert_eq!(buf.next_ack_dsn(), init_seq_num, "{buf:?}");
 
         // 2 ms buffer release tolerance, we are ok with releasing them 2ms late
         let now = now + tsbpd + Duration::from_millis(5);
-        // it should drop all missing packets up to the next viable message
-        // and begin to ack all viable packets
-        assert_eq!(
-            buf.pop_next_message(now),
-            Err(MessageError {
-                too_late_packets: SeqNumber(6)..SeqNumber(10),
-                delay: TimeSpan::from_millis(10)
-            })
-        );
-        assert_eq!(buf.next_ack_dsn(), init_seq_num + 6);
+        // it should not drop packets
+        assert_eq!(buf.pop_next_message(now), Ok(None));
+        assert_eq!(buf.next_ack_dsn(), init_seq_num);
 
-        assert_eq!(
-            buf.pop_next_message(now),
-            Ok(Some((expected_release_time, b"yas"[..].into())))
-        );
-        assert_eq!(buf.next_ack_dsn(), init_seq_num + 6);
+        assert_eq!(buf.pop_next_message(now), Ok(None));
+        assert_eq!(buf.next_ack_dsn(), init_seq_num);
     }
 
     #[test]
@@ -958,7 +998,7 @@ mod receive_buffer {
         let init_seq_num = SeqNumber(5);
         let mean_rtt = TimeSpan::from_micros(10_000);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
+        let mut buf = ReceiveBuffer::new(start, tsbpd, true, init_seq_num, PacketCount(8192));
 
         let now = start;
         assert_eq!(
@@ -991,7 +1031,7 @@ mod receive_buffer {
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(10));
+        let mut buf = ReceiveBuffer::new(start, tsbpd, true, init_seq_num, PacketCount(10));
 
         assert_eq!(buf.buffer_available(), 10);
 
@@ -1097,51 +1137,12 @@ mod receive_buffer {
     }
 
     #[test]
-    fn wrong_lrsn_after_drop_all() {
-        let tsbpd = Duration::from_secs(2);
-        let start = Instant::now();
-        let init_seq_num = SeqNumber(5);
-
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(8192));
-
-        let now = start;
-        assert_eq!(
-            buf.push_packet(
-                now,
-                DataPacket {
-                    seq_number: init_seq_num + 3,
-                    payload: b"yas"[..].into(),
-                    ..basic_pack()
-                },
-            ),
-            Ok(ReceivedWithLoss((init_seq_num..init_seq_num + 3).into()))
-        );
-
-        assert_eq!(buf.next_ack_dsn(), init_seq_num);
-
-        // pop_next_message is strange, may want some cleanup
-        assert_eq!(
-            buf.pop_next_message(now + tsbpd + Duration::from_millis(10)),
-            Err(MessageError {
-                too_late_packets: SeqNumber(5)..SeqNumber(8),
-                delay: TimeSpan::from_millis(10)
-            })
-        );
-        assert_eq!(
-            buf.pop_next_message(now + tsbpd + Duration::from_millis(10)),
-            Ok(Some((now, b"yas"[..].into())))
-        );
-
-        assert_eq!(buf.next_ack_dsn(), init_seq_num + 4);
-    }
-
-    #[test]
     fn rx_acknowledged_time() {
         let tsbpd = Duration::from_secs(2);
         let start = Instant::now();
         let init_seq_num = SeqNumber(5);
 
-        let mut buf = ReceiveBuffer::new(start, tsbpd, init_seq_num, PacketCount(10));
+        let mut buf = ReceiveBuffer::new(start, tsbpd, true, init_seq_num, PacketCount(10));
 
         let add_packet = |i, buf: &mut ReceiveBuffer| {
             buf.push_packet(

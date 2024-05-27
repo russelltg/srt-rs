@@ -447,7 +447,7 @@ mod tests {
         socket.connect.linger = Some(Duration::from_millis(128));
         socket.receiver.reorder_tolerance_max = PacketCount(256);
         socket.session.max_segment_size = PacketSize(1300);
-        socket.encryption.passphrase = "passphrase1234".try_into().ok();
+        socket.encryption.passphrase = Some("passphrase1234".into());
         socket.sender.max_payload_size = PacketSize(1234);
         socket.encryption.key_size = KeySize::AES256;
         socket.session.peer_idle_timeout = Duration::from_millis(4242);

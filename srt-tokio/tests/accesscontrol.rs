@@ -1,8 +1,4 @@
-use std::{
-    convert::{TryFrom, TryInto},
-    io,
-    time::Instant,
-};
+use std::{io, time::Instant};
 
 use assert_matches::assert_matches;
 use bytes::Bytes;
@@ -83,8 +79,7 @@ async fn streamid() -> io::Result<()> {
             let stream_id = AccessControlList(vec![
                 StandardAccessControlEntry::UserName("russell".into()).into(),
                 StandardAccessControlEntry::ResourceName(format!("{i}")).into(),
-            ])
-            .to_string();
+            ]).to_string();
 
             let recvr = SrtSocket::builder()
                 .call("127.0.0.1:2000", Some(stream_id.as_str()))
@@ -128,7 +123,7 @@ async fn set_password() {
 
     let listener = tokio::spawn(async move {
         while let Some(request) = incoming.incoming().next().await {
-            let passphrase = request.stream_id().unwrap().as_str().try_into().unwrap();
+            let passphrase = request.stream_id().unwrap().as_str().into();
 
             if let Ok(mut sender) = request
                 .accept(Some(KeySettings {
