@@ -43,7 +43,13 @@ pub async fn bind_with(
             NotHandled(e) => {
                 warn!("rendezvous {:?} error: {}", socket_id, e);
             }
-            Reject(_, _) => todo!(),
+            Reject(p, e) => {
+                warn!("rendezvous {:?} error: {}", socket_id, e);
+                if let Some(packet) = p {
+                    let _ = socket.send(packet).await?;
+                }
+                return Err(io::Error::new(io::ErrorKind::ConnectionRefused, e));
+            }
             Connected(p, connection) => {
                 if let Some(packet) = p {
                     let _ = socket.send(packet).await?;

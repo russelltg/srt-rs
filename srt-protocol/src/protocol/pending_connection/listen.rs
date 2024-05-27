@@ -96,7 +96,7 @@ impl Listen {
     }
 
     pub fn handle_timer(&self, _now: Instant) -> ConnectionResult {
-        ConnectionResult::NoAction
+        NoAction
     }
 
     fn handle_control_packets(
@@ -299,13 +299,14 @@ impl Listen {
     }
 
     fn make_rejection(
-        &self,
+        &mut self,
         response_to: &HandshakeControlInfo,
         from: SocketAddr,
         timestamp: TimeStamp,
         r: ConnectionReject,
     ) -> ConnectionResult {
-        ConnectionResult::Reject(
+        self.state = InductionWait;
+        Reject(
             Some((
                 ControlPacket {
                     timestamp,
