@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #if defined __linux__ || defined __APPLE__
     #include <sys/socket.h>
+    #include <arpa/inet.h>
+    #include <netinet/in.h>
 #elif defined _WIN32 || defined WIN32
     #include <winsock2.h>
 #endif
@@ -138,6 +140,48 @@ typedef enum SRT_KM_STATE {
   SRT_KM_S_NOSECRET = 3,
   SRT_KM_S_BADSECRET = 4,
 } SRT_KM_STATE;
+
+typedef enum SRT_REJECT_REASON {
+  SRT_REJ_UNKNOWN = 0,
+  SRT_REJ_SYSTEM = 1,
+  SRT_REJ_PEER = 2,
+  SRT_REJ_RESOURCE = 3,
+  SRT_REJ_ROGUE = 4,
+  SRT_REJ_BACKLOG = 5,
+  SRT_REJ_IPE = 6,
+  SRT_REJ_CLOSE = 7,
+  SRT_REJ_VERSION = 8,
+  SRT_REJ_RDVCOOKIE = 9,
+  SRT_REJ_BADSECRET = 10,
+  SRT_REJ_UNSECURE = 11,
+  SRT_REJ_MESSAGEAPI = 12,
+  SRT_REJ_CONGESTION = 13,
+  SRT_REJ_FILTER = 14,
+  SRT_REJ_GROUP = 15,
+  SRT_REJ_TIMEOUT = 16,
+  SRT_REJ_CRYPTO = 17,
+  SRT_REJX_FALLBACK = 1000,
+  SRT_REJX_KEY_NOTSUP = 1001,
+  SRT_REJX_FILEPATH = 1002,
+  SRT_REJX_HOSTNOTFOUND = 1003,
+  SRT_REJX_BAD_REQUEST = 1400,
+  SRT_REJX_UNAUTHORIZED = 1401,
+  SRT_REJX_OVERLOAD = 1402,
+  SRT_REJX_FORBIDDEN = 1403,
+  SRT_REJX_NOTFOUND = 1404,
+  SRT_REJX_BAD_MODE = 1405,
+  SRT_REJX_UNACCEPTABLE = 1406,
+  SRT_REJX_CONFLICT = 1409,
+  SRT_REJX_NOTSUP_MEDIA = 1415,
+  SRT_REJX_LOCKED = 1423,
+  SRT_REJX_FAILED_DEPEND = 1424,
+  SRT_REJX_ISE = 1500,
+  SRT_REJX_UNIMPLEMENTED = 1501,
+  SRT_REJX_GW = 1502,
+  SRT_REJX_DOWN = 1503,
+  SRT_REJX_VERSION = 1505,
+  SRT_REJX_NOROOM = 1507,
+} SRT_REJECT_REASON;
 
 typedef enum SRT_SOCKOPT {
   SRTO_MSS = 0,
@@ -425,11 +469,17 @@ int srt_recv(SRTSOCKET sock, char *buf, int len);
 
 int srt_recvmsg(SRTSOCKET sock, char *buf, int len);
 
+int srt_recvmsg2(SRTSOCKET sock, char *buf, int len, struct SRT_MSGCTRL *mctrl);
+
 int srt_bstats(SRTSOCKET _sock, struct SRT_TRACEBSTATS *_perf, int _clear);
 
 SRTSOCKET srt_create_socket(void);
 
 void srt_setloglevel(int ll);
+
+enum SRT_REJECT_REASON srt_getrejectreason(SRTSOCKET sock);
+
+void srt_setrejectreason(SRTSOCKET sock, enum SRT_REJECT_REASON value);
 
 /**
  * # Safety
