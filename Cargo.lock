@@ -1528,7 +1528,7 @@ dependencies = [
 
 [[package]]
 name = "srt-c"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "bitflags 2.4.2",
  "bytes",
@@ -1556,7 +1556,7 @@ dependencies = [
 
 [[package]]
 name = "srt-protocol"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "aes",
  "array-init",
@@ -1587,7 +1587,7 @@ dependencies = [
 
 [[package]]
 name = "srt-tokio"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "ac-ffmpeg",
  "anyhow",
@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "srt-transmit"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "bus",
