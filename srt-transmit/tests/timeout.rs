@@ -1,3 +1,11 @@
+use bytes::Bytes;
+
+use nix::{
+    sys::signal::{kill, Signal},
+    unistd::Pid,
+};
+
+use srt_tokio::SrtSocketBuilder;
 use std::{env, path::PathBuf, process::Stdio, time::Instant};
 
 use bytes::Bytes;
@@ -106,5 +114,51 @@ async fn sender_timeout() {
 
         a.kill().await.unwrap();
     };
+    futures::join!(sender, recvr);
+}
+
+// I could not find an easy way to send Ctrl+C from code on windows
+#[cfg(not(windows))]
+#[tokio::test]
+async fn ctrlc() {
+    let _ = pretty_env_logger::try_init();
+
+    let b = SrtSocketBuilder::new_listen().local_port(1880).connect();
+
+    let mut a = Command::new(&find_stransmit_rs())
+        .args(&["srt://localhost:1880", "-"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let sender = async move {
+        let mut b = b.await.unwrap();
+
+        for _ in 0..100 {
+            if b.send((Instant::now(), Bytes::from_static(b"asdf\n")))
+                .await
+                .is_err()
+            {
+                return;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        assert!(false);
+    };
+
+    let recvr = async move {
+        let mut out = BufReader::new(a.stdout.as_mut().unwrap());
+        let mut line = String::new();
+        for _ in 0..10 {
+            out.read_line(&mut line).await.unwrap();
+        }
+
+        let pid = Pid::from_raw(a.id().unwrap() as i32);
+        kill(pid, Signal::SIGINT).unwrap();
+
+        sleep(Duration::from_millis(500)).await;
+        a.try_wait().unwrap().unwrap();
+    };
+
     futures::join!(sender, recvr);
 }
